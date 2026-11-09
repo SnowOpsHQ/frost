@@ -483,7 +483,7 @@ describe('projects service', () => {
   test('rank-run-asks-for-an-engine-host-page', async () => {
     const { service, runs, confirmRankRun } = setup();
     // Pages on an engine's host that the pack refuses as a result page (another vertical): still disclosed.
-    for (const url of ['https://www.google.com/search?q=green+tea&udm=50', 'https://www.google.com/search?q=green+tea&tbm=isch', 'https://duckduckgo.com/?q=green+tea&ia=images', 'https://www.bing.com/images/search?q=tea']) {
+    for (const url of ['https://www.google.com/search?q=green+tea&udm=50', 'https://www.google.com/search?q=green+tea&tbm=isch', 'https://duckduckgo.com/?q=green+tea&ia=images', 'https://www.bing.com/search?form=x']) {
       const id = await created(service, url.slice(8, 30));
       await service.addPage(id, url);
       confirmRankRun.mockResolvedValueOnce(false);
@@ -491,11 +491,14 @@ describe('projects service', () => {
     }
     expect(confirmRankRun).toHaveBeenCalledTimes(4);
     expect(runs.start).not.toHaveBeenCalled();
-    // A page on another host never asks.
-    const own = await created(service, 'Own site');
-    await service.addPage(own, 'https://example.com/search?q=green+tea&udm=50');
-    expect(await service.startRun(own, false)).toMatchObject({ status: 'started' });
-    expect(confirmRankRun).toHaveBeenCalledTimes(4);
+    // A page on another host never asks, nor one on an engine's host off its result paths (council review).
+    for (const url of ['https://example.com/search?q=green+tea&udm=50', 'https://www.google.com/maps/place/x', 'https://duckduckgo.com/about', 'https://www.bing.com/images/search?q=tea']) {
+      runs.start.mockClear();
+      const own = await created(service, `Own ${url.slice(8, 24)}`);
+      await service.addPage(own, url);
+      expect(await service.startRun(own, false), url).toMatchObject({ status: 'started' });
+      expect(confirmRankRun, url).toHaveBeenCalledTimes(4);
+    }
   });
 
   // spec: specs/projects.feature.md — Cadence (the disclosure before a cadence is first set; Unfiled refuses one)

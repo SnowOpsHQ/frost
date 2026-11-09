@@ -23,7 +23,7 @@ import { sortedJson, type SerpRunVerdict } from '@app/specs/rankings.spec';
 import { isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import { SERP_DEVICE_OF_PRESET } from '@app/specs/serp.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
-import { isEngineHost, searchParamsForUrl, type SearchParamsOf, type SerpVerdictOf } from './serp-params';
+import { isEngineResultPath, searchParamsForUrl, type SearchParamsOf, type SerpVerdictOf } from './serp-params';
 import { storedPageUrl } from './snapshot';
 
 // A project's capture run (Phase 6 Task 6; spec `projects.spec.ts`, `PROJECT_RUN_LIMITS`; acceptance
@@ -68,9 +68,10 @@ import { storedPageUrl } from './snapshot';
 // - the landed document (`documentSeq`) is recorded when a search target lands: any other document
 //   before its capture or screenshot (a same-URL reload too) stops the run (`not-a-result-page`); the
 //   check is not made again.
-// Whole-branch review rulings: a **page target on an engine's host** that is not a result page (the
-// pack's `reject` rules: Google `udm=50`, `tbm=isch`, DuckDuckGo `ia=images`) still queries the engine
-// (`queriesAnEngine`): disclosed, paced and gated, so it blocks as it lands (`not-a-result-page`); and a
+// Whole-branch review rulings: a **page target on an engine's result path** that is not a result page
+// (the pack's `reject` rules: Google `udm=50`, `tbm=isch`, DuckDuckGo `ia=images`) still queries the
+// engine (`queriesAnEngine`): disclosed, paced and gated, so it blocks as it lands (`not-a-result-page`);
+// a page on an engine's host off its result paths (Google Maps, DuckDuckGo `/about`) is a page; and a
 // URL change **within the landed document** (`pushState` / `replaceState`) stops the run only when the
 // new URL is not a result page of the target's search (`searchParamsForUrl` + `sameRunSearch`), else
 // the target goes on at the new URL (its reading and parameters read again before a capture).
@@ -181,17 +182,17 @@ export function runSearchOf(target: Pick<RunPlanTarget, 'kind' | 'url' | 'search
 }
 
 /**
- * Whether a run loading `target` queries a search engine (whole-branch review ruling): a target with a
- * search (`runSearchOf`), or a page target on one of the bundled pack's engine hosts whatever the pack
- * makes of its path or parameters (`isEngineHost`: e.g. Google `udm=50` or `tbm=isch`, DuckDuckGo
- * `ia=images`, which the pack's `reject` rules refuse as result pages). Such a target is disclosed
- * (`projects.ts`), paced and gated; one without a search is then blocked at once (`not-a-result-page`).
- * Never throws.
+ * Whether a run loading `target` queries a search engine (whole-branch review ruling, narrowed by the
+ * council review): a target with a search (`runSearchOf`), or a page target on one of the bundled pack's
+ * engine result paths whatever the pack makes of its parameters (`isEngineResultPath`: e.g. Google
+ * `udm=50` or `tbm=isch`, DuckDuckGo `ia=images`, which the pack's `reject` rules refuse as result
+ * pages). Such a target is disclosed (`projects.ts`), paced and gated; one without a search is then
+ * blocked at once (`not-a-result-page`). Another page on an engine's host is a page. Never throws.
  */
 export function queriesAnEngine(target: Pick<RunPlanTarget, 'kind' | 'url' | 'searchParams'>): boolean {
   if (runSearchOf(target) !== null) return true;
   try {
-    return target.kind === 'page' && isEngineHost(target.url);
+    return target.kind === 'page' && isEngineResultPath(target.url);
   } catch {
     return false;
   }
@@ -425,7 +426,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     const search = own === null || target.kind === 'query' ? own : { ...own, device: SERP_DEVICE_OF_PRESET[profileFor(target, plan.profile)?.device ?? 'none'] };
     /** The target URL's filters (none for a saved search): the landed page must carry the same. */
     const filtersOf = (url: string | null): string => (url === null || search === null ? '' : sortedJson(serpFiltersOf(url, search.engine)));
-    /** Gated: a query, a result page, or any page on an engine's host (one without a search blocks as it lands). */
+    /** Gated: a query, a result page, or any page on an engine's result path (one without a search blocks as it lands). */
     const gated = target.kind === 'query' || queriesAnEngine(target);
     /** A search target's document when it landed: another one before its capture or screenshot stops the run. */
     let landedSeq: number | null = null;

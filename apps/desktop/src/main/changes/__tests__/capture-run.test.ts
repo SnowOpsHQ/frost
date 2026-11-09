@@ -731,6 +731,8 @@ const DESKTOP: SearchParams = { ...PARAMS, device: 'desktop' };
 const BLACK: SearchParams = { ...DESKTOP, query: 'black tea', url: 'https://www.google.com/search?q=black+tea&gl=de&hl=de' };
 const BLACK_SEARCH = 'https://www.google.com/search?q=black%20tea&hl=de&gl=de';
 const SPACING = RANK_RUN_QUERY_SPACING_MS;
+/** A Phase 6 page target on an engine's host, off its result paths. */
+const MAPS = 'https://www.google.com/maps/place/x';
 
 /** Records when each navigation happened (fake clock). */
 function timedNavigations(fake: ReturnType<typeof setup>): [string, number][] {
@@ -1080,13 +1082,14 @@ describe('searches in a run', () => {
     // Pages on an engine's host that the pack refuses (another vertical): no search parameters, but they query an engine.
     const UDM = 'https://www.google.com/search?q=green+tea&udm=50';
     const page = (url: string) => ({ kind: 'page' as const, url, searchParams: null });
-    for (const url of [UDM, 'https://www.google.com/search?q=green+tea&tbm=isch', 'https://duckduckgo.com/?q=green+tea&ia=images', 'https://www.bing.com/images/search?q=tea', 'https://WWW.GOOGLE.COM./maps']) {
+    for (const url of [UDM, 'https://www.google.com/search?q=green+tea&tbm=isch', 'https://duckduckgo.com/?q=green+tea&ia=images', 'https://WWW.GOOGLE.COM./search', 'https://html.duckduckgo.com/html/']) {
       expect(runSearchOf(page(url)), url).toBeNull();
       expect(queriesAnEngine(page(url)), url).toBe(true);
     }
     expect(queriesAnEngine(page(SEARCH))).toBe(true);
     expect(queriesAnEngine({ kind: 'query', url: SEARCH, searchParams: DESKTOP })).toBe(true);
-    for (const url of [A, 'https://google.com.example.net/search?q=x', 'ftp://www.google.com/search?q=x', 'not a url']) expect(queriesAnEngine(page(url)), url).toBe(false);
+    // Off the engine's result paths (the pack's `paths`), a page on its host sends no search: a page target.
+    for (const url of [A, MAPS, 'https://duckduckgo.com/about', 'https://www.bing.com/images/search?q=tea', 'https://WWW.GOOGLE.COM./maps', 'https://google.com.example.net/search?q=x', 'ftp://www.google.com/search?q=x', 'not a url']) expect(queriesAnEngine(page(url)), url).toBe(false);
 
     // In a run: spaced after the search before it, then blocked at once (no result page), nothing of it captured.
     const targets = [query(DESKTOP), ...pages(UDM), ...pages(A)];
@@ -1233,5 +1236,18 @@ describe('searches in a run', () => {
       expect(fake.capture, c.name).not.toHaveBeenCalled();
       expect(fake.screenshot, c.name).not.toHaveBeenCalled();
     }
+  });
+  // spec: specs/projects.feature.md — Searches in a run (council review: a page off an engine's result paths is a page target)
+  test('capture-run-engine-page-off-result-paths-is-a-page', async () => {
+    const targets = [...pages(MAPS), ...pages('https://duckduckgo.com/about'), ...pages(A)];
+    const fake = setup({ serpVerdictOf: () => 'not-serp' });
+    const at = timedNavigations(fake);
+    await fake.runs.start(plan(targets));
+    await run(RETRY * 8);
+    // Captured as pages (no verdict asked, no spacing), and the run goes on to the end.
+    expect(fake.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
+    expect(outcomes(fake.runs.state())).toEqual(['captured', 'captured', 'captured']);
+    expect(fake.seen.map((seen) => seen.url)).toEqual([MAPS, 'https://duckduckgo.com/about', A]);
+    expect(at[2]![1] - at[0]![1]).toBeLessThan(SPACING);
   });
 });

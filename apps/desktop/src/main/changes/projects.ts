@@ -46,7 +46,7 @@ import { storedPageUrl } from './snapshot';
 // (`confirmRankRun`) unless the settings repository remembers a Continue on this install; Cancel starts
 // or stores nothing (`declined`). The renderer has no way past it. Task 8 security review rulings: a page
 // that is an engine's result page counts as a search (`runSearchOf`), and (whole-branch review) so does
-// any page on an engine's host (`queriesAnEngine`); after a Continue the project and its targets are
+// any page on an engine's result path (`queriesAnEngine`); after a Continue the project and its targets are
 // read again; `startAutomaticRun` (the schedule's) never opens the dialog. Legal gate L1 (plan Decision
 // 10): while `RANK_CHECK_AVAILABLE` is `false`, `setCadence` (and `setAutoCapture`) answer
 // `unavailable` here in main, whatever the renderer sends, and no summary is `due`. Every method
@@ -344,7 +344,7 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
 
   /**
    * Starts a run of the project's targets in `scope`. One that would load a search (a saved search, a
-   * page that is an engine's result page, or any page on an engine's host: `queriesAnEngine`) needs the disclosure: asked (`ask`) or only
+   * page that is an engine's result page, or any page on an engine's result path: `queriesAnEngine`) needs the disclosure: asked (`ask`) or only
    * read (an automatic start never opens it); Cancel starts nothing. After a Continue the project and
    * its targets are read again: the run is of what the project holds then (Task 8 review ruling).
    */

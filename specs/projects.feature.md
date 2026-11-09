@@ -148,10 +148,14 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   never asks. *Lead rulings of the Task 8 security review (amending plan Decision 10):* a **page
   target whose URL is an engine's result page** (`runSearchOf`: `searchParamsForUrl` reads it) counts
   as a search for the disclosure, the pacing and the stop below (its own parameters are what
-  `sameRunSearch` compares); so does a **page target on an engine's host** (`queriesAnEngine`: its
-  host is one of the bundled pack's engine hosts, whatever its path or the pack's `reject` rules, e.g.
-  Google `udm=50` or `tbm=isch`, DuckDuckGo `ia=images`): it is disclosed and paced, and the stop
-  below blocks it (`not-a-result-page`: no result page of the search it is not); after a Continue, `startRun` **reads the project and its targets again**
+  `sameRunSearch` compares); so does a **page target on an engine's result path** (`queriesAnEngine`:
+  its host is one of the bundled pack's engine hosts and its path one of that engine's result `paths`
+  (Google and Bing `/search`; DuckDuckGo `/`, `/html`, `/html/`), whatever its parameters or the pack's
+  `reject` rules, e.g. Google `udm=50` or `tbm=isch`, DuckDuckGo `ia=images`): it is disclosed and
+  paced, and the stop below blocks it (`not-a-result-page`: no result page of the search it is not).
+  Any other page on an engine's host (Google Maps `/maps/…`, DuckDuckGo `/about`, Bing
+  `/images/search`) sends no search: it is a page target as in Phase 6 (not disclosed, paced or
+  gated); after a Continue, `startRun` **reads the project and its targets again**
   (a project deleted meanwhile is `not-found`; the run is of what it holds then); an **automatic
   start** (`startAutomaticRun`, the schedule's) never opens the dialog and is `declined` without a
   Continue already given.
@@ -512,8 +516,10 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   navigation the guard refused), `capture-run-ready-needs-tab-params`; the review rulings'
   `capture-run-stops-after-a-failed-search-load`, `capture-run-result-page-target-is-gated`,
   `capture-run-blocks-a-reload-after-the-check`, `capture-run-spacing-holds-across-runs`; the
-  whole-branch review's `capture-run-engine-host-page-is-gated` (a page target on an engine's host
-  that the pack refuses, e.g. Google `udm=50`: spaced and blocked `not-a-result-page`, nothing captured)
+  whole-branch review's `capture-run-engine-host-page-is-gated` (a page target on an engine's result
+  path that the pack refuses, e.g. Google `udm=50`: spaced and blocked `not-a-result-page`, nothing
+  captured; the council review: a page off the result paths, e.g. `/maps/…`, is a page target, captured,
+  and the run goes on)
   and `capture-run-same-document-url-change` (a `pushState` keeping the search captures; one changing
   the query blocks);
   the council review's `capture-run-files-a-search-under-its-saved-key` (a desktop saved search in a
@@ -524,8 +530,9 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `projects.test.ts` `rank-run-asks-once-before-first-search-run` (Cancel starts nothing; Continue
   remembered; a pages-only run never asks), `rank-run-disclosure-review-rulings` (a result-page page
   asks; targets read again after Continue; an automatic start never asks),
-  `rank-run-asks-for-an-engine-host-page` (whole-branch review: a page on an engine's host that the
-  pack refuses, e.g. Google `udm=50`, asks too; a page on another host never does), `cadence-asks-the-disclosure-first` (with `RANK_CHECK_AVAILABLE`
+  `rank-run-asks-for-an-engine-host-page` (whole-branch review: a page on an engine's result path that
+  the pack refuses, e.g. Google `udm=50`, asks too; a page on another host, or off the engine's result
+  paths, never does), `cadence-asks-the-disclosure-first` (with `RANK_CHECK_AVAILABLE`
   injected `true`), `set-cadence-unavailable-until-cleared` (the shipped flag: `setCadence` is
   `unavailable` for every cadence, nothing stored, no disclosure asked; `setAutoCapture` `unavailable`;
   no summary `due`; Capture now with searches still asks and starts).
