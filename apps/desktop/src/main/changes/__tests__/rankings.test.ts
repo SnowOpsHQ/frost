@@ -175,6 +175,35 @@ describe('rankings service', () => {
     expect(month.rows[0]!.change).toBe(1);
   });
 
+  // spec: specs/rankings.feature.md — Router (`series` is `capped` as a row is); Scenario: rank-series-says-when-capped
+  test('rank-series-says-when-capped', async () => {
+    const t = setup();
+    const a = await project(t, 'Tea');
+    const key = searchKeyOf(SEARCH, {})!;
+    for (let i = 0; i < 3; i++) await captured(t, a, SEARCH, readingOf(SEARCH, ['example.com']));
+    // Answered whole: not capped.
+    const whole = ok(await t.rankings.series(a, key, 'all'));
+    expect(RankSeriesSchema.parse(whole)).toEqual(whole);
+    expect(whole.points).toHaveLength(3);
+    expect(whole.capped).toBe(false);
+    // The store cuts a read short (its byte budget): fewer points than it holds, and it says so.
+    const original = t.repo.readings.bind(t.repo);
+    vi.spyOn(t.repo, 'readings').mockImplementation(async (filter) => (await original(filter)).slice(0, 2));
+    const cut = ok(await t.rankings.series(a, key, 'all'));
+    expect(cut.points).toHaveLength(2);
+    expect(cut.capped).toBe(true);
+    vi.mocked(t.repo.readings).mockRestore();
+    // More readings in the range than maxPointsPerSeries: that many points, capped.
+    const json = canonicalJson(readingOf(SEARCH, ['example.com']));
+    t.raw.exec('BEGIN');
+    for (let n = 0; n < RANK_LIMITS.maxPointsPerSeries; n++) plant(t, a, { search_key: key, search_params: canonicalJson(SEARCH), reading: json });
+    t.raw.exec('COMMIT');
+    const many = ok(await t.rankings.series(a, key, 'all'));
+    expect(many.points).toHaveLength(RANK_LIMITS.maxPointsPerSeries);
+    expect(many.capped).toBe(true);
+    expect(RankSeriesSchema.parse(many)).toEqual(many);
+  });
+
   test('rank-table-read-is-bounded', async () => {
     // A small budget: the size of five readings (each of these is the same size).
     const sizeOf = Buffer.byteLength(canonicalJson(readingOf(SEARCH, ['example.com'])), 'utf8');

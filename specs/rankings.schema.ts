@@ -173,7 +173,7 @@ export const RankTableSchema = z.discriminatedUnion('status', [
 
 /** `rankings.series`'s answer (`RankSeriesAnswer`). */
 export const RankSeriesSchema = z.discriminatedUnion('status', [
-  z.strictObject({ status: z.literal('ok'), searchKey, points: z.array(RankPointSchema).max(RANK_LIMITS.maxPointsPerSeries).readonly() }),
+  z.strictObject({ status: z.literal('ok'), searchKey, points: z.array(RankPointSchema).max(RANK_LIMITS.maxPointsPerSeries).readonly(), capped: z.boolean() }),
   refused,
 ]) satisfies z.ZodType<RankSeriesAnswer>;
 

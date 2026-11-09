@@ -442,8 +442,12 @@ export type RankTableAnswer =
     }
   | RankingsRefused;
 
-/** `rankings.series`: one search's points in the range (oldest first, at most `RANK_LIMITS.maxPointsPerSeries`). */
-export type RankSeriesAnswer = { readonly status: 'ok'; readonly searchKey: string; readonly points: readonly RankPoint[] } | RankingsRefused;
+/**
+ * `rankings.series`: one search's points in the range (oldest first, at most
+ * `RANK_LIMITS.maxPointsPerSeries`), `capped` as a table row's is: the store held more of its readings in
+ * the range than it answered (past `maxPointsPerSeries`, or cut by the read's byte budget).
+ */
+export type RankSeriesAnswer = { readonly status: 'ok'; readonly searchKey: string; readonly points: readonly RankPoint[]; readonly capped: boolean } | RankingsRefused;
 
 /** One reading of a search, as the Compare view's date picker lists it. */
 export interface ReadingDate {

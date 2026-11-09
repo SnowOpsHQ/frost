@@ -178,12 +178,19 @@ function Series({
   }, [projectId, row.searchKey, range, row.latest?.readingId]);
   const problem = answer === undefined ? null : rankingsRefusalText(answer);
   const points = answer?.status === 'ok' ? seriesRows(answer.points) : [];
+  const capped = answer?.status === 'ok' && answer.capped === true;
   const summary = searchSummary(row.params);
   return (
-    <section className="rankings-series" id={id} data-testid="rankings-series-view" aria-label={`History of ${summary}`}>
+    <section className="rankings-series" id={id} data-testid="rankings-series-view" data-capped={capped ? 'true' : undefined} aria-label={`History of ${summary}`}>
       <div className="rankings-series-head">
         <h4 className="rankings-series-title">
           <Text value={summary} />
+          {capped ? (
+            <span className="rankings-capped" data-testid="rankings-series-capped" title={RANK_VIEW_TEXT.capped}>
+              <span aria-hidden="true">*</span>
+              <span className="visually-hidden">{RANK_VIEW_TEXT.capped}</span>
+            </span>
+          ) : null}
         </h4>
         <button type="button" className="projects-small-button" data-testid="rankings-open-result" disabled={url === null || busy} title={url === null ? undefined : isolatedTooltip(url)} onClick={() => url !== null && onOpenUrl(url)}>
           {RANK_VIEW_TEXT.openResultPage}

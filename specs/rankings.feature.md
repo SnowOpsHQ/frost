@@ -194,7 +194,9 @@ Spec: `rankings.spec.ts` (`RANKINGS_REFUSALS`, `RankTableAnswer`, `RankSeriesAns
      points (or more than `maxPointsPerSeries`), counted on the rows the store answered **before** any
      was skipped as tampered, so a tampered reading never reads as a cut.
   Copy CSV and Save CSV… take the table from the same read. `series` reads at most
-  `maxPointsPerSeries` readings of its search in the range. `readingDates` reads ids, times and
+  `maxPointsPerSeries` readings of its search in the range, and is `capped` as a row is: the store
+  held more of them in the range (`countReadings`) than it answered (past `maxPointsPerSeries`, or cut
+  by the read's byte budget, `MAX_READING_BYTES_PER_READ`). `readingDates` reads ids, times and
   statuses only (the repository's `readingDates`; no reading JSON), at most `MAX_READING_DATES`, so it
   may list a reading whose JSON is tampered: `compare` refuses that one.
 - **Older key versions.** Every read takes a search's stored keys from `readingSearches`: its own,
@@ -261,6 +263,8 @@ unchanged). Pure view model: `apps/desktop/src/renderer/rankings-view.ts`; compo
 - **Series.** Activating a row (its search button: click, Enter or Space) opens the series below the
   table (`rankings.series`, the same range): one line per reading, newest first, with its date, its
   position (`rankLabel`) and the URL of the site's result (inert text, or `—`), and "Also in …".
+  A series `capped` by main carries `RANK_VIEW_TEXT.capped` as its hint, as a capped row does
+  (`rankings-series-capped`; the view `data-capped`).
   **Open this result page** loads the row's canonical search URL (`params.url`) in the active tab
   through `browser.navigate` (the address bar's path and browse guards), only when it is `http(s)`,
   closing the sheet; it is disabled while a run is under way. Nothing else in the views navigates.
@@ -288,7 +292,7 @@ unchanged). Pure view model: `apps/desktop/src/renderer/rankings-view.ts`; compo
   the view switch is a tablist; the trend SVG is `role="img"` with an `aria-label` from numbers.
 - **Hooks** (e2e): `data-testid` `rankings-view`, `rankings-range`, `rankings-tag`, `rankings-row`
   (`data-key`, `data-outcome`, `data-capped`), `rankings-row-open`, `rankings-trend`, `rankings-series`,
-  `rankings-series-point`, `rankings-open-result`, `rankings-export-kind`, `rankings-copy-csv`,
+  `rankings-series-point`, `rankings-series-capped`, `rankings-open-result`, `rankings-export-kind`, `rankings-copy-csv`,
   `rankings-save-csv`, `rankings-no-site`, `rankings-no-readings`, `rankings-history-note`;
   `compare-view`, `compare-search-a`, `compare-date-a`, `compare-search-b`, `compare-date-b`,
   `compare-run`, `compare-row` (`data-domain`, `data-movement`, `data-role`), `compare-feature`.
@@ -364,6 +368,9 @@ unchanged). Pure view model: `apps/desktop/src/renderer/rankings-view.ts`; compo
   older than the newest `MAX_READINGS_PER_READ` of the project still shows its latest, previous and
   change (in any range); a search with more than `maxPointsPerSeries` readings shows that many points
   and is `capped`. (`rankings.test.ts`)
+- **Scenario: rank-series-says-when-capped** — `series` of a search with more readings in the range than
+  it answered (past `maxPointsPerSeries`, or a read cut by its byte budget) is `capped`; one answered
+  whole is not; the series view shows the capped hint. (`rankings.test.ts`, `rankings-components.test.ts`)
 - **Scenario: rank-table-read-is-bounded** — the points reads ask for no more than what is left of the
   byte budget and load no more than it; once it is spent the later rows keep their latest, get no
   points beyond their newest readings and are `capped`. (`rankings.test.ts`)

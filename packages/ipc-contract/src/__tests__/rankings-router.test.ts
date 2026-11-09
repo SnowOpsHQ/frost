@@ -32,7 +32,7 @@ const ROW: RankRow = {
   competitors: { 'rival.com': { ...POINT, position: 1 }, 'other.com': null },
 };
 const TABLE: RankTableAnswer = { status: 'ok', rows: [{ ...ROW, capped: false }], truncated: false, retention: { mode: 'versions', value: 5 }, site: { domain: 'example.com', subdomains: true }, competitors: ['rival.com', 'other.com'], tags: ['tea'] };
-const SERIES: RankSeriesAnswer = { status: 'ok', searchKey: KEY, points: [POINT] };
+const SERIES: RankSeriesAnswer = { status: 'ok', searchKey: KEY, points: [POINT], capped: false };
 const DATES: ReadingDatesAnswer = { status: 'ok', dates: [{ readingId: READING_A, at: 1_000, status: 'ready' }] };
 const SIDE = { readingId: READING_A, at: 1_000, params: PARAMS, filters: {}, status: 'ready' as const, organicRead: 10, complete: true, features: ['featured-snippet' as const] };
 const COMPARE: CompareAnswer = {

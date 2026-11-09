@@ -231,14 +231,23 @@ export function createRankingsService(deps: RankingsServiceDeps): RankingsServic
   /** The stored keys of search `searchKey` (itself first). */
   const storedKeysOf = (keys: ReadonlyMap<string, ReadonlySet<string>>, searchKey: string): string[] => [...new Set([searchKey, ...(keys.get(searchKey) ?? [])])];
 
-  /** One search's readings (newest first, checked), from each of its stored keys, at most `limit` of them. */
-  const searchObservations = async (projectId: string, searchKey: string, filter: { from?: number; limit: number }): Promise<SerpObservation[]> => {
+  /**
+   * One search's readings (newest first, checked), from each of its stored keys, at most `limit` of
+   * them; `capped` when the store held more in the range than it answered (past `limit`, or a read cut by
+   * its byte budget), counted before any row was skipped as tampered, as a table row's.
+   */
+  const searchObservations = async (projectId: string, searchKey: string, filter: { from?: number; limit: number }): Promise<{ observations: SerpObservation[]; capped: boolean }> => {
     const found = new Map<string, SerpObservation>();
+    const range = filter.from === undefined ? {} : { from: filter.from };
+    let available = 0;
+    let returned = 0;
     for (const key of storedKeysOf(await searchKeys(projectId), searchKey)) {
-      const { rows } = storeRows(await store.readings({ projectId, searchKey: key, limit: filter.limit, ...(filter.from === undefined ? {} : { from: filter.from }) }));
+      available += await store.countReadings({ projectId, searchKey: key, ...range });
+      const { rows } = storeRows(await store.readings({ projectId, searchKey: key, limit: filter.limit, ...range }));
+      returned += rows.length;
       for (const observation of checkedOf(rows, projectId, searchKey)) found.set(observation.id, observation);
     }
-    return [...found.values()].sort(newestFirst).slice(0, filter.limit);
+    return { observations: [...found.values()].sort(newestFirst).slice(0, filter.limit), capped: available > Math.min(returned, filter.limit) };
   };
 
   /** The project's saved searches as the table takes them (checked parameters, their key, their tags), and every tag they carry. */
@@ -355,7 +364,7 @@ export function createRankingsService(deps: RankingsServiceDeps): RankingsServic
           const at = now();
           const from = rangeStart(range, at);
           const read = await searchObservations(projectId, searchKey, { limit: RANK_LIMITS.maxPointsPerSeries, ...(from > 0 ? { from } : {}) });
-          return { status: 'ok' as const, searchKey, points: rankSeries(read, searchKey, { site: view.siteMatch, keyOf: searchKeyOf, range, now: at }) };
+          return { status: 'ok' as const, searchKey, points: rankSeries(read.observations, searchKey, { site: view.siteMatch, keyOf: searchKeyOf, range, now: at }), capped: read.capped };
         },
         refused('store-failed'),
       ),

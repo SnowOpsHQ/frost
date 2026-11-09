@@ -196,9 +196,28 @@ describe('rankings components', () => {
     expect($<HTMLButtonElement>('compare-run')!.disabled).toBe(true);
   });
 
+  // spec: specs/rankings.feature.md — Series (a capped series carries the capped hint); Scenario: rank-series-says-when-capped
+  test('series-shows-when-capped', async () => {
+    fakes.rankings.table.mockResolvedValue(tableAnswer([row(KEY_A, 'tea'), row(KEY_B, 'coffee')]));
+    fakes.rankings.series.mockResolvedValue({ status: 'ok', searchKey: KEY_A, points: [point('tea-2', 2_000)], capped: true });
+    await act(async () => root.render(createElement(Rankings, { projectId: P1, refreshKey: 1, busy: false, onOpenUrl: vi.fn(), say: vi.fn() })));
+    await flush();
+    await act(async () => host.querySelectorAll<HTMLButtonElement>('[data-testid="rankings-row-open"]')[0]!.click());
+    await flush();
+    expect($('rankings-series-view')!.getAttribute('data-capped')).toBe('true');
+    expect($('rankings-series-capped')!.getAttribute('title')).toBe(RANK_VIEW_TEXT.capped);
+    expect($('rankings-series-capped')!.textContent).toContain(RANK_VIEW_TEXT.capped);
+    // Answered whole: no hint.
+    fakes.rankings.series.mockResolvedValue({ status: 'ok', searchKey: KEY_B, points: [point('coffee-2', 2_000)], capped: false });
+    await act(async () => host.querySelectorAll<HTMLButtonElement>('[data-testid="rankings-row-open"]')[1]!.click());
+    await flush();
+    expect($('rankings-series-view')!.hasAttribute('data-capped')).toBe(false);
+    expect($('rankings-series-capped')).toBeNull();
+  });
+
   test('series-close-returns-focus', async () => {
     fakes.rankings.table.mockResolvedValue(tableAnswer([row(KEY_A, 'tea'), row(KEY_B, 'coffee')]));
-    fakes.rankings.series.mockResolvedValue({ status: 'ok', searchKey: KEY_B, points: [point('coffee-2', 2_000)] });
+    fakes.rankings.series.mockResolvedValue({ status: 'ok', searchKey: KEY_B, points: [point('coffee-2', 2_000)], capped: false });
     await act(async () => root.render(createElement(Rankings, { projectId: P1, refreshKey: 1, busy: false, onOpenUrl: vi.fn(), say: vi.fn() })));
     await flush();
     const opener = host.querySelectorAll<HTMLButtonElement>('[data-testid="rankings-row-open"]')[1]!;
