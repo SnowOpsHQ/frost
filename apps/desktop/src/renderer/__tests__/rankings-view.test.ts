@@ -95,6 +95,9 @@ describe('rankings view', () => {
     expect(view.direction).toBe('up');
     expect(view.best).toBe('2');
     expect(view.lastChecked).toBe(formatWhen(Date.UTC(2026, 9, 1, 12)));
+    // The table shows last checked on two lines (the date, then the time), the same moment.
+    const checkedAt = Date.UTC(2026, 9, 1, 12);
+    expect(view.lastCheckedLines).toEqual([new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(checkedAt), new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(checkedAt)]);
     // Competitors in the project's order; one with no reading is a dash.
     expect(view.competitors).toEqual([
       { host: 'other.org', position: RANK_VIEW_TEXT.none },
@@ -127,6 +130,7 @@ describe('rankings view', () => {
     expect(unread.outcome).toBe('none');
     expect(unread.best).toBe(RANK_VIEW_TEXT.none);
     expect(unread.lastChecked).toBe(RANK_VIEW_TEXT.noReading);
+    expect(unread.lastCheckedLines).toEqual([RANK_VIEW_TEXT.noReading]);
     expect(unread.locale).toBe(RANK_VIEW_TEXT.none);
     expect(unread.device).toBe('Mobile');
     expect(unread.tags).toEqual([]);

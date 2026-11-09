@@ -957,6 +957,27 @@ input {
   background: var(--accent-hover);
 }
 
+/* A disabled panel button looks it (as the app's other disabled buttons: faded) and does not
+   react to the pointer. Its title, when it has one, still shows. */
+.panel-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.panel-button:disabled:hover {
+  border-color: var(--border-field);
+  background: var(--bg-field);
+}
+
+.panel-button-primary:disabled:hover {
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.panel-button:disabled:active {
+  transform: none;
+}
+
 /* Retrying: the reload arrow turns until the load ends. */
 .panel-button[data-busy='true'] .icon {
   animation: tab-spin 0.9s linear infinite;

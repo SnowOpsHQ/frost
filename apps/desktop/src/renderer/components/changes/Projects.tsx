@@ -181,9 +181,14 @@ function ProjectItem({
   };
   return (
     <li className="projects-item" data-testid="projects-item" data-project={project.id} data-selected={selected} data-unfiled={project.unfiled} data-favorite={project.favorite}>
-      <button type="button" className="projects-icon-button projects-star" data-testid="projects-star" aria-pressed={star.pressed} aria-label={star.label} title={star.pressed ? 'Remove from favorites' : 'Add to favorites'} onClick={() => onFavorite(star.next)}>
-        <StarIcon />
-      </button>
+      {/* Unfiled is always first, so it has no star: an empty space keeps the names aligned. */}
+      {project.unfiled ? (
+        <span className="projects-star-space" aria-hidden="true" />
+      ) : (
+        <button type="button" className="projects-icon-button projects-star" data-testid="projects-star" aria-pressed={star.pressed} aria-label={star.label} title={star.pressed ? 'Remove from favorites' : 'Add to favorites'} onClick={() => onFavorite(star.next)}>
+          <StarIcon />
+        </button>
+      )}
       {renaming ? (
         <form className="projects-rename" onSubmit={(event) => void save(event)}>
           <input

@@ -341,15 +341,16 @@ describe('rankings components', () => {
     expect(names()).toEqual(['Unfiled', 'Blog', 'Shop']);
     await select('projects-sort', 'created');
     expect($<HTMLSelectElement>('projects-sort')!.value).toBe('created');
+    // spec: specs/projects.feature.md — Star and sort: Unfiled (always first) shows no star.
     const stars = all<HTMLButtonElement>('projects-star');
     expect(stars.map((star) => [star.getAttribute('aria-label'), star.getAttribute('aria-pressed')])).toEqual([
-      ['Favorite Unfiled', 'false'],
       ['Favorite Blog', 'true'],
       ['Favorite Shop', 'false'],
     ]);
+    expect(host.querySelector(`[data-project="${UNFILED_PROJECT_ID}"] [data-testid="projects-star"]`)).toBeNull();
     fakes.workspace.setFavorite.mockResolvedValueOnce({ status: 'ok' });
     fakes.projects.list.mockResolvedValue({ projects: [unfiled, { ...shop, favorite: true }, blog] });
-    await act(async () => stars[2]!.click());
+    await act(async () => stars[1]!.click());
     await flush();
     expect(fakes.workspace.setFavorite).toHaveBeenCalledWith(P1, true);
     expect(names()).toEqual(['Unfiled', 'Blog', 'Shop']);

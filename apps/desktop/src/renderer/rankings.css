@@ -81,21 +81,30 @@
 .rankings-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
+/* Compact cells so the plan's columns and a competitor fit the sheet's main column at a 1400 px
+   window; long search, engine and competitor text ellipsises (its full text is the title). The wrap
+   scrolls only as a fallback (many competitors, a narrow window). */
 .rankings-table th,
 .rankings-table td {
-  padding: 5px 8px;
+  padding: 4px 3px;
   border-bottom: 1px solid var(--bg-chrome-edge);
   text-align: start;
   vertical-align: middle;
 }
 
+.rankings-table :is(th, td):first-child {
+  padding-inline-start: 2px;
+}
+
 .rankings-table thead th {
   color: var(--text-muted);
+  font-size: 11px;
   font-weight: 600;
-  white-space: nowrap;
+  line-height: 1.25;
+  vertical-align: bottom;
 }
 
 .rankings-table tbody th {
@@ -106,13 +115,9 @@
   background: var(--accent-soft);
 }
 
-.rankings-search {
-  max-width: 260px;
-}
-
 .rankings-row-open {
   display: block;
-  max-width: 100%;
+  max-width: 6.5em;
   padding: 0;
   border: 0;
   background: transparent;
@@ -136,6 +141,27 @@
   outline-offset: 2px;
 }
 
+.rankings-engine .rankings-text,
+.rankings-competitor .rankings-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankings-engine .rankings-text {
+  max-width: 5.5em;
+}
+
+.rankings-competitor .rankings-text {
+  max-width: 6em;
+}
+
+.rankings-locale,
+.rankings-device {
+  white-space: nowrap;
+}
+
 .rankings-also-in {
   display: block;
   color: var(--text-muted);
@@ -149,7 +175,7 @@
 }
 
 .rankings-tags {
-  max-width: 180px;
+  max-width: 160px;
 }
 
 .rankings-tag {
@@ -186,6 +212,12 @@
 .rankings-when {
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* The rank table's last checked: the date, then the time under it. */
+.rankings-when-line {
+  display: block;
+  font-size: 11px;
 }
 
 .rankings-trend-cell {
@@ -329,6 +361,13 @@
 
 .projects-star-icon {
   fill: none;
+}
+
+/* Unfiled's place for a star (it has none): the star button's size. */
+.projects-star-space {
+  flex: none;
+  width: 30px;
+  height: 30px;
 }
 
 .projects-star[aria-pressed='true'] .projects-star-icon {
@@ -562,4 +601,18 @@
 
 .project-settings-cadence .projects-select {
   max-width: 200px;
+}
+
+/* Fields in the sheet --------------------------------------------------------------------------------
+   `.projects-input, .projects-select` grow on a 120 px basis, which suits a row; inside a labelled
+   field (a column) that basis would be its height. There a single-line input or menu keeps its 30 px
+   height (the textarea keeps its own), and an input reads at the sheet's text size, not the label's
+   12 px. */
+
+.projects-field:not(.projects-profile) > :is(.projects-input, .projects-select):not(.projects-textarea) {
+  flex: none;
+}
+
+.projects-field > :is(.projects-input, .projects-select) {
+  font-size: 13px;
 }

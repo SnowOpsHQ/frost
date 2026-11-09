@@ -98,13 +98,13 @@ function RankRowItem({
         </button>
         {view.alsoIn !== '' ? <span className="rankings-also-in">{view.alsoIn}</span> : null}
       </th>
-      <td>
+      <td className="rankings-engine" title={isolatedTooltip(view.engine)}>
         <Text value={view.engine} />
       </td>
-      <td>
+      <td className="rankings-locale">
         <Text value={view.locale} />
       </td>
-      <td>{view.device}</td>
+      <td className="rankings-device">{view.device}</td>
       <td className="rankings-filters">
         <Text value={view.filters} />
       </td>
@@ -129,7 +129,13 @@ function RankRowItem({
           </span>
         ) : null}
       </td>
-      <td className="rankings-when">{view.lastChecked}</td>
+      <td className="rankings-when" title={view.lastChecked}>
+        {view.lastCheckedLines.map((line, index) => (
+          <span key={index} className="rankings-when-line">
+            {line}
+          </span>
+        ))}
+      </td>
       {view.competitors.map((competitor) => (
         <td key={competitor.host} className="rankings-number" data-competitor={competitor.host}>
           {competitor.position}
@@ -370,7 +376,7 @@ export function Rankings({
                   </th>
                 ))}
                 {competitors.map((host) => (
-                  <th key={host} scope="col" data-competitor={host}>
+                  <th key={host} scope="col" className="rankings-competitor" data-competitor={host} title={isolatedTooltip(host)}>
                     <Text value={host} />
                   </th>
                 ))}

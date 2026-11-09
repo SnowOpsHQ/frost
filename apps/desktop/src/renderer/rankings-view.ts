@@ -43,6 +43,8 @@ const text = (value: unknown): string => (typeof value === 'string' ? value : ''
 const featureLabel = (type: unknown): string => (typeof type === 'string' && Object.hasOwn(SERP_RESULT_TYPE_LABELS, type) ? SERP_RESULT_TYPE_LABELS[type as SerpResultType] : text(type));
 
 const WHEN = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+const WHEN_DATE = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+const WHEN_TIME = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
 
 /** The "no readings yet" notice: names Check rankings only when it is offered (`shown`: `rankCheckShown()`, L1), else Capture now. */
 export const noReadingsText = (shown: boolean): string => (shown ? RANK_VIEW_TEXT.noReadings : RANK_VIEW_TEXT.noReadingsWithoutRankCheck);
@@ -50,6 +52,11 @@ export const noReadingsText = (shown: boolean): string => (shown ? RANK_VIEW_TEX
 /** A reading's time as the views show it (`—` for a time that is not a date). */
 export function formatWhen(at: number): string {
   return typeof at === 'number' && Number.isFinite(at) && !Number.isNaN(new Date(at).getTime()) ? WHEN.format(at) : RANK_VIEW_TEXT.none;
+}
+
+/** A reading's time on two lines, the date then the time (the rank table's narrow column); `—` alone for a time that is not a date. */
+function whenLines(at: number): readonly string[] {
+  return typeof at === 'number' && Number.isFinite(at) && !Number.isNaN(new Date(at).getTime()) ? [WHEN_DATE.format(at), WHEN_TIME.format(at)] : [RANK_VIEW_TEXT.none];
 }
 
 /** "Also in Featured snippet, AI overview" for a point's `alsoIn` (empty with none). */
@@ -105,6 +112,8 @@ export interface RankRowView {
   readonly direction: ChangeDirection;
   readonly best: string;
   readonly lastChecked: string;
+  /** `lastChecked` as the table shows it: the date, then the time (one line when never checked). */
+  readonly lastCheckedLines: readonly string[];
   readonly competitors: readonly { readonly host: string; readonly position: string }[];
   readonly alsoIn: string;
   /** `RANK_VIEW_TEXT.capped` when main read only the newest of the range's readings; else `null`. */
@@ -135,6 +144,7 @@ export function rankRowView(row: RankTableRow, competitors: readonly string[]): 
     direction: directionOf(row.change),
     best: typeof row.best === 'number' ? String(row.best) : RANK_VIEW_TEXT.none,
     lastChecked: latest ? formatWhen(latest.at) : RANK_VIEW_TEXT.noReading,
+    lastCheckedLines: latest ? whenLines(latest.at) : [RANK_VIEW_TEXT.noReading],
     competitors: competitors.map((host) => {
       const point = isObject(row.competitors) ? row.competitors[host] : undefined;
       return { host, position: point ? rankLabel(point) : RANK_VIEW_TEXT.none };
@@ -192,7 +202,7 @@ export function rowsForTag<T extends Pick<RankRow, 'saved'>>(rows: readonly T[],
 // ---- The trend ----------------------------------------------------------------------------------
 
 /** The trend's box, in SVG user units. */
-export const TREND_GEOMETRY = { width: 96, height: 24, pad: 3 } as const;
+export const TREND_GEOMETRY = { width: 52, height: 22, pad: 3 } as const;
 
 export interface TrendModel {
   readonly width: number;

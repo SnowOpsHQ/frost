@@ -343,7 +343,7 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `projects-run-progress-on-every-view` (`renderer/__tests__/rankings-components.test.ts`).
 - **Star and sort (Phase 10 Task 7).** Each project in the list has a star (`data-testid="projects-star"`,
   a toggle button named `FAVORITE_TEXT.label` with `aria-pressed`) that calls `setFavorite`; Unfiled
-  can be starred too. A sort menu above the list (`projects-sort`, a labelled `<select>` of
+  shows no star (it is always first; main still answers `setFavorite` for it). A sort menu above the list (`projects-sort`, a labelled `<select>` of
   `PROJECT_SORTS` with `PROJECT_SORT_LABELS`, `DEFAULT_PROJECT_SORT` when the sheet opens) orders it
   with `sortProjects`: Unfiled first, then favorites, then the rest. The sort is view state, never
   sent to main or kept.
