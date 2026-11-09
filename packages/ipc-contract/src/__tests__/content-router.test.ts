@@ -4,7 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
-import { MAX_SNIPPET_VARIANTS, SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS, SNIPPET_VARIANT_TITLE_MAX_CHARS, TARGET_QUERY_MAX_CHARS } from '@app/specs/seo-content.spec';
+import { MAX_SNIPPET_VARIANTS, SERP_PREVIEW_LIMITS, SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS, SNIPPET_VARIANT_TITLE_MAX_CHARS, TARGET_QUERY_MAX_CHARS } from '@app/specs/seo-content.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { appRouter, createSenderPolicy, type ContentNotesAnswer, type ContentService, type IpcContext } from '../index';
@@ -24,6 +24,7 @@ function fakeContent() {
     deleteVariant: vi.fn(async (_url: string, _slot: number, _generation: number) => true),
     copySnippetHtml: vi.fn(async (tabId: number, _audit: { url: string; takenAt: number }, _source: 'page' | { slot: number }) => tabId === 1),
     clearAllNotes: vi.fn(async () => true),
+    copyPreviewJsonLd: vi.fn(async (tabId: number, _audit: { url: string; takenAt: number }, _source: 'page' | 'suggested', _fields?: { siteName?: string; breadcrumb?: boolean; date?: boolean }) => tabId === 1),
   } satisfies ContentService;
 }
 
@@ -59,6 +60,8 @@ const VALID_INPUT: Record<string, unknown> = {
   copySnippetHtml: { tabId: 1, audit: AUDIT, source: 'page' },
   // Phase 2.5 Task 3 review: "Delete all notes" (main confirms); no input.
   clearAllNotes: undefined,
+  // Phase 11 Task 3: Copy JSON-LD (the page's blocks, or a suggested graph main builds).
+  copyPreviewJsonLd: { tabId: 1, audit: AUDIT, source: 'suggested', fields: { siteName: 'Tea house', breadcrumb: true, date: false } },
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 const untouched = (content: ReturnType<typeof fakeContent>) => {
@@ -111,6 +114,23 @@ describe('content router', () => {
         { tabId: 1, audit: AUDIT, source: 'page', html: '<title>x</title>' },
       ],
       clearAllNotes: [],
+      // copy-preview-jsonld-input-bounded
+      copyPreviewJsonLd: [
+        { tabId: 0, audit: AUDIT, source: 'page' },
+        { tabId: 1, source: 'page' },
+        { tabId: 1, audit: AUDIT, source: 'variant' },
+        { tabId: 1, audit: AUDIT, source: 'page', fields: {} },
+        { tabId: 1, audit: AUDIT, source: 'page', json: '{}' },
+        { tabId: 1, audit: AUDIT, source: 'suggested', fields: { siteName: 's'.repeat(SERP_PREVIEW_LIMITS.maxSiteNameChars + 1) } },
+        { tabId: 1, audit: AUDIT, source: 'suggested', fields: { siteName: '😀'.repeat(SERP_PREVIEW_LIMITS.maxSiteNameChars + 1) } },
+        { tabId: 1, audit: AUDIT, source: 'suggested', fields: { siteName: '' } },
+        { tabId: 1, audit: AUDIT, source: 'suggested', fields: { siteName: '   ' } },
+        { tabId: 1, audit: AUDIT, source: 'suggested', fields: { siteName: 'two\nlines' } },
+        { tabId: 1, audit: AUDIT, source: 'suggested', fields: { siteName: 'sep\u2028arated' } },
+        { tabId: 1, audit: AUDIT, source: 'suggested', fields: { siteName: 'bell\u0007' } },
+        { tabId: 1, audit: AUDIT, source: 'suggested', fields: { breadcrumb: 'yes' } },
+        { tabId: 1, audit: AUDIT, source: 'suggested', fields: { name: 'x' } },
+      ],
     };
     // Each write's bad inputs carry a generation (one defect each); without one, or a bad one, is refused too.
     const generations = [undefined, -1, 1.5, '3'];
@@ -149,6 +169,11 @@ describe('content router', () => {
     await expect(procedure(ctxFor(content), 'copySnippetHtml')({ tabId: 1, audit: AUDIT, source: 'variant', slot: 3 })).resolves.toBe(true);
     expect(content.copySnippetHtml).toHaveBeenLastCalledWith(1, AUDIT, { slot: 3 });
     await expect(procedure(ctxFor(content), 'copySnippetHtml')({ tabId: 2, audit: AUDIT, source: 'page' })).resolves.toBe(false);
+    await expect(procedure(ctxFor(content), 'copyPreviewJsonLd')({ tabId: 1, audit: AUDIT, source: 'page' })).resolves.toBe(true);
+    expect(content.copyPreviewJsonLd).toHaveBeenLastCalledWith(1, AUDIT, 'page', undefined);
+    await expect(procedure(ctxFor(content), 'copyPreviewJsonLd')(VALID_INPUT.copyPreviewJsonLd)).resolves.toBe(true);
+    expect(content.copyPreviewJsonLd).toHaveBeenLastCalledWith(1, AUDIT, 'suggested', { siteName: 'Tea house', breadcrumb: true, date: false });
+    await expect(procedure(ctxFor(content), 'copyPreviewJsonLd')({ tabId: 2, audit: AUDIT, source: 'suggested' })).resolves.toBe(false);
     await expect(procedure(ctxFor(content), 'clearAllNotes')()).resolves.toBe(true);
     expect(content.clearAllNotes).toHaveBeenCalledOnce();
     content.clearAllNotes.mockResolvedValueOnce(false);

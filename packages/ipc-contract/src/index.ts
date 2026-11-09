@@ -2,7 +2,7 @@
 export { appRouter, type AppRouter } from './router';
 export { enforceSender } from './trpc';
 export type { BrowserService, IpcServices, SeoAuditRef, SeoService } from './services';
-export type { ContentNotesAnswer, ContentService, ContentVariant, SnippetHtmlSource } from './content-service';
+export type { ContentNotesAnswer, ContentService, ContentVariant, PreviewJsonLdFields, PreviewJsonLdSource, SnippetHtmlSource } from './content-service';
 export type { JavascriptService } from './javascript-router';
 export type { DevtoolsService } from './devtools-service';
 export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';

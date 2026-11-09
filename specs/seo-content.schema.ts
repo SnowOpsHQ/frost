@@ -5,7 +5,7 @@
  * unknown key, an over-long value or a non-`http(s)` URL is refused before the service is called.
  */
 import { z } from 'zod';
-import { MAX_SNIPPET_VARIANTS, SNIPPET_HTML_SOURCES, SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS, SNIPPET_VARIANT_TITLE_MAX_CHARS, TARGET_QUERY_MAX_CHARS } from './seo-content.spec';
+import { MAX_SNIPPET_VARIANTS, SERP_PREVIEW_LIMITS, SNIPPET_HTML_SOURCES, SNIPPET_JSONLD_SOURCES, SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS, SNIPPET_VARIANT_TITLE_MAX_CHARS, TARGET_QUERY_MAX_CHARS } from './seo-content.spec';
 import { SeoAuditRefSchema, SNAPSHOT_LIMITS } from './seo-snapshot.spec';
 import { isWebUrl } from './web-url.spec';
 
@@ -53,3 +53,38 @@ export const CopySnippetHtmlInputSchema = z.strictObject({
   slot: slot.optional(),
 }).refine((input) => (input.source === 'variant') === (input.slot !== undefined), { message: 'a variant needs its slot (and only a variant has one)' });
 export type CopySnippetHtmlInput = z.infer<typeof CopySnippetHtmlInputSchema>;
+
+/**
+ * A site-name override (Phase 11 Task 3, `SERP_PREVIEW_LIMITS`): 1 to `maxSiteNameChars` code points
+ * on one line, with no control character (C0, C1, line or paragraph separator) and not only white space.
+ */
+export const SiteNameOverrideSchema = z
+  .string()
+  .min(1)
+  .max(SERP_PREVIEW_LIMITS.maxSiteNameChars * 2)
+  .refine((value) => [...value].length <= SERP_PREVIEW_LIMITS.maxSiteNameChars, { message: 'site name too long' })
+  .refine((value) => !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(value), { message: 'one line, no control characters' })
+  .refine((value) => value.trim() !== '', { message: 'empty site name' });
+
+/** What a suggested JSON-LD may take from the editor's session-only state (`SNIPPET_JSONLD_SOURCES`). */
+export const SuggestedJsonLdFieldsSchema = z.strictObject({
+  siteName: SiteNameOverrideSchema.optional(),
+  breadcrumb: z.boolean().optional(),
+  date: z.boolean().optional(),
+});
+export type SuggestedJsonLdFields = z.infer<typeof SuggestedJsonLdFieldsSchema>;
+
+/**
+ * `content.copyPreviewJsonLd` (Phase 11 Task 3): the tab, the audit the panel shows, and what to copy:
+ * the page's own blocks that fed the preview (`page`, no fields) or a suggested JSON-LD (`suggested`,
+ * with the editor's fields).
+ */
+export const CopyPreviewJsonLdInputSchema = z
+  .strictObject({
+    tabId: z.int().positive(),
+    audit: SeoAuditRefSchema,
+    source: z.enum(SNIPPET_JSONLD_SOURCES),
+    fields: SuggestedJsonLdFieldsSchema.optional(),
+  })
+  .refine((input) => input.source === 'suggested' || input.fields === undefined, { message: 'only a suggested JSON-LD takes fields' });
+export type CopyPreviewJsonLdInput = z.infer<typeof CopyPreviewJsonLdInputSchema>;

@@ -5904,14 +5904,6 @@ input {
   height: 24px;
 }
 
-.seo-serp-glyph-disc {
-  fill: var(--serp-glyph);
-}
-
-.seo-serp-glyph-mark {
-  stroke: var(--serp-glyph-mark);
-}
-
 .seo-serp-site-text {
   display: flex;
   flex-direction: column;
@@ -5958,6 +5950,106 @@ input {
 
 .seo-serp-note {
   margin-top: 0;
+}
+
+/* Phase 11 Task 3: the result preview's facts and rich variants (frost's own drawing). */
+.seo-serp-monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--serp-glyph);
+  color: var(--serp-glyph-mark);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.seo-serp-rating {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--serp-text);
+  font-size: 12px;
+}
+
+.seo-serp-stars {
+  color: var(--warn);
+  letter-spacing: 1px;
+}
+
+.seo-serp-description-row {
+  display: block;
+}
+
+.seo-serp-date {
+  color: var(--serp-path);
+  font-size: 12.5px;
+}
+
+.seo-serp-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.seo-serp-rich-card {
+  flex-direction: row;
+  gap: 12px;
+}
+
+.seo-serp-rich-lines {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.seo-serp-rich-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--serp-text);
+  font-size: 12.5px;
+}
+
+.seo-serp-rich-line .seo-serp-glyph {
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+}
+
+.seo-serp-rich-title {
+  color: var(--serp-title);
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.seo-serp-rich-site,
+.seo-serp-rich-meta {
+  color: var(--serp-path);
+  font-size: 12px;
+}
+
+.seo-serp-rich-badge {
+  align-self: flex-start;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--serp-glyph);
+  color: var(--serp-glyph-mark);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.seo-serp-video-frame {
+  flex: none;
+  width: 96px;
+  height: 54px;
+  border-radius: 8px;
+  background: var(--serp-glyph);
 }
 
 .seo-width-meters {

@@ -1,12 +1,14 @@
 import { noteUrl, type ContentNotes, type ContentNotesRepository } from '@app/db';
 import type { ContentService, SeoAuditRef } from '@app/ipc-contract';
-import { snippetHtml, type SeoAuditResponse } from '@app/seo-core';
+import { previewJsonLdBlocks, snippetHtml, suggestedJsonLd, type SeoAuditResponse } from '@app/seo-core';
 import { shownAudit } from './audit-ref';
 
 // The Content panel's notes and Copy as HTML in main (Phase 2.5 Task 3; acceptance
 // `seo-content.feature.md`, Copy and Store). Notes go to `@app/db` (validated there, both ways);
 // Copy as HTML writes only what main holds itself: the tab's ready audit, if it is the one the panel
-// shows, or a draft stored for that audit's URL. Nothing here reads page text beyond that audit.
+// shows, or a draft stored for that audit's URL. Copy JSON-LD (Phase 11 Task 3) likewise writes the
+// page's blocks from that audit, or a suggested JSON-LD main builds from it (plus the editor's
+// validated session fields). Nothing here reads page text beyond that audit.
 
 export interface ContentServiceOptions {
   /** The local notes (`SessionStore.contentNotes`). */
@@ -131,6 +133,20 @@ export function createContentService(options: ContentServiceOptions): MainConten
       if (html === '') return false;
       options.clipboard.writeText(html);
       return true;
+    },
+    async copyPreviewJsonLd(tabId, shown, source, fields) {
+      // Never rejects: a failure (building it, or the clipboard) answers like a stale audit, nothing written.
+      try {
+        const audit = readyAudit(tabId, shown);
+        if (audit === null) return false;
+        const text = source === 'page' ? previewJsonLdBlocks(audit) : suggestedJsonLd(audit, fields ?? {});
+        if (text === null || text === '') return false;
+        options.clipboard.writeText(text);
+        return true;
+      } catch (error) {
+        options.log?.(`copy JSON-LD failed (${error instanceof Error ? error.message : 'unknown error'})`);
+        return false;
+      }
     },
   };
 }

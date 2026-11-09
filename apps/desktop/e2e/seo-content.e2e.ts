@@ -1,8 +1,9 @@
 // Specs: specs/seo-content.spec.ts (SNIPPET_BUDGETS_PX, SNIPPET_ELLIPSIS, TARGET_QUERY_PLACES, Copy as HTML,
 // READABILITY_FORMULAS, INFLESZ_BANDS, SENTENCE_LIMITS), specs/seo-sidebar.spec.ts (SEO_PANELS, HIGHLIGHT_MODES,
 // HIGHLIGHT_STYLES, TextHighlightTarget; keyphrase, Phase 11), specs/seo-limits.spec.ts (SEO_WORLD_ID), specs/gsc-targets.spec.ts
-// (GSC_TARGET_SUGGESTIONS, GSC_TARGETS_COPY)
-// Acceptance: specs/seo-content.feature.md (End to end)
+// (GSC_TARGET_SUGGESTIONS, GSC_TARGETS_COPY); seo-content.spec.ts (SERP_PREVIEW_NOTE, SNIPPET_JSONLD_SOURCES,
+// SUGGESTED_JSONLD_SHAPE, SERP_PREVIEW_VARIANT_MISSING, Phase 11 Task 3)
+// Acceptance: specs/seo-content.feature.md (End to end; Result preview facts, Phase 11 Task 3)
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -12,7 +13,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { readability, sentenceReport, textWidth } from '@app/seo-core';
 import { GSC_RANGE_TEXT } from '@app/specs/gsc-panel.spec';
 import { GSC_TARGET_SUGGESTIONS, GSC_TARGETS_COPY } from '@app/specs/gsc-targets.spec';
-import { INFLESZ_BANDS, SENTENCE_LIMITS, SNIPPET_BUDGETS_PX, SNIPPET_ELLIPSIS } from '@app/specs/seo-content.spec';
+import { INFLESZ_BANDS, SENTENCE_LIMITS, SERP_PREVIEW_NOTE, SERP_PREVIEW_VARIANT_MISSING, SNIPPET_BUDGETS_PX, SNIPPET_ELLIPSIS, SUGGESTED_JSONLD_SHAPE } from '@app/specs/seo-content.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SEO_WORLD_ID } from '@app/specs/seo-limits.spec';
 import { HIGHLIGHT_STYLES, SEO_PANELS } from '@app/specs/seo-sidebar.spec';
 import { accountHelpers } from './account-helpers';
@@ -90,6 +91,37 @@ const KEYPHRASE_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-
 <p>Light RUNNING SHOES dry fast. A running shoestring budget is not enough.</p>
 <p>Old running shoes go in the bin.</p></main></body></html>`;
 
+/**
+ * Phase 11 Task 3: an article with the structured data the result preview reads, one JSON-LD block
+ * each (an Organization the preview does not read first). The site name holds markup: it is text.
+ */
+const RICH_SITE_NAME = 'Leaf <b>&</b> Kettle';
+const RICH_BLOCKS = [
+  { '@context': 'https://schema.org', '@type': 'Organization', name: 'Leaf Holdings' },
+  { '@context': 'https://schema.org', '@type': 'WebSite', name: RICH_SITE_NAME, url: '/' },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 2, name: 'Guides', item: 'https://example.com/guides' },
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://example.com/' },
+      { '@type': 'ListItem', position: 3, name: 'Sencha' },
+    ],
+  },
+  { '@context': 'https://schema.org', '@type': 'NewsArticle', headline: 'How to brew sencha', datePublished: '2025-03-04T09:00:00+01:00' },
+  { '@context': 'https://schema.org', '@type': 'Product', name: 'Sencha tin', aggregateRating: { '@type': 'AggregateRating', ratingValue: '4.6', reviewCount: '87' } },
+  { '@context': 'https://schema.org', '@type': 'VideoObject', name: 'Brewing sencha in two minutes', duration: 'PT2M5S', uploadDate: '2025-03-01', thumbnailUrl: 'https://example.com/thumb.jpg' },
+  { '@context': 'https://schema.org', '@type': 'Recipe', name: 'Iced sencha', totalTime: 'PT1H10M', recipeYield: '2 glasses' },
+];
+const RICH_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>How to brew sencha</title>
+<meta name="description" content="Water at seventy degrees, one minute, and a warm cup.">
+${RICH_BLOCKS.map((block) => `<script type="application/ld+json">${JSON.stringify(block)}</script>`).join('\n')}</head>
+<body><main><h1>How to brew sencha</h1><p>Warm the cup, then pour.</p></main></body></html>`;
+/** No structured data: the site name, trail and date come from the tags and the URL. */
+const PLAIN_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>A plain tea page</title>
+<meta property="og:site_name" content="Plain Tea Co"><meta property="article:published_time" content="2024-06-01T08:00:00Z"></head>
+<body><main><h1>A plain tea page</h1><p>Nothing marked up here.</p></main></body></html>`;
+
 async function startSite() {
   const server = createServer((request, response) => {
     const pathname = new URL(request.url ?? '/', 'http://x').pathname;
@@ -97,6 +129,8 @@ async function startSite() {
     if (pathname === '/guides/green-tea') html(article());
     else if (pathname === '/inert') html(INERT_PAGE);
     else if (pathname === '/guides/shoes') html(KEYPHRASE_PAGE);
+    else if (pathname === '/guides/sencha') html(RICH_PAGE);
+    else if (pathname === '/guides/plain') html(PLAIN_PAGE);
     else if (pathname === '/es/te-verde') html(SPANISH_PAGE);
     else if (pathname === '/guides/long') response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': STRICT_CSP }).end(longArticle());
     else html('<!doctype html><html lang="en"><title>loopback</title><p>loopback</p></html>');
@@ -274,6 +308,99 @@ test('snippet-editor-previews', async () => {
   await page.getByTestId('seo-draft-delete').click();
   await expect(page.locator('[data-testid="seo-snippet-source"][data-source="draft"]')).toHaveCount(0);
   await expect(desktopTitle).toHaveAttribute('data-truncated', 'true');
+});
+
+// Phase 11 Task 3: the result preview's schema facts, toggles, site-name override and rich variants.
+test('serp-preview-schema-facts-and-variants', async () => {
+  await openContent(`${site.origin}/guides/sencha`);
+  const host = new URL(site.origin).host;
+  // The standard previews: the WebSite's name (markup is text), a drawn monogram, the schema trail in position order, the date and rating.
+  for (const device of ['desktop', 'mobile']) {
+    await expect(page.getByTestId(`seo-serp-${device}-site-name`)).toHaveText(RICH_SITE_NAME);
+    await expect(page.getByTestId(`seo-serp-${device}-monogram`)).toHaveText('L');
+    await expect(page.getByTestId(`seo-serp-${device}-trail`)).toHaveText(`${host} › Home › Guides › Sencha`);
+    await expect(page.getByTestId(`seo-serp-${device}-date`)).toContainText('Mar 4, 2025');
+    await expect(page.getByTestId(`seo-serp-${device}-rating`)).toContainText('★★★★★');
+    await expect(page.getByTestId(`seo-serp-${device}-rating`)).toContainText('Rating: 4.6 · 87 reviews');
+  }
+  await expect(page.getByTestId('seo-serp-preview-note')).toHaveText(SERP_PREVIEW_NOTE);
+  // No favicon, thumbnail or other image is loaded into the chrome; the page's markup made no element.
+  expect(await sidebar().evaluate((root) => ({ img: root.querySelectorAll('img').length, b: root.querySelectorAll('b').length, style: root.querySelectorAll('[style]').length }))).toEqual({ img: 0, b: 0, style: 0 });
+
+  // The toggles hide their parts (session only).
+  const toggle = (name: string) => page.locator(`[data-testid="seo-serp-toggle"][data-toggle="${name}"]`);
+  await toggle('date').click();
+  await expect(toggle('date')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByTestId('seo-serp-desktop-date')).toHaveCount(0);
+  await toggle('rating').click();
+  await expect(page.getByTestId('seo-serp-desktop-rating')).toHaveCount(0);
+  await toggle('breadcrumb').click();
+  await expect(page.getByTestId('seo-serp-desktop-trail')).toHaveText(host);
+  for (const name of ['date', 'rating', 'breadcrumb']) await toggle(name).click();
+  await expect(page.getByTestId('seo-serp-desktop-date')).toHaveCount(1);
+  // A site-name override replaces the name and its monogram; clearing it brings the page's back.
+  await page.getByTestId('seo-serp-site-name-input').fill('my tea shop');
+  await expect(page.getByTestId('seo-serp-desktop-site-name')).toHaveText('my tea shop');
+  await expect(page.getByTestId('seo-serp-desktop-monogram')).toHaveText('M');
+  await page.getByTestId('seo-serp-site-name-input').fill('');
+  await expect(page.getByTestId('seo-serp-desktop-site-name')).toHaveText(RICH_SITE_NAME);
+
+  // The rich variants: frost's own cards, under the note.
+  const variant = (name: string) => page.locator(`[data-testid="seo-serp-variant"][data-variant="${name}"]`);
+  const card = page.getByTestId('seo-serp-variant-card');
+  const lines = () => card.getByTestId('seo-serp-card-line').allTextContents();
+  await variant('top-stories').click();
+  await expect(card).toHaveAttribute('data-variant', 'top-stories');
+  await expect(page.getByTestId('seo-serp-desktop')).toHaveCount(0);
+  expect(await lines()).toEqual(['L' + RICH_SITE_NAME, 'How to brew sencha', 'Mar 4, 2025']);
+  await variant('video').click();
+  await expect(card).toHaveAttribute('data-variant', 'video');
+  expect(await lines()).toEqual(['2:05', 'Brewing sencha in two minutes', `${RICH_SITE_NAME} · Mar 1, 2025`]);
+  await variant('recipe').click();
+  await expect(card).toHaveAttribute('data-variant', 'recipe');
+  expect(await lines()).toEqual(['Iced sencha', 'L' + RICH_SITE_NAME, '1 hr 10 min · Makes 2 glasses']);
+  await expect(page.getByTestId('seo-serp-preview-note')).toHaveText(SERP_PREVIEW_NOTE);
+  expect(await sidebar().evaluate((root) => root.querySelectorAll('img').length)).toBe(0);
+  await variant('standard').click();
+  await expect(page.getByTestId('seo-serp-desktop')).toBeVisible();
+
+  // Without structured data: og:site_name, the URL's trail and article:published_time; the rich variants are offered disabled.
+  await openContent(`${site.origin}/guides/plain`);
+  await expect(page.getByTestId('seo-serp-desktop-site-name')).toHaveText('Plain Tea Co');
+  await expect(page.getByTestId('seo-serp-desktop-trail')).toHaveText(`${host} › guides › plain`);
+  await expect(page.getByTestId('seo-serp-desktop-date')).toContainText('Jun 1, 2024');
+  await expect(page.getByTestId('seo-serp-desktop-rating')).toHaveCount(0);
+  for (const name of ['top-stories', 'video', 'recipe'] as const) {
+    await expect(variant(name)).toBeDisabled();
+    await expect(variant(name)).toHaveAttribute('title', SERP_PREVIEW_VARIANT_MISSING[name]);
+  }
+  await expect(page.getByTestId('seo-snippet-copy-jsonld')).toBeDisabled();
+});
+
+// Phase 11 Task 3: Copy JSON-LD, through main's clipboard.
+test('copy-jsonld', async () => {
+  await openContent(`${site.origin}/guides/sencha`);
+  // The page's own blocks that fed the preview: every one but the Organization, formatted.
+  await app!.evaluate(({ clipboard }) => clipboard.writeText('before'));
+  await page.getByTestId('seo-snippet-copy-jsonld').click();
+  await expect(page.getByTestId('seo-content-flash')).toHaveText('Copied JSON-LD');
+  const copied = await app!.evaluate(({ clipboard }) => clipboard.readText());
+  expect(copied.split('\n\n').map((block) => JSON.parse(block) as unknown)).toEqual(RICH_BLOCKS.slice(1));
+  // A suggested JSON-LD main builds, with the session's site-name override; every < escaped.
+  await page.getByTestId('seo-serp-site-name-input').fill('Tea <shop>');
+  await page.getByTestId('seo-snippet-copy-jsonld-suggested').click();
+  await expect(page.getByTestId('seo-content-flash')).toHaveText('Copied suggested JSON-LD');
+  const suggested = await app!.evaluate(({ clipboard }) => clipboard.readText());
+  expect(suggested).not.toContain('<');
+  expect(suggested).toContain('Tea \\u003cshop>');
+  const json = JSON.parse(suggested) as { '@context': string; '@graph': Record<string, unknown>[] };
+  expect(json['@context']).toBe(SUGGESTED_JSONLD_SHAPE.context);
+  expect(json['@graph'].map((node) => node['@type'])).toEqual([...SUGGESTED_JSONLD_SHAPE.graph]);
+  const pageUrl = `${site.origin}/guides/sencha`;
+  expect(json['@graph'][0]).toEqual({ '@type': 'WebSite', '@id': `${site.origin}/#website`, name: 'Tea <shop>', url: `${site.origin}/` });
+  expect(json['@graph'][1]).toMatchObject({ itemListElement: [{ position: 1, name: 'Home', item: 'https://example.com/' }, { position: 2, name: 'Guides', item: 'https://example.com/guides' }, { position: 3, name: 'Sencha' }] });
+  expect(json['@graph'][2]).toMatchObject({ '@id': pageUrl, url: pageUrl, name: 'How to brew sencha', datePublished: '2025-03-04T09:00:00+01:00' });
+  await page.getByTestId('seo-serp-site-name-input').fill('');
 });
 
 test('target-query-persists', async () => {

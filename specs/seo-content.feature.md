@@ -206,8 +206,8 @@ heuristic does, not what a linguist would count. No rule, finding or score depen
   characters; "too short" stays the character minimum.
 - **Scenario: content-inputs-capped** — the chrome cuts the query and drafts at their caps, never
   splitting a surrogate pair.
-- **Scenario: breadcrumb-and-labels** — the preview's address line (host › decoded path segments) and
-  the counts' wording.
+- **Scenario: count-labels** — the counts' wording. (The preview's address line, host › decoded path
+  segments, is `serpPreview`'s since Phase 11 Task 3: `breadcrumb-falls-back-to-url`.)
 - **Scenario: readability-view-formula-and-band** (Phase 8) — the readability section names the
   formula that scored the page (`READABILITY_FORMULAS`' `name`: Flesch reading ease, Szigriszt-Pazos,
   Kandel-Moles, Flesch-Amstad) with its band, never "Flesch, for English text" for another language.
@@ -322,6 +322,59 @@ only where the segmenter puts its word boundaries. No occurrence left: the overl
   word holding it); the toggle is pressed; leaving the panel removes the boxes and leaves the page's
   `<html>` as it was.
 
+## Result preview facts (Phase 11 Task 3, Decision 4; SL-053, SL-054)
+Spec: `seo-content.spec.ts` (`SERP_PREVIEW_VARIANTS`, `SERP_PREVIEW_LIMITS`, `SERP_PREVIEW_BUDGETS_PX`,
+the source orders `SERP_SITE_NAME_SOURCES` / `SERP_BREADCRUMB_SOURCES` / `SERP_DATE_SOURCES`,
+`SERP_PREVIEW_NOTE`, `SERP_PREVIEW_TOGGLES`, `SNIPPET_JSONLD_SOURCES`, `SUGGESTED_JSONLD_SHAPE`),
+`seo-content.schema.ts` (`CopyPreviewJsonLdInputSchema`), `seo-limits.spec.ts` (`SOCIAL_TAGS` +=
+`article:published_time`, `article:modified_time`).
+- The standard previews show a site-name line (with a frost-drawn monogram, never a favicon), an
+  address line of the host and the breadcrumb trail, and, before the description, the date and the
+  rating, each from the audit alone (`serpPreview`). Rich variants (Top stories, Video, Recipe) are
+  frost's own text cards, each under `SERP_PREVIEW_NOTE`; a variant the page has no node for is
+  disabled with its reason. Every fact is inert, bidi-isolated text.
+- The toggles and the site-name override live in the panel's state for the session only; drafts
+  still store a title and a description only (no migration).
+- **Scenario: site-name-prefers-website-schema** (`serp-preview.test.ts`) — a WebSite node's `name`
+  wins over `og:site_name`; an override wins over both; cut at `maxSiteNameChars`.
+- **Scenario: site-name-falls-back-to-og-then-host** — without a named WebSite, `og:site_name`;
+  without that, the host without `www.`.
+- **Scenario: breadcrumb-from-breadcrumblist** — ListItems (nested or by `@id`) ordered by position,
+  named by `name` or their item's `name`, with absolute URLs only; at most `maxCrumbs` steps of
+  `maxCrumbChars`; the address line is cut by width.
+- **Scenario: breadcrumb-falls-back-to-url** — no BreadcrumbList (or none with a named step): the
+  URL's decoded path segments.
+- **Scenario: date-from-article-schema** — an Article-family `datePublished`, else its `dateModified`,
+  shown as `Mon D, YYYY` from the date as written.
+- **Scenario: date-falls-back-to-article-published-time** — no Article date: `article:published_time`,
+  then `article:modified_time`.
+- **Scenario: rating-from-aggregate** — the first valid AggregateRating: value, best, count, stars.
+- **Scenario: video-and-recipe-facts** — a VideoObject's name, duration (`m:ss`), upload date and
+  thumbnail flag; a Recipe's name, total time (or prep + cook), yield and own rating; the variants
+  each enables.
+- **Scenario: invalid-dates-and-ratings-ignored** — a date that is not ISO 8601 (or not a real date)
+  is skipped for the next source; a rating that is not a number, out of range or with
+  `worstRating >= bestRating` is skipped; a non-integer count is dropped; a duration with years or
+  months is not shown.
+- **Scenario: suggested-jsonld-escapes-lt** — the suggested JSON-LD is the `SUGGESTED_JSONLD_SHAPE`
+  graph from validated fields only, every `<` written `\u003c`; it parses back to the same values. Its
+  trail lists every step (a deep URL's seven, though five are drawn), its site name is not the drawn
+  cut, a modified date is `dateModified`, and the page is the effective canonical when there is one.
+- **Scenario: article-time-tags-read** (seo-core `panels.test.ts`; `extract-dom.test.ts`) — the
+  extractor reads `article:published_time` / `article:modified_time` like the other social tags; the
+  audit carries them and the result preview reads them as its last date sources.
+- **Scenario: article-time-tags-leave-capture-identity-unchanged** (`changes/__tests__/snapshot.test.ts`)
+  — the same page with and without the article tags gives the same capture snapshot and identity.
+- **Scenario: copy-jsonld-page-blocks** (`content-service.test.ts`) — `page` writes the page's blocks
+  that fed the preview (formatted), not the others; `suggested` writes the suggested JSON-LD with the
+  override and toggles applied; nothing when no block fed the preview.
+- **Scenario: copy-jsonld-stale-audit-writes-nothing** — another audit than the one shown, another
+  tab, or a pending one: `false`, nothing written.
+- **Scenario: copy-preview-jsonld-input-bounded** (`content-router.test.ts`) — strict input: unknown
+  keys, an unknown source, fields with `page`, an over-long or multi-line override are refused.
+- **Scenario: preview-variant-cards** (`content-view.test.ts`) — each variant's card lines and
+  whether it is offered, from the facts; the stars text; the toggles hide their parts.
+
 ## Command palette (`apps/desktop/src/renderer/__tests__/content-palette.test.ts`)
 Registered with `registerPaletteActions` (`command-palette.spec.ts`); the Content panel's jump is
 this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second one.
@@ -367,3 +420,13 @@ this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second one.
   target", the pages Google showed for it in the fake's order, this page alone marked "This page",
   its rank among them stated, the facts line; no tone and no link in the part; one page read for the
   query, with no page, country or device filter.
+- **Scenario: serp-preview-schema-facts-and-variants** (Phase 11 Task 3) — a loopback article with
+  WebSite, BreadcrumbList, NewsArticle (a date), AggregateRating, VideoObject and Recipe JSON-LD: the
+  standard previews show the schema site name with its monogram, the trail, the date and the rating
+  as text; a site-name override replaces the name for the session; the toggles hide parts; each
+  variant card shows its facts under the note; no image is loaded into the chrome. A page without
+  markup falls back to `og:site_name`, the URL trail and `article:published_time`, with the rich
+  variants disabled.
+- **Scenario: copy-jsonld** (Phase 11 Task 3) — "Copy JSON-LD" of the page writes the blocks that fed
+  the preview; "Copy suggested JSON-LD" writes the suggested graph with the override, `<` as `\u003c`;
+  both through main's clipboard.

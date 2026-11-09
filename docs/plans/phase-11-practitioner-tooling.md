@@ -123,7 +123,7 @@
    Editor toggles and a site-name override are **session-only**; drafts still store title and
    description only (no migration). "Copy JSON-LD" writes either the page's own blocks that fed the
    preview or a **suggested** minimal JSON-LD main builds from validated fields (`<` written as
-   `<`). *Rejected:* storing preview extras per draft (a new column for a cosmetic choice; deferred).
+   `\u003c`). *Rejected:* storing preview extras per draft (a new column for a cosmetic choice; deferred).
 5. **Network export is HAR 1.2 or CSV, saved by main** in its own save dialog (the
    `agent/dialogs.ts` pattern), active tab only (`DEVTOOLS_TAB_SCOPE`). Built from the log as kept:
    rows and headers exactly as stored (allowlisted, `SECRET_HEADERS` masked `•••`), **never a body**
@@ -1017,3 +1017,13 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   first, so `setHighlight` stays synchronous. `KEYPHRASE_UNMATCHED_NOTE` shows only when nothing is
   drawn. Box modes skip non-finite or sub-pixel boxes while measuring (so each cap in `all` holds).
   The phrase refuses every line separator. No palette commands for the new modes.
+- **Task 3:** `article:modified_time` is a fourth date source after `article:published_time`; a
+  date from a modified source is written as `dateModified` in the suggested graph. The suggested
+  JSON-LD is bare JSON (no `<script>`), takes `fields` (a session-only `siteName` override ≤ 60
+  chars, one line, Zod-checked in main; `breadcrumb` and `date` toggles), names the WebSite with the
+  uncut site name, lists every breadcrumb step (only 5 are drawn), and uses the effective canonical
+  (absolute `http(s)`, fragment dropped) for the WebPage, else the page URL. "Copy JSON-LD" (page) is
+  disabled when no block fed the preview; a block whose pretty-print would be cut is written as on
+  the page; `copyPreviewJsonLd` never rejects. The favicon placeholder is a site-name monogram;
+  `SiteGlyph` and the URL `breadcrumb()` helper are removed. Article times are not in `og-tags`. The
+  agent's audit summary carries 14 social fields (was 12), since `maxSocialFields = SOCIAL_TAGS.length`.

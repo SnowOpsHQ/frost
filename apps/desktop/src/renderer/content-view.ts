@@ -1,15 +1,22 @@
-import type { Readability, SentenceReport, SnippetCut } from '@app/seo-core';
+import type { Readability, SentenceReport, SerpPreviewFacts, SerpRating, SnippetCut } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import { HIGHLIGHT_PHRASE_MAX_CHARS } from '@app/specs/seo-limits.spec';
 import {
   MAX_SNIPPET_VARIANTS,
   READABILITY_FORMULAS,
   SENTENCE_LIMITS,
+  SERP_PREVIEW_LIMITS,
+  SERP_PREVIEW_TOGGLES,
+  SERP_PREVIEW_VARIANT_LABELS,
+  SERP_PREVIEW_VARIANT_MISSING,
+  SERP_PREVIEW_VARIANTS,
   SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS,
   SNIPPET_VARIANT_TITLE_MAX_CHARS,
   TARGET_QUERY_MAX_CHARS,
   type DifficultSentenceReason,
   type ReadabilityFormulaId,
+  type SerpPreviewToggle,
+  type SerpPreviewVariant,
 } from '@app/specs/seo-content.spec';
 
 // Pure helpers behind the Content panel (spec `seo-content.spec.ts`; acceptance
@@ -61,30 +68,6 @@ export function capInput(value: string, max: number): string {
 export const capQuery = (value: string): string => capInput(value, TARGET_QUERY_MAX_CHARS);
 export const capTitle = (value: string): string => capInput(value, SNIPPET_VARIANT_TITLE_MAX_CHARS);
 export const capDescription = (value: string): string => capInput(value, SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS);
-
-/**
- * How a result shows a page's address: its host, then its path segments (decoded where they decode),
- * joined with ` › `. Text only; the address is never a link here.
- */
-export function breadcrumb(url: string): { readonly host: string; readonly path: string } {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { host: url, path: '' };
-  }
-  const segments = parsed.pathname
-    .split('/')
-    .filter((segment) => segment !== '')
-    .map((segment) => {
-      try {
-        return decodeURIComponent(segment);
-      } catch {
-        return segment;
-      }
-    });
-  return { host: parsed.host, path: segments.length > 0 ? ` › ${segments.join(' › ')}` : '' };
-}
 
 /** `n` words / sentences etc. with a unit, singular for one. */
 export function countLabel(n: number, one: string, many: string): string {
@@ -163,4 +146,108 @@ export function keyphraseToggle(tab: Pick<TabState, 'highlight' | 'highlightPhra
   const pressed = tab.highlight === 'keyphrase' && tab.highlightPhrase === phrase;
   const available = phrase.length >= 1 && phrase.length <= HIGHLIGHT_PHRASE_MAX_CHARS && !/[\r\n\v\f\u0085\u2028\u2029]/.test(phrase);
   return { pressed, available, next: pressed ? { mode: 'off' } : { mode: 'keyphrase', phrase } };
+}
+
+// ---- Result preview facts (Phase 11 Task 3; spec `seo-content.spec.ts`, Result preview facts) -----
+
+/** The editor's session-only display toggles (`SERP_PREVIEW_TOGGLES`): kept in the panel's state, never stored. */
+export type SerpToggles = Readonly<Record<SerpPreviewToggle, boolean>>;
+export const SERP_TOGGLES_ON: SerpToggles = Object.fromEntries(SERP_PREVIEW_TOGGLES.map((toggle) => [toggle, true])) as Record<SerpPreviewToggle, boolean>;
+
+/** The site-name override as typed: control characters and line breaks dropped, cut to `maxSiteNameChars` code points. */
+export function cleanSiteName(value: string): string {
+  return [...value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '')].slice(0, SERP_PREVIEW_LIMITS.maxSiteNameChars).join('');
+}
+
+/** The override the preview and a suggested JSON-LD take (`SiteNameOverrideSchema`): `undefined` when blank. */
+export function siteNameOverride(value: string): string | undefined {
+  const cleaned = cleanSiteName(value);
+  return cleaned.trim() === '' ? undefined : cleaned;
+}
+
+/** A rating as text: whole stars of five (`★` / `☆`) and its label. */
+export function ratingView(rating: SerpRating): { readonly stars: string; readonly label: string } {
+  const stars = Math.min(5, Math.max(0, rating.stars));
+  const count = rating.count === null ? '' : ` · ${countLabel(rating.count, rating.countOf === 'reviews' ? 'review' : 'rating', rating.countOf === 'reviews' ? 'reviews' : 'ratings')}`;
+  return { stars: `${'★'.repeat(stars)}${'☆'.repeat(5 - stars)}`, label: `Rating: ${rating.shown}${rating.best === 5 ? '' : ` of ${rating.best}`}${count}` };
+}
+
+/** What the standard previews draw, after the toggles: `null` parts are hidden or absent. */
+export interface StandardPreviewView {
+  /** The site-name line (the host without `www.` when the site name is off). */
+  readonly siteName: string;
+  readonly monogram: string;
+  /** The address line: `host › step …` (the host alone when the breadcrumb is off), cut by width. */
+  readonly trail: string;
+  readonly trailTruncated: boolean;
+  readonly date: string | null;
+  readonly rating: { readonly stars: string; readonly label: string } | null;
+}
+
+export function standardPreview(facts: SerpPreviewFacts, toggles: SerpToggles): StandardPreviewView {
+  const { host } = facts.breadcrumb;
+  // Without the site name, the host as the host fallback names it (no `www.`).
+  const site = host.startsWith('www.') ? host.slice(4) : host;
+  return {
+    siteName: toggles['site-name'] ? facts.siteName.shown.shown : site,
+    monogram: toggles['site-name'] ? facts.siteName.monogram : (/[\p{L}\p{N}]/u.exec(site)?.[0]?.toLocaleUpperCase() ?? '•'),
+    trail: toggles.breadcrumb ? facts.breadcrumb.line.shown : host,
+    trailTruncated: toggles.breadcrumb && facts.breadcrumb.line.truncated,
+    date: toggles.date && facts.date !== null ? facts.date.shown : null,
+    rating: toggles.rating && facts.rating !== null ? ratingView(facts.rating) : null,
+  };
+}
+
+/** A variant button: whether the page has its facts, and why not. */
+export interface VariantChoice {
+  readonly variant: SerpPreviewVariant;
+  readonly label: string;
+  readonly available: boolean;
+  readonly reason: string | null;
+}
+
+export function variantChoices(facts: SerpPreviewFacts): VariantChoice[] {
+  return SERP_PREVIEW_VARIANTS.map((variant) => {
+    const available = facts.variants[variant];
+    return { variant, label: SERP_PREVIEW_VARIANT_LABELS[variant], available, reason: available || variant === 'standard' ? null : SERP_PREVIEW_VARIANT_MISSING[variant] };
+  });
+}
+
+export type VariantCardLineKind = 'badge' | 'site' | 'title' | 'rating' | 'meta';
+/** One line of a rich result card: page text (render as inert, bidi-isolated text). */
+export interface VariantCardLine {
+  readonly kind: VariantCardLineKind;
+  readonly text: string;
+}
+export interface VariantCard {
+  readonly variant: Exclude<SerpPreviewVariant, 'standard'>;
+  readonly heading: string;
+  readonly monogram: string;
+  readonly lines: readonly VariantCardLine[];
+}
+
+/**
+ * A rich result card frost draws in its own layout (an approximation, under `SERP_PREVIEW_NOTE`):
+ * Top stories (site, headline, date), Video (a duration badge on a drawn frame, name, site and upload
+ * date) or Recipe (name, site, rating, time and yield). `null` when the page lacks the variant's node.
+ * `title` is the page's title (or the draft's), used when the node has no name of its own.
+ */
+export function variantCard(variant: Exclude<SerpPreviewVariant, 'standard'>, facts: SerpPreviewFacts, title: string): VariantCard | null {
+  if (!facts.variants[variant]) return null;
+  const site = facts.siteName.text;
+  const named = (name: string | null | undefined): string => (name ?? '') || title || 'No title';
+  const line = (kind: VariantCardLineKind, text: string | null | undefined): VariantCardLine[] => (text ? [{ kind, text }] : []);
+  const meta = (...parts: (string | null | undefined)[]): VariantCardLine[] => line('meta', parts.filter((part): part is string => !!part).join(' · '));
+  let lines: VariantCardLine[];
+  if (variant === 'top-stories') {
+    lines = [...line('site', site), ...line('title', named(facts.article?.headline)), ...meta(facts.date?.shown)];
+  } else if (variant === 'video') {
+    const video = facts.video!;
+    lines = [...line('badge', video.duration ?? 'Video'), ...line('title', named(video.name)), ...meta(site, video.uploadDate?.shown)];
+  } else {
+    const recipe = facts.recipe!;
+    const rating = recipe.rating === null ? null : ratingView(recipe.rating);
+    lines = [...line('title', named(recipe.name)), ...line('site', site), ...line('rating', rating ? `${rating.stars} ${rating.label}` : null), ...meta(recipe.totalTime, recipe.yield ? `Makes ${recipe.yield}` : null)];
+  }
+  return { variant, heading: SERP_PREVIEW_VARIANT_LABELS[variant], monogram: facts.siteName.monogram, lines };
 }

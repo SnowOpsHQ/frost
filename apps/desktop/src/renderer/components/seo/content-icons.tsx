@@ -145,19 +145,3 @@ export function TagsIcon(props: IconProps) {
     </Icon>
   );
 }
-
-/**
- * The neutral site glyph the previews show instead of a favicon (none is fetched into the chrome):
- * a filled disc with a simple globe drawn over it.
- */
-export function SiteGlyph({ className }: IconProps) {
-  return (
-    <svg className={className ? `seo-serp-glyph ${className}` : 'seo-serp-glyph'} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <circle className="seo-serp-glyph-disc" cx="12" cy="12" r="12" />
-      <g className="seo-serp-glyph-mark" fill="none" strokeWidth="1.5" strokeLinecap="round">
-        <circle cx="12" cy="12" r="6.2" />
-        <path d="M5.8 12h12.4M12 5.8c-2.3 2.4-2.3 10 0 12.4M12 5.8c2.3 2.4 2.3 10 0 12.4" />
-      </g>
-    </svg>
-  );
-}

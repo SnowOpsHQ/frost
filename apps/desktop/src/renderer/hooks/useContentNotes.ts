@@ -151,3 +151,18 @@ export function copySnippetHtml(tabId: number, audit: { url: string; takenAt: nu
   const input = slot === null ? { tabId, audit, source: 'page' as const } : { tabId, audit, source: 'variant' as const, slot };
   return ipc.content.copySnippetHtml.mutate(input).catch(() => false);
 }
+
+/**
+ * Copy JSON-LD through main (`content.copyPreviewJsonLd`, Phase 11 Task 3): the page's blocks that
+ * fed the preview (`page`), or a suggested JSON-LD main builds with the editor's session fields
+ * (`suggested`). Resolves whether it was written.
+ */
+export function copyPreviewJsonLd(
+  tabId: number,
+  audit: { url: string; takenAt: number },
+  source: 'page' | 'suggested',
+  fields?: { siteName?: string; breadcrumb?: boolean; date?: boolean },
+): Promise<boolean> {
+  const input = source === 'suggested' && fields !== undefined ? { tabId, audit, source, fields } : { tabId, audit, source };
+  return ipc.content.copyPreviewJsonLd.mutate(input).catch(() => false);
+}

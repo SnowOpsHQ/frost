@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
-import { ContentNotesInputSchema, CopySnippetHtmlInputSchema, DeleteVariantInputSchema, SaveVariantInputSchema, SetTargetQueryInputSchema } from '@app/specs/seo-content.schema';
+import { ContentNotesInputSchema, CopyPreviewJsonLdInputSchema, CopySnippetHtmlInputSchema, DeleteVariantInputSchema, SaveVariantInputSchema, SetTargetQueryInputSchema } from '@app/specs/seo-content.schema';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
 // The Content panel ↔ main (Phase 2.5 Task 3; spec `seo-content.schema.ts`; acceptance
@@ -50,4 +50,11 @@ export const contentRouter = router({
     .use(enforceSender)
     .use(requireContent)
     .mutation(async ({ ctx }) => (await ctx.content.clearAllNotes()) === true),
+  // Phase 11 Task 3: Copy JSON-LD of the result preview (the page's blocks, or a suggested graph main
+  // builds); whether main wrote it (only from the ready audit the panel shows).
+  copyPreviewJsonLd: publicProcedure
+    .use(enforceSender)
+    .use(requireContent)
+    .input(CopyPreviewJsonLdInputSchema)
+    .mutation(async ({ ctx, input }) => (await ctx.content.copyPreviewJsonLd(input.tabId, input.audit, input.source, input.fields)) === true),
 });

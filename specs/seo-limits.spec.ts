@@ -60,6 +60,13 @@ export type RobotsMetaName = (typeof ROBOTS_META_NAMES)[number];
  * (case-insensitive; sites use both for either family), its `content` trimmed and
  * whitespace-normalised. `og:url` is not in this list: it is the snapshot's own `ogUrl`
  * (Task 1), read the same way from `property` only.
+ *
+ * Phase 11 Task 3 (Decision 4) appends the Open Graph article times `article:published_time` and
+ * `article:modified_time`, read like the others (text values, never parsed here): the result
+ * preview's last date sources (`SERP_DATE_SOURCES`, `seo-content.spec.ts`). They are not `og:` tags,
+ * so the Social panel's Open Graph list and the `og-tags` copy value leave them out. Change tracking
+ * picks the social tags it keeps by name (`changes/snapshot.ts`: `og:title`, `og:description`,
+ * `og:image`), so a capture's identity does not change with them.
  */
 export const SOCIAL_TAGS = [
   'og:title',
@@ -74,6 +81,8 @@ export const SOCIAL_TAGS = [
   'twitter:description',
   'twitter:image',
   'twitter:site',
+  'article:published_time',
+  'article:modified_time',
 ] as const;
 export type SocialTag = (typeof SOCIAL_TAGS)[number];
 /** The social tags whose value is a URL (cut to `maxUrlChars`, not normalised). */

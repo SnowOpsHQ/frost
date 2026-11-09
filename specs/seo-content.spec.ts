@@ -400,3 +400,150 @@ export const CONTENT_TABLES = ['seo_snippet_variants', 'seo_target_queries'] as 
  * nothing is written.
  */
 export const SNIPPET_HTML_SOURCES = ['page', 'variant'] as const;
+
+// ---- Result preview facts (Phase 11 Task 3, Decision 4) ----------------------------------------
+
+/**
+ * The result preview's extra facts are a pure function of the audit (`serpPreview` in
+ * `packages/seo-core/src/content/serp-preview.ts`): the chrome draws them, main builds "Copy JSON-LD"
+ * from the same function. Nothing is fetched: the favicon stays a frost-drawn placeholder (a
+ * monogram of the site name's first letter on a disc; `SOCIAL_REMOTE_IMAGES` is `false` for the same
+ * reason), and a video's thumbnail is never loaded. Every fact is page text: the chrome renders it
+ * as React text (`<bdi dir="auto">`), never markup.
+ *
+ * The variants: `standard` (the desktop and mobile results), and three rich result cards drawn by
+ * frost in its own layout, each labelled an approximation (`SERP_PREVIEW_NOTE`): `top-stories` (an
+ * Article-family node), `video` (a VideoObject) and `recipe` (a Recipe). A variant whose node the
+ * page lacks is offered but disabled, with `SERP_PREVIEW_VARIANT_MISSING` as its reason.
+ */
+export const SERP_PREVIEW_VARIANTS = ['standard', 'top-stories', 'video', 'recipe'] as const;
+export type SerpPreviewVariant = (typeof SERP_PREVIEW_VARIANTS)[number];
+export const SERP_PREVIEW_VARIANT_LABELS: Readonly<Record<SerpPreviewVariant, string>> = {
+  standard: 'Standard',
+  'top-stories': 'Top stories',
+  video: 'Video',
+  recipe: 'Recipe',
+};
+export const SERP_PREVIEW_VARIANT_MISSING: Readonly<Record<Exclude<SerpPreviewVariant, 'standard'>, string>> = {
+  'top-stories': 'The page has no Article, NewsArticle or BlogPosting markup.',
+  video: 'The page has no VideoObject markup.',
+  recipe: 'The page has no Recipe markup.',
+};
+/** Shown under every preview: frost's own wording. */
+export const SERP_PREVIEW_NOTE = 'frost’s drawing; engines decide which rich results show.';
+
+/**
+ * Caps. A site name is cut to `maxSiteNameChars` code points; a breadcrumb trail keeps its first
+ * `maxCrumbs` steps (`more` says there were others), each step's name cut to `maxCrumbChars` code
+ * points (a cut ends in `SNIPPET_ELLIPSIS`). Any other text fact (a headline, a video or recipe name,
+ * a recipe yield) is cut to `maxFactChars` code points. Then the drawn lines are cut by width
+ * (`SERP_PREVIEW_BUDGETS_PX`).
+ */
+export const SERP_PREVIEW_LIMITS = {
+  maxSiteNameChars: 60,
+  maxCrumbs: 5,
+  maxCrumbChars: 40,
+  maxFactChars: 300,
+} as const;
+
+/**
+ * The site-name line and the address line (`host › step › step`) are cut by width like the title
+ * and description (`truncateToWidth`), measured with the same table at `SNIPPET_FONT.descriptionPx`.
+ * Approximations, rounded, of how much of each line a desktop result shows; as with
+ * `SNIPPET_BUDGETS_PX`, engines change their layouts and publish no limit, so these are a guide.
+ */
+export const SERP_PREVIEW_BUDGETS_PX = {
+  siteName: 300,
+  breadcrumb: 450,
+} as const;
+
+/**
+ * Where each fact comes from, first match wins:
+ *
+ * - **Site name:** the session-only override the user typed (`override`, never stored); else the
+ *   first WebSite node's `name` (`website-schema`); else `og:site_name` (`og-site-name`); else the
+ *   page's host without `www.` (`host`).
+ * - **Breadcrumb:** the first BreadcrumbList with at least one named step (`breadcrumb-schema`):
+ *   its `itemListElement` ListItems (nodes or `@id` references), ordered by `position` when every
+ *   step has a whole-number one, else as written; a step's name is the ListItem's `name`, else its
+ *   `item` node's `name` (steps without one are skipped); its URL is the `item` (a URL, or the item
+ *   node's `@id` / `url`) when it is an absolute `http(s)` URL. Else the page URL's path segments,
+ *   decoded where they decode (`url`), as the editor drew it before.
+ * - **Date:** an Article-family node's (`Article` or a kind of it, `typeChain`) `datePublished`
+ *   (`article-date-published`), else its `dateModified` (`article-date-modified`), else
+ *   `article:published_time` (`article-published-time`), else `article:modified_time`
+ *   (`article-modified-time`). A value that is not an ISO 8601 date (`isIsoDate`) is ignored and the
+ *   next source is read. Shown as `Jan 5, 2025` (English month abbreviations; the date as written,
+ *   never moved to another time zone; `Jan 2025` or `2025` for a month or a year).
+ * - **Rating:** the first AggregateRating node (top level or nested) whose `ratingValue` is a number
+ *   (a JSON number, or digits with one `.` or `,` decimal part) between its `worstRating` and
+ *   `bestRating` (defaults 1 and 5; `worstRating < bestRating`). `ratingCount`, else `reviewCount`,
+ *   when it is a whole number, is the count (else none). An invalid rating is ignored (the next one is
+ *   read). Shown as the value (at most one decimal) out of `bestRating`, with stars on a five-star
+ *   scale (`value / best × 5`, rounded to a whole star).
+ * - **Video:** the first VideoObject: its `name`, its `duration` (an ISO 8601 duration of days,
+ *   hours, minutes and seconds, shown `h:mm:ss` / `m:ss`; years or months are ignored), its
+ *   `uploadDate` (as a date above) and whether it names a thumbnail (`thumbnailUrl` an absolute
+ *   `http(s)` URL; never loaded).
+ * - **Recipe:** the first Recipe: its `name`, its `totalTime` (else `prepTime` + `cookTime`, shown
+ *   `1 hr 15 min`), its first `recipeYield` text, and its own `aggregateRating` (as above).
+ * - **Top stories:** the first Article-family node's `headline`, with the date and site name above.
+ *
+ * Every invalid value is ignored, never shown as written.
+ */
+export const SERP_SITE_NAME_SOURCES = ['override', 'website-schema', 'og-site-name', 'host'] as const;
+export type SerpSiteNameSource = (typeof SERP_SITE_NAME_SOURCES)[number];
+export const SERP_BREADCRUMB_SOURCES = ['breadcrumb-schema', 'url'] as const;
+export type SerpBreadcrumbSource = (typeof SERP_BREADCRUMB_SOURCES)[number];
+export const SERP_DATE_SOURCES = ['article-date-published', 'article-date-modified', 'article-published-time', 'article-modified-time'] as const;
+export type SerpDateSource = (typeof SERP_DATE_SOURCES)[number];
+
+/**
+ * The editor's session-only display toggles (each on by default; kept in the panel's state, never
+ * stored: drafts still store title and description only). Turning one off hides that part of the
+ * standard previews; `breadcrumb` and `date` off also leave it out of a suggested JSON-LD.
+ */
+export const SERP_PREVIEW_TOGGLES = ['site-name', 'breadcrumb', 'date', 'rating'] as const;
+export type SerpPreviewToggle = (typeof SERP_PREVIEW_TOGGLES)[number];
+export const SERP_PREVIEW_TOGGLE_LABELS: Readonly<Record<SerpPreviewToggle, string>> = {
+  'site-name': 'Site name',
+  breadcrumb: 'Breadcrumb',
+  date: 'Date',
+  rating: 'Rating',
+};
+
+/**
+ * "Copy JSON-LD" (`content.copyPreviewJsonLd`): main writes, with Electron's `clipboard`, from the
+ * tab's ready audit if it is the one the panel shows (`SeoAuditRefSchema`; stale → nothing written):
+ *
+ * - `page`: the page's own JSON-LD blocks that fed the preview (the blocks of the nodes the site name,
+ *   breadcrumb, date, rating, video, recipe and headline came from, and of untyped nodes extending
+ *   them), in block order, each formatted when it parsed (else as written), a blank line between
+ *   them. Nothing is written when no JSON-LD block fed it (facts from tags, the URL or markup only).
+ * - `suggested`: a minimal JSON-LD main builds from validated fields only (`SUGGESTED_JSONLD_SHAPE`):
+ *   `{"@context": "https://schema.org", "@graph": [WebSite, BreadcrumbList, WebPage]}`. WebSite:
+ *   `@id` `<origin>/#website` (the page's origin), `name` (the previewed site name as its source holds
+ *   it, before the drawing cut: the override, the WebSite `name`, `og:site_name` or the host), `url`
+ *   `<origin>/`. BreadcrumbList (only with at least one step, and the `breadcrumb` toggle on): `@id`
+ *   `<page>#breadcrumb`, a ListItem for every step of the previewed trail (all of them, not only the
+ *   `maxCrumbs` drawn) with `position` 1 … n, `name`, and `item` when the step has a URL (the
+ *   schema's, or the URL path up to that segment). WebPage: `@id` and `url` the page (`<page>`: the
+ *   audit's effective canonical when it is an absolute `http(s)` URL, else the page URL; either
+ *   without its fragment), `name` the page's title (when it has one), `isPartOf` the WebSite,
+ *   `breadcrumb` the list (when there is one), and the previewed date as written (an ISO 8601 date;
+ *   only with the `date` toggle on) as `datePublished`, or as `dateModified` when it came from an
+ *   Article `dateModified` or `article:modified_time`. Two-space indented, and every `<` written as
+ *   `\u003c` so the text is safe inside a `<script>` element. Nothing for a page URL that is not
+ *   `http(s)`.
+ *
+ * The chrome sends only the source and, for `suggested`, the fields: the site-name override (1 to
+ * `maxSiteNameChars` characters, one line, no control characters) and the two toggles.
+ */
+export const SNIPPET_JSONLD_SOURCES = ['page', 'suggested'] as const;
+export type SnippetJsonLdSource = (typeof SNIPPET_JSONLD_SOURCES)[number];
+export const SUGGESTED_JSONLD_SHAPE = {
+  context: 'https://schema.org',
+  graph: ['WebSite', 'BreadcrumbList', 'WebPage'],
+  websiteIdSuffix: '/#website',
+  breadcrumbIdSuffix: '#breadcrumb',
+} as const;

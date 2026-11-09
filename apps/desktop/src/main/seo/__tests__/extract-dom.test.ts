@@ -317,7 +317,8 @@ describe('extractor on a DOM', () => {
         <meta name="OG:Description" content="${long}"><meta property="og:image" content=" /img/share.png?x=${long} ">
         <meta property="og:image:width" content="1200"><meta property="og:type" content="article"><meta property="og:site_name" content="Example">
         <meta name="twitter:card" content="summary_large_image"><meta property="twitter:title" content="Tw title"><meta name="twitter:image" content="https://example.com/t.png">
-        <meta name="twitter:site" content="@example"><meta property="og:url" content="${PAGE}">`,
+        <meta name="twitter:site" content="@example"><meta property="og:url" content="${PAGE}">
+        <meta property="article:published_time" content=" 2025-01-05 ">`,
     });
     expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
     expect(snapshot.social).toEqual({
@@ -333,6 +334,9 @@ describe('extractor on a DOM', () => {
       'twitter:description': null,
       'twitter:image': 'https://example.com/t.png',
       'twitter:site': '@example',
+      // Phase 11 Task 3 (article-time-tags-read): the article times are read like the others.
+      'article:published_time': '2025-01-05',
+      'article:modified_time': null,
     });
     // og:url stays the snapshot's own field (cut to maxUrlChars like every URL).
     expect(snapshot.ogUrl).toBe(PAGE.slice(0, 30));

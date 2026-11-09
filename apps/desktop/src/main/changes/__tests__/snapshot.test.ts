@@ -144,6 +144,19 @@ describe('capture snapshot', () => {
     expect(fitted.regions.main.textHash).toBe(sha(fullRegion.text));
   });
 
+  // Phase 11 Task 3 (Decision 4): the article time tags join SOCIAL_TAGS; the snapshot picks its
+  // social values by name, so a capture's identity is the same with or without them.
+  test('article-time-tags-leave-capture-identity-unchanged', () => {
+    const regions = regionAnswer(PAGE);
+    const plain = auditOf(PAGE);
+    const tagged = auditOf(PAGE, { social: { ...plain.page.social, 'article:published_time': '2025-01-05', 'article:modified_time': '2025-02-01T10:00:00Z' } });
+    expect(tagged.page.social['article:published_time']).toBe('2025-01-05');
+    const a = buildCaptureSnapshot(plain, regions, sha256Hex);
+    const b = buildCaptureSnapshot({ ...tagged, takenAt: plain.takenAt }, regions, sha256Hex);
+    expect(b).toEqual(a);
+    expect(identityHash(b)).toBe(identityHash(a));
+  });
+
   test('every-rule-is-classified', () => {
     // The two category lists are every category, each once.
     const all = [...CAPTURE_PAGE_CATEGORIES, ...CAPTURE_CONTEXT_CATEGORIES];

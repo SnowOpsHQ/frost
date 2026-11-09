@@ -172,6 +172,8 @@ export function socialTags(changes: Partial<PageSnapshot['social']> = {}): PageS
     'twitter:description': null,
     'twitter:image': null,
     'twitter:site': '@example',
+    'article:published_time': null,
+    'article:modified_time': null,
     ...changes,
   };
 }
