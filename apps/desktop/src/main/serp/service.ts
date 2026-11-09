@@ -3,6 +3,8 @@ import type { IntentAnswer } from '@app/specs/intent-classifier.spec';
 import type { PackUpdateOutcome } from '@app/specs/serp-selector-pack.spec';
 import type { EngineLayout, SelectorEngine } from '@app/specs/serp-selector-pack.schema';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
+import { serpFiltersOf } from '@app/specs/rankings-url.spec';
+import { sortedJson } from '@app/specs/rankings.spec';
 import type { PackStatus, SerpState, SerpTabState } from '@app/specs/serp-service.schema';
 import { MAX_PENDING_SERP_WATCHES, SERP_INPAGE_DEBOUNCE_MS, SERP_INTENT_CACHE_SIZE, SERP_OUTLINE_ACTIVE_POLL_MS } from '@app/specs/serp-service.spec';
 import type { SerpSnapshot } from '@app/specs/serp-snapshot.schema';
@@ -37,7 +39,8 @@ import type { SerpAnalyzer } from './serp-analyzer';
 //   switch (polled every `SERP_OUTLINE_ACTIVE_POLL_MS` while one is drawn), a pack swap, Clear
 //   Browsing Data or the toggle, always with an `off` paint to the page (harmless on a fresh
 //   document, so a paint that crossed a navigation is removed too); off when the page ends them. An
-//   in-page move within the same search keeps the reading and the outlines.
+//   in-page move within the same search keeps the reading and the outlines, unless it changes a known
+//   filter (`SERP_FILTER_PARAMS`, Phase 10): that page is read again, as another search is.
 
 /** A tab as the service sees it, now. */
 export interface SerpTab {
@@ -549,8 +552,18 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       if (tabId === null || !tab || tab.contentsId !== contentsId || !pack) return;
       const entry = entries.get(tabId);
       const match = matchSerp(url, pack.pack, tab.device);
-      // The same search at another URL (a fragment, a tracking token): the reading stays.
-      if (entry && match && entry.contentsId === contentsId && entry.documentSeq === tab.documentSeq && entry.packVersion === pack.version && entry.device === tab.device && entry.params.url === match.params.url) {
+      // The same search at another URL (a fragment, a tracking token): the reading stays. Not when a
+      // known filter changed (canonical params leave filters out): a capture would file old results under it.
+      if (
+        entry &&
+        match &&
+        entry.contentsId === contentsId &&
+        entry.documentSeq === tab.documentSeq &&
+        entry.packVersion === pack.version &&
+        entry.device === tab.device &&
+        entry.params.url === match.params.url &&
+        sortedJson(serpFiltersOf(entry.url, match.engine.id)) === sortedJson(serpFiltersOf(url, match.engine.id))
+      ) {
         entry.url = url;
         return;
       }

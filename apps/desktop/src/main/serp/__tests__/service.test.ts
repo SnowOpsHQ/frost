@@ -260,6 +260,39 @@ describe('SERP service', () => {
     expect(s.read).toHaveBeenCalledTimes(2);
   });
 
+  // spec: specs/serp-service.spec.ts — The service (an in-page move that changes a known filter is read again)
+  test('serp-service-inpage-filter-change-reads-again', async () => {
+    vi.useFakeTimers();
+    const s = setup();
+    s.t.add(1, GOOGLE);
+    s.serp.loaded(s.t.get(1).contentsId);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.read).toHaveBeenCalledTimes(1);
+    expect(s.serp.state(1).serp.status).toBe('ready');
+    const move = (url: string) => {
+      s.t.get(1).url = url;
+      s.serp.navigatedInPage(s.t.get(1).contentsId, url);
+    };
+    // The same canonical search with a time filter (past week): the old reading goes, and the page is read again.
+    move(`${GOOGLE}&tbs=qdr:w`);
+    expect(s.serp.state(1).serp).toMatchObject({ status: 'pending', url: `${GOOGLE}&tbs=qdr:w` });
+    await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS);
+    expect(s.read).toHaveBeenCalledTimes(2);
+    expect(s.serp.state(1).serp).toMatchObject({ status: 'ready', url: `${GOOGLE}&tbs=qdr:w` });
+    // Another value of the filter, or the filter dropped: read again each time.
+    move(`${GOOGLE}&tbs=qdr:m`);
+    await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS);
+    expect(s.read).toHaveBeenCalledTimes(3);
+    move(GOOGLE);
+    await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS);
+    expect(s.read).toHaveBeenCalledTimes(4);
+    // A tracking parameter only: the reading stays (no read).
+    move(`${GOOGLE}&ved=abc&ei=x`);
+    await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS * 2);
+    expect(s.read).toHaveBeenCalledTimes(4);
+    expect(s.serp.state(1).serp).toMatchObject({ status: 'ready', url: `${GOOGLE}&ved=abc&ei=x` });
+  });
+
   test('serp-service-watch-wakes-times-out-capped', async () => {
     const s = setup();
     s.t.add(1, 'about:blank');

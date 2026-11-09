@@ -11,7 +11,10 @@
  *   `did-finish-load`, and after an in-page navigation (`did-navigate-in-page`, main frame) to
  *   another search (another canonical URL, `SearchParams.url`) once the page has been quiet for
  *   `SERP_INPAGE_DEBOUNCE_MS` (a result page that updates itself in place). An in-page move within
- *   the same search (a fragment, a tracking token) keeps the reading and the outlines. Detection is `matchSerp` with the pack in use and the tab's device
+ *   the same search (a fragment, a tracking token) keeps the reading and the outlines; one that
+ *   changes a known filter (`SERP_FILTER_PARAMS`, `rankings.spec.ts`: Google `tbs`, `num`, `safe`,
+ *   `pws`; DuckDuckGo `df`, `kp`) is another search for this purpose and is read again (a filter
+ *   changes the results, and a capture files the reading under the page's filters). Detection is `matchSerp` with the pack in use and the tab's device
  *   (its render profile, `SERP_DEVICE_OF_PRESET`); any other page is `not-serp` and is never read.
  *   frost never requests a search engine.
  * - **Per tab, per document.** A tab's reading belongs to its WebContents, its document
