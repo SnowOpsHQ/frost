@@ -283,7 +283,10 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
      the verdict wait, `sameRunSearch`), with those parameters; any other page stops the run
      (`blocked`) without a capture. A **page target** takes the tab's parameters when the service has
      them, else none. Asked
-     again every `captureRetryMs` while it answers `no-audit`, `busy` or `not-active`; `no-tab` ends the
+     again every `captureRetryMs` while it answers `no-audit`, `busy` or `not-active` (a search
+     target's verdict and parameters are checked again before each attempt: a page whose reading
+     turned `unreadable`, or another search, meanwhile stops the run, never captured on the earlier
+     `ready`); `no-tab` ends the
      run (`tab-closed`), `no-project` ends it (`cancelled`), any other refusal fails the target;
   5. with screenshots asked, a viewport screenshot linked to the capture (`captureId`, the search
      parameters the capture recorded), asked again while it answers `not-active` or `busy` (another screenshot of the tab
@@ -526,6 +529,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   project on a phone profile is read on the desktop: its reading's key is the saved row's) and
   `capture-run-blocks-another-device-or-filters` (a site pin forcing mobile, a profile that could not
   be set, a filter on the landed URL: `mismatch`, nothing captured);
+  `capture-run-retry-checks-the-verdict-again` (`ready`, a capture refused `no-audit`, the verdict then
+  `unreadable`: the retry stops the run `unreadable`, nothing captured);
   `readings-spec.test.ts` `run-search-matches-built-urls`;
   `projects.test.ts` `rank-run-asks-once-before-first-search-run` (Cancel starts nothing; Continue
   remembered; a pages-only run never asks), `rank-run-disclosure-review-rulings` (a result-page page

@@ -561,6 +561,8 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
           // The project went while the run was under way: nothing more can be filed in it.
           if (answer.reason === 'no-project') return { result: { outcome: 'failed', changeCount: null, screenshot: null }, end: 'cancelled' };
           if (RETRY.has(answer.reason) || answer.reason === 'not-active') {
+            // A search target's verdict and parameters are checked again before the next attempt.
+            passed = null;
             await pause(run, limits.captureRetryMs);
             continue;
           }

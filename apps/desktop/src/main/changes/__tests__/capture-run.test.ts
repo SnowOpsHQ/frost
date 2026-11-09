@@ -1250,4 +1250,21 @@ describe('searches in a run', () => {
     expect(fake.seen.map((seen) => seen.url)).toEqual([MAPS, 'https://duckduckgo.com/about', A]);
     expect(at[2]![1] - at[0]![1]).toBeLessThan(SPACING);
   });
+  // spec: specs/projects.feature.md — Capture now (4. a search target's verdict is checked again before each attempt)
+  test('capture-run-retry-checks-the-verdict-again', async () => {
+    let verdict: SerpRunVerdict = 'ready';
+    const fake = setup({ serpVerdictOf: () => verdict, searchParamsOf: () => DESKTOP });
+    // The first attempt is refused for a retry; meanwhile the same page (URL and document unchanged) reads unreadable.
+    fake.capture.mockImplementationOnce(async () => {
+      verdict = 'unreadable';
+      return { status: 'refused', reason: 'no-audit' };
+    });
+    await fake.runs.start(plan([query(DESKTOP), ...pages(A)], { screenshot: true }));
+    await run(RETRY * 8);
+    expect(fake.runs.state()).toMatchObject({ state: 'blocked', blockedReason: 'unreadable' });
+    expect(outcomes(fake.runs.state())).toEqual(['blocked', 'cancelled']);
+    // Asked once (refused); never captured on the earlier ready verdict.
+    expect(fake.capture).toHaveBeenCalledOnce();
+    expect(fake.screenshot).not.toHaveBeenCalled();
+  });
 });
