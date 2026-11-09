@@ -24,8 +24,20 @@
  * (never the element under the pointer); frost stops them there. The page cannot pick for the user:
  * only trusted input (`event.isTrusted`) picks or ends a pick, and main hears Esc first (its key-up
  * too).
+ *
+ * Search and sources (Phase 11 Task 5, SL-047): `inspector.search` finds elements by their own text
+ * or a CSS selector, in `INSPECTOR_WORLD_ID`, and answers their paths (bounded by
+ * `INSPECTOR_SEARCH_LIMITS`); `inspector.source` answers the **rendered** source (the document's
+ * doctype and `<html>`'s `outerHTML`, serialised in that world, the inspector's own overlay host left
+ * out) or the **served** source (the HTML as the server sent it to the audit's cookieless fetch,
+ * decoded in the analysis worker, never in main), each capped at `INSPECTOR_SOURCE_MAX_CHARS`.
+ * `inspector.copySource` has main write, with the clipboard main holds, the source it answered under
+ * the `ref` the chrome names (rendered: the text main kept from that read; served: the served entry
+ * that `ref` names, still the tab's for its current document and URL): the chrome never sends the text. The chrome shows a source as inert text lines (React text, never
+ * markup), a page of rows at a time (`INSPECTOR_SOURCE_VIEW`).
  */
 import { PAGE_REGIONS } from './capture.spec';
+import type { ServedUnavailableReason } from './seo-javascript.spec';
 
 /**
  * The isolated world the inspector's scripts run in (its token, children, node details, the picker,
@@ -69,6 +81,35 @@ export type InspectorLimits = { readonly [K in Exclude<keyof typeof INSPECTOR_LI
 /** A computed style the details show (`INSPECTOR_LIMITS.computedStyleProps`). */
 export type InspectorStyleProp = (typeof INSPECTOR_LIMITS.computedStyleProps)[number];
 
+/** How `inspector.search` matches: an element's own text (its child text nodes, case-insensitive), or a CSS selector (`querySelectorAll`). */
+export const INSPECTOR_SEARCH_MODES = ['text', 'selector'] as const;
+export type InspectorSearchMode = (typeof INSPECTOR_SEARCH_MODES)[number];
+
+/**
+ * The bounds of one search: the longest query (characters), the most matches answered (in document
+ * order; past them `more` is true), and the most nodes (elements and text nodes; for a selector, the
+ * selector's matches) looked at before the search stops (`more` true too).
+ */
+export const INSPECTOR_SEARCH_LIMITS = { maxQueryChars: 200, maxResults: 200, maxNodesVisited: 50_000 } as const;
+
+/** Which source `inspector.source` reads: the page as it is now (`rendered`) or as the server sent it (`served`). */
+export const INSPECTOR_SOURCE_KINDS = ['rendered', 'served'] as const;
+export type InspectorSourceKind = (typeof INSPECTOR_SOURCE_KINDS)[number];
+
+/** The most characters (UTF-16 code units) of a source answered; past them it is cut (`truncated`). */
+export const INSPECTOR_SOURCE_MAX_CHARS = 2_000_000;
+
+/**
+ * How the panel shows a source (renderer only): split into lines, each long line wrapped into rows of
+ * at most `rowChars` characters (the first row of a line carries its number), at most `maxRows` rows
+ * (past them the view says so; Copy source still copies all of it). Only a window of rows is rendered:
+ * `pageRows` at first, "Show more lines" / "Show earlier lines" add `pageRows` after or before it, never
+ * more than `maxRendered` rows at once (the far end is dropped); moving to a find match outside the
+ * window renders the `pageRows` rows around it instead. Find-in-view lists at most `maxFindMatches`
+ * rows whose text holds the query (case-insensitive, within one row).
+ */
+export const INSPECTOR_SOURCE_VIEW = { rowChars: 500, maxRows: 100_000, pageRows: 500, maxRendered: 1_000, maxFindChars: 200, maxFindMatches: 10_000 } as const;
+
 /** A document's token: 32 lowercase hex characters, made in the inspector's world. */
 export const DOC_TOKEN_PATTERN = /^[0-9a-f]{32}$/;
 
@@ -82,9 +123,10 @@ export const DOC_TOKEN_PATTERN = /^[0-9a-f]{32}$/;
  * - `busy`: an element of this tab is already being picked;
  * - `cancelled`: the pick ended with nothing picked (Esc, Cancel, the timeout, the page moving on, the
  *   tab closing or leaving the front, the outline's host removed by the page);
- * - `failed`: the page did not answer in time, or answered something that is not an answer.
+ * - `failed`: the page did not answer in time, or answered something that is not an answer;
+ * - `invalid-selector`: a selector search's query is not a selector the page's browser understands.
  */
-export const INSPECTOR_REFUSALS = ['no-tab', 'not-active', 'no-page', 'stale', 'not-found', 'busy', 'cancelled', 'failed'] as const;
+export const INSPECTOR_REFUSALS = ['no-tab', 'not-active', 'no-page', 'stale', 'not-found', 'busy', 'cancelled', 'failed', 'invalid-selector'] as const;
 export type InspectorRefusal = (typeof INSPECTOR_REFUSALS)[number];
 
 /** How the Inspector panel explains a refusal (frost's own wording). */
@@ -97,6 +139,7 @@ export const INSPECTOR_REFUSAL_MESSAGES: Readonly<Record<InspectorRefusal, strin
   busy: 'An element is already being picked on this page.',
   cancelled: 'Pick cancelled.',
   failed: 'The page did not answer. Reload it and try again.',
+  'invalid-selector': 'That is not a CSS selector this page understands.',
 };
 
 /** Shown in the panel while an element is being picked. */
@@ -123,7 +166,39 @@ export const INSPECTOR_LABELS = {
   noAttributes: 'No attributes',
   loading: 'Reading the page…',
   shadow: 'shadow root (not entered)',
+  views: 'Inspector view',
+  viewTree: 'Tree',
+  viewRendered: 'Rendered',
+  viewServed: 'Served',
+  search: 'Search elements',
+  searchQuery: 'Text or selector to find',
+  searchModeText: 'Text',
+  searchModeSelector: 'CSS selector',
+  searchRun: 'Search',
+  searchResults: 'Matching elements',
+  searchNone: 'No element matches.',
+  searchMore: 'Only the first matches are listed. Narrow the search to see the rest.',
+  copySource: 'Copy source',
+  sourceCopied: 'Source copied.',
+  readSource: 'Read again',
+  findInSource: 'Find in source',
+  findPrevious: 'Previous match',
+  findNext: 'Next match',
+  findNone: 'Not in this source.',
+  showMoreLines: 'Show more lines',
+  showEarlierLines: 'Show earlier lines',
+  sourceLines: 'Source lines',
+  sourceTruncated: 'The source is longer than frost keeps, so only its first part is shown and copied.',
+  sourceRowsCut: 'The source has more lines than the panel lists. Copy source copies all of what frost kept.',
+  servedPending: 'frost is still fetching the served HTML for this page.',
+  sourceChanged: 'The page changed since this source was read, so it was read again. Copy it again if it is still what you want.',
 } as const;
+
+/** What each source view is (frost's own wording), shown above its lines. */
+export const INSPECTOR_SOURCE_NOTES: Readonly<Record<InspectorSourceKind, string>> = {
+  rendered: 'The page as it is now, after its scripts ran, serialised by the browser.',
+  served: 'The HTML the server sent to frost’s own fetch (no cookies), before any script ran.',
+};
 
 /**
  * A node's region: its landmark region (the rules of `changes-diff.feature.md`, Regions), or `head`
@@ -180,6 +255,29 @@ export interface InspectorHighlightInput {
   tabId: number;
   node: { path: NodePath; tag: string } | null;
   docToken: string;
+}
+
+/** `inspector.search`: elements of the tab's document matching `query` (`mode`: own text, or a CSS selector). */
+export interface InspectorSearchInput {
+  tabId: number;
+  docToken: string;
+  mode: InspectorSearchMode;
+  query: string;
+}
+
+/** `inspector.source`: the tab's `kind` source, for the document `docToken`. */
+export interface InspectorSourceInput {
+  tabId: number;
+  docToken: string;
+  kind: InspectorSourceKind;
+}
+/**
+ * `inspector.copySource`: the source the panel shows, named by the `ref` its `inspector.source`
+ * answer carried (never its text). Main copies only the text it answered under that `ref`, for that
+ * document; anything else is `stale`.
+ */
+export interface InspectorCopySourceInput extends InspectorSourceInput {
+  ref: number;
 }
 
 /** `inspector.cancelPick` and `inspector.clear`: the tab. */
@@ -258,6 +356,30 @@ export type InspectorNodeAnswer = { status: 'ok'; docToken: string; path: NodePa
 
 /** A pick: the path of the element clicked (the selection outline stays on it), or why not. */
 export type InspectorPickAnswer = { status: 'picked'; docToken: string; path: NodePath } | InspectorRefused;
+
+/** A search match: its path and its tree row (the row's `index` is the path's last step). */
+export interface InspectorSearchMatch {
+  path: NodePath;
+  node: InspectorChild;
+}
+
+/** A search's matches, in document order (at most `maxResults`; `more`: the search stopped before the end), or why not. */
+export type InspectorSearchAnswer = { status: 'ok'; docToken: string; matches: InspectorSearchMatch[]; more: boolean } | InspectorRefused;
+
+/**
+ * A source: its text (at most `INSPECTOR_SOURCE_MAX_CHARS`; `truncated`: the document, or the bytes
+ * frost fetched, were longer) and its `ref`, main's name for exactly this text (Copy source passes it
+ * back). The served source can also be `pending` (its fetch or parse is under way) or `unavailable`
+ * (the reason, and the HTTP status where known, as the JavaScript panel's).
+ */
+export type InspectorSourceAnswer =
+  | { status: 'ok'; kind: InspectorSourceKind; docToken: string; ref: number; text: string; truncated: boolean }
+  | { status: 'pending'; kind: 'served' }
+  | { status: 'unavailable'; kind: 'served'; reason: ServedUnavailableReason; httpStatus: number | null }
+  | InspectorRefused;
+
+/** `inspector.copySource`: main wrote the source it answered under `ref` to the clipboard, or why not (`stale`: the page, its URL or that source changed since). */
+export type InspectorCopySourceAnswer = { status: 'copied'; kind: InspectorSourceKind; truncated: boolean } | InspectorRefused;
 
 /** `inspector.highlight` and `inspector.clear`: done, or why not. */
 export type InspectorAck = { status: 'ok' } | InspectorRefused;

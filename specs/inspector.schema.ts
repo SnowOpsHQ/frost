@@ -6,21 +6,32 @@
  * it, and every answer a page script gives is checked with the same schemas in main before it is used.
  */
 import { z } from 'zod';
+import { SERVED_UNAVAILABLE_REASONS } from './seo-javascript.spec';
 import {
   DOC_TOKEN_PATTERN,
   INSPECTOR_LIMITS,
   INSPECTOR_REFUSALS,
   INSPECTOR_REGIONS,
+  INSPECTOR_SEARCH_LIMITS,
+  INSPECTOR_SEARCH_MODES,
+  INSPECTOR_SOURCE_KINDS,
+  INSPECTOR_SOURCE_MAX_CHARS,
   type InspectorAck,
   type InspectorChild,
   type InspectorChildrenAnswer,
   type InspectorChildrenInput,
+  type InspectorCopySourceAnswer,
+  type InspectorCopySourceInput,
   type InspectorHighlightInput,
   type InspectorNode,
   type InspectorNodeAnswer,
   type InspectorNodeInput,
   type InspectorPickAnswer,
   type InspectorPickInput,
+  type InspectorSearchAnswer,
+  type InspectorSearchInput,
+  type InspectorSourceAnswer,
+  type InspectorSourceInput,
   type InspectorTabInput,
 } from './inspector.spec';
 
@@ -50,6 +61,23 @@ export const InspectorNodeInputSchema = z.strictObject({ tabId, path: NodePathSc
 export const InspectorPickInputSchema = z.strictObject({ tabId, docToken }) satisfies z.ZodType<InspectorPickInput>;
 export const InspectorHighlightInputSchema = z.strictObject({ tabId, node: z.strictObject({ path: NodePathSchema, tag: TagSchema }).nullable(), docToken: DocTokenSchema }) satisfies z.ZodType<InspectorHighlightInput>;
 export const InspectorTabInputSchema = z.strictObject({ tabId }) satisfies z.ZodType<InspectorTabInput>;
+
+/**
+ * A search's query: 1 to `maxQueryChars` characters, not only whitespace, no control character (a
+ * line break included). It is data the page script compares or hands to `querySelectorAll`, never code.
+ */
+export const InspectorSearchQuerySchema = z
+  .string()
+  .min(1)
+  .max(INSPECTOR_SEARCH_LIMITS.maxQueryChars)
+  .refine((query) => query.trim() !== '', { message: 'an empty query' })
+  .refine((query) => !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(query), { message: 'a control character' });
+export const InspectorSearchInputSchema = z.strictObject({ tabId, docToken: DocTokenSchema, mode: z.enum(INSPECTOR_SEARCH_MODES), query: InspectorSearchQuerySchema }) satisfies z.ZodType<InspectorSearchInput>;
+export const InspectorSourceInputSchema = z.strictObject({ tabId, docToken: DocTokenSchema, kind: z.enum(INSPECTOR_SOURCE_KINDS) }) satisfies z.ZodType<InspectorSourceInput>;
+/** A source answer's `ref`: main's serial for exactly that text. */
+export const SourceRefSchema = z.int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+/** "Copy source": the tab, the document, which source and the `ref` it was answered under; never the text. */
+export const InspectorCopySourceInputSchema = z.strictObject({ tabId, docToken: DocTokenSchema, kind: z.enum(INSPECTOR_SOURCE_KINDS), ref: SourceRefSchema }) satisfies z.ZodType<InspectorCopySourceInput>;
 
 // ---- Answers -----------------------------------------------------------------------------------
 
@@ -111,3 +139,27 @@ export const InspectorPickAnswerSchema = z.discriminatedUnion('status', [
 ]) satisfies z.ZodType<InspectorPickAnswer>;
 
 export const InspectorAckSchema = z.discriminatedUnion('status', [z.strictObject({ status: z.literal('ok') }), InspectorRefusedSchema]) satisfies z.ZodType<InspectorAck>;
+
+export const InspectorSearchAnswerSchema = z.discriminatedUnion('status', [
+  z.strictObject({
+    status: z.literal('ok'),
+    docToken: DocTokenSchema,
+    matches: z.array(z.strictObject({ path: NodePathSchema, node: InspectorChildSchema })).max(INSPECTOR_SEARCH_LIMITS.maxResults),
+    more: z.boolean(),
+  }),
+  InspectorRefusedSchema,
+]) satisfies z.ZodType<InspectorSearchAnswer>;
+
+const sourceKind = z.enum(INSPECTOR_SOURCE_KINDS);
+const httpStatus = z.int().min(100).max(999).nullable();
+const servedPending = z.strictObject({ status: z.literal('pending'), kind: z.literal('served') });
+const servedUnavailable = z.strictObject({ status: z.literal('unavailable'), kind: z.literal('served'), reason: z.enum(SERVED_UNAVAILABLE_REASONS), httpStatus });
+
+export const InspectorSourceAnswerSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('ok'), kind: sourceKind, docToken: DocTokenSchema, ref: SourceRefSchema, text: z.string().max(INSPECTOR_SOURCE_MAX_CHARS), truncated: z.boolean() }),
+  servedPending,
+  servedUnavailable,
+  InspectorRefusedSchema,
+]) satisfies z.ZodType<InspectorSourceAnswer>;
+
+export const InspectorCopySourceAnswerSchema = z.discriminatedUnion('status', [z.strictObject({ status: z.literal('copied'), kind: sourceKind, truncated: z.boolean() }), InspectorRefusedSchema]) satisfies z.ZodType<InspectorCopySourceAnswer>;

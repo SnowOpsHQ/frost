@@ -128,6 +128,15 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
   type `not-html`, each fetch failure its own reason, a parse failure or timeout `parse-failed` /
   `parse-timeout`; a ready state carries the fetch facts and validates (`ServedStateSchema`).
 
+- **Scenario: served-source-decoded-in-worker-and-capped** — the parse answers the decoded text as
+  `sourceText` (the same decoding: a meta charset honoured), cut at `SERVED_SOURCE_MAX_CHARS`
+  (`sourceTruncated`); main keeps it beside the ready state (never in it) and answers it with
+  `truncated` when the fetched bytes were cut; a source that is not a capped string is not kept.
+- **Scenario: served-source-kept-for-four-documents** — sources are kept for the `SERVED_SOURCE_KEEP`
+  most recently parsed documents over all tabs; an older one, and one dropped by Fetch again,
+  `forget` or `clear`, is gone while the served state stays as it was. Each answer has its own
+  serial (`ref`; a fetch again is a new one), and `forget` bumps the tab document's generation.
+
 ## Parsing (`served-parse.test.ts`)
 - **Scenario: served-parse-reads-fields** — every field of the served snapshot is read as the
   extractor reads it (titles, descriptions, robots metas with bot names, canonicals, `og:url`, lang,

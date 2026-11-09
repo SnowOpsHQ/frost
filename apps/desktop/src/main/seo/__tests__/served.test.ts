@@ -1,11 +1,15 @@
-// Spec: specs/seo-javascript.spec.ts (SERVED_FETCH_LIMITS, SERVED_ACCEPT, SERVED_UNAVAILABLE_REASONS), specs/fetcher.spec.ts
-// Acceptance: specs/seo-javascript.feature.md (Fetching)
+// Spec: specs/seo-javascript.spec.ts (SERVED_FETCH_LIMITS, SERVED_ACCEPT, SERVED_UNAVAILABLE_REASONS, SERVED_SOURCE_MAX_CHARS,
+// SERVED_SOURCE_KEEP), specs/seo-javascript.schema.ts (ServedParseResult's sourceText), specs/fetcher.spec.ts
+// Acceptance: specs/seo-javascript.feature.md (Fetching; Phase 11 Task 5: served-source-decoded-in-worker-and-capped,
+// served-source-kept-for-four-documents)
 import { describe, expect, test, vi } from 'vitest';
 import type { BoundedFetcher, BoundedFetchRequest, BoundedFetchResult } from '@app/specs/fetcher.spec';
-import { SERVED_ACCEPT, SERVED_FETCH_LIMITS, SERVED_LEAD_TEXT_MAX_CHARS } from '@app/specs/seo-javascript.spec';
+import { SERVED_ACCEPT, SERVED_FETCH_LIMITS, SERVED_LEAD_TEXT_MAX_CHARS, SERVED_SOURCE_KEEP, SERVED_SOURCE_MAX_CHARS } from '@app/specs/seo-javascript.spec';
 import { ServedStateSchema, type ServedParseInput, type ServedParseResult } from '@app/specs/seo-javascript.schema';
 import { createServedHtml } from '../served';
 import { parseServedHtml } from '../served-parse';
+import { SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
+import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 
 const PAGE = 'https://example.com/guide';
 const HTML = new TextEncoder().encode('<html><head><title>Served</title></head><body><p>Hello world</p></body></html>');
@@ -177,5 +181,97 @@ describe('served HTML', () => {
     expect(ServedStateSchema.safeParse({ ...state, snapshot: without }).success).toBe(true);
     // Over its cap it is not a served snapshot.
     expect(ServedStateSchema.safeParse({ ...state, snapshot: { ...without, leadText: 'x'.repeat(SERVED_LEAD_TEXT_MAX_CHARS + 1) } }).success).toBe(false);
+  });
+
+  test('served-source-decoded-in-worker-and-capped', async () => {
+    // The worker's parse decodes the bytes (a meta charset honoured) and answers the text with the parse.
+    const latin = Uint8Array.from([...new TextEncoder().encode('<html><head><meta charset="windows-1252"><title>Caf'), 0xe9, ...new TextEncoder().encode('</title></head><body>x</body></html>')]);
+    const parsed = parseServedHtml({ url: PAGE, contentType: 'text/html', body: latin });
+    expect(parsed).toMatchObject({ ok: true, sourceText: '<html><head><meta charset="windows-1252"><title>Café</title></head><body>x</body></html>', sourceTruncated: false });
+    // Cut at the cap, never splitting a surrogate pair.
+    const emoji = new TextEncoder().encode('<p>abcdefgh😀😀</p>');
+    expect(parseServedHtml({ url: PAGE, contentType: 'text/html', body: emoji }, SERVED_PARSE_LIMITS, SNAPSHOT_LIMITS, 12)).toMatchObject({ ok: true, sourceText: '<p>abcdefgh', sourceTruncated: true });
+    expect(parseServedHtml({ url: PAGE, contentType: 'text/html', body: emoji }, SERVED_PARSE_LIMITS, SNAPSHOT_LIMITS, 13)).toMatchObject({ ok: true, sourceText: '<p>abcdefgh😀', sourceTruncated: true });
+    const big = parseServedHtml({ url: PAGE, contentType: 'text/html', body: new TextEncoder().encode(`<p>${'x'.repeat(SERVED_SOURCE_MAX_CHARS)}</p>`) });
+    expect(big.ok && big.sourceText?.length === SERVED_SOURCE_MAX_CHARS && big.sourceTruncated).toBe(true);
+
+    // Main keeps what the worker answered beside the state (never in it), and never decodes itself.
+    const { served } = setup();
+    const state = await served.get(1, PAGE, null);
+    expect(ServedStateSchema.safeParse(state).success).toBe(true);
+    expect(JSON.stringify(state)).not.toContain('sourceText');
+    expect(served.source(1, `${PAGE}#x`, null)).toEqual({ status: 'ready', ref: expect.any(Number), text: new TextDecoder().decode(HTML), truncated: false });
+    // Another key: nothing fetched for it.
+    expect(served.source(1, PAGE, 'Bingbot')).toEqual({ status: 'unavailable', reason: 'not-fetched', httpStatus: null });
+    expect(served.source(1, PAGE, null, { scripting: false })).toEqual({ status: 'unavailable', reason: 'not-fetched', httpStatus: null });
+    // Fetched bytes that were cut, or text the worker cut, are flagged.
+    const cutBytes = setup(() => result({ truncated: true }));
+    await cutBytes.served.get(1, PAGE, null);
+    expect(cutBytes.served.source(1, PAGE, null)).toMatchObject({ status: 'ready', truncated: true });
+    const cutText = setup(undefined, async (input) => ({ ...parseServedHtml(input), sourceText: 'cut', sourceTruncated: true }) as ServedParseResult);
+    await cutText.served.get(1, PAGE, null);
+    expect(cutText.served.source(1, PAGE, null)).toMatchObject({ status: 'ready', text: 'cut', truncated: true });
+    // A source that is not a capped string is not kept: the state stays ready, the source reads as not fetched.
+    for (const bad of ['x'.repeat(SERVED_SOURCE_MAX_CHARS + 1), 5, { text: 'x' }, undefined]) {
+      const odd = setup(undefined, async (input) => ({ ...parseServedHtml(input), sourceText: bad }) as unknown as ServedParseResult);
+      expect((await odd.served.get(1, PAGE, null)).status).toBe('ready');
+      expect(odd.served.source(1, PAGE, null)).toEqual({ status: 'unavailable', reason: 'not-fetched', httpStatus: null });
+    }
+    // The states before and beside it.
+    const slow = setup(undefined, () => new Promise(() => undefined));
+    void slow.served.get(1, PAGE, null);
+    expect(slow.served.source(1, PAGE, null)).toEqual({ status: 'pending' });
+    const failing = setup(() => result({ status: 503, body: new Uint8Array(0) }));
+    await failing.served.get(1, PAGE, null);
+    expect(failing.served.source(1, PAGE, null)).toEqual({ status: 'unavailable', reason: 'http-status', httpStatus: 503 });
+    expect(served.source(1, 'about:blank', null)).toEqual({ status: 'unavailable', reason: 'not-fetched', httpStatus: null });
+  });
+
+  test('served-source-kept-for-four-documents', async () => {
+    expect(SERVED_SOURCE_KEEP).toBe(4);
+    const { served } = setup((request) => result({ url: request.url, finalUrl: request.url }));
+    const kept = (id: number, url = PAGE) => served.source(id, url, null).status === 'ready';
+    for (let id = 1; id <= SERVED_SOURCE_KEEP + 1; id++) await served.get(id, PAGE, null);
+    // The oldest document's source went; its served state stays.
+    expect([1, 2, 3, 4, 5].map((id) => kept(id))).toEqual([false, true, true, true, true]);
+    expect(served.peek(1, PAGE, null)?.status).toBe('ready');
+    // Kept per document over all tabs: a second URL in tab 2 is one more document.
+    await served.get(2, `${PAGE}/next`, null);
+    expect([2, 3].map((id) => kept(id))).toEqual([false, true]);
+    expect(kept(2, `${PAGE}/next`)).toBe(true);
+    // Each answer has its own ref, and a fetch again is a new one.
+    const refOf = (id: number, url = PAGE) => {
+      const source = served.source(id, url, null);
+      return source.status === 'ready' ? source.ref : null;
+    };
+    const refs = [refOf(3), refOf(4), refOf(5), refOf(2, `${PAGE}/next`)];
+    expect(new Set(refs).size).toBe(4);
+    // `forget` (a new document) bumps the tab document's generation; nothing else does.
+    expect(served.generation(4)).toBe(0);
+    served.drop(5, PAGE);
+    await served.get(5, PAGE, null);
+    expect(served.generation(5)).toBe(0);
+    expect(refOf(5)).not.toBe(refs[2]);
+    expect(refOf(5)).toBeGreaterThan(refs[2]!);
+    // Fetch again, a new document and Clear Browsing Data drop the source with its answer.
+    served.drop(3, PAGE);
+    expect(kept(3)).toBe(false);
+    served.forget(4);
+    expect(kept(4)).toBe(false);
+    expect(served.generation(4)).toBe(1);
+    served.forget(4);
+    expect(served.generation(4)).toBe(2);
+    served.clear();
+    expect(kept(5)).toBe(false);
+    expect(kept(2, `${PAGE}/next`)).toBe(false);
+    // A source settling after its answer was dropped is not kept.
+    let finish: (value: ServedParseResult) => void = () => undefined;
+    const late = setup(undefined, () => new Promise<ServedParseResult>((resolve) => (finish = resolve)));
+    const pendingState = late.served.get(1, PAGE, null);
+    await vi.waitFor(() => expect(late.parsed).toHaveBeenCalled());
+    late.served.forget(1);
+    finish(parseServedHtml({ url: PAGE, contentType: 'text/html', body: HTML }));
+    await pendingState;
+    expect(late.served.source(1, PAGE, null)).toEqual({ status: 'unavailable', reason: 'not-fetched', httpStatus: null });
   });
 });

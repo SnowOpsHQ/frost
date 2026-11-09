@@ -60,6 +60,43 @@ state lives on the isolated world's own global.
   follow scrolling and resizing. The host is removed as soon as nothing is outlined; a host the page
   appends again is inert (empty, hidden, no listener). Nothing is ever written to a page element.
 
+## Search and sources (Phase 11 Task 5, SL-047)
+Spec: `INSPECTOR_SEARCH_MODES`, `INSPECTOR_SEARCH_LIMITS`, `INSPECTOR_SOURCE_KINDS`,
+`INSPECTOR_SOURCE_MAX_CHARS`, `INSPECTOR_SOURCE_VIEW`, `INSPECTOR_SOURCE_NOTES`, the refusal
+`invalid-selector`; `seo-javascript.spec.ts` `SERVED_SOURCE_MAX_CHARS`, `SERVED_SOURCE_KEEP`.
+- **Search** (`search(token, mode, query)`, in `INSPECTOR_WORLD_ID`, read-only): `text` walks the
+  document's elements in document order (the overlay's host left out) and matches an element whose
+  own text (its child text nodes) holds the query, case-insensitive; `selector` hands the query to
+  `querySelectorAll` (a query it throws on answers `invalid-selector`). It answers each match's path
+  and tree row, at most `maxResults`; it looks at no more than `maxNodesVisited` nodes (text mode:
+  `<html>` and every child node it walks, of any kind (element, text, comment), each once; selector
+  mode: the selector's matches). Stopping at either cap sets `more`. A match deeper than
+  `maxPathDepth` is left out (a selector match's ancestor chain is checked before its path is made). The query is data in the script's request (JSON), never code; it is
+  1–`maxQueryChars` characters, not blank, with no control character.
+- **Rendered source** (`source(token)`, in `INSPECTOR_WORLD_ID`, read-only): the doctype (its
+  name, public and system ids), a line break, and `<html>`'s `outerHTML`; nodes outside `<html>`
+  (comments before or after it) are left out. The overlay's host is left out: while it is in the
+  page the top level is serialised child by child, `<html>`'s start tag written from its attributes
+  with HTML attribute escaping (`&`, U+00A0, `"`), never by cloning it (a clone of a customised
+  built-in would run the page's constructor); the host itself is never touched. Cut at
+  `INSPECTOR_SOURCE_MAX_CHARS` without splitting a surrogate pair (`truncated`). Bounded by
+  `scriptTimeoutMs` like every inspector call. Main keeps the last rendered source it answered (one,
+  over all tabs) under a fresh `ref`.
+- **Served source**: main never fetches for it and never decodes. The served HTML the audit fetched
+  (`seo-javascript.feature.md`, Fetching) is decoded in the analysis worker with its parse, which
+  answers `sourceText` (cut at `SERVED_SOURCE_MAX_CHARS`, `sourceTruncated`); main checks it and
+  keeps it for the `SERVED_SOURCE_KEEP` most recent documents, each answer with a serial (`ref`). The
+  service reads the tab document's generation (bumped by each new document) and URL, has the page
+  confirm its token, and reads both again: the page not the panel's, or either changed meanwhile, is
+  `stale`. Then it answers the tab's served state for its URL, user agent and scripting: `pending`,
+  `unavailable` (the reason and HTTP status), `not-fetched` when nothing was fetched or its source is
+  no longer kept, or the text and its `ref` (`truncated` when the text or the fetched bytes were cut).
+- **Copy source** (`copySource(tabId, docToken, kind, ref)`): the chrome names the `ref` of the
+  source it shows, never its text. Rendered: main writes the text it kept under that `ref`, if it is
+  the last one it answered, for that tab and document, and the page still shows that document.
+  Served: main writes the served entry that `ref` names, if it is still the tab's for its current
+  document and URL (checked as above). Anything else is `stale` and nothing is written.
+
 ## The service
 `createInspectorService(deps)` (main):
 - only the active tab (`not-active`), an open one (`no-tab`), showing an `http(s)` page (`no-page`);
@@ -75,12 +112,13 @@ state lives on the isolated world's own global.
 - never rejects; one log line per failure in frost's own words, never page text or a URL.
 
 ## Router
-`inspector.children` and `inspector.node` (queries), `inspector.pick`, `inspector.cancelPick`,
-`inspector.highlight` and `inspector.clear` (mutations). Each starts `enforceSender`, then
-`requireInspector` (fails closed without the service), takes a strict input (`tabId`, a path and its
-expected tag, the `docToken`, an offset; never a selector, a script or page text; a `null` token or
-tag only for `children` of `[]` from offset 0, and a `null` token for `pick`) and checks its answer
-on the way out.
+`inspector.children`, `inspector.node`, `inspector.search` and `inspector.source` (queries),
+`inspector.pick`, `inspector.cancelPick`, `inspector.highlight`, `inspector.clear` and
+`inspector.copySource` (mutations). Each starts `enforceSender`, then `requireInspector` (fails
+closed without the service), takes a strict input (`tabId`, a path and its expected tag, the
+`docToken`, an offset, a search mode and query, a source kind; never a script or page text, and a
+selector only as `search`'s capped query; a `null` token or tag only for `children` of `[]` from
+offset 0, and a `null` token for `pick`) and checks its answer on the way out.
 
 ## The panel
 An Inspector rail item after Changes (`SEO_PANELS`, no rules, no status dot).
@@ -104,6 +142,19 @@ An Inspector rail item after Changes (`SEO_PANELS`, no rules, no status dot).
   top of the tree again with the panel's token, without waiting for the page to finish loading: the
   same document answering keeps the tree and its outlines; a `stale` answer clears the tab and reads
   the tree afresh, with a note. Another tab starts afresh.
+- **Views**: Tree, Rendered and Served (a toggle of pressed buttons). The Tree view has a search
+  form (mode Text or CSS selector, the query, Search); its matches are a list of rows
+  (`<tag#id.class>` and the text preview, inert text); choosing one opens the tree down to it and
+  selects it, as a pick does. A source view reads its source for the panel's document when shown
+  (and again on "Read again" or a new document), says what it is (`INSPECTOR_SOURCE_NOTES`), and
+  lists it as numbered text rows (`INSPECTOR_SOURCE_VIEW`: long lines wrapped into rows, a page of
+  rows rendered at a time, "Show more lines" / "Show earlier lines", never more than `maxRendered`),
+  each row React text in `<bdi dir="auto">`, never markup. Find in source marks the rows holding the
+  query and moves between them (Enter, Previous, Next); a match outside the rendered rows renders the
+  page of rows around it instead. Copy source asks main with the view's `ref`; a `stale` answer reads
+  the source again and says so. A source view reads again on a new URL in the same document (an
+  in-page move). The served view says when the served HTML is still being fetched (it reads again
+  every second, a few times) or why there is none (`SERVED_UNAVAILABLE_MESSAGES`).
 - **Command palette** (`inspector-palette.ts`): "Open Inspector" (its own jump, in
   `FEATURE_PANEL_JUMPS`) and "Pick an element" (on a web page; opens the panel and picks, for
   whichever document is shown: a `null` token).
@@ -145,6 +196,20 @@ An Inspector rail item after Changes (`SEO_PANELS`, no rules, no status dot).
 - `inspector-scripts-are-self-contained`: every script compiles and runs in a fresh context; it
   runs in `INSPECTOR_WORLD_ID`.
 
+- `search-text-finds-paths`: text search finds elements by their own text, case-insensitive, in
+  document order, with paths that resolve and rows; the overlay's host is never a match.
+- `search-selector-invalid-refused`: a selector search answers matching paths; a query
+  `querySelectorAll` throws on answers `invalid-selector`.
+- `search-capped`: at most `maxResults` matches (`more`), and at most `maxNodesVisited` nodes
+  looked at, comments and empty elements included (`more`); a selector match deeper than
+  `maxPathDepth` is left out; a stale token is `stale`.
+- `serialize-capped-and-truncated-flag`: the rendered source is the doctype, a line break and
+  `<html>`'s `outerHTML`, the overlay's host left out (`<html>`'s start tag from its attributes,
+  escaped, and no node cloned); past the cap it is cut (`truncated`), never splitting a surrogate
+  pair; the answer validates.
+- `scripts-never-write-dom`: after searches (both modes, an invalid selector included) and source
+  reads, with and without an outline showing, `outerHTML` is as it was and no element has a `style`.
+
 ### Service (`apps/desktop/src/main/inspector/__tests__/service.test.ts`)
 - `inspector-service-refusals`: `no-tab`, `not-active`, `no-page`; `clear` on another open tab.
 - `inspector-service-deadlines`: a page that never answers is `failed` after the deadline (the pick
@@ -155,14 +220,25 @@ An Inspector rail item after Changes (`SEO_PANELS`, no rules, no status dot).
 - `inspector-pick-cancel-paths`: navigation, closing, tab switch, `clear` and main's Esc cancel (its
   key-up kept from the page once); a subframe navigation or another key does not.
 - `inspector-tabs-follow-the-browser`.
+- `search-stale-doc-refused`: a search or rendered-source answer for another document is `stale`;
+  `invalid-selector` passes through for a search only; answers are checked (over-long, extra keys).
+- `served-source-unavailable-reason`: the served source is `stale` for another document, or when the
+  tab's document generation or URL changed while the page was asked; then `pending`, `unavailable`
+  with the reason and status, `not-fetched` without a source, or the text and its `ref`.
+- `copy-source-from-main`: Copy source writes the rendered text main kept under the `ref` (not a
+  newer reading of the page), or the served entry the `ref` names; another `ref`, document, tab,
+  generation or URL, or a served source no longer ready is `stale` and writes nothing.
 
 ### Router (`packages/ipc-contract/src/__tests__/inspector-router.test.ts`)
-- `every-inspector-procedure-enforces-sender`, `inspector-inputs-are-validated`,
-  `inspector-procedures-call-service`.
+- `every-inspector-procedure-enforces-sender` (the new `search`, `source` and `copySource` too),
+  `inspector-inputs-are-validated`, `inspector-procedures-call-service`.
 
 ### Panel helpers (`apps/desktop/src/renderer/__tests__/inspector-view.test.ts`)
 - `inspector-row-labels`, `inspector-tree-model`, `inspector-tree-keys`, `inspector-details-text`,
-  `inspector-palette-actions`.
+  `inspector-palette-actions`, `source-lines-are-text` (a source's rows are plain strings, numbered
+  and wrapped, capped, found case-insensitively; the line list renders markup as text, only its
+  window), `source-window-bounded` (the first window, a far match's window, and showing more lines
+  after or before never render more than `maxRendered` rows).
 
 ### End to end (`apps/desktop/e2e/inspector.e2e.ts`, a loopback page)
 - `inspector-tree-expands-to-h1`: the keyboard opens `<html>` → `<body>` → `<main>` and selects the H1.
@@ -176,3 +252,8 @@ An Inspector rail item after Changes (`SEO_PANELS`, no rules, no status dot).
   it was.
 - `inspector-stale-after-navigation`: after the tab moves to another page, the tree is read again
   from the top with the note, and shows the new page.
+- `inspector-search-selects-node`: a CSS-selector search lists the H1; choosing it opens the tree to it
+  and shows its details; a text search finds the link; an invalid selector says so.
+- `rendered-and-served-source`: the Rendered view lists the page's markup as text (the doctype, a
+  script's source as text, the H1 after the page's script changed it); the Served view lists the HTML
+  as served (the H1 as the server sent it); find marks a row; Copy source writes main's text.

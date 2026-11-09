@@ -1,19 +1,27 @@
 import type { InspectorService } from '@app/ipc-contract';
 import {
+  DocTokenSchema,
   InspectorAckSchema,
   InspectorChildrenAnswerSchema,
   InspectorNodeAnswerSchema,
   InspectorPickAnswerSchema,
+  InspectorSearchAnswerSchema,
+  InspectorSourceAnswerSchema,
   type InspectorAck,
   type InspectorChildrenAnswer,
+  type InspectorCopySourceAnswer,
   type InspectorNodeAnswer,
   type InspectorPickAnswer,
   type InspectorRefusal,
+  type InspectorSearchAnswer,
+  type InspectorSourceAnswer,
+  type InspectorSourceKind,
   type NodePath,
 } from '@app/specs/inspector.schema';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import type { WebContents } from 'electron';
-import type { z } from 'zod';
+import { z } from 'zod';
+import type { ServedSourceState } from '../seo/served';
 import { INSPECTOR_SCRIPT_LIMITS, runInspector, type InspectorRequest, type InspectorScriptLimits, type InspectorScriptTarget } from './page-script';
 
 // The DOM inspector (Phase 6 Task 8; spec `inspector.spec.ts`, `inspector.schema.ts`; acceptance
@@ -24,6 +32,15 @@ import { INSPECTOR_SCRIPT_LIMITS, runInspector, type InspectorRequest, type Insp
 // time; a main-frame navigation, the tab closing or leaving the front, Esc (heard by main before the
 // page) or `cancelPick` end it. The service never rejects: each failure is a refusal and one log
 // line in frost's own words (never page text or a URL).
+//
+// Search and sources (Phase 11 Task 5): `search` and the rendered source run in the same world with
+// the same deadline and checks. The served source is never fetched or decoded here: it is the text the
+// analysis worker decoded for the audit's served fetch, kept by `seo/served.ts` (`served`), and
+// answered only if the page confirms it still shows the panel's document **and** the tab's document
+// generation and URL did not change while it was asked. Each source answer carries a `ref`: "Copy
+// source" names it and main writes, with the clipboard it holds, only the text it answered under that
+// `ref` (rendered: the text it kept from that read; served: the served entry that `ref` names, still
+// the tab's for its current document and URL), else `stale`. The chrome never sends the text.
 
 /** A tab's WebContents as the inspector uses it (its `did-start-navigation`, `destroyed` and `before-input-event` events while picking). */
 export interface InspectorContents extends InspectorScriptTarget, Pick<NodeJS.EventEmitter, 'on' | 'removeListener'> {
@@ -31,6 +48,14 @@ export interface InspectorContents extends InspectorScriptTarget, Pick<NodeJS.Ev
   isDestroyed(): boolean;
   /** Gives the page keyboard focus, so the user's Esc reaches it while picking. */
   focus?(): void;
+}
+
+/** The served HTML of a tab's page, as the Inspector reads it (`seo/served.ts`); never fetches. */
+export interface InspectorServed {
+  /** The tab's document as the served cache knows it: its navigation generation (`ServedHtml.generation`) and its current URL. */
+  document(contents: InspectorContents): { readonly generation: number; readonly url: string };
+  /** The served source of the tab's current page (`ServedHtml.source`); `null`/`undefined`: nothing fetched. */
+  source(contents: InspectorContents): ServedSourceState | null | undefined;
 }
 
 /** What the service needs of the browser. */
@@ -49,6 +74,10 @@ export interface InspectorServiceDeps {
   readonly activePollMs?: number;
   /** Runs a request in the tab's inspector world (tests replace it). */
   readonly run?: (target: InspectorScriptTarget, request: InspectorRequest, limits: InspectorScriptLimits) => Promise<unknown>;
+  /** The served source of the tab's current page (`seo/served.ts`, `ServedHtml.source`): never fetches. `null`/`undefined`: nothing fetched. */
+  readonly served?: InspectorServed;
+  /** Electron's `clipboard` in main ("Copy source"); without it nothing is written. */
+  readonly clipboard?: { writeText(text: string): void };
 }
 
 const ACTIVE_POLL_MS = 250;
@@ -66,6 +95,11 @@ const OK_CHILDREN = InspectorChildrenAnswerSchema.options[0];
 const OK_NODE = InspectorNodeAnswerSchema.options[0];
 const PICKED = InspectorPickAnswerSchema.options[0];
 const ACK = InspectorAckSchema.options[0];
+const OK_SEARCH = InspectorSearchAnswerSchema.options[0];
+/** The rendered source as the page answers it (the service adds `kind`). */
+const PAGE_SOURCE = InspectorSourceAnswerSchema.options[0].omit({ kind: true, ref: true });
+const OK_SOURCE = InspectorSourceAnswerSchema.options[0];
+const TOKEN_ANSWER = z.strictObject({ docToken: DocTokenSchema });
 
 export function createInspectorService(deps: InspectorServiceDeps): InspectorService {
   const { tabs } = deps;
@@ -216,6 +250,69 @@ export function createInspectorService(deps: InspectorServiceDeps): InspectorSer
     contents.on('before-input-event', onUp);
   }
 
+  /** The last rendered source answered (one, over all tabs): what Copy source writes for its `ref`. */
+  let held: { readonly tabId: number; readonly docToken: string; readonly ref: number; readonly text: string; readonly truncated: boolean } | null = null;
+  let refs = 0;
+
+  /** Whether the page still shows the document `docToken` (`stale` if not; `failed` on no answer). */
+  async function sameDocument(contents: InspectorContents, docToken: string): Promise<true | InspectorRefusal> {
+    const token = parse(await script(contents, { op: 'token' }, limits.scriptTimeoutMs), TOKEN_ANSWER, 'token');
+    if (typeof token === 'string') return token;
+    return token.docToken === docToken ? true : 'stale';
+  }
+
+  /**
+   * The tab's served source for the document `docToken`: the tab's document generation and URL are
+   * read before the page confirms its token and again after, and either changing meanwhile is `stale`.
+   */
+  async function servedFor(contents: InspectorContents, docToken: string): Promise<ServedSourceState | InspectorRefusal> {
+    const served = deps.served;
+    const before = served?.document(contents);
+    const same = await sameDocument(contents, docToken);
+    if (same !== true) return same;
+    if (!served || !before) return { status: 'unavailable', reason: 'not-fetched', httpStatus: null };
+    const after = served.document(contents);
+    if (after.generation !== before.generation || after.url !== before.url) return 'stale';
+    return served.source(contents) ?? { status: 'unavailable', reason: 'not-fetched', httpStatus: null };
+  }
+
+  /** The tab's `kind` source for the document `docToken` (rendered: read from the page and kept for Copy source; served: from the served cache). */
+  async function readSource(tabId: number, docToken: string, kind: InspectorSourceKind): Promise<InspectorSourceAnswer> {
+    const contents = targetOf(tabId);
+    if (typeof contents === 'string') return refused(contents);
+    if (kind === 'rendered') {
+      const answer = parse(await script(contents, { op: 'source', token: docToken }, limits.scriptTimeoutMs), PAGE_SOURCE, 'source');
+      if (typeof answer === 'string') return refused(answer);
+      if (answer.docToken !== docToken) return refused('stale');
+      const ref = ++refs;
+      held = { tabId, docToken, ref, text: answer.text, truncated: answer.truncated };
+      return { ...answer, kind, ref };
+    }
+    const served = await servedFor(contents, docToken);
+    if (typeof served === 'string') return refused(served);
+    if (served.status === 'pending') return { status: 'pending', kind };
+    if (served.status === 'unavailable') return { status: 'unavailable', kind, reason: served.reason, httpStatus: served.httpStatus };
+    const answer = OK_SOURCE.safeParse({ status: 'ok', kind, docToken, ref: served.ref, text: served.text, truncated: served.truncated });
+    if (answer.success) return answer.data;
+    log('the served source is not one');
+    return refused('failed');
+  }
+
+  /** The text answered under `ref` for the document `docToken`, if it is still what the tab shows; else why not. */
+  async function copyable(tabId: number, docToken: string, kind: InspectorSourceKind, ref: number): Promise<{ readonly text: string; readonly truncated: boolean } | InspectorRefusal> {
+    const contents = targetOf(tabId);
+    if (typeof contents === 'string') return contents;
+    if (kind === 'rendered') {
+      const kept = held;
+      if (kept === null || kept.tabId !== tabId || kept.docToken !== docToken || kept.ref !== ref) return 'stale';
+      const same = await sameDocument(contents, docToken);
+      return same === true ? kept : same;
+    }
+    const served = await servedFor(contents, docToken);
+    if (typeof served === 'string') return served;
+    return served.status === 'ready' && served.ref === ref ? served : 'stale';
+  }
+
   return {
     children: (tabId, path, tag, docToken, offset) =>
       guarded<InspectorChildrenAnswer>(
@@ -275,6 +372,37 @@ export function createInspectorService(deps: InspectorServiceDeps): InspectorSer
         refused('failed'),
       ),
 
+    search: (tabId, docToken, mode, query) =>
+      guarded<InspectorSearchAnswer>(
+        'search',
+        async () => {
+          const contents = targetOf(tabId);
+          if (typeof contents === 'string') return refused(contents);
+          const raw = await script(contents, { op: 'search', token: docToken, mode, query }, limits.scriptTimeoutMs);
+          // Only a selector can be one the page's browser does not understand.
+          if (mode === 'selector' && isPlainObject(raw) && Object.keys(raw).length === 1 && raw['status'] === 'invalid-selector') return refused('invalid-selector');
+          const answer = parse(raw, OK_SEARCH, 'search');
+          if (typeof answer === 'string') return refused(answer);
+          return answer.docToken !== docToken ? refused('stale') : answer;
+        },
+        refused('failed'),
+      ),
+
+    source: (tabId, docToken, kind) => guarded<InspectorSourceAnswer>('source', () => readSource(tabId, docToken, kind), refused('failed')),
+
+    copySource: (tabId, docToken, kind, ref) =>
+      guarded<InspectorCopySourceAnswer>(
+        'copy source',
+        async () => {
+          const source = await copyable(tabId, docToken, kind, ref);
+          if (typeof source === 'string') return refused(source);
+          if (!deps.clipboard) return refused('failed');
+          deps.clipboard.writeText(source.text);
+          return { status: 'copied', kind, truncated: source.truncated };
+        },
+        refused('failed'),
+      ),
+
     // Any open tab (not only the one in front): the panel clears the tab it leaves.
     clear: (tabId) =>
       guarded<InspectorAck>(
@@ -297,7 +425,25 @@ export function inspectorTabs(browser: { getState(): { readonly activeTabId: num
 }
 
 /** Main's inspector over Electron: the tabs' live WebContents (`index.ts` creates it with one line). */
-export function createMainInspector({ browser, tabContents, log }: { readonly browser: { getState(): { readonly activeTabId: number | null }; tabIdOf(contents: WebContents): number | null }; readonly tabContents: ReadonlyMap<number, WebContents>; readonly log: (message: string) => void }): InspectorService {
+export function createMainInspector({
+  browser,
+  tabContents,
+  log,
+  served,
+  clipboard,
+}: {
+  readonly browser: { getState(): { readonly activeTabId: number | null }; tabIdOf(contents: WebContents): number | null };
+  readonly tabContents: ReadonlyMap<number, WebContents>;
+  readonly log: (message: string) => void;
+  /** The tab's served HTML (`ServedHtml.generation`, and `.source` for its URL, user agent and scripting); read lazily, so the served cache may be set up later. */
+  readonly served?: { document(contents: WebContents): { readonly generation: number; readonly url: string }; source(contents: WebContents): ServedSourceState | null | undefined };
+  readonly clipboard?: { writeText(text: string): void };
+}): InspectorService {
   const contentsOf = (tabId: number): WebContents | null => [...tabContents.values()].find((contents) => !contents.isDestroyed() && browser.tabIdOf(contents) === tabId) ?? null;
-  return createInspectorService({ tabs: inspectorTabs(browser, contentsOf), log });
+  return createInspectorService({
+    tabs: inspectorTabs(browser, contentsOf),
+    log,
+    ...(served ? { served: { document: (contents: InspectorContents) => served.document(contents as WebContents), source: (contents: InspectorContents) => served.source(contents as WebContents) } } : {}),
+    ...(clipboard ? { clipboard } : {}),
+  });
 }

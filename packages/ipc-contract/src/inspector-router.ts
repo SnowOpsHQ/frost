@@ -3,16 +3,27 @@ import {
   InspectorAckSchema,
   InspectorChildrenAnswerSchema,
   InspectorChildrenInputSchema,
+  InspectorCopySourceAnswerSchema,
+  InspectorCopySourceInputSchema,
   InspectorHighlightInputSchema,
   InspectorNodeAnswerSchema,
   InspectorNodeInputSchema,
   InspectorPickAnswerSchema,
   InspectorPickInputSchema,
+  InspectorSearchAnswerSchema,
+  InspectorSearchInputSchema,
+  InspectorSourceAnswerSchema,
+  InspectorSourceInputSchema,
   InspectorTabInputSchema,
   type InspectorAck,
   type InspectorChildrenAnswer,
+  type InspectorCopySourceAnswer,
   type InspectorNodeAnswer,
   type InspectorPickAnswer,
+  type InspectorSearchAnswer,
+  type InspectorSearchMode,
+  type InspectorSourceAnswer,
+  type InspectorSourceKind,
   type NodePath,
 } from '@app/specs/inspector.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
@@ -23,8 +34,10 @@ import { enforceSender, middleware, publicProcedure, router } from './trpc';
 // `inspector.feature.md`, Router). Every procedure starts `publicProcedure.use(enforceSender)`, then
 // `requireInspector` (which fails closed without the service), and takes a strict input: a tab id, a
 // node path of at most `maxPathDepth` indices with its expected tag, the document's token (`null` only
-// for the first read of `<html>` and a pick), an offset. No input carries a selector, a script or page
-// text. Answers are checked against their schemas on the way out.
+// for the first read of `<html>` and a pick), an offset. No input carries a script or page text; a
+// selector only as `search`'s capped query (data the page script hands to `querySelectorAll`), and
+// `copySource` never carries the text it copies, only the `ref` of a source main answered. Answers
+// are checked against their schemas on the way out.
 
 /**
  * What the `inspector.*` procedures call (main's `apps/desktop/src/main/inspector/service.ts`).
@@ -43,6 +56,12 @@ export interface InspectorService {
   highlight(tabId: number, node: { path: NodePath; tag: string } | null, docToken: string): Promise<InspectorAck>;
   /** Ends any pick and removes every outline (the overlay's host leaves the page). */
   clear(tabId: number): Promise<InspectorAck>;
+  /** Elements of the document `docToken` whose own text holds `query`, or that match the selector `query` (Phase 11 Task 5). */
+  search(tabId: number, docToken: string, mode: InspectorSearchMode, query: string): Promise<InspectorSearchAnswer>;
+  /** The document's rendered source, or the served source the audit fetched for it (capped). */
+  source(tabId: number, docToken: string, kind: InspectorSourceKind): Promise<InspectorSourceAnswer>;
+  /** Writes, with the clipboard in main, the source main answered under `ref` (`stale` if the page, its URL or that source changed since). */
+  copySource(tabId: number, docToken: string, kind: InspectorSourceKind, ref: number): Promise<InspectorCopySourceAnswer>;
 }
 
 /** Hands the procedure main's `InspectorService` (after `enforceSender`; fails closed without it). */
@@ -89,4 +108,22 @@ export const inspectorRouter = router({
     .input(InspectorTabInputSchema)
     .output(InspectorAckSchema)
     .mutation(({ ctx, input }) => ctx.inspector.clear(input.tabId)),
+  search: publicProcedure
+    .use(enforceSender)
+    .use(requireInspector)
+    .input(InspectorSearchInputSchema)
+    .output(InspectorSearchAnswerSchema)
+    .query(({ ctx, input }) => ctx.inspector.search(input.tabId, input.docToken, input.mode, input.query)),
+  source: publicProcedure
+    .use(enforceSender)
+    .use(requireInspector)
+    .input(InspectorSourceInputSchema)
+    .output(InspectorSourceAnswerSchema)
+    .query(({ ctx, input }) => ctx.inspector.source(input.tabId, input.docToken, input.kind)),
+  copySource: publicProcedure
+    .use(enforceSender)
+    .use(requireInspector)
+    .input(InspectorCopySourceInputSchema)
+    .output(InspectorCopySourceAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.inspector.copySource(input.tabId, input.docToken, input.kind, input.ref)),
 });

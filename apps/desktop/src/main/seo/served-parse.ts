@@ -1,5 +1,5 @@
 import { defaultTreeAdapter, Parser, type DefaultTreeAdapterMap, type ParserOptions, type TreeAdapter } from 'parse5';
-import { SERVED_LEAD_TEXT_MAX_CHARS, SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
+import { SERVED_LEAD_TEXT_MAX_CHARS, SERVED_PARSE_LIMITS, SERVED_SOURCE_MAX_CHARS } from '@app/specs/seo-javascript.spec';
 import type { ServedParseInput, ServedParseResult, ServedSnapshot } from '@app/specs/seo-javascript.schema';
 import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';
@@ -14,6 +14,8 @@ import { parseWebUrl } from '@app/specs/web-url.spec';
 // minus everything that needs layout: no hidden-element check for headings, and only `[hidden]`
 // subtrees are left out of the word count. The same walk reads `leadText` (Phase 9 Task 10): the
 // first `SERVED_LEAD_TEXT_MAX_CHARS` of the body's text, for the AI checks' input only (main-only).
+// The decoded text itself is answered beside the snapshot as `sourceText` (Phase 11 Task 5, the
+// Inspector's Served view), cut at `SERVED_SOURCE_MAX_CHARS`: main shows and copies it, never decodes.
 
 type Node = DefaultTreeAdapterMap['node'];
 type Element = DefaultTreeAdapterMap['element'];
@@ -511,11 +513,21 @@ function readSnapshot(document: Node, url: URL, L: SnapshotLimits, budget: Budge
   };
 }
 
+/** `text` cut to at most `max` UTF-16 code units, never splitting a surrogate pair. */
+function cutSource(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let end = max;
+  const code = text.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+  return text.slice(0, end);
+}
+
 /**
  * The served snapshot of `input` (bytes as fetched, their media type and the URL they came from):
- * decoded, parsed within `limits` and read. `parse-failed` when it cannot be read. Never throws.
+ * decoded, parsed within `limits` and read, with the decoded text as `sourceText` (cut at
+ * `sourceMaxChars`, `sourceTruncated`). `parse-failed` when it cannot be read. Never throws.
  */
-export function parseServedHtml(input: ServedParseInput, limits: ParseLimits = SERVED_PARSE_LIMITS, snapshotLimits: SnapshotLimits = SNAPSHOT_LIMITS): ServedParseResult {
+export function parseServedHtml(input: ServedParseInput, limits: ParseLimits = SERVED_PARSE_LIMITS, snapshotLimits: SnapshotLimits = SNAPSHOT_LIMITS, sourceMaxChars: number = SERVED_SOURCE_MAX_CHARS): ServedParseResult {
   try {
     const url = parseWebUrl(input.url);
     if (!url || !(input.body instanceof Uint8Array)) return { ok: false, reason: 'parse-failed' };
@@ -539,7 +551,8 @@ export function parseServedHtml(input: ServedParseInput, limits: ParseLimits = S
       if (error !== STOP) throw error;
     }
     if (document === null) return { ok: false, reason: 'parse-failed' };
-    return { ok: true, snapshot: readSnapshot(document, url, snapshotLimits, budget, limits) };
+    const snapshot = readSnapshot(document, url, snapshotLimits, budget, limits);
+    return { ok: true, snapshot, sourceText: cutSource(text, sourceMaxChars), sourceTruncated: text.length > sourceMaxChars };
   } catch {
     return { ok: false, reason: 'parse-failed' };
   }

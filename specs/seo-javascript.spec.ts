@@ -93,6 +93,20 @@ export const SERVED_PARSE_LIMITS = {
  */
 export const SERVED_LEAD_TEXT_MAX_CHARS = 4_000;
 
+/**
+ * The served source (Phase 11 Task 5, the Inspector's Served view): the analysis worker returns, with
+ * its parse, the text it decoded from the fetched bytes (the same decoding as the parse), cut at
+ * `SERVED_SOURCE_MAX_CHARS` UTF-16 code units (`sourceTruncated` past it, never splitting a surrogate
+ * pair); main never decodes. Main keeps it beside the served state (never in it, so it never reaches
+ * the audit's worker or the agent), for the `SERVED_SOURCE_KEEP` most recently parsed documents over
+ * all tabs, and drops it with its served answer (Fetch again, a new document, Clear Browsing Data).
+ * A served answer whose source is no longer kept reads as `not-fetched` in the Inspector. Each answer
+ * has a serial (the Inspector's `ref`) and each tab document a generation that a new document bumps,
+ * so the Inspector copies only the answer it showed, for the document and URL it showed.
+ */
+export const SERVED_SOURCE_MAX_CHARS = 2_000_000;
+export const SERVED_SOURCE_KEEP = 4;
+
 // ---- The comparison's states ------------------------------------------------------------------------
 
 /**

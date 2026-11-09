@@ -344,7 +344,17 @@ function start(): void {
   // Projects (specs/projects.feature.md): pages and queries, and their capture runs in a tab of their own.
   const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of });
   // The DOM inspector (specs/inspector.feature.md): reads the active tab's page in its own isolated world; never writes to it.
-  const inspector = createMainInspector({ browser, tabContents, log: logSession });
+  // Its Served view reads the audit's served HTML as the worker decoded it (never fetched for it); "Copy source" writes main's own text.
+  const inspector = createMainInspector({
+    browser,
+    tabContents,
+    log: logSession,
+    clipboard,
+    served: {
+      document: (contents) => ({ generation: served?.generation(contents.id) ?? 0, url: contents.getURL() }),
+      source: (contents) => served?.source(contents.id, contents.getURL(), tabUserAgent(contents), { scripting: tabScripting(contents) }),
+    },
+  });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
   // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.

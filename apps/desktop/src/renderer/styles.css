@@ -9623,3 +9623,110 @@ input {
 }
 
 /* End of Inspector (Phase 6) */
+
+/* Inspector search and sources (Phase 11) ----------------------------------------------------------
+   Phase 11 Task 5, specs/inspector.feature.md (Search and sources): the Tree / Rendered / Served
+   toggle, the element search and its matches, and a source as numbered rows of inert text. */
+.inspector-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.inspector-view-button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.inspector-search,
+.inspector-find,
+.inspector-source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.inspector-search-mode {
+  flex: 0 1 120px;
+}
+
+.inspector-matches {
+  max-height: 24vh;
+  margin: 0;
+  padding: 4px 0;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 8px;
+  background: var(--seo-card);
+  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+.inspector-match {
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspector-match:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  outline: 0;
+}
+
+.inspector-source {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inspector-find-count {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.inspector-source-lines {
+  max-height: 60vh;
+  margin: 0;
+  padding: 4px 0;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 8px;
+  background: var(--seo-card);
+  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+.inspector-source-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 8px 0 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inspector-source-row[data-match='true'] {
+  background: var(--accent-soft);
+}
+
+.inspector-source-row[aria-current='true'] {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.inspector-source-no {
+  flex: none;
+  min-width: 4ch;
+  color: var(--text-faint);
+  text-align: right;
+  user-select: none;
+}
+
+.inspector-more-lines {
+  align-self: flex-start;
+}
+
+/* End of Inspector search and sources (Phase 11) */

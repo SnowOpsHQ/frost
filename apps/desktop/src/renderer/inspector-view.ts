@@ -2,6 +2,7 @@ import type { TabState } from '@app/specs/browser.spec';
 import {
   INSPECTOR_REFUSAL_MESSAGES,
   INSPECTOR_REGION_LABELS,
+  INSPECTOR_SOURCE_VIEW,
   type InspectorBox,
   type InspectorChild,
   type InspectorChildrenAnswer,
@@ -14,8 +15,8 @@ import { isWebUrl } from '@app/specs/web-url.spec';
 
 // The Inspector panel's pure helpers (acceptance `inspector.feature.md`, The panel): the tree's
 // model (loaded lazily, one page of children at a time), its keyboard navigation (the ARIA tree-view
-// pattern), row labels and the details' text. Page text stays plain strings here; the panel renders
-// it as React text only.
+// pattern), row labels and the details' text; a source's rows and find-in-view (Phase 11 Task 5).
+// Page text stays plain strings here; the panel renders it as React text only.
 
 /** A tree entry: the element's row, its loaded children (`null`: not read yet; `kidSet` the same keys, for lookups), whether more are left, and whether it is open. */
 export interface TreeEntry {
@@ -233,4 +234,93 @@ export function seoRows(node: InspectorNode): [string, string][] {
   if (seo.linkRel) rows.push([`link rel=${seo.linkRel.rel}`, seo.linkRel.href]);
   rows.push(['Language', seo.lang ?? '(not set)']);
   return rows;
+}
+
+// ---- Sources (Phase 11 Task 5) ---------------------------------------------------------------------
+
+/** A source row as listed: its text (plain, never markup) and its line number (only on a line's first row). */
+export interface SourceRow {
+  readonly line: number | null;
+  readonly text: string;
+}
+
+/** The end of a row of at most `max` code units from `start`, never splitting a surrogate pair. */
+function rowEnd(text: string, start: number, max: number): number {
+  let end = Math.min(text.length, start + max);
+  if (end < text.length && end > start + 1) {
+    const code = text.charCodeAt(end - 1);
+    if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+  }
+  return end;
+}
+
+/**
+ * A source split into lines (`\n`, `\r\n` or `\r`), each long line wrapped into rows of at most
+ * `rowChars` (`INSPECTOR_SOURCE_VIEW`), numbered from 1, at most `maxRows` rows (`cut`: more were left
+ * out). `lines`: the lines read.
+ */
+export function sourceRows(text: string, view: { readonly rowChars: number; readonly maxRows: number } = INSPECTOR_SOURCE_VIEW): { rows: SourceRow[]; cut: boolean; lines: number } {
+  const rows: SourceRow[] = [];
+  const width = Math.max(1, view.rowChars);
+  let line = 0;
+  let at = 0;
+  while (at <= text.length) {
+    let stop = at;
+    while (stop < text.length && text.charCodeAt(stop) !== 10 && text.charCodeAt(stop) !== 13) stop += 1;
+    line += 1;
+    const content = text.slice(at, stop);
+    let start = 0;
+    do {
+      if (rows.length >= view.maxRows) return { rows, cut: true, lines: line };
+      const end = rowEnd(content, start, width);
+      rows.push({ line: start === 0 ? line : null, text: content.slice(start, end) });
+      start = end;
+    } while (start < content.length);
+    if (stop >= text.length) break;
+    at = stop + (text.charCodeAt(stop) === 13 && text.charCodeAt(stop + 1) === 10 ? 2 : 1);
+    // A source ending in a line break has no empty last line.
+    if (at >= text.length) break;
+  }
+  return { rows, cut: false, lines: line };
+}
+
+/** The indexes of the rows whose text holds `query` (case-insensitive; a blank query finds nothing), at most `max`. */
+export function findRows(rows: readonly SourceRow[], query: string, max: number = INSPECTOR_SOURCE_VIEW.maxFindMatches): number[] {
+  const needle = query.toLowerCase();
+  if (needle.trim() === '') return [];
+  const found: number[] = [];
+  for (let i = 0; i < rows.length && found.length < max; i++) if (rows[i]!.text.toLowerCase().includes(needle)) found.push(i);
+  return found;
+}
+
+/** The rows of a source rendered at once: `start` (inclusive) to `end` (exclusive). */
+export interface RowWindow {
+  readonly start: number;
+  readonly end: number;
+}
+
+type WindowView = { readonly pageRows: number; readonly maxRendered: number };
+
+/** The window a source opens with: its first `pageRows` rows. */
+export function firstWindow(total: number, view: WindowView = INSPECTOR_SOURCE_VIEW): RowWindow {
+  return { start: 0, end: Math.min(total, view.pageRows) };
+}
+
+/** The window that shows `row`: `current` if it holds it, else the `pageRows` rows around it (within the source). */
+export function windowAround(current: RowWindow, row: number, total: number, view: WindowView = INSPECTOR_SOURCE_VIEW): RowWindow {
+  if (row >= current.start && row < current.end) return current;
+  const size = Math.min(total, view.pageRows);
+  const start = Math.max(0, Math.min(total - size, row - Math.floor(size / 2)));
+  return { start, end: start + size };
+}
+
+/** One more page of rows after (or before) the window, never more than `maxRendered` rows: the far end is dropped. */
+export function extendWindow(current: RowWindow, direction: 'after' | 'before', total: number, view: WindowView = INSPECTOR_SOURCE_VIEW): RowWindow {
+  const max = Math.max(1, view.maxRendered);
+  if (direction === 'after') {
+    const end = Math.min(total, current.end + view.pageRows);
+    return { start: Math.max(current.start, end - max), end };
+  }
+  const start = Math.max(0, current.start - view.pageRows);
+  return { start, end: Math.min(current.end, start + max) };
 }

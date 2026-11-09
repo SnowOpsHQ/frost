@@ -1044,3 +1044,14 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   request rows only. A second export while the dialog is open answers `cancelled`. Electron's
   `onSendHeaders` does not report `Referer` here, so the log never holds one; the reader with
   JavaScript off is covered by a fake-tab unit test only.
+- **Task 5:** search text mode matches an element's own text (child text nodes, whitespace
+  collapsed, case-insensitive), not attributes; every node walked counts toward `maxNodesVisited`;
+  selector mode skips matches deeper than `maxPathDepth`. Rendered source is the doctype, a line
+  break, then `outerHTML` (nodes outside `<html>` omitted); while the outline overlay is in the page,
+  `<html>` is serialised child by child with its start tag built from its attributes (nothing is
+  cloned, so no page constructor runs). Served entries carry a serial `ref` and each tab document a
+  generation bumped on `forget`; a source answer carries `ref`, and `copySource` takes `ref` (never
+  text) and writes only main's kept text for the same document, else `stale` (security-review fix,
+  same pattern as Decision 1). Source views re-read on a `tab.url` change. The source view renders at
+  most 1,000 rows of 500 characters at once (windowed around a find jump). `skipExtraText` is
+  Phase 12's and was not added.
