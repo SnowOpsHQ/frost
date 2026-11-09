@@ -1,0 +1,618 @@
+/* Rankings and Compare (Phase 10 Task 6) ---------------------------------------------------------
+   specs/rankings.feature.md, The views: the Projects sheet's view switch, the rank table with its
+   trend lines and a search's series, and the Compare view. Inside the sheet's main column (the page
+   column; the SEO sidebar and the agent are untouched). Reading text wraps or ellipsises, never
+   widens the sheet: the table scrolls inside its own box. */
+
+.projects-views {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.projects-view-tab {
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.projects-view-tab:hover {
+  color: var(--text);
+}
+
+.projects-view-tab[aria-selected='true'] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.projects-view-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.projects-view-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.rankings,
+.compare {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rankings-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.rankings-toolbar-gap {
+  flex: 1 1 auto;
+}
+
+.rankings-notice {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-field);
+  background: var(--accent-soft);
+  font-size: 12px;
+}
+
+.rankings-muted {
+  color: var(--text-muted);
+}
+
+.rankings-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.rankings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+/* Compact cells so the plan's columns and a competitor fit the sheet's main column at a 1400 px
+   window; long search, engine and competitor text ellipsises (its full text is the title). The wrap
+   scrolls only as a fallback (many competitors, a narrow window). */
+.rankings-table th,
+.rankings-table td {
+  padding: 4px 3px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+  text-align: start;
+  vertical-align: middle;
+}
+
+.rankings-table :is(th, td):first-child {
+  padding-inline-start: 2px;
+}
+
+.rankings-table thead th {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  vertical-align: bottom;
+}
+
+.rankings-table tbody th {
+  font-weight: 400;
+}
+
+.rankings-row[data-selected='true'] {
+  background: var(--accent-soft);
+}
+
+.rankings-row-open {
+  display: block;
+  max-width: 6.5em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: start;
+}
+
+.rankings-row-open .rankings-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankings-row-open:hover .rankings-text {
+  color: var(--accent);
+}
+
+.rankings-row-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.rankings-engine .rankings-text,
+.rankings-competitor .rankings-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankings-engine .rankings-text {
+  max-width: 5.5em;
+}
+
+.rankings-competitor .rankings-text {
+  max-width: 6em;
+}
+
+.rankings-locale,
+.rankings-device {
+  white-space: nowrap;
+}
+
+.rankings-also-in {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.rankings-filters,
+.rankings-url {
+  max-width: 220px;
+  overflow-wrap: anywhere;
+}
+
+.rankings-tags {
+  max-width: 160px;
+}
+
+.rankings-tag {
+  display: inline-block;
+  margin: 1px 4px 1px 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+}
+
+.rankings-number {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rankings-position {
+  font-weight: 600;
+}
+
+.rankings-change[data-direction='up'],
+.rankings-change[data-direction='new'],
+.compare-movement[data-movement='up'],
+.compare-movement[data-movement='new'] {
+  color: var(--ok);
+}
+
+.rankings-change[data-direction='down'],
+.rankings-change[data-direction='lost'],
+.compare-movement[data-movement='down'],
+.compare-movement[data-movement='gone'] {
+  color: var(--danger);
+}
+
+.rankings-when {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* The rank table's last checked: the date, then the time under it. */
+.rankings-when-line {
+  display: block;
+  font-size: 11px;
+}
+
+.rankings-trend-cell {
+  white-space: nowrap;
+}
+
+.rankings-trend {
+  display: inline-block;
+  vertical-align: middle;
+  overflow: visible;
+}
+
+.rankings-trend-line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.rankings-trend-dot {
+  fill: var(--accent);
+}
+
+.rankings-capped {
+  margin-inline-start: 4px;
+  color: var(--warn);
+  cursor: help;
+}
+
+.rankings-series {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+}
+
+.rankings-series-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rankings-series-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.compare-pickers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.compare-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+}
+
+.compare-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.compare-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.compare-sides {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 0;
+}
+
+.compare-side {
+  display: contents;
+}
+
+.compare-side dt {
+  font-weight: 600;
+}
+
+.compare-side dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.compare-site {
+  margin: 0;
+  font-weight: 600;
+}
+
+.compare-role {
+  margin-inline-start: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: 11px;
+}
+
+.compare-row[data-role='site'] {
+  background: var(--accent-soft);
+}
+
+/* Star and sort, Settings, tags and Bulk add (Phase 10 Task 7) ------------------------------------
+   specs/projects.feature.md, The sheet. Inside the sheet's list and main column; user text wraps or
+   ellipsises, never widens the sheet. */
+
+.projects-sort {
+  margin-bottom: 6px;
+}
+
+.projects-sort .projects-select {
+  flex: 1 1 auto;
+}
+
+.projects-star {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.projects-star[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+.projects-star-icon {
+  fill: none;
+}
+
+/* Unfiled's place for a star (it has none): the star button's size. */
+.projects-star-space {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+
+.projects-star[aria-pressed='true'] .projects-star-icon {
+  fill: currentColor;
+}
+
+.projects-link-button {
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.projects-link-button:hover {
+  text-decoration: underline;
+}
+
+.projects-link-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.projects-entry-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-bottom: 4px;
+}
+
+.projects-entry-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+}
+
+.projects-tag {
+  max-width: 16em;
+  overflow: hidden;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-tags-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.projects-tags-editor .projects-input {
+  flex: 1 1 14em;
+  min-width: 0;
+}
+
+.projects-tags-editor .projects-note {
+  flex-basis: 100%;
+}
+
+.project-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.project-settings-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 12px;
+}
+
+.project-settings-form .projects-field-wide {
+  flex: 1 1 18em;
+  min-width: 0;
+}
+
+.project-settings-competitor {
+  padding: 6px 4px;
+}
+
+.project-settings-competitor .projects-entry-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.projects-bulk {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--bg-chrome-edge);
+  border-radius: var(--radius-field);
+}
+
+.projects-bulk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.projects-bulk-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.projects-bulk-form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.projects-bulk-form > .panel-button {
+  align-self: flex-start;
+}
+
+.projects-textarea {
+  min-height: 6em;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.projects-bulk-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 6px 12px;
+  margin: 0;
+  padding: 6px 8px 8px;
+  border: 1px solid var(--bg-chrome-edge);
+  border-radius: var(--radius-control);
+}
+
+.projects-bulk-group legend {
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.projects-bulk-locale {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+}
+
+.projects-bulk-outcomes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.projects-bulk-outcome {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.projects-bulk-outcome .projects-entry-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.projects-bulk-outcome-text {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.projects-bulk-outcome[data-outcome='invalid'] .projects-bulk-outcome-text,
+.projects-bulk-outcome[data-outcome='limit'] .projects-bulk-outcome-text {
+  color: var(--danger);
+}
+
+/* Due, a blocked run and the cadence (Phase 10 Task 8) --------------------------------------------
+   specs/projects.feature.md, The sheet (Due, Check rankings and a blocked run; Settings: the cadence). */
+
+.projects-item-open:has(> .projects-due) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.projects-item-open:has(> .projects-due) .projects-item-name {
+  min-width: 0;
+}
+
+.projects-due {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.projects-run-target[data-outcome='blocked'] .projects-run-outcome {
+  color: var(--warn);
+}
+
+.projects-run-blocked {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.projects-run-blocked-reason {
+  margin: 0;
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.project-settings-cadence .projects-select {
+  max-width: 200px;
+}
+
+/* Fields in the sheet --------------------------------------------------------------------------------
+   `.projects-input, .projects-select` grow on a 120 px basis, which suits a row; inside a labelled
+   field (a column) that basis would be its height. There a single-line input or menu keeps its 30 px
+   height (the textarea keeps its own), and an input reads at the sheet's text size, not the label's
+   12 px. */
+
+.projects-field:not(.projects-profile) > :is(.projects-input, .projects-select):not(.projects-textarea) {
+  flex: none;
+}
+
+.projects-field > :is(.projects-input, .projects-select) {
+  font-size: 13px;
+}

@@ -1,10 +1,13 @@
-// Spec: specs/projects.schema.ts (the projects.* inputs and answers), specs/projects.spec.ts, specs/ipc-sender.spec.ts
+// Spec: specs/projects.schema.ts (the projects.* inputs and answers, Phase 10's workspace procedures and Task 8's
+// setCadence / setAutoCapture, RunStateSchema's `blocked` and blockedReason), specs/projects.spec.ts
+// (BULK_SEARCH_LIMITS, SITE_INPUT_MAX_CHARS, TAG_INPUT_MAX_CHARS), specs/workspace-db.spec.ts (MAX_TAGS_PER_ENTRY), specs/ipc-sender.spec.ts
 // Acceptance: specs/projects.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
 import { MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
 import { MAX_RETENTION_DAYS, MAX_RETENTION_VERSIONS, PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import type { SavedSearchInput } from '@app/specs/projects.spec';
+import { BULK_SEARCH_LIMITS, SITE_INPUT_MAX_CHARS, TAG_INPUT_MAX_CHARS, type BulkSearchesInput, type SavedSearchInput } from '@app/specs/projects.spec';
+import { MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY } from '@app/specs/workspace-db.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import type { ProjectsAnswer, RunState } from '@app/specs/projects.spec';
@@ -18,11 +21,12 @@ const PAGE = 'https://example.com/guides/tea';
 const PROJECT = '01920000-0000-7000-8000-0000000000aa';
 const ITEM = '01920000-0000-7000-8000-000000000001';
 const PARAMS: SavedSearchInput = { engine: 'google', query: 'green tea', country: 'de', language: 'de', device: 'tablet' };
-const LIST: ProjectsAnswer = { projects: [{ id: UNFILED_PROJECT_ID, name: 'Unfiled', unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null } }] };
-const STATE: RunState = { version: 3, runId: ITEM, projectId: PROJECT, state: 'running', current: 1, total: 1, omitted: 0, screenshot: false, targets: [{ kind: 'page', label: PAGE, outcome: 'running', changeCount: null, screenshot: null }] };
+const LIST: ProjectsAnswer = { projects: [{ id: UNFILED_PROJECT_ID, name: 'Unfiled', unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 0, lastCapturedAt: null, cadence: 'off', autoCapture: false, due: false }] };
+const BULK: BulkSearchesInput = { text: 'green tea\nblack tea', engine: 'google', locales: [{ country: 'de', language: 'de' }, { country: null, language: null }], devices: ['desktop', 'mobile'], tags: ['Brand'] };
+const STATE: RunState = { version: 3, runId: ITEM, projectId: PROJECT, state: 'running', current: 1, total: 1, omitted: 0, screenshot: false, targets: [{ kind: 'page', label: PAGE, outcome: 'running', changeCount: null, screenshot: null }], blockedReason: null };
 
 const COUNTS = { captures: 2, versions: 2, diffs: 1, screenshots: 1 };
-const USAGE: RetentionUsage = { projectId: PROJECT, captures: 1, versions: 1, sharedVersions: 0, snapshotBytes: 900, diffBytes: 0, screenshots: 1, files: { count: 1, bytes: 300, missing: 0, shared: 0 }, database: { bytes: 40_960, walBytes: 0 } };
+const USAGE: RetentionUsage = { projectId: PROJECT, captures: 1, versions: 1, sharedVersions: 0, snapshotBytes: 900, diffBytes: 0, readingBytes: 0, screenshots: 1, files: { count: 1, bytes: 300, missing: 0, shared: 0 }, database: { bytes: 40_960, walBytes: 0 } };
 const ENTRY: PurgeLogEntry = { id: ITEM, reason: 'purge-now', projectId: PROJECT, policy: { mode: 'versions', value: 1 }, counts: COUNTS, bytes: 1_200, createdAt: 1_700_000_000_000 };
 
 function fakeProjects() {
@@ -40,6 +44,14 @@ function fakeProjects() {
     removeQuery: vi.fn(async () => ({ status: 'ok' as const })),
     forPage: vi.fn(async () => LIST),
     startRun: vi.fn(async () => ({ status: 'started' as const, runId: ITEM })),
+    setFavorite: vi.fn(async () => ({ status: 'ok' as const })),
+    setSite: vi.fn(async () => ({ status: 'ok' as const, site: { domain: 'tea-shop.com', subdomains: true } })),
+    addCompetitor: vi.fn(async () => ({ status: 'added' as const, competitor: { id: ITEM, domain: 'rival-tea.com' } })),
+    removeCompetitor: vi.fn(async () => ({ status: 'ok' as const })),
+    setTags: vi.fn(async () => ({ status: 'ok' as const, tags: ['brand'] })),
+    addSearches: vi.fn(async () => ({ status: 'done' as const, lines: [{ query: 'green tea', outcome: 'added' as const, added: 4 }] })),
+    setCadence: vi.fn(async () => ({ status: 'ok' as const })),
+    setAutoCapture: vi.fn(async () => ({ status: 'refused' as const, reason: 'unavailable' as const })),
     cancelRun: vi.fn(() => true),
     runState: vi.fn(async () => STATE),
     setRetention: vi.fn(async () => ({ status: 'ok' as const })),
@@ -90,6 +102,14 @@ const VALID_INPUT: Record<string, unknown> = {
   forPage: { url: PAGE },
   startRun: { projectId: PROJECT, screenshot: true },
   cancelRun: undefined,
+  setFavorite: { projectId: PROJECT, favorite: true },
+  setSite: { projectId: PROJECT, domain: 'https://Tea-Shop.com/guides', subdomains: false },
+  addCompetitor: { projectId: PROJECT, domain: 'rival-tea.com' },
+  removeCompetitor: { projectId: PROJECT, competitorId: ITEM },
+  setTags: { projectId: PROJECT, entryKind: 'search', entryId: ITEM, tags: ['Brand', 'top 10'] },
+  addSearches: { projectId: PROJECT, searches: BULK },
+  setCadence: { projectId: PROJECT, cadence: 'weekly' },
+  setAutoCapture: { projectId: PROJECT, on: true },
   runState: { sinceVersion: 2 },
   setRetention: { projectId: PROJECT, policy: { mode: 'versions', value: 3 } },
   retentionPreview: { projectId: PROJECT },
@@ -151,7 +171,79 @@ describe('projects router', () => {
       addSearch: [{ projectId: PROJECT }, { projectId: PROJECT, search: null }, { projectId: PROJECT, params: PARAMS }, ...badParams.map((search) => ({ projectId: PROJECT, search }))],
       removeSearch: [{ projectId: PROJECT }, ...badIds.map((queryId) => ({ projectId: PROJECT, queryId }))],
       forPage: [{}, { url: PAGE, extra: 1 }, ...badUrls.map((url) => ({ url }))],
-      startRun: [{ projectId: PROJECT }, { projectId: PROJECT, screenshot: 'yes' }, { projectId: PROJECT, screenshot: true, extra: 1 }, ...badIds.map((projectId) => ({ projectId, screenshot: false }))],
+      startRun: [
+        { projectId: PROJECT },
+        { projectId: PROJECT, screenshot: 'yes' },
+        { projectId: PROJECT, screenshot: true, extra: 1 },
+        { projectId: PROJECT, screenshot: true, scope: 'pages' },
+        { projectId: PROJECT, screenshot: true, scope: null },
+        ...badIds.map((projectId) => ({ projectId, screenshot: false })),
+      ],
+      setFavorite: [{ projectId: PROJECT }, { projectId: PROJECT, favorite: 'yes' }, { projectId: PROJECT, favorite: true, extra: 1 }, ...badIds.map((projectId) => ({ projectId, favorite: true }))],
+      setSite: [
+        { projectId: PROJECT, domain: 'tea-shop.com' },
+        { projectId: PROJECT, subdomains: true },
+        { projectId: PROJECT, domain: 'tea-shop.com', subdomains: 'yes' },
+        { projectId: PROJECT, domain: 'tea-shop.com', subdomains: true, extra: 1 },
+        ...['', '   ', 'x'.repeat(SITE_INPUT_MAX_CHARS + 1), 'tea\nshop.com', 'tea‮shop.com', 5].map((domain) => ({ projectId: PROJECT, domain, subdomains: true })),
+        ...badIds.map((projectId) => ({ projectId, domain: 'tea-shop.com', subdomains: true })),
+      ],
+      addCompetitor: [
+        { projectId: PROJECT },
+        { projectId: PROJECT, domain: null },
+        { projectId: PROJECT, domain: 'rival-tea.com', extra: 1 },
+        ...['', '   ', 'x'.repeat(SITE_INPUT_MAX_CHARS + 1), 'rival\u0000.com', 5].map((domain) => ({ projectId: PROJECT, domain })),
+        ...badIds.map((projectId) => ({ projectId, domain: 'rival-tea.com' })),
+      ],
+      removeCompetitor: [{ projectId: PROJECT }, { projectId: PROJECT, competitorId: ITEM, extra: 1 }, ...badIds.map((competitorId) => ({ projectId: PROJECT, competitorId }))],
+      setTags: [
+        { projectId: PROJECT, entryKind: 'page', entryId: ITEM },
+        { projectId: PROJECT, entryKind: 'query', entryId: ITEM, tags: [] },
+        { projectId: PROJECT, entryKind: 'page', entryId: ITEM, tags: [], extra: 1 },
+        { projectId: PROJECT, entryKind: 'page', entryId: ITEM, tags: 'brand' },
+        { projectId: PROJECT, entryKind: 'page', entryId: ITEM, tags: Array.from({ length: MAX_TAGS_PER_ENTRY + 1 }, (_, n) => `t${n}`) },
+        ...['', 'x'.repeat(TAG_INPUT_MAX_CHARS + 1), 'a\nb', 'a⁦b', 5, null].map((tag) => ({ projectId: PROJECT, entryKind: 'page', entryId: ITEM, tags: [tag] })),
+        ...badIds.map((entryId) => ({ projectId: PROJECT, entryKind: 'page', entryId, tags: [] })),
+        ...badIds.map((projectId) => ({ projectId, entryKind: 'page', entryId: ITEM, tags: [] })),
+      ],
+      addSearches: [
+        { projectId: PROJECT },
+        { projectId: PROJECT, searches: BULK, extra: 1 },
+        { projectId: PROJECT, searches: { ...BULK, extra: 1 } },
+        ...[
+          { ...BULK, text: '' },
+          { ...BULK, text: ' \n , ' },
+          { ...BULK, text: 'x'.repeat(BULK_SEARCH_LIMITS.maxTextChars + 1) },
+          { ...BULK, text: Array.from({ length: BULK_SEARCH_LIMITS.maxLines + 1 }, (_, n) => `tea ${n}`).join('\n') },
+          { ...BULK, engine: 'other' },
+          { ...BULK, locales: [] },
+          { ...BULK, locales: Array.from({ length: BULK_SEARCH_LIMITS.maxLocales + 1 }, (_, n) => ({ country: `a${String.fromCharCode(97 + n)}`, language: null })) },
+          { ...BULK, locales: [{ country: 'de', language: 'de' }, { country: 'de', language: 'de' }] },
+          { ...BULK, locales: [{ country: 'DE', language: null }] },
+          { ...BULK, locales: [{ country: 'de' }] },
+          { ...BULK, locales: [{ country: 'de', language: 'de', location: 'Berlin' }] },
+          { ...BULK, devices: [] },
+          { ...BULK, devices: ['desktop', 'desktop'] },
+          { ...BULK, devices: ['watch'] },
+          { ...BULK, tags: Array.from({ length: MAX_TAGS_PER_ENTRY + 1 }, (_, n) => `t${n}`) },
+          { ...BULK, tags: ['a\u0000b'] },
+          { text: 'green tea', engine: 'google' },
+        ].map((searches) => ({ projectId: PROJECT, searches })),
+        ...badIds.map((projectId) => ({ projectId, searches: BULK })),
+      ],
+      // Phase 10 Task 8: a cadence of `CAPTURE_CADENCES` only; nothing that could skip main's disclosure.
+      setCadence: [
+        {},
+        undefined,
+        { projectId: PROJECT },
+        { projectId: PROJECT, cadence: 'hourly' },
+        { projectId: PROJECT, cadence: 'Daily' },
+        { projectId: PROJECT, cadence: null },
+        { projectId: PROJECT, cadence: 'daily', disclosed: true },
+        { projectId: PROJECT, cadence: 'daily', extra: 1 },
+        ...badIds.map((projectId) => ({ projectId, cadence: 'daily' })),
+      ],
+      setAutoCapture: [{}, undefined, { projectId: PROJECT }, { projectId: PROJECT, on: 'yes' }, { projectId: PROJECT, on: true, extra: 1 }, ...badIds.map((projectId) => ({ projectId, on: true }))],
       runState: [{}, undefined, { sinceVersion: -1 }, { sinceVersion: 1.5 }, { sinceVersion: '1' }, { sinceVersion: 1, extra: 1 }],
       setRetention: [
         { projectId: PROJECT },
@@ -210,7 +302,29 @@ describe('projects router', () => {
     await call('forPage');
     expect(projects.forPage).toHaveBeenCalledWith(PAGE);
     await expect(call('startRun')).resolves.toEqual({ status: 'started', runId: ITEM });
-    expect(projects.startRun).toHaveBeenCalledWith(PROJECT, true);
+    // No scope: `all` (Phase 10, `RUN_SCOPES`).
+    expect(projects.startRun).toHaveBeenCalledWith(PROJECT, true, 'all');
+    await call('startRun', { projectId: PROJECT, screenshot: false, scope: 'searches' });
+    expect(projects.startRun).toHaveBeenLastCalledWith(PROJECT, false, 'searches');
+    await expect(call('setFavorite')).resolves.toEqual({ status: 'ok' });
+    expect(projects.setFavorite).toHaveBeenCalledWith(PROJECT, true);
+    // Domains and tags reach main as typed: main normalizes them.
+    await expect(call('setSite')).resolves.toEqual({ status: 'ok', site: { domain: 'tea-shop.com', subdomains: true } });
+    expect(projects.setSite).toHaveBeenCalledWith(PROJECT, 'https://Tea-Shop.com/guides', false);
+    await call('setSite', { projectId: PROJECT, domain: null, subdomains: true });
+    expect(projects.setSite).toHaveBeenLastCalledWith(PROJECT, null, true);
+    await expect(call('addCompetitor')).resolves.toMatchObject({ status: 'added' });
+    expect(projects.addCompetitor).toHaveBeenCalledWith(PROJECT, 'rival-tea.com');
+    await call('removeCompetitor');
+    expect(projects.removeCompetitor).toHaveBeenCalledWith(PROJECT, ITEM);
+    await expect(call('setTags')).resolves.toEqual({ status: 'ok', tags: ['brand'] });
+    expect(projects.setTags).toHaveBeenCalledWith(PROJECT, 'search', ITEM, ['Brand', 'top 10']);
+    await expect(call('addSearches')).resolves.toMatchObject({ status: 'done' });
+    expect(projects.addSearches).toHaveBeenCalledWith(PROJECT, BULK);
+    await expect(call('setCadence')).resolves.toEqual({ status: 'ok' });
+    expect(projects.setCadence).toHaveBeenCalledWith(PROJECT, 'weekly');
+    await expect(call('setAutoCapture')).resolves.toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(projects.setAutoCapture).toHaveBeenCalledWith(PROJECT, true);
     await expect(call('cancelRun')).resolves.toBe(true);
     await expect(call('runState')).resolves.toEqual(STATE);
     expect(projects.runState).toHaveBeenCalledWith(2);
@@ -239,6 +353,10 @@ describe('projects router', () => {
     expect((await errorOf(procedure(ctxFor(projects), 'list')(undefined))).code).toBe('INTERNAL_SERVER_ERROR');
     projects.runState.mockResolvedValueOnce({ ...STATE, state: 'bogus' } as unknown as RunState);
     expect((await errorOf(procedure(ctxFor(projects), 'runState')({ sinceVersion: 0 }))).code).toBe('INTERNAL_SERVER_ERROR');
+    // A blocked run (Phase 10 Task 8) passes with its reason.
+    const blocked: RunState = { ...STATE, state: 'blocked', blockedReason: 'not-a-result-page', targets: [{ ...STATE.targets[0]!, outcome: 'blocked' }] };
+    projects.runState.mockResolvedValueOnce(blocked);
+    await expect(procedure(ctxFor(projects), 'runState')({ sinceVersion: 0 })).resolves.toEqual(blocked);
     projects.purgeNow.mockResolvedValueOnce({ status: 'purged', counts: { ...COUNTS, captures: -1 }, bytes: 1, files: 0 });
     expect((await errorOf(procedure(ctxFor(projects), 'purgeNow')({ projectId: PROJECT }))).code).toBe('INTERNAL_SERVER_ERROR');
     projects.usage.mockResolvedValueOnce({ status: 'ok', usage: { ...USAGE, database: { bytes: 1.5, walBytes: 0 } } });
@@ -247,5 +365,38 @@ describe('projects router', () => {
     expect((await errorOf(procedure(ctxFor(projects), 'purgeLog')({ projectId: null }))).code).toBe('INTERNAL_SERVER_ERROR');
     projects.compact.mockResolvedValueOnce({ status: 'refused', reason: 'bogus' } as never);
     expect((await errorOf(procedure(ctxFor(projects), 'compact')(undefined))).code).toBe('INTERNAL_SERVER_ERROR');
+    // Phase 10's workspace answers.
+    const wrong: [string, keyof ReturnType<typeof fakeProjects>, unknown][] = [
+      ['list', 'list', { projects: [{ ...LIST.projects[0]!, favorite: 'yes' }] }],
+      ['list', 'list', { projects: [{ ...LIST.projects[0]!, site: { domain: 'Tea-Shop.com', subdomains: true } }] }],
+      ['list', 'list', { projects: [{ ...LIST.projects[0]!, lastCapturedAt: -1 }] }],
+      ['get', 'get', { project: LIST.projects[0]!, pages: [{ id: ITEM, url: PAGE, lastCapturedAt: null, changeCount: null, tags: ['ok', 'x'.repeat(40)] }], queries: [], competitors: [] }],
+      ['get', 'get', { project: LIST.projects[0]!, pages: [], queries: [], competitors: Array.from({ length: MAX_PROJECT_COMPETITORS + 1 }, () => ({ id: ITEM, domain: 'rival-tea.com' })) }],
+      ['get', 'get', { project: LIST.projects[0]!, pages: [], queries: [] }],
+      ['setFavorite', 'setFavorite', { status: 'ok', favorite: true }],
+      ['setSite', 'setSite', { status: 'ok', site: { domain: 'tea shop.com', subdomains: true } }],
+      ['setSite', 'setSite', { status: 'refused', reason: 'bogus' }],
+      ['addCompetitor', 'addCompetitor', { status: 'added', competitor: { id: 'x', domain: 'rival-tea.com' } }],
+      ['removeCompetitor', 'removeCompetitor', { status: 'removed' }],
+      ['setTags', 'setTags', { status: 'ok', tags: Array.from({ length: MAX_TAGS_PER_ENTRY + 1 }, (_, n) => `t${n}`) }],
+      ['addSearches', 'addSearches', { status: 'done', lines: [{ query: 'tea', outcome: 'skipped', added: 0 }] }],
+      ['addSearches', 'addSearches', { status: 'done', lines: [{ query: 'tea', outcome: 'added', added: -1 }] }],
+      ['addSearches', 'addSearches', { status: 'done', lines: Array.from({ length: BULK_SEARCH_LIMITS.maxLines + 1 }, () => ({ query: 'tea', outcome: 'added', added: 1 })) }],
+      // Task 8's answers and fields.
+      ['list', 'list', { projects: [{ ...LIST.projects[0]!, cadence: 'hourly' }] }],
+      ['list', 'list', { projects: [{ ...LIST.projects[0]!, due: 'yes' }] }],
+      ['list', 'list', { projects: [{ ...LIST.projects[0]!, autoCapture: undefined }] }],
+      ['setCadence', 'setCadence', { status: 'refused', reason: 'bogus' }],
+      ['setCadence', 'setCadence', { status: 'ok', cadence: 'daily' }],
+      ['setAutoCapture', 'setAutoCapture', { status: 'refused', reason: 'later' }],
+      ['runState', 'runState', { ...STATE, state: 'blocked', blockedReason: 'bogus' }],
+      ['runState', 'runState', { ...STATE, blockedReason: undefined }],
+      ['runState', 'runState', { ...STATE, targets: [{ ...STATE.targets[0]!, outcome: 'stopped' }] }],
+    ];
+    for (const [name, method, answer] of wrong) {
+      const fake = fakeProjects();
+      (fake[method] as unknown as { mockResolvedValueOnce: (value: unknown) => void }).mockResolvedValueOnce(answer);
+      expect((await errorOf(procedure(ctxFor(fake), name)(VALID_INPUT[name]))).code, `${name} ${JSON.stringify(answer).slice(0, 80)}`).toBe('INTERNAL_SERVER_ERROR');
+    }
   });
 });

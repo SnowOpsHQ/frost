@@ -1,14 +1,43 @@
 // Spec: specs/projects.spec.ts (searchUrlFor, searchLocaleFor, SEARCH_PARAM_URL_RULES, PROJECT_RUN_LIMITS, queryLabel,
-// deleteProjectDialog, QUERY_DEVICE_PROFILES, QUERY_FIELD_MAX_CHARS), specs/browser-polish.spec.ts (SEARCH_ENGINES, wellFormed)
-// Acceptance: specs/projects.feature.md (Saved searches; Scenarios: search-url-for-params, projects-spec-values)
-import { describe, expect, test } from 'vitest';
+// deleteProjectDialog, QUERY_DEVICE_PROFILES, QUERY_FIELD_MAX_CHARS; Phase 10: RUN_SCOPES, PROJECT_REFUSALS, normalizeTag,
+// normalizeTags, BULK_SEARCH_LIMITS, BULK_LINE_OUTCOMES, splitBulkSearches, bulkSearchInputs, PROJECT_SORTS, sortProjects),
+// specs/browser-polish.spec.ts (SEARCH_ENGINES, wellFormed), specs/workspace-db.spec.ts (TAG_MAX_CHARS, MAX_TAGS_PER_ENTRY)
+// Phase 10 Task 8: RANK_RUN_DISCLOSURE, RANK_RUN_QUERY_SPACING_MS, RUN_STATES, RUN_END_STATES, RUN_BLOCK_REASONS, RUN_REFUSALS
+// Acceptance: specs/projects.feature.md (Saved searches; Tags; Bulk add; Favorites and sort; Run scope; Searches in a run;
+// Scenarios: search-url-for-params, projects-spec-values, project workspace)
+import { dialog } from 'electron';
+import { describe, expect, test, vi } from 'vitest';
 import { SEARCH_ENGINE_IDS, SEARCH_ENGINES } from '@app/specs/browser-polish.spec';
 import { WATCH_TIMEOUT_MS, MAX_PENDING_WATCHES } from '@app/specs/browser.spec';
+import { MAX_PROJECT_QUERIES } from '@app/specs/capture-db.spec';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import {
+  BULK_LINE_OUTCOMES,
+  BULK_SEARCH_LIMITS,
   DELETE_PROJECT,
   MOBILE_QUERY_PROFILE,
+  PROJECT_REFUSAL_MESSAGES,
+  PROJECT_REFUSALS,
+  PROJECT_SORT_LABELS,
+  PROJECT_SORTS,
+  RUN_SCOPES,
+  bulkSearchInputs,
+  normalizeTag,
+  normalizeTags,
+  sortProjects,
+  splitBulkSearches,
+  type ProjectSummary,
   PROJECT_RUN_LIMITS,
+  CAPTURE_RUN_NOTE,
+  RANK_RUN_DISCLOSURE,
+  RANK_RUN_DISCLOSURE_SETTING_KEY,
+  RANK_RUN_QUERY_SPACING_MS,
+  RUN_BLOCK_REASONS,
+  RUN_END_STATES,
+  RUN_REFUSAL_MESSAGES,
+  RUN_REFUSALS,
+  RUN_STATES,
+  RUN_TARGET_OUTCOMES,
   QUERY_DEVICE_PROFILES,
   QUERY_FIELD_MAX_CHARS,
   SEARCH_PARAM_URL_RULES,
@@ -21,6 +50,10 @@ import {
 } from '@app/specs/projects.spec';
 import { DEFAULT_RENDER_PROFILE, QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
 import { SERP_PARAM_LIMITS } from '@app/specs/serp.spec';
+import { MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from '@app/specs/workspace-db.spec';
+import { confirmRankRun } from '../projects-dialog';
+
+vi.mock('electron', async () => (await import('../../../test/electron-fake')).electronFake());
 
 const BASE: SavedSearchInput = { engine: 'google', query: 'green tea', country: null, language: null, device: 'desktop' };
 const PARAMS: SearchParams = { engine: 'google', engineLabel: 'Google', query: 'green tea', gl: null, hl: null, device: 'desktop', page: 1, offset: null, url: 'https://www.google.com/search?q=green+tea' };
@@ -86,5 +119,115 @@ describe('projects spec', () => {
     expect(dialog.defaultId).toBe(DELETE_PROJECT.dialog.cancelId);
     expect(dialog.buttons[DELETE_PROJECT.confirmIndex]).toBe('Delete Project');
     expect(dialog.detail).toContain('“⁨Tea ‮gnp.exe⁩”');
+  });
+
+  test('projects-workspace-values', () => {
+    // Run scopes, refusals, bulk limits, line outcomes and sorts.
+    expect(RUN_SCOPES).toEqual(['all', 'searches']);
+    expect(PROJECT_REFUSALS).toEqual(expect.arrayContaining(['invalid-domain', 'invalid-tag', 'unfiled', 'limit']));
+    expect(Object.keys(PROJECT_REFUSAL_MESSAGES).sort()).toEqual([...PROJECT_REFUSALS].sort());
+    expect(BULK_SEARCH_LIMITS).toMatchObject({ maxLines: MAX_PROJECT_QUERIES, maxLocales: 5 });
+    expect(BULK_LINE_OUTCOMES).toEqual(['added', 'exists', 'invalid', 'limit']);
+    expect(PROJECT_SORTS).toEqual(['name', 'last-captured', 'created']);
+    expect(Object.keys(PROJECT_SORT_LABELS)).toEqual([...PROJECT_SORTS]);
+    // Tags: NFC, white space runs as one space, trimmed, lowercase; blank, too long or unprintable refused.
+    expect(normalizeTag('  Top\t\n 10 ')).toBe('top 10');
+    expect(normalizeTag('Cafe\u0301')).toBe('café');
+    expect(normalizeTag('x'.repeat(TAG_MAX_CHARS))).toBe('x'.repeat(TAG_MAX_CHARS));
+    for (const bad of ['', '   ', 'x'.repeat(TAG_MAX_CHARS + 1), 'a\u0000b', 'a\u007fb', 'a\u202eb', 'a\u2066b']) expect(normalizeTag(bad), JSON.stringify(bad)).toBeNull();
+    expect(normalizeTags(['B', 'a', ' b '])).toEqual(['a', 'b']);
+    expect(normalizeTags(Array.from({ length: MAX_TAGS_PER_ENTRY }, (_, n) => `t${n}`))).toHaveLength(MAX_TAGS_PER_ENTRY);
+    expect(normalizeTags(Array.from({ length: MAX_TAGS_PER_ENTRY + 1 }, (_, n) => `t${n}`))).toBeNull();
+    expect(normalizeTags(['ok', ''])).toBeNull();
+    // Bulk text: lines or commas, white space collapsed, blanks and repeats dropped, in order.
+    expect(splitBulkSearches('green tea\r\nblack  tea, oolong\n\n , green tea\nGreen tea')).toEqual(['green tea', 'black tea', 'oolong', 'Green tea']);
+    expect(splitBulkSearches(' \n, \n')).toEqual([]);
+    // One search per locale, on each device, locales first.
+    expect(
+      bulkSearchInputs('tea', {
+        engine: 'bing',
+        locales: [
+          { country: 'de', language: 'de' },
+          { country: null, language: null },
+        ],
+        devices: ['desktop', 'mobile'],
+      }),
+    ).toEqual([
+      { engine: 'bing', query: 'tea', country: 'de', language: 'de', device: 'desktop' },
+      { engine: 'bing', query: 'tea', country: 'de', language: 'de', device: 'mobile' },
+      { engine: 'bing', query: 'tea', country: null, language: null, device: 'desktop' },
+      { engine: 'bing', query: 'tea', country: null, language: null, device: 'mobile' },
+    ]);
+    // Sort: Unfiled first, favorites next, then by the sort; ties by name, then id. The input is left as it is.
+    const p = (id: string, name: string, changes: Partial<ProjectSummary> = {}): ProjectSummary => ({
+      id,
+      name,
+      unfiled: false,
+      renderProfile: null,
+      retention: { mode: 'forever', value: null },
+      favorite: false,
+      site: null,
+      createdAt: 0,
+      lastCapturedAt: null,
+      cadence: 'off',
+      autoCapture: false,
+      due: false,
+      ...changes,
+    });
+    const list = [
+      p('1', 'banana', { createdAt: 3, lastCapturedAt: 10 }),
+      p('2', 'Apple', { createdAt: 4 }),
+      p('0', 'Unfiled', { unfiled: true, createdAt: 0 }),
+      p('3', 'cherry', { createdAt: 2, lastCapturedAt: 30, favorite: true }),
+      p('4', 'apple', { createdAt: 1, lastCapturedAt: 20 }),
+      p('5', 'date', { createdAt: 5, favorite: true }),
+    ];
+    const names = (sort: (typeof PROJECT_SORTS)[number]) => sortProjects(list, sort).map((project) => project.id);
+    expect(names('name')).toEqual(['0', '3', '5', '2', '4', '1']);
+    expect(names('last-captured')).toEqual(['0', '3', '5', '4', '1', '2']);
+    expect(names('created')).toEqual(['0', '5', '3', '2', '1', '4']);
+    expect(list.map((project) => project.id)).toEqual(['1', '2', '0', '3', '4', '5']);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Disclosure first, Pacing, Stop at the first challenge)
+  test('rank-run-disclosure-values', async () => {
+    const { dialog: box } = RANK_RUN_DISCLOSURE;
+    // Cancel is the default and the cancel answer; only Continue agrees.
+    expect(box.buttons).toEqual(['Continue', 'Cancel']);
+    expect(box.buttons[RANK_RUN_DISCLOSURE.confirmIndex]).toBe('Continue');
+    expect(box.defaultId).toBe(box.cancelId);
+    expect(box.buttons[box.cancelId]).toBe('Cancel');
+    // What it says: this computer's connection, the pace, the signed-in profile, terms, and the stop.
+    expect(box.detail).toContain('as your signed-in browser profile sees them');
+    expect(box.detail).toContain('one every 10 seconds');
+    expect(box.detail).toContain('cookies');
+    expect(box.detail).toMatch(/terms may restrict automated searches/);
+    expect(box.detail).toMatch(/consent page or a challenge: frost stops at the first one/);
+    expect(RANK_RUN_DISCLOSURE_SETTING_KEY).toBe('rank_run_disclosure');
+    expect(RANK_RUN_QUERY_SPACING_MS).toBe(10_000);
+    expect(PROJECT_RUN_LIMITS.querySpacingMs).toBe(RANK_RUN_QUERY_SPACING_MS);
+    expect(CAPTURE_RUN_NOTE).toMatch(/one every 10 seconds/);
+    expect(CAPTURE_RUN_NOTE).toMatch(/run stops there and captures nothing/);
+    // `blocked` is a state, an end state and an outcome; a declined disclosure is a run refusal.
+    expect(RUN_STATES).toContain('blocked');
+    expect(RUN_END_STATES).toContain('blocked');
+    expect(RUN_TARGET_OUTCOMES).toContain('blocked');
+    expect(RUN_BLOCK_REASONS).toEqual(['not-a-result-page', 'unreadable', 'serp-off', 'mismatch', 'no-reading', 'timed-out', 'load-failed']);
+    expect(RUN_REFUSALS).toContain('declined');
+    expect(Object.keys(RUN_REFUSAL_MESSAGES).sort()).toEqual([...RUN_REFUSALS].sort());
+    expect(PROJECT_REFUSALS).toContain('unavailable');
+    // Main's message box: parented when there is a window (else app-modal); only Continue agrees.
+    const showMessageBox = vi.mocked(dialog.showMessageBox);
+    const parent = { id: 1 } as never;
+    showMessageBox.mockResolvedValueOnce({ response: RANK_RUN_DISCLOSURE.confirmIndex, checkboxChecked: false });
+    await expect(confirmRankRun(parent)).resolves.toBe(true);
+    expect(showMessageBox).toHaveBeenLastCalledWith(parent, { ...box, buttons: [...box.buttons] });
+    for (const response of [box.cancelId, 7]) {
+      showMessageBox.mockResolvedValueOnce({ response, checkboxChecked: false });
+      await expect(confirmRankRun(parent)).resolves.toBe(false);
+    }
+    showMessageBox.mockResolvedValueOnce({ response: RANK_RUN_DISCLOSURE.confirmIndex, checkboxChecked: false });
+    await expect(confirmRankRun(null)).resolves.toBe(true);
+    expect(showMessageBox.mock.lastCall).toEqual([{ ...box, buttons: [...box.buttons] }]);
   });
 });

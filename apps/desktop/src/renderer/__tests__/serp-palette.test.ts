@@ -1,11 +1,14 @@
 // Spec: specs/command-palette.spec.ts (FEATURE_PANEL_JUMPS, Registration API), specs/intent-classifier.spec.ts
 // (INTENT_ENABLE_PROMPT, INTENT_ENABLE_MESSAGES), specs/serp-selector-pack.spec.ts (PACK_UPDATE_MESSAGES),
-// specs/visibility-probes.spec.ts (PROBE_DISCLOSURE)
-// Acceptance: specs/serp-panels.feature.md (Command palette)
+// specs/visibility-probes.spec.ts (PROBE_DISCLOSURE), specs/serp-param-editor.spec.ts (TRACK_REFUSAL_MESSAGES),
+// specs/ai-destinations.spec.ts (AI_SEARCH_DESTINATIONS, AI_DESTINATION_NOTE, openDestinationMessage)
+// Acceptance: specs/serp-panels.feature.md (Command palette; Edit search, Command palette; Open in an AI engine, Command palette)
 import { describe, expect, test, vi } from 'vitest';
+import { AI_DESTINATION_NOTE, AI_SEARCH_DESTINATIONS, OPEN_DESTINATION_REFUSAL_MESSAGES, openDestinationMessage } from '@app/specs/ai-destinations.spec';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
 import { FEATURE_PANEL_JUMPS } from '@app/specs/command-palette.spec';
 import { INTENT_ENABLE_MESSAGES, INTENT_ENABLE_PROMPT, type IntentState } from '@app/specs/intent-classifier.spec';
+import { TRACK_REFUSAL_MESSAGES } from '@app/specs/serp-param-editor.spec';
 import { PACK_UPDATE_MESSAGES } from '@app/specs/serp-selector-pack.spec';
 import type { PackStatus, SerpTabState } from '@app/specs/serp-service.schema';
 import { PROBE_DISCLOSURE } from '@app/specs/visibility-probes.spec';
@@ -47,6 +50,8 @@ function setup(context: Partial<PaletteContext> = {}, known: Known = {}) {
     refreshIntent: vi.fn(async () => 'ready' as const),
     runProbes: vi.fn(async () => true),
     stopProbes: vi.fn(async () => true),
+    openEditor: vi.fn(),
+    openDestination: vi.fn(async (_tabId: number, _destination: string) => ({ status: 'opened' as const, tabId: 11 })),
     knownSerp: () => known.serp,
     knownProbes: () => known.probes,
     knownIntent: () => known.intent,
@@ -169,5 +174,78 @@ describe('SERP palette actions', () => {
     const refused = setup();
     (refused.api.runProbes as ReturnType<typeof vi.fn>).mockResolvedValue(false);
     await expect(Promise.resolve(refused.action('probes.run').run(refused.ctx))).resolves.toBe('The probes could not start');
+  });
+
+  test('serp-palette-edit-and-track', async () => {
+    const pending = (url: string, engine = 'google', paramNames: SerpTabState['paramNames'] = null): SerpTabState =>
+      ({
+        version: 1,
+        tabId: 3,
+        serp: { status: 'pending', tabId: 3, documentSeq: 1, url, params: { engine, engineLabel: 'Engine', query: 'tea', gl: null, hl: null, device: 'desktop', page: 1, offset: null, url } },
+        outlines: false,
+        intent: null,
+        pack: PACK,
+        paramNames,
+      }) as SerpTabState;
+    // On a known result page: both; it opens the SERP panel on the editor.
+    const known = setup({}, { serp: pending(URL_A) });
+    expect(known.ids()).toEqual(expect.arrayContaining(['serp.edit', 'serp.track']));
+    expect(known.action('serp.edit').label).toBe('Edit search…');
+    expect(known.action('serp.track').label).toBe('Track this search…');
+    await known.action('serp.edit').run(known.ctx);
+    expect(known.chrome.openPanel).toHaveBeenLastCalledWith('serp');
+    expect(known.api.openEditor).toHaveBeenLastCalledWith(3, 'edit');
+    await known.action('serp.track').run(known.ctx);
+    expect(known.api.openEditor).toHaveBeenLastCalledWith(3, 'track');
+    // A search a saved search cannot be: the reason, and nothing opens.
+    const filtered = setup({ tab: tab({ url: 'https://www.google.com/search?q=tea&tbs=qdr:w' }) }, { serp: pending('https://www.google.com/search?q=tea&tbs=qdr:w') });
+    await expect(Promise.resolve(filtered.action('serp.track').run(filtered.ctx))).resolves.toBe(TRACK_REFUSAL_MESSAGES.filters);
+    const german = setup({ tab: tab({ url: 'https://www.google.de/search?q=tea' }) }, { serp: pending('https://www.google.de/search?q=tea') });
+    await expect(Promise.resolve(german.action('serp.track').run(german.ctx))).resolves.toBe(TRACK_REFUSAL_MESSAGES.address);
+    expect(german.api.openEditor).not.toHaveBeenCalled();
+    // Another engine: editable only with the pack's names from main.
+    expect(setup({}, { serp: pending('http://search.frost-e2e.net/find?q=tea', 'synthetic') }).ids()).not.toContain('serp.edit');
+    expect(setup({}, { serp: pending('http://search.frost-e2e.net/find?q=tea', 'synthetic', { query: 'q', gl: 'gl', hl: null }) }).ids()).toContain('serp.edit');
+    // Not on a page known not to be a result page, nor before the chrome has seen one.
+    for (const context of [setup({}, { serp: serpState('not-serp') }), setup(), setup({ tab: undefined })]) {
+      expect(context.ids()).not.toContain('serp.edit');
+      expect(context.ids()).not.toContain('serp.track');
+    }
+  });
+
+  test('serp-palette-ai-destinations', async () => {
+    const IDS = AI_SEARCH_DESTINATIONS.map((d) => `serp.open-in-${d.id}`);
+    // On a known result page (pending, ready, or unreadable with its parameters): one action per destination.
+    for (const known of [serpState('pending'), serpState('ready', { serp: { status: 'ready', tabId: 3, documentSeq: 1, url: URL_A, readAt: 1, snapshot: { params: { engine: 'google', engineLabel: 'Google', query: 'tea', gl: null, hl: null, device: 'desktop', page: 1, offset: null, url: URL_A } } } as unknown as SerpTabState['serp'] })]) {
+      expect(setup({}, { serp: known }).ids(), known.serp.status).toEqual(expect.arrayContaining(IDS));
+    }
+    // Not on a page known not to be a result page, before the chrome has seen one, without a tab,
+    // on a non-web page, or for a state of another tab.
+    for (const context of [setup({}, { serp: serpState('not-serp') }), setup(), setup({ tab: undefined }, { serp: serpState('pending') }), setup({ tab: tab({ url: 'about:blank' }) }, { serp: serpState('pending') }), setup({ tab: tab({ id: 4 }) }, { serp: serpState('pending') })]) {
+      for (const id of IDS) expect(context.ids()).not.toContain(id);
+    }
+    const { ctx, action, api } = setup({}, { serp: serpState('pending') });
+    for (const [index, destination] of AI_SEARCH_DESTINATIONS.entries()) {
+      const item = action(`serp.open-in-${destination.id}`);
+      expect(item.label).toBe(`Open search in ${destination.label}`);
+      expect(item.group).toBe('open-in');
+      // It asks first, with the note; nothing is called until it runs.
+      const confirm = item.confirm!(ctx)!;
+      expect(confirm.note).toBe(AI_DESTINATION_NOTE);
+      expect(confirm.message).toContain(destination.label);
+      expect(api.openDestination).toHaveBeenCalledTimes(index);
+      // Running it names the tab and the table id only.
+      await expect(Promise.resolve(item.run(ctx))).resolves.toBe(openDestinationMessage(destination, { status: 'opened', tabId: 11 }));
+      expect(api.openDestination).toHaveBeenLastCalledWith(3, destination.id);
+      expect((api.openDestination as ReturnType<typeof vi.fn>).mock.lastCall).toHaveLength(2);
+    }
+    expect(api.openDestination).toHaveBeenCalledTimes(AI_SEARCH_DESTINATIONS.length);
+    // Main's refusals and an IPC failure are reported.
+    const refused = setup({}, { serp: serpState('pending') });
+    (refused.api.openDestination as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ status: 'refused', reason: 'no-tab' }).mockResolvedValueOnce({ status: 'refused', reason: 'no-search' }).mockResolvedValueOnce(null);
+    const perplexity = () => refused.action('serp.open-in-perplexity');
+    await expect(Promise.resolve(perplexity().run(refused.ctx))).resolves.toBe(OPEN_DESTINATION_REFUSAL_MESSAGES['no-tab']);
+    await expect(Promise.resolve(perplexity().run(refused.ctx))).resolves.toBe(OPEN_DESTINATION_REFUSAL_MESSAGES['no-search']);
+    await expect(Promise.resolve(perplexity().run(refused.ctx))).resolves.toBe(OPEN_DESTINATION_REFUSAL_MESSAGES['no-tab']);
   });
 });

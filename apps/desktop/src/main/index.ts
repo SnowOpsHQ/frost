@@ -59,6 +59,7 @@ import { gscAdapter, intentAdapter, probesAdapter, serpAdapter } from './agent/p
 import { createMainChanges } from './changes/changes-main';
 import { createMainScreenshots } from './screenshots/electron';
 import { createMainProjects } from './changes/projects-main';
+import { createMainRankings } from './changes/rank-dialogs';
 import { lateSearchParams } from './changes/serp-params';
 import { createMainInspector } from './inspector/service';
 import { createAiChecksMain } from './ai-checks/main';
@@ -333,11 +334,11 @@ function start(): void {
   // Change intelligence (specs/changes-capture.feature.md): the active tab's ready audit and its regions, captured into the session database.
   // A SERP tab's search parameters come from Phase 3's read API, bound once setupSerp runs (null until then).
   const serpParams = lateSearchParams();
-  const changes = createMainChanges({ store: sessionStore.changeIntel, browser, tabContents, log: logSession, searchParamsOf: serpParams.of });
+  const changes = createMainChanges({ store: sessionStore.changeIntel, browser, tabContents, log: logSession, searchParamsOf: serpParams.of, readingOf: serpParams.readingOf });
   // Screenshots (specs/screenshot.feature.md): the active tab's own view, captured by main; PNG files named by their hash under the profile directory.
   const screenshots = createMainScreenshots({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, tabContents, log: logSession, searchParamsOf: serpParams.of });
   // Projects (specs/projects.feature.md): pages and queries, and their capture runs in a tab of their own.
-  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of });
+  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of, serpVerdictOf: serpParams.verdictOf, settings: sessionStore.settings });
   // The DOM inspector (specs/inspector.feature.md): reads the active tab's page in its own isolated world; never writes to it.
   const inspector = createMainInspector({ browser, tabContents, log: logSession });
 
@@ -418,7 +419,7 @@ function start(): void {
     // The SERP overlay (specs/serp-overlay.feature.md): selector packs, the SERP worker, on-device
     // intent, the visibility probes (their own fetcher lane over this hop and resolver) and each tab's
     // page events, all wired in serp/setup.ts (disposed on will-quit there).
-    const serp = setupSerp({ app, browser, isBrowseContents, hop, resolve, robots: (pageUrl) => robotsFetcher.get(pageUrl), userData: app.getPath('userData'), switches: app.commandLine, log: logSession });
+    const serp = setupSerp({ app, browser, isBrowseContents, hop, resolve, robots: (pageUrl) => robotsFetcher.get(pageUrl), userData: app.getPath('userData'), switches: app.commandLine, log: logSession, openBackgroundTab: (url) => browser.openBackgroundTab(url, false) });
     serpParams.bind(serp.readApi);
     // Main and preload are bundled side by side into .vite/build (CJS); the renderer is in .vite/renderer.
     handleAppProtocol(path.join(__dirname, '../renderer', MAIN_WINDOW_VITE_NAME));
@@ -489,6 +490,7 @@ function start(): void {
         telemetry: telemetryMain.service,
         gsc: gsc.service,
         aiChecks,
+        rankings: createMainRankings({ store: sessionStore.changeIntel, log: logSession }), // specs/rankings.feature.md: rank table, compare, CSV via main's clipboard and save dialog.
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

@@ -957,6 +957,27 @@ input {
   background: var(--accent-hover);
 }
 
+/* A disabled panel button looks it (as the app's other disabled buttons: faded) and does not
+   react to the pointer. Its title, when it has one, still shows. */
+.panel-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.panel-button:disabled:hover {
+  border-color: var(--border-field);
+  background: var(--bg-field);
+}
+
+.panel-button-primary:disabled:hover {
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.panel-button:disabled:active {
+  transform: none;
+}
+
 /* Retrying: the reload arrow turns until the load ends. */
 .panel-button[data-busy='true'] .icon {
   animation: tab-spin 0.9s linear infinite;
@@ -9473,3 +9494,84 @@ input {
 }
 
 /* End of Inspector (Phase 6) */
+
+/* The SERP panel's search tools (Phase 10 Task 9): Edit search and Track this search…. */
+.serp-search-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.serp-search-tools .seo-note {
+  margin: 0;
+}
+
+.serp-editor,
+.serp-track {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 12px;
+  background: var(--seo-card);
+  box-shadow: var(--shadow-card);
+}
+
+.serp-editor-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.serp-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.serp-editor-field[data-key='host'] {
+  grid-column: span 2;
+}
+
+.serp-editor-label {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.serp-editor-select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+  background: var(--bg-field);
+  color: var(--text);
+}
+
+.serp-editor-hint {
+  font-size: 11px;
+}
+
+/* "Open in" an AI engine (Phase 10 Task 10): the panel's row and the editor's. While the editor is
+   open its own row stands in for the panel's. */
+.serp-open-in {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.serp-open-in .seo-note {
+  margin: 0;
+}
+
+.serp-search-tools:has(.serp-editor) + .serp-open-in {
+  display: none;
+}

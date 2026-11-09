@@ -1,16 +1,19 @@
 // Spec: specs/serp-service.schema.ts (SerpTabInputSchema, SerpWatchInputSchema, SerpOutlinesInputSchema,
-// SerpClassifyInputSchema, SerpTabStateSchema), specs/serp-service.spec.ts, specs/ipc-sender.spec.ts,
+// SerpClassifyInputSchema, SerpTabStateSchema, OpenDestinationInputSchema, OpenDestinationAnswerSchema),
+// specs/ai-destinations.spec.ts (AI_DESTINATION_IDS, OpenDestinationResult), specs/serp-service.spec.ts, specs/ipc-sender.spec.ts,
 // specs/browser.spec.ts (WATCH_TIMEOUT_MS), specs/visibility-probes.schema.ts (ProbesStateSchema)
-// Acceptance: specs/serp-overlay.feature.md (Router), specs/visibility-probes.feature.md (Router and setup)
+// Acceptance: specs/serp-overlay.feature.md (Router), specs/visibility-probes.feature.md (Router and setup),
+// specs/serp-panels.feature.md (Open in an AI engine, Router)
 import { TRPCError } from '@trpc/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { AI_DESTINATION_IDS, type AiDestinationId, type OpenDestinationResult } from '@app/specs/ai-destinations.spec';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import type { IntentAnswer, IntentEnableOutcome, IntentState } from '@app/specs/intent-classifier.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import type { PackUpdateOutcome } from '@app/specs/serp-selector-pack.spec';
-import { SerpTabStateSchema, type PackStatus, type SerpTabState } from '@app/specs/serp-service.schema';
+import { OpenDestinationAnswerSchema, SerpTabStateSchema, type PackStatus, type SerpTabState } from '@app/specs/serp-service.schema';
 import { ProbesStateSchema, type ProbesState } from '@app/specs/visibility-probes.schema';
 import { appRouter, createSenderPolicy, type IpcContext, type SerpService } from '../index';
 
@@ -51,6 +54,7 @@ function fakeSerp() {
             signal?.addEventListener('abort', () => resolve(probesState(5)));
           }),
     ),
+    openDestination: vi.fn((tabId: number, _destination: AiDestinationId): OpenDestinationResult => (tabId === 1 ? { status: 'opened', tabId: 8 } : { status: 'refused', reason: 'no-search' })),
   } satisfies SerpService;
   return { serp, push: (s: SerpTabState) => release?.(s), pushProbes: (s: ProbesState) => releaseProbes?.(s) };
 }
@@ -92,6 +96,7 @@ const VALID_INPUT: Record<string, unknown> = {
   stopProbes: { tabId: 1 },
   probes: { tabId: 1 },
   watchProbes: { tabId: 1, sinceVersion: -1 },
+  openDestination: { tabId: 1, destination: 'perplexity' },
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 const untouched = (serp: ReturnType<typeof fakeSerp>['serp']) => {
@@ -206,5 +211,51 @@ describe('serp router', () => {
     expect(serp.watchProbes.mock.calls.at(-1)![2]?.aborted).toBe(true);
     // Reading never runs anything.
     expect(serp.runProbes).toHaveBeenCalledTimes(1);
+  });
+
+  test('open-destination-enforces-sender', async () => {
+    // A foreign origin, window or frame is refused before the service is touched (also `serp-procedures-enforce-sender`).
+    for (const origin of ['https://evil.com', 'https://www.perplexity.ai', 'null']) {
+      const { serp } = fakeSerp();
+      expect((await errorOf(procedure(ctxFor(serp, origin), 'openDestination')({ tabId: 1, destination: 'perplexity' }))).code, origin).toBe(IPC_SENDER_ERROR_CODE);
+      untouched(serp);
+    }
+    // Strict input: the tab and a table id only, never a query, a URL or a host.
+    const bad: unknown[] = [
+      { tabId: 1 },
+      { destination: 'perplexity' },
+      { tabId: 0, destination: 'perplexity' },
+      { tabId: 1.5, destination: 'perplexity' },
+      { tabId: '1', destination: 'perplexity' },
+      { tabId: 1, destination: 'bing' },
+      { tabId: 1, destination: 'Perplexity' },
+      { tabId: 1, destination: 'https://evil.com/' },
+      { tabId: 1, destination: 'perplexity', query: 'injected' },
+      { tabId: 1, destination: 'perplexity', url: 'https://evil.com/?q=x' },
+      { tabId: 1, destination: 'perplexity', origin: 'https://evil.com' },
+      {},
+      undefined,
+    ];
+    for (const input of bad) {
+      const { serp } = fakeSerp();
+      expect((await errorOf(procedure(ctxFor(serp), 'openDestination')(input))).code, JSON.stringify(input) ?? 'undefined').toBe('BAD_REQUEST');
+      untouched(serp);
+    }
+    // Fails closed without the service.
+    expect((await errorOf(procedure(ctxFor(undefined), 'openDestination')({ tabId: 1, destination: 'chatgpt' }))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    // Each table id reaches the service as it is; the answer is checked on the way out.
+    for (const destination of AI_DESTINATION_IDS) {
+      const { serp } = fakeSerp();
+      const answer = await procedure(ctxFor(serp), 'openDestination')({ tabId: 1, destination });
+      expect(answer).toEqual({ status: 'opened', tabId: 8 });
+      expect(OpenDestinationAnswerSchema.parse(answer)).toEqual(answer);
+      expect(serp.openDestination).toHaveBeenCalledWith(1, destination);
+      expect(serp.openDestination).toHaveBeenCalledTimes(1);
+    }
+    const { serp } = fakeSerp();
+    await expect(procedure(ctxFor(serp), 'openDestination')({ tabId: 2, destination: 'google-ai-mode' })).resolves.toEqual({ status: 'refused', reason: 'no-search' });
+    // An answer outside the schema never reaches the renderer.
+    serp.openDestination.mockReturnValueOnce({ status: 'opened', tabId: 8, url: 'https://www.perplexity.ai/search?q=x' } as unknown as OpenDestinationResult);
+    expect((await errorOf(procedure(ctxFor(serp), 'openDestination')({ tabId: 1, destination: 'perplexity' }))).code).toBe('INTERNAL_SERVER_ERROR');
   });
 });

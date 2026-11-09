@@ -26,6 +26,7 @@ import { serpRouter } from './serp-router';
 import { telemetryRouter } from './telemetry-router';
 import { gscRouter } from './gsc-router';
 import { aiChecksRouter } from './ai-checks-router';
+import { rankingsRouter } from './rankings-router';
 import type { BrowserService } from './services';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 import { changesRouter, screenshotsRouter } from './changes-router';
@@ -308,6 +309,7 @@ export const appRouter = router({
   gsc: gscRouter,
   // Phase 9 Task 10 (`ai-checks.feature.md`): AI checks' mode (consent in main), state and "Check this page".
   aiChecks: aiChecksRouter,
+  rankings: rankingsRouter, // Phase 10 Task 5 (`rankings.feature.md`, Router): rank table, series, compare and CSV export.
 });
 
 export type AppRouter = typeof appRouter;

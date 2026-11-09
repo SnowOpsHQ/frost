@@ -341,6 +341,7 @@ export function createRetentionService(deps: RetentionServiceDeps): MainRetentio
             sharedVersions: stored.sharedVersions,
             snapshotBytes: stored.snapshotBytes,
             diffBytes: stored.diffBytes,
+            readingBytes: stored.readingBytes,
             screenshots: stored.screenshots,
             files: await measureFiles(hashes, stored.sharedScreenshotFiles),
             database: await databaseSize(),

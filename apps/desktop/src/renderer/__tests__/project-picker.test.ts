@@ -31,7 +31,7 @@ const { ProjectPicker } = await import('../components/changes/ProjectPicker');
 const { captureProject, setCaptureProject } = await import('../components/changes/capture-project');
 const { notifyProjectsChanged } = await import('../components/changes/projects-sheet');
 
-const project = (id: string): ProjectSummary => ({ id, name: id, unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null } });
+const project = (id: string): ProjectSummary => ({ id, name: id, unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 0, lastCapturedAt: null, cadence: 'off', autoCapture: false, due: false });
 const P = '01890a5d-ac96-774b-bcce-b302099a8057';
 
 let root: Root;

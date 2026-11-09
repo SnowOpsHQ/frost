@@ -1,7 +1,9 @@
 // Spec: specs/projects.spec.ts (PROJECT_REFUSALS, RUN_REFUSALS, SavedSearchInput, searchUrlFor, queryLabel, DELETE_PROJECT),
 // specs/serp-search-params.schema.ts (SearchParamsSchema: a saved search is Phase 3's parameters of its URL),
 // specs/projects.schema.ts (answers), specs/capture-db.spec.ts (UNFILED_PROJECT_ID, MAX_PROJECT_PAGES)
-// Acceptance: specs/projects.feature.md (The service; Deleting a project; Scenarios: service)
+// Phase 10 Task 8: RANK_RUN_DISCLOSURE, RANK_RUN_DISCLOSURE_SETTING_KEY (through the settings repository), CAPTURE_CADENCES,
+// specs/capture-schedule.spec.ts (isDue, AUTO_CAPTURE_AVAILABLE, RANK_CHECK_AVAILABLE)
+// Acceptance: specs/projects.feature.md (The service; Deleting a project; Searches in a run; Cadence; Scenarios: service)
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,6 +13,8 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { canonicalJson } from '@app/change-intel';
 import { openSessionStore, uuidv7, type ChangeIntelRepository } from '@app/db';
 import { MAX_PROJECT_PAGES, PROJECT_NAME_MAX_CHARS, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME } from '@app/specs/capture-db.spec';
+import { RANK_CHECK_AVAILABLE } from '@app/specs/capture-schedule.spec';
+import { CAPTURE_CADENCES } from '@app/specs/workspace-db.spec';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { CreateProjectAnswerSchema, ProjectDetailSchema, ProjectsAnswerSchema, type RunState, type SavedSearchInput, type StartRunAnswer } from '@app/specs/projects.schema';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from '@app/specs/render-profile.spec';
@@ -33,7 +37,20 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-const IDLE: RunState = { version: 1, runId: null, projectId: null, state: 'idle', current: 0, total: 0, omitted: 0, screenshot: false, targets: [] };
+const IDLE: RunState = { version: 1, runId: null, projectId: null, state: 'idle', current: 0, total: 0, omitted: 0, screenshot: false, targets: [], blockedReason: null };
+
+/** The settings repository's disclosure flag, in memory (one install). */
+function fakeSettings() {
+  const stored = { accepted: false };
+  return {
+    stored,
+    rankRunDisclosureAccepted: vi.fn(async () => stored.accepted),
+    setRankRunDisclosureAccepted: vi.fn(async (_at: number) => {
+      stored.accepted = true;
+      return true;
+    }),
+  };
+}
 
 function setup(deps: Partial<ProjectsServiceDeps> = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'frost-projects-'));
@@ -59,9 +76,14 @@ function setup(deps: Partial<ProjectsServiceDeps> = {}) {
     watch: vi.fn(async (_since: number) => IDLE),
   } satisfies CaptureRuns;
   const log = vi.fn((_message: string) => undefined);
-  const service = createProjectsService({ store: opened.changeIntel, files, confirmDelete, activeUrl: () => state.activeUrl, runs, now: tick, log, ...deps });
+  // Main's disclosure (Phase 10 Task 8) answers Continue unless a test says otherwise.
+  const confirmRankRun = vi.fn(async () => true);
+  const settings = fakeSettings();
+  // The cadence and Due notice are tested as they will ship once L1 is cleared (`RANK_CHECK_AVAILABLE`
+  // injected `true`); `set-cadence-unavailable-until-cleared` passes the shipped flag.
+  const service = createProjectsService({ store: opened.changeIntel, files, confirmDelete, activeUrl: () => state.activeUrl, runs, now: tick, log, confirmRankRun, settings, rankCheckAvailable: true, ...deps });
   const count = (sql: string, ...args: string[]) => (raw.prepare(sql).get(...args) as { n: number }).n;
-  return { service, repo: opened.changeIntel, files, unlinked, confirmDelete, state, runs, log, count, raw };
+  return { service, repo: opened.changeIntel, files, unlinked, confirmDelete, state, runs, log, count, raw, confirmRankRun, settings };
 }
 
 /** Creates a project and answers its id. */
@@ -109,7 +131,7 @@ describe('projects service', () => {
     const { service } = setup();
     // Unfiled is there from the start, first.
     const first = ProjectsAnswerSchema.parse(await service.list());
-    expect(first.projects).toEqual([{ id: UNFILED_PROJECT_ID, name: UNFILED_PROJECT_NAME, unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null } }]);
+    expect(first.projects).toEqual([{ id: UNFILED_PROJECT_ID, name: UNFILED_PROJECT_NAME, unfiled: true, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 0, lastCapturedAt: null, cadence: 'off', autoCapture: false, due: false }]);
     const made = CreateProjectAnswerSchema.parse(await service.create('  Coffee guides  '));
     expect(made).toMatchObject({ status: 'created', project: { name: 'Coffee guides', unfiled: false, renderProfile: null } });
     const id = made.status === 'created' ? made.project.id : '';
@@ -153,7 +175,7 @@ describe('projects service', () => {
     expect(await service.addQuery(id, { ...SEARCH, query: '  padded  ' })).toEqual({ status: 'refused', reason: 'invalid-query' });
     const detail = ProjectDetailSchema.parse(await service.get(id))!;
     expect(detail.pages.map((p) => p.url)).toEqual([A, B, 'https://example.com/c?x=1']);
-    expect(detail.queries).toEqual([{ id: query.status === 'added' ? query.query.id : '', params: PARAMS, url: PARAMS.url, lastCapturedAt: null, changeCount: null }]);
+    expect(detail.queries).toEqual([{ id: query.status === 'added' ? query.query.id : '', params: PARAMS, url: PARAMS.url, lastCapturedAt: null, changeCount: null, tags: [] }]);
     // Remove.
     expect(await service.removePage(id, detail.pages[0]!.id)).toEqual({ status: 'ok' });
     expect(await service.removePage(id, detail.pages[0]!.id)).toEqual({ status: 'refused', reason: 'not-found' });
@@ -333,6 +355,7 @@ describe('projects service', () => {
       projectId: id,
       profile: PHONE,
       screenshot: true,
+      scope: 'all',
       targets: [
         { kind: 'page', label: A, url: A, searchParams: null },
         { kind: 'query', label: '“green tea” on Bing (DE, de, mobile)', url: PARAMS.url, searchParams: PARAMS },
@@ -342,6 +365,204 @@ describe('projects service', () => {
     expect(service.cancelRun()).toBe(true);
     await expect(service.runState(0)).resolves.toBe(IDLE);
     expect(runs.watch).toHaveBeenCalledWith(0);
+  });
+
+  // spec: specs/projects.feature.md — Run scope: `searches` plans only the saved searches; none is `no-targets`.
+  test('start-run-passes-its-scope', async () => {
+    const { service, runs } = setup();
+    const id = await created(service, 'Guides');
+    await service.addPage(id, A);
+    expect(await service.startRun(id, false, 'searches')).toEqual({ status: 'refused', reason: 'no-targets' });
+    expect(runs.start).not.toHaveBeenCalled();
+    await service.addQuery(id, SEARCH);
+    expect(await service.startRun(id, false, 'searches')).toMatchObject({ status: 'started' });
+    expect(runs.start).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ projectId: id, scope: 'searches' }));
+    expect(runs.start.mock.calls[0]![0].targets.map((target) => target.kind)).toEqual(['page', 'query']);
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Disclosure first); projects.spec.ts RANK_RUN_DISCLOSURE
+  test('rank-run-asks-once-before-first-search-run', async () => {
+    const { service, runs, confirmRankRun, settings } = setup();
+    const id = await created(service, 'Guides');
+    await service.addPage(id, A);
+    // A pages-only run never asks.
+    expect(await service.startRun(id, false)).toMatchObject({ status: 'started' });
+    expect(confirmRankRun).not.toHaveBeenCalled();
+    await service.addQuery(id, SEARCH);
+    // Cancel starts nothing, and nothing is remembered.
+    confirmRankRun.mockResolvedValueOnce(false);
+    expect(await service.startRun(id, false)).toEqual({ status: 'refused', reason: 'declined' });
+    expect(confirmRankRun).toHaveBeenCalledOnce();
+    expect(runs.start).toHaveBeenCalledOnce();
+    expect(settings.setRankRunDisclosureAccepted).not.toHaveBeenCalled();
+    // Check rankings asks too (a run with search targets); Continue starts it and is remembered.
+    expect(await service.startRun(id, false, 'searches')).toMatchObject({ status: 'started' });
+    expect(confirmRankRun).toHaveBeenCalledTimes(2);
+    expect(runs.start).toHaveBeenCalledTimes(2);
+    expect(settings.setRankRunDisclosureAccepted).toHaveBeenCalledOnce();
+    expect(settings.stored.accepted).toBe(true);
+    // Asked once per install: neither this service nor one made after a restart asks again.
+    expect(await service.startRun(id, true)).toMatchObject({ status: 'started' });
+    const restarted = setup({ settings });
+    const other = await created(restarted.service, 'Other');
+    await restarted.service.addQuery(other, SEARCH);
+    expect(await restarted.service.startRun(other, false)).toMatchObject({ status: 'started' });
+    expect(restarted.confirmRankRun).not.toHaveBeenCalled();
+    expect(confirmRankRun).toHaveBeenCalledTimes(2);
+
+    // A setting that cannot be read is not an answer: main asks (fail closed).
+    const unread = setup({ settings: { rankRunDisclosureAccepted: vi.fn(async () => Promise.reject(new Error('SQLITE_BUSY'))), setRankRunDisclosureAccepted: vi.fn(async () => true) } });
+    const third = await created(unread.service, 'Third');
+    await unread.service.addQuery(third, SEARCH);
+    unread.confirmRankRun.mockResolvedValueOnce(false);
+    expect(await unread.service.startRun(third, false)).toEqual({ status: 'refused', reason: 'declined' });
+    expect(unread.runs.start).not.toHaveBeenCalled();
+
+    // One question at a time: a second start while it is open waits for the same answer.
+    const pair = setup();
+    const fourth = await created(pair.service, 'Fourth');
+    await pair.service.addQuery(fourth, SEARCH);
+    let answer: (value: boolean) => void = () => undefined;
+    pair.confirmRankRun.mockImplementationOnce(() => new Promise<boolean>((resolve) => (answer = resolve)));
+    const first = pair.service.startRun(fourth, false);
+    const second = pair.service.startRun(fourth, false);
+    await vi.waitFor(() => expect(pair.confirmRankRun).toHaveBeenCalledOnce());
+    answer(false);
+    expect(await first).toEqual({ status: 'refused', reason: 'declined' });
+    expect(await second).toEqual({ status: 'refused', reason: 'declined' });
+    expect(pair.confirmRankRun).toHaveBeenCalledOnce();
+    expect(pair.runs.start).not.toHaveBeenCalled();
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (Task 8 security review rulings: a page that is a result
+  // page needs the disclosure; the targets are read again after Continue; an automatic start never asks)
+  test('rank-run-disclosure-review-rulings', async () => {
+    // A pages-only project whose page is an engine's result page: its run loads a search, so main asks.
+    const { service, runs, confirmRankRun, settings, repo } = setup();
+    const id = await created(service, 'Pages');
+    await service.addPage(id, 'https://www.google.com/search?q=green+tea&gl=de&hl=de');
+    confirmRankRun.mockResolvedValueOnce(false);
+    expect(await service.startRun(id, false)).toEqual({ status: 'refused', reason: 'declined' });
+    expect(confirmRankRun).toHaveBeenCalledOnce();
+    expect(runs.start).not.toHaveBeenCalled();
+
+    // What the project holds after Continue is what the run visits (read again once the dialog closed).
+    let answer: (value: boolean) => void = () => undefined;
+    confirmRankRun.mockImplementationOnce(() => new Promise<boolean>((resolve) => (answer = resolve)));
+    const starting = service.startRun(id, false);
+    await vi.waitFor(() => expect(confirmRankRun).toHaveBeenCalledTimes(2));
+    await service.addPage(id, B);
+    answer(true);
+    expect(await starting).toMatchObject({ status: 'started' });
+    expect(runs.start.mock.calls[0]![0].targets.map((target) => target.url)).toEqual(['https://www.google.com/search?q=green+tea&gl=de&hl=de', B]);
+    // A project deleted while the dialog was open: nothing starts.
+    settings.stored.accepted = false;
+    const gone = await created(service, 'Gone');
+    await service.addQuery(gone, SEARCH);
+    confirmRankRun.mockImplementationOnce(async () => {
+      await repo.tombstoneProject(gone, tick());
+      return true;
+    });
+    expect(await service.startRun(gone, false)).toEqual({ status: 'refused', reason: 'not-found' });
+    expect(runs.start).toHaveBeenCalledOnce();
+
+    // An automatic start never opens the disclosure: without a Continue given, `declined`.
+    const auto = setup();
+    const project = await created(auto.service, 'Auto');
+    await auto.service.addQuery(project, SEARCH);
+    expect(await auto.service.startAutomaticRun(project)).toEqual({ status: 'refused', reason: 'declined' });
+    expect(auto.confirmRankRun).not.toHaveBeenCalled();
+    expect(auto.runs.start).not.toHaveBeenCalled();
+    auto.settings.stored.accepted = true;
+    expect(await auto.service.startAutomaticRun(project)).toMatchObject({ status: 'started' });
+    expect(auto.runs.start).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ projectId: project, screenshot: false, scope: 'all' }));
+    expect(auto.confirmRankRun).not.toHaveBeenCalled();
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (whole-branch review ruling: a page on an engine's host is a search)
+  test('rank-run-asks-for-an-engine-host-page', async () => {
+    const { service, runs, confirmRankRun } = setup();
+    // Pages on an engine's host that the pack refuses as a result page (another vertical): still disclosed.
+    for (const url of ['https://www.google.com/search?q=green+tea&udm=50', 'https://www.google.com/search?q=green+tea&tbm=isch', 'https://duckduckgo.com/?q=green+tea&ia=images', 'https://www.bing.com/search?form=x']) {
+      const id = await created(service, url.slice(8, 30));
+      await service.addPage(id, url);
+      confirmRankRun.mockResolvedValueOnce(false);
+      expect(await service.startRun(id, false), url).toEqual({ status: 'refused', reason: 'declined' });
+    }
+    expect(confirmRankRun).toHaveBeenCalledTimes(4);
+    expect(runs.start).not.toHaveBeenCalled();
+    // A page on another host never asks, nor one on an engine's host off its result paths (council review).
+    for (const url of ['https://example.com/search?q=green+tea&udm=50', 'https://www.google.com/maps/place/x', 'https://duckduckgo.com/about', 'https://www.bing.com/images/search?q=tea']) {
+      runs.start.mockClear();
+      const own = await created(service, `Own ${url.slice(8, 24)}`);
+      await service.addPage(own, url);
+      expect(await service.startRun(own, false), url).toMatchObject({ status: 'started' });
+      expect(confirmRankRun, url).toHaveBeenCalledTimes(4);
+    }
+  });
+
+  // spec: specs/projects.feature.md — Cadence (the disclosure before a cadence is first set; Unfiled refuses one)
+  test('cadence-asks-the-disclosure-first', async () => {
+    const { service, confirmRankRun, settings } = setup();
+    const id = await created(service, 'Guides');
+    const summary = async () => (await service.list()).projects.find((project) => project.id === id)!;
+    expect(await summary()).toMatchObject({ cadence: 'off', autoCapture: false, due: false });
+    // Unfiled has no cadence; an unknown project is not found; neither asks.
+    expect(await service.setCadence(UNFILED_PROJECT_ID, 'daily')).toEqual({ status: 'refused', reason: 'unfiled' });
+    expect(await service.setCadence(uuidv7(tick()), 'daily')).toEqual({ status: 'refused', reason: 'not-found' });
+    // Off never asks.
+    expect(await service.setCadence(id, 'off')).toEqual({ status: 'ok' });
+    expect(confirmRankRun).not.toHaveBeenCalled();
+    // Cancel: nothing stored.
+    confirmRankRun.mockResolvedValueOnce(false);
+    expect(await service.setCadence(id, 'daily')).toEqual({ status: 'refused', reason: 'declined' });
+    expect(await summary()).toMatchObject({ cadence: 'off', due: false });
+    expect(settings.stored.accepted).toBe(false);
+    // Continue: stored and remembered; a project that never ran is due at once (a notice only).
+    expect(await service.setCadence(id, 'daily')).toEqual({ status: 'ok' });
+    expect(confirmRankRun).toHaveBeenCalledTimes(2);
+    expect(settings.stored.accepted).toBe(true);
+    expect(await summary()).toMatchObject({ cadence: 'daily', autoCapture: false, due: true });
+    expect(ProjectsAnswerSchema.parse(await service.list()).projects.find((project) => project.id === id)).toMatchObject({ cadence: 'daily', due: true });
+    // Asked once: another cadence, and the first run with searches, do not ask again.
+    expect(await service.setCadence(id, 'weekly')).toEqual({ status: 'ok' });
+    await service.addQuery(id, SEARCH);
+    expect(await service.startRun(id, false)).toMatchObject({ status: 'started' });
+    expect(confirmRankRun).toHaveBeenCalledTimes(2);
+    // Starting runs automatically is not offered (AUTO_CAPTURE_AVAILABLE is false): nothing stored.
+    expect(await service.setAutoCapture(id, true)).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(await summary()).toMatchObject({ cadence: 'weekly', autoCapture: false });
+    expect(confirmRankRun).toHaveBeenCalledTimes(2);
+  });
+
+  // spec: specs/projects.feature.md — Cadence (Legal gate L1); capture-schedule.spec.ts RANK_CHECK_AVAILABLE
+  test('set-cadence-unavailable-until-cleared', async () => {
+    // The shipped flag: no cadence until the owner's L1 note is under docs/research/.
+    expect(RANK_CHECK_AVAILABLE).toBe(false);
+    const { service, repo, confirmRankRun, settings, runs } = setup({ rankCheckAvailable: RANK_CHECK_AVAILABLE });
+    const id = await created(service, 'Guides');
+    const summary = async () => (await service.list()).projects.find((project) => project.id === id)!;
+    // Every cadence is refused in main, whatever the renderer sends: nothing stored, no disclosure asked.
+    for (const cadence of CAPTURE_CADENCES) expect(await service.setCadence(id, cadence), cadence).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(await service.setCadence(UNFILED_PROJECT_ID, 'daily')).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(confirmRankRun).not.toHaveBeenCalled();
+    expect(settings.setRankRunDisclosureAccepted).not.toHaveBeenCalled();
+    expect((await repo.projectWorkspaces()).find((workspace) => workspace.projectId === id)?.cadence ?? 'off').toBe('off');
+    expect(await service.setAutoCapture(id, true)).toEqual({ status: 'refused', reason: 'unavailable' });
+    // A cadence stored earlier (another build, sync) is never due: the Due notice is not offered.
+    expect(await repo.setProjectCadence(id, 'daily')).toBe(true);
+    expect(await summary()).toMatchObject({ cadence: 'daily', due: false });
+    expect(ProjectsAnswerSchema.parse(await service.list()).projects.every((project) => !project.due)).toBe(true);
+    expect((await service.get(id))!.project.due).toBe(false);
+    // Capture now on a project with saved searches still asks the disclosure first and starts.
+    await service.addQuery(id, SEARCH);
+    // "Check rankings" (a `searches` run) is refused in main, whatever the renderer sends: nothing asked or started.
+    expect(await service.startRun(id, false, 'searches')).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(confirmRankRun).not.toHaveBeenCalled();
+    expect(runs.start).not.toHaveBeenCalled();
+    expect(await service.startRun(id, false)).toMatchObject({ status: 'started' });
+    expect(confirmRankRun).toHaveBeenCalledOnce();
+    expect(runs.start).toHaveBeenCalledOnce();
   });
 
   test('projects-never-reject', async () => {
@@ -361,6 +582,7 @@ describe('projects service', () => {
     expect(await service.addQuery(id, SEARCH)).toEqual({ status: 'refused', reason: 'store-failed' });
     expect(await service.forPage(A)).toEqual({ projects: [] });
     expect(await service.startRun(id, false)).toEqual({ status: 'refused', reason: 'store-failed' });
+    expect(await service.setCadence(id, 'daily')).toEqual({ status: 'refused', reason: 'store-failed' });
     // The log says what failed, never the error's message.
     expect(log).toHaveBeenCalled();
     for (const [line] of log.mock.calls) expect(line).not.toContain('SECRET');

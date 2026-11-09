@@ -12,7 +12,8 @@ import { fakeEvent } from '../../../test/electron-fake';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../../browser/controller';
 import type { ProfileDebugger } from '../../browser/render-profile-debugger';
 import { createRenderProfilePins, type RenderProfilePins } from '../../browser/render-profile-pins';
-import { createCaptureRuns, type RunBrowser } from '../capture-run';
+import { createCaptureRuns, type RunBrowser, type RunPlanTarget } from '../capture-run';
+import { readySerpFor } from './fakes';
 
 vi.mock('electron', async () => (await import('../../../test/electron-fake')).electronFake());
 
@@ -88,20 +89,15 @@ describe('capture run over the real render profiles', () => {
       inEffect.push(controller.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile?.profile ?? null);
       return { status: 'captured', captureId: ID, versionId: ID, newVersion: true, changeCount: null };
     });
-    const runs = createCaptureRuns({ browser: runBrowser(), capture, screenshot: vi.fn(), uuidv7: () => ID, limits: { captureRetryMs: 10 } });
+    const targets: RunPlanTarget[] = [
+      { kind: 'query', label: 'mobile', url: SEARCH, searchParams: MOBILE },
+      { kind: 'query', label: 'desktop', url: `${SEARCH}&num=10`, searchParams: DESKTOP },
+      { kind: 'page', label: 'a', url: 'https://a.example/', searchParams: null },
+    ];
+    // Every search reads ready as its own (Phase 10 Task 8's gate), with no spacing or settle wait.
+    const runs = createCaptureRuns({ browser: runBrowser(), capture, screenshot: vi.fn(), uuidv7: () => ID, ...readySerpFor(targets), limits: { captureRetryMs: 10, querySpacingMs: 0, serpSettleWaitMs: 0 } });
     const previous = controller.getState().activeTabId;
-    expect(
-      await runs.start({
-        projectId: PROJECT,
-        profile: null,
-        screenshot: false,
-        targets: [
-          { kind: 'query', label: 'mobile', url: SEARCH, searchParams: MOBILE },
-          { kind: 'query', label: 'desktop', url: `${SEARCH}&num=10`, searchParams: DESKTOP },
-          { kind: 'page', label: 'a', url: 'https://a.example/', searchParams: null },
-        ],
-      }),
-    ).toMatchObject({ status: 'started' });
+    expect(await runs.start({ projectId: PROJECT, profile: null, screenshot: false, targets })).toMatchObject({ status: 'started' });
     await vi.waitFor(() => expect(runs.state().state).toBe('done'), { timeout: 5_000, interval: 10 });
     expect(runs.state().targets.map((target) => target.outcome)).toEqual(['captured', 'captured', 'captured']);
     // No pin was removed, and both still apply: the mobile query in its own profiled tab, the rest under the pins.

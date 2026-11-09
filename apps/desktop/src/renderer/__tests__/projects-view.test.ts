@@ -1,19 +1,82 @@
-// Spec: specs/projects.spec.ts (PROJECT_REFUSAL_MESSAGES, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS), specs/render-profile.spec.ts
+// Spec: specs/projects.spec.ts (PROJECT_REFUSAL_MESSAGES, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS; Phase 10 Task 8:
+// RUN_BLOCK_REASONS, RUN_BLOCK_REASON_LABELS, RUN_BLOCKED_NOTE, DUE_TEXT, CHECK_RANKINGS_TEXT), specs/capture-schedule.spec.ts
+// (AUTO_CAPTURE_AVAILABLE, CAPTURE_CADENCE_LABELS, CAPTURE_SCHEDULE_NOTE, CADENCE_TEXT), specs/render-profile.spec.ts
 // (QUICK_RENDER_PROFILES), specs/command-palette.spec.ts (Registration API)
-// Acceptance: specs/projects.feature.md (The sheet; Changes panel picker; Command palette)
+// Acceptance: specs/projects.feature.md (The sheet, with Phase 10 Task 7's star and sort, Settings, tags
+// and Bulk add, and Task 8's Due, Check rankings, cadence and blocked run; Changes panel picker; Command palette)
 import { describe, expect, test, vi } from 'vitest';
 import type { TabState } from '@app/specs/browser.spec';
-import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import { PROJECT_REFUSAL_MESSAGES, QUERY_FIELD_MAX_CHARS, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS, type RunState } from '@app/specs/projects.spec';
+import { MAX_PROJECT_QUERIES, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import { AUTO_CAPTURE_AVAILABLE, CADENCE_TEXT, CAPTURE_CADENCE_LABELS, CAPTURE_SCHEDULE_NOTE } from '@app/specs/capture-schedule.spec';
+import {
+  BULK_ADD_TEXT,
+  BULK_LINE_OUTCOME_LABELS,
+  CHECK_RANKINGS_TEXT,
+  DUE_TEXT,
+  RUN_BLOCKED_NOTE,
+  RUN_BLOCK_REASONS,
+  RUN_BLOCK_REASON_LABELS,
+  RUN_TARGET_OUTCOME_LABELS,
+  BULK_SEARCH_LIMITS,
+  DEFAULT_PROJECT_SORT,
+  FAVORITE_TEXT,
+  PROJECT_REFUSAL_MESSAGES,
+  PROJECT_SETTINGS_TEXT,
+  PROJECT_SORTS,
+  PROJECT_SORT_LABELS,
+  PROJECT_VIEWS,
+  PROJECT_VIEW_LABELS,
+  QUERY_FIELD_MAX_CHARS,
+  RUN_REFUSAL_MESSAGES,
+  RUN_STATE_LABELS,
+  SITE_INPUT_MAX_CHARS,
+  TAG_EDITOR_TEXT,
+  type ProjectSummary,
+  type RunState,
+} from '@app/specs/projects.spec';
+import { CAPTURE_CADENCES, MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from '@app/specs/workspace-db.spec';
 import { DEFAULT_RENDER_PROFILE, QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
-import { RETENTION_REFUSAL_MESSAGES, RETENTION_RULE_NOTES, USAGE_NOTE, type RetentionUsage } from '@app/specs/retention.spec';
+import { RETENTION_REFUSAL_MESSAGES, RETENTION_RULE_NOTES, USAGE_NOTE, formatBytes, type RetentionUsage } from '@app/specs/retention.spec';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
 import { projectsPaletteSources, retentionPaletteSources } from '../projects-palette';
 import {
+  bulkAddNote,
   EMPTY_QUERY_FORM,
   PROJECT_PROFILE_CHOICES,
+  EMPTY_BULK_FORM,
+  PROJECT_SORT_OPTIONS,
+  TAGS_TEXT_MAX_CHARS,
+  addCompetitorText,
   addPageText,
+  blockedRunNote,
+  CADENCE_OPTIONS,
+  cadenceOf,
+  cadenceText,
+  checkRankingsButton,
+  dueLabel,
+  showAutoCaptureSwitch,
+  bulkFromForm,
+  bulkOutcomeRows,
+  bulkResultText,
+  bulkSummaryText,
+  canAddLocale,
   changeCountText,
+  competitorFromInput,
+  competitorRoom,
+  favoriteButton,
+  favoriteText,
+  listedProjects,
+  projectSortOf,
+  removeCompetitorText,
+  setTagsText,
+  settingsAvailable,
+  siteFormChanged,
+  siteFormOf,
+  siteFromForm,
+  siteText,
+  tagEditorLabel,
+  tagsFromText,
+  tagsTextOf,
   compactText,
   previewText,
   purgeLogText,
@@ -44,7 +107,7 @@ function tab(changes: Partial<TabState> = {}): TabState {
   return { id: 3, url: 'https://www.example.com/a#top', title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null, ...changes };
 }
 
-const run = (changes: Partial<RunState>): RunState => ({ version: 2, runId: P1, projectId: P1, state: 'running', current: 1, total: 3, omitted: 0, screenshot: false, targets: [], ...changes });
+const run = (changes: Partial<RunState>): RunState => ({ version: 2, runId: P1, projectId: P1, state: 'running', current: 1, total: 3, omitted: 0, screenshot: false, targets: [], blockedReason: null, ...changes });
 
 describe('projects view', () => {
   test('projects-view-profile-choice', () => {
@@ -142,16 +205,31 @@ describe('projects view', () => {
   test('projects-palette-actions', async () => {
     const api = { open: vi.fn(), lastProject: vi.fn((): string | undefined => undefined), startRun: vi.fn(async () => ({ status: 'started' as const, runId: P1 })) };
     const registry = createPaletteRegistry();
-    registry.register(...projectsPaletteSources(api));
+    // "Check rankings now" as it ships once L1 is cleared (`RANK_CHECK_AVAILABLE` injected; the shipped
+    // flag hides it: `rankings-components.test.ts` `rank-check-hidden-until-cleared`).
+    registry.register(...projectsPaletteSources(api, { rankCheckAvailable: true }));
     const ctx = (active: TabState | undefined): PaletteContext => ({ state: null, tab: active, audit: null, sidebarOpen: false, chrome: { openPanel: vi.fn(), setSidebarOpen: vi.fn() } });
     const ids = (active: TabState | undefined) => registry.resolve(ctx(active)).map((action) => action.id);
-    // Open projects always; add this page with a web page; capture now once a project was opened.
-    expect(ids(undefined)).toEqual(['projects.open']);
-    expect(ids(tab({ url: 'app://frost/newtab' }))).toEqual(['projects.open']);
-    expect(ids(tab())).toEqual(['projects.open', 'projects.add-page']);
-    api.lastProject.mockReturnValue(P1);
-    expect(ids(tab())).toEqual(['projects.open', 'projects.add-page', 'projects.capture-now']);
+    // Open projects, rankings and compare always; add this page with a web page; capture now once a project was opened.
+    const always = ['projects.open', 'projects.open-rankings', 'projects.compare'];
+    expect(ids(undefined)).toEqual(always);
+    expect(ids(tab({ url: 'app://frost/newtab' }))).toEqual(always);
+    expect(ids(tab())).toEqual([...always, 'projects.add-page']);
+    const labels = registry.resolve(ctx(tab())).map((action) => action.label);
+    expect(labels).toContain('Open rankings');
+    expect(labels).toContain('Compare searches');
     const action = (id: string) => registry.resolve(ctx(tab())).find((a) => a.id === id)!;
+    // Spec: projects.feature.md, Command palette — the last project opened, else the sheet's first.
+    await action('projects.open-rankings').run(ctx(tab()));
+    expect(api.open).toHaveBeenLastCalledWith({ view: 'rankings' });
+    await action('projects.compare').run(ctx(tab()));
+    expect(api.open).toHaveBeenLastCalledWith({ view: 'compare' });
+    api.lastProject.mockReturnValue(P1);
+    expect(ids(tab())).toEqual([...always, 'projects.add-page', 'projects.capture-now', 'projects.check-rankings']);
+    await action('projects.open-rankings').run(ctx(tab()));
+    expect(api.open).toHaveBeenLastCalledWith({ projectId: P1, view: 'rankings' });
+    await action('projects.compare').run(ctx(tab()));
+    expect(api.open).toHaveBeenLastCalledWith({ projectId: P1, view: 'compare' });
     await action('projects.open').run(ctx(tab()));
     expect(api.open).toHaveBeenLastCalledWith();
     await action('projects.add-page').run(ctx(tab()));
@@ -161,6 +239,271 @@ describe('projects view', () => {
     expect(api.startRun).toHaveBeenCalledWith(P1);
     api.startRun.mockResolvedValueOnce({ status: 'refused', reason: 'busy' } as never);
     expect(await action('projects.capture-now').run(ctx(tab()))).toBe(RUN_REFUSAL_MESSAGES.busy);
+    // Phase 10 Task 8 — "Check rankings now": the saved searches only (main asks the disclosure first when it must).
+    expect(action('projects.check-rankings').label).toBe(CHECK_RANKINGS_TEXT.palette);
+    expect(CHECK_RANKINGS_TEXT.palette).toBe('Check rankings now');
+    expect(await action('projects.check-rankings').run(ctx(tab()))).toBe('Checking rankings…');
+    expect(api.open).toHaveBeenLastCalledWith({ projectId: P1, view: 'rankings' });
+    expect(api.startRun).toHaveBeenLastCalledWith(P1, 'searches');
+    api.startRun.mockResolvedValueOnce({ status: 'refused', reason: 'declined' } as never);
+    expect(await action('projects.check-rankings').run(ctx(tab()))).toBe(RUN_REFUSAL_MESSAGES.declined);
+    api.lastProject.mockReturnValue(undefined);
+    expect(ids(tab())).not.toContain('projects.check-rankings');
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Due, Check rankings and a blocked run); projects.spec.ts DUE_TEXT
+  test('projects-view-due-label', () => {
+    expect(DUE_TEXT.label).toBe('Due');
+    expect(DUE_TEXT.note).toContain('never starts one by itself');
+    expect(dueLabel({ due: true, unfiled: false })).toBe(DUE_TEXT.label);
+    expect(dueLabel({ due: false, unfiled: false })).toBeNull();
+    // Unfiled has no cadence: never due, whatever a row says.
+    expect(dueLabel({ due: true, unfiled: true })).toBeNull();
+    // Check rankings: the saved searches only; disabled with none, or while a run is under way.
+    expect(CHECK_RANKINGS_TEXT.button).toBe('Check rankings');
+    expect(checkRankingsButton(2, false)).toEqual({ label: CHECK_RANKINGS_TEXT.button, disabled: false, title: undefined });
+    expect(checkRankingsButton(0, false)).toEqual({ label: CHECK_RANKINGS_TEXT.button, disabled: true, title: CHECK_RANKINGS_TEXT.none });
+    expect(checkRankingsButton(2, true)).toEqual({ label: CHECK_RANKINGS_TEXT.button, disabled: true, title: undefined });
+  });
+
+  // spec: specs/projects.feature.md — Cadence; The sheet (Settings: the cadence); capture-schedule.spec.ts
+  test('projects-view-cadence-settings', () => {
+    expect(CADENCE_OPTIONS).toEqual(CAPTURE_CADENCES.map((value) => ({ value, label: CAPTURE_CADENCE_LABELS[value] })));
+    expect(CADENCE_OPTIONS.map((option) => option.label)).toEqual(['Off', 'Daily', 'Weekly']);
+    for (const cadence of CAPTURE_CADENCES) expect(cadenceOf(cadence)).toBe(cadence);
+    for (const bad of ['hourly', '', '__proto__', 'constructor', 'Daily']) expect(cadenceOf(bad), bad).toBeNull();
+    // No automatic switch while automatic starts are unavailable (the shipped flag).
+    expect(AUTO_CAPTURE_AVAILABLE).toBe(false);
+    expect(showAutoCaptureSwitch()).toBe(false);
+    expect(CAPTURE_SCHEDULE_NOTE).toContain('while frost is open');
+    expect(CAPTURE_SCHEDULE_NOTE).toContain('never starts a run by itself');
+    expect(CAPTURE_SCHEDULE_NOTE).toContain('challenge');
+    expect(cadenceText({ status: 'ok' })).toBe(CADENCE_TEXT.saved);
+    // The disclosure answered Cancel: nothing changed, said in the cadence's own words.
+    expect(cadenceText({ status: 'refused', reason: 'declined' })).toBe(CADENCE_TEXT.declined);
+    expect(cadenceText({ status: 'refused', reason: 'unfiled' })).toBe(PROJECT_REFUSAL_MESSAGES.unfiled);
+    expect(cadenceText({ status: 'refused', reason: 'unavailable' })).toBe(PROJECT_REFUSAL_MESSAGES.unavailable);
+    expect(cadenceText(null)).toMatch(/went wrong/);
+    expect(PROJECT_REFUSAL_MESSAGES.unfiled).toContain('cadence');
+    // Bulk add stays true: a cadence never sends anything by itself (said only once a cadence is offered, L1).
+    expect(bulkAddNote(true)).toBe(BULK_ADD_TEXT.note);
+    expect(bulkAddNote(true)).toContain('a cadence only marks the project due');
+    expect(bulkAddNote(false)).toBe(BULK_ADD_TEXT.noteWithoutRankCheck);
+    expect(bulkAddNote(false)).not.toContain('cadence');
+  });
+
+  // spec: specs/projects.feature.md — Searches in a run (a blocked run); The sheet (a blocked run)
+  test('projects-view-blocked-run', () => {
+    expect(Object.keys(RUN_BLOCK_REASON_LABELS).sort()).toEqual([...RUN_BLOCK_REASONS].sort());
+    expect(RUN_STATE_LABELS.blocked).toBe('Stopped at a search');
+    expect(RUN_TARGET_OUTCOME_LABELS.blocked).toMatch(/nothing captured/);
+    expect(runActive('blocked')).toBe(false);
+    const targets = [
+      { kind: 'page' as const, label: 'a', outcome: 'captured' as const, changeCount: 0, screenshot: null },
+      { kind: 'query' as const, label: 'q', outcome: 'blocked' as const, changeCount: null, screenshot: null },
+      { kind: 'query' as const, label: 'r', outcome: 'cancelled' as const, changeCount: null, screenshot: null },
+    ];
+    const blocked = run({ state: 'blocked', blockedReason: 'not-a-result-page', targets });
+    expect(runProgressText(blocked)).toBe(`${RUN_STATE_LABELS.blocked}: 1 of 3 captured`);
+    for (const reason of RUN_BLOCK_REASONS) expect(blockedRunNote(run({ state: 'blocked', blockedReason: reason, targets }))).toEqual({ reason: `${RUN_STATE_LABELS.blocked}: ${RUN_BLOCK_REASON_LABELS[reason]}`, note: RUN_BLOCKED_NOTE });
+    expect(RUN_BLOCKED_NOTE).toContain('stored nothing');
+    // Only a blocked run has one.
+    expect(blockedRunNote(run({ state: 'done', targets }))).toBeNull();
+    expect(blockedRunNote(run({ state: 'cancelled', blockedReason: 'unreadable' }))).toBeNull();
+    // A declined disclosure started nothing.
+    expect(startRunText({ status: 'refused', reason: 'declined' })).toBe(RUN_REFUSAL_MESSAGES.declined);
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Star and sort); projects.spec.ts sortProjects, PROJECT_SORTS
+  test('projects-view-favorites-and-sort', () => {
+    const summary = (id: string, name: string, more: Partial<ProjectSummary> = {}): ProjectSummary => ({ id, name, unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 1, lastCapturedAt: null, cadence: 'off', autoCapture: false, due: false, ...more });
+    const P3 = '01920000-0000-7000-8000-0000000000a3';
+    const unfiled = summary(UNFILED_PROJECT_ID, 'Unfiled', { unfiled: true, createdAt: 0 });
+    const beta = summary(P1, 'beta', { createdAt: 30, lastCapturedAt: 100 });
+    const alpha = summary(P2, 'Alpha', { createdAt: 10, lastCapturedAt: null });
+    const gamma = summary(P3, 'Gamma', { favorite: true, createdAt: 20, lastCapturedAt: 50 });
+    const list = [beta, alpha, gamma, unfiled];
+    const order = (sort: string) => listedProjects(list, projectSortOf(sort)).map((project) => project.name);
+    // The menu: every sort with its label; Name when the sheet opens; anything else is Name.
+    expect(PROJECT_SORT_OPTIONS).toEqual(PROJECT_SORTS.map((value) => ({ value, label: PROJECT_SORT_LABELS[value] })));
+    expect(DEFAULT_PROJECT_SORT).toBe('name');
+    expect(projectSortOf('created')).toBe('created');
+    expect(projectSortOf('last-captured')).toBe('last-captured');
+    expect(projectSortOf('bogus')).toBe('name');
+    expect(projectSortOf('__proto__')).toBe('name');
+    // Unfiled first, then favorites, then the rest, each by the sort.
+    expect(order('name')).toEqual(['Unfiled', 'Gamma', 'Alpha', 'beta']);
+    expect(order('created')).toEqual(['Unfiled', 'Gamma', 'beta', 'Alpha']);
+    expect(order('last-captured')).toEqual(['Unfiled', 'Gamma', 'beta', 'Alpha']);
+    // View state only: the answer's order is left as it was.
+    expect(list.map((project) => project.name)).toEqual(['beta', 'Alpha', 'Gamma', 'Unfiled']);
+    // The star: a toggle with a fixed name and its state in aria-pressed; Unfiled has one too.
+    expect(favoriteButton(beta)).toEqual({ pressed: false, next: true, label: 'Favorite beta' });
+    expect(favoriteButton(gamma)).toEqual({ pressed: true, next: false, label: 'Favorite Gamma' });
+    expect(favoriteButton(unfiled).label).toBe(FAVORITE_TEXT.label.replace('{name}', 'Unfiled'));
+    // A `$&` in a name stays text.
+    expect(favoriteButton(summary(P1, 'A $& B')).label).toBe('Favorite A $& B');
+    expect(favoriteText({ status: 'ok' }, true)).toBe(FAVORITE_TEXT.added);
+    expect(favoriteText({ status: 'ok' }, false)).toBe(FAVORITE_TEXT.removed);
+    expect(favoriteText({ status: 'refused', reason: 'not-found' }, true)).toBe(PROJECT_REFUSAL_MESSAGES['not-found']);
+    expect(favoriteText(null, true)).toMatch(/went wrong/);
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Settings: site and competitors); plan Decision 7
+  test('projects-view-settings-form', () => {
+    expect(PROJECT_VIEWS).toEqual(['overview', 'rankings', 'compare', 'settings']);
+    expect(PROJECT_VIEW_LABELS.settings).toBe('Settings');
+    // The site form: subdomains on for a project with no site.
+    expect(siteFormOf(null)).toEqual({ domain: '', subdomains: true });
+    expect(siteFormOf({ domain: 'shop.com', subdomains: false })).toEqual({ domain: 'shop.com', subdomains: false });
+    // Read as main reads it (normalizeSiteDomain): the host of an address, lowercase, IDN as punycode.
+    expect(siteFromForm({ domain: ' https://WWW.Shop.com/path?q=1 ', subdomains: false })).toEqual({ site: { domain: 'www.shop.com', subdomains: false } });
+    expect(siteFromForm({ domain: 'bücher.de', subdomains: true })).toEqual({ site: { domain: 'xn--bcher-kva.de', subdomains: true } });
+    // Empty clears the site.
+    expect(siteFromForm({ domain: '   ', subdomains: true })).toEqual({ site: { domain: null, subdomains: true } });
+    for (const bad of ['localhost', '192.168.0.1', '[::1]', 'ftp://shop.com', 'me@shop.com', 'shop.example', 'two words.com', 'intranet', 'x'.repeat(SITE_INPUT_MAX_CHARS + 1)]) {
+      expect(siteFromForm({ domain: bad, subdomains: true }), bad).toEqual({ problem: PROJECT_REFUSAL_MESSAGES['invalid-domain'] });
+    }
+    expect(siteFormChanged({ domain: 'shop.com', subdomains: true }, { domain: 'shop.com', subdomains: true })).toBe(false);
+    expect(siteFormChanged({ domain: ' shop.com ', subdomains: true }, { domain: 'shop.com', subdomains: true })).toBe(false);
+    expect(siteFormChanged({ domain: 'shop.com', subdomains: false }, { domain: 'shop.com', subdomains: true })).toBe(true);
+    expect(siteFormChanged({ domain: 'other.com', subdomains: true }, { domain: 'shop.com', subdomains: true })).toBe(true);
+    expect(siteFormChanged({ domain: '', subdomains: true }, null)).toBe(false);
+    expect(siteFormChanged({ domain: 'shop.com', subdomains: true }, null)).toBe(true);
+    expect(siteText({ status: 'ok', site: { domain: 'shop.com', subdomains: true } })).toBe(PROJECT_SETTINGS_TEXT.siteSaved);
+    expect(siteText({ status: 'ok', site: null })).toBe(PROJECT_SETTINGS_TEXT.siteCleared);
+    expect(siteText({ status: 'refused', reason: 'invalid-domain' })).toBe(PROJECT_REFUSAL_MESSAGES['invalid-domain']);
+    expect(siteText({ status: 'refused', reason: 'unfiled' })).toBe(PROJECT_REFUSAL_MESSAGES.unfiled);
+    expect(siteText(null)).toMatch(/went wrong/);
+    // Unfiled has no site or competitors.
+    expect(settingsAvailable({ unfiled: true })).toBe(false);
+    expect(settingsAvailable({ unfiled: false })).toBe(true);
+    // Competitors: read the same way, at most MAX_PROJECT_COMPETITORS.
+    expect(competitorFromInput(' Rival.COM ')).toEqual({ domain: 'rival.com' });
+    expect(competitorFromInput('https://shop.rival.com/x')).toEqual({ domain: 'shop.rival.com' });
+    for (const bad of ['', '  ', 'localhost', '10.0.0.1', 'javascript:alert(1)']) expect(competitorFromInput(bad), bad).toEqual({ problem: PROJECT_REFUSAL_MESSAGES['invalid-domain'] });
+    expect(MAX_PROJECT_COMPETITORS).toBe(10);
+    expect(competitorRoom(0)).toEqual({ canAdd: true, text: `0 of ${MAX_PROJECT_COMPETITORS}` });
+    expect(competitorRoom(3)).toEqual({ canAdd: true, text: `3 of ${MAX_PROJECT_COMPETITORS}` });
+    expect(competitorRoom(MAX_PROJECT_COMPETITORS)).toEqual({ canAdd: false, text: `${MAX_PROJECT_COMPETITORS} of ${MAX_PROJECT_COMPETITORS}` });
+    const rival = { id: P2, domain: 'rival.com' };
+    expect(addCompetitorText({ status: 'added', competitor: rival }, [])).toBe(PROJECT_SETTINGS_TEXT.competitorAdded);
+    // Another host of a competitor's domain answers that competitor.
+    expect(addCompetitorText({ status: 'added', competitor: rival }, [rival])).toBe(PROJECT_SETTINGS_TEXT.competitorExists);
+    expect(addCompetitorText({ status: 'refused', reason: 'limit' }, [])).toBe(PROJECT_REFUSAL_MESSAGES.limit);
+    expect(addCompetitorText({ status: 'refused', reason: 'invalid-domain' }, [])).toBe(PROJECT_REFUSAL_MESSAGES['invalid-domain']);
+    expect(addCompetitorText(null, [])).toMatch(/went wrong/);
+    expect(removeCompetitorText({ status: 'ok' })).toBe(PROJECT_SETTINGS_TEXT.competitorRemoved);
+    expect(removeCompetitorText({ status: 'refused', reason: 'not-found' })).toBe(PROJECT_REFUSAL_MESSAGES['not-found']);
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Bulk add); Bulk add; projects.spec.ts BULK_SEARCH_LIMITS, splitBulkSearches
+  test('projects-view-bulk-add-form', () => {
+    expect(EMPTY_BULK_FORM).toEqual({ text: '', engine: 'google', locales: [{ country: '', language: '' }], devices: ['desktop'], tags: '' });
+    const form = {
+      text: 'green tea\nblack tea,  green  tea\n\n',
+      engine: 'bing',
+      locales: [{ country: ' DE ', language: 'de' }, { country: '', language: '' }, { country: 'de', language: 'DE' }],
+      devices: ['tablet', 'desktop'],
+      tags: 'Tea, drinks',
+    };
+    // Lines as main splits them; a pair given twice sent once; devices in SERP_DEVICES order; tags normalized.
+    expect(bulkFromForm(form)).toEqual({
+      input: { text: 'green tea\nblack tea', engine: 'bing', locales: [{ country: 'de', language: 'de' }, { country: null, language: null }], devices: ['desktop', 'tablet'], tags: ['drinks', 'tea'] },
+      lines: 2,
+      locales: 2,
+      devices: 2,
+      searches: 8,
+    });
+    expect(bulkFromForm({ ...EMPTY_BULK_FORM, text: 'tea' })).toEqual({ input: { text: 'tea', engine: 'google', locales: [{ country: null, language: null }], devices: ['desktop'], tags: [] }, lines: 1, locales: 1, devices: 1, searches: 1 });
+    const many = Array.from({ length: BULK_SEARCH_LIMITS.maxLines + 1 }, (_, index) => `q${index}`).join('\n');
+    const problems: [Partial<typeof form>, string][] = [
+      [{ text: ' \n , ' }, 'Enter at least one query.'],
+      [{ text: many }, `Enter at most ${BULK_SEARCH_LIMITS.maxLines} queries at once.`],
+      [{ text: 'x'.repeat(BULK_SEARCH_LIMITS.maxTextChars + 1) }, `Enter at most ${BULK_SEARCH_LIMITS.maxLines} queries at once.`],
+      [{ engine: 'other' }, 'Choose a search engine.'],
+      [{ locales: [{ country: 'deu', language: '' }] }, 'A country is two letters, like “de”.'],
+      [{ locales: [{ country: '', language: 'english!' }] }, 'A language is a code like “en” or “pt-br”.'],
+      [{ locales: [{ country: '', language: 'a'.repeat(QUERY_FIELD_MAX_CHARS.language + 1) }] }, 'A language is a code like “en” or “pt-br”.'],
+      [{ locales: [] }, 'Add a country and language (or leave both empty).'],
+      [{ locales: Array.from({ length: BULK_SEARCH_LIMITS.maxLocales + 1 }, (_, index) => ({ country: String.fromCharCode(97 + index).repeat(2), language: '' })) }, `At most ${BULK_SEARCH_LIMITS.maxLocales} countries and languages.`],
+      [{ devices: [] }, 'Choose at least one device.'],
+      [{ devices: ['watch'] }, 'Choose at least one device.'],
+      [{ tags: Array.from({ length: MAX_TAGS_PER_ENTRY + 1 }, (_, index) => `t${index}`).join(',') }, PROJECT_REFUSAL_MESSAGES['invalid-tag']],
+    ];
+    for (const [change, problem] of problems) expect(bulkFromForm({ ...form, ...change }), JSON.stringify(change).slice(0, 80)).toEqual({ problem });
+    // Locale rows: up to maxLocales.
+    expect(BULK_SEARCH_LIMITS.maxLocales).toBe(5);
+    expect(canAddLocale(EMPTY_BULK_FORM)).toBe(true);
+    expect(canAddLocale({ ...EMPTY_BULK_FORM, locales: Array.from({ length: BULK_SEARCH_LIMITS.maxLocales }, () => ({ country: '', language: '' })) })).toBe(false);
+    // The summary: what it makes, and the room left in the project.
+    expect(bulkSummaryText({ lines: 2, locales: 2, devices: 2, searches: 8 }, MAX_PROJECT_QUERIES - 10)).toBe('2 queries × 2 locales × 2 devices: 8 searches. The project can hold 10 more.');
+    expect(bulkSummaryText({ lines: 1, locales: 1, devices: 1, searches: 1 }, 0)).toBe(`1 query × 1 locale × 1 device: 1 search. The project can hold ${MAX_PROJECT_QUERIES} more.`);
+    expect(bulkSummaryText({ lines: 1, locales: 1, devices: 1, searches: 1 }, MAX_PROJECT_QUERIES)).toBe('1 query × 1 locale × 1 device: 1 search. The project is full.');
+    // The note: frost's own words, nothing sent; Check rankings named only once it is offered (L1), else Capture now alone.
+    expect(bulkAddNote(true)).toContain('only saves searches');
+    expect(bulkAddNote(true)).toContain('Nothing is sent to a search engine until you run Check rankings');
+    expect(bulkAddNote(false)).toContain('only saves searches');
+    expect(bulkAddNote(false)).toContain('Nothing is sent to a search engine until you run Capture now');
+    expect(bulkAddNote(false)).not.toContain('Check rankings');
+    // Per-line outcomes, in order, the query as text.
+    const answer = {
+      status: 'done' as const,
+      lines: [
+        { query: 'green tea', outcome: 'added' as const, added: 3 },
+        { query: 'one', outcome: 'added' as const, added: 1 },
+        { query: 'black tea', outcome: 'exists' as const, added: 0 },
+        { query: '<b>x</b>', outcome: 'invalid' as const, added: 0 },
+        { query: 'white tea', outcome: 'limit' as const, added: 1 },
+        { query: 'oolong', outcome: 'limit' as const, added: 0 },
+      ],
+    };
+    expect(bulkOutcomeRows(answer)).toEqual([
+      { query: 'green tea', outcome: 'added', text: 'Added 3 searches' },
+      { query: 'one', outcome: 'added', text: 'Added 1 search' },
+      { query: 'black tea', outcome: 'exists', text: BULK_LINE_OUTCOME_LABELS.exists },
+      { query: '<b>x</b>', outcome: 'invalid', text: BULK_LINE_OUTCOME_LABELS.invalid },
+      { query: 'white tea', outcome: 'limit', text: `${BULK_LINE_OUTCOME_LABELS.limit} (1 search added first)` },
+      { query: 'oolong', outcome: 'limit', text: BULK_LINE_OUTCOME_LABELS.limit },
+    ]);
+    expect(bulkOutcomeRows(null)).toEqual([]);
+    expect(bulkOutcomeRows({ status: 'refused', reason: 'invalid-tag' })).toEqual([]);
+    expect(bulkResultText(answer)).toBe('Added 5 searches from 6 lines.');
+    expect(bulkResultText({ status: 'done', lines: [{ query: 'a', outcome: 'exists', added: 0 }] })).toBe('Added 0 searches from 1 line.');
+    expect(bulkResultText({ status: 'refused', reason: 'limit' })).toBe(PROJECT_REFUSAL_MESSAGES.limit);
+    expect(bulkResultText({ status: 'refused', reason: 'unfiled' })).toBe(PROJECT_REFUSAL_MESSAGES.unfiled);
+    expect(bulkResultText(null)).toMatch(/went wrong/);
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Tags); Tags; projects.spec.ts normalizeTags
+  test('projects-view-tags', () => {
+    expect(tagsFromText(' Tea,  Green   Tea ,tea, ')).toEqual({ tags: ['green tea', 'tea'] });
+    expect(tagsFromText('')).toEqual({ tags: [] });
+    expect(tagsFromText(' , ,')).toEqual({ tags: [] });
+    // The cap counts tags after repeats are dropped: more typed parts than MAX_TAGS_PER_ENTRY can still fit.
+    const repeated = [...Array.from({ length: MAX_TAGS_PER_ENTRY }, (_, index) => `t${index}`), 'T0', ' t1 '].join(',');
+    expect(tagsFromText(repeated)).toEqual({ tags: Array.from({ length: MAX_TAGS_PER_ENTRY }, (_, index) => `t${index}`).sort() });
+    expect(tagsFromText(Array.from({ length: MAX_TAGS_PER_ENTRY }, (_, index) => `t${index}`).join(', '))).toEqual({ tags: Array.from({ length: MAX_TAGS_PER_ENTRY }, (_, index) => `t${index}`).sort() });
+    for (const bad of [
+      Array.from({ length: MAX_TAGS_PER_ENTRY + 1 }, (_, index) => `t${index}`).join(','),
+      'x'.repeat(TAG_MAX_CHARS + 1),
+      'bad\u0007tag',
+      'rtl‮tag',
+      'x'.repeat(TAGS_TEXT_MAX_CHARS + 1),
+    ]) {
+      expect(tagsFromText(bad), bad.slice(0, 40)).toEqual({ problem: PROJECT_REFUSAL_MESSAGES['invalid-tag'] });
+    }
+    // The bound of the input holds MAX_TAGS_PER_ENTRY tags of the longest typed length, with separators.
+    expect(TAGS_TEXT_MAX_CHARS).toBeGreaterThanOrEqual(MAX_TAGS_PER_ENTRY * TAG_MAX_CHARS);
+    expect(tagsTextOf([])).toBe('');
+    expect(tagsTextOf(['green tea', 'tea'])).toBe('green tea, tea');
+    expect(tagsFromText(tagsTextOf(['green tea', 'tea']))).toEqual({ tags: ['green tea', 'tea'] });
+    expect(tagEditorLabel('“tea” on Google')).toBe(TAG_EDITOR_TEXT.label.replace('{label}', '“tea” on Google'));
+    expect(tagEditorLabel('$&')).toBe('Tags for $&');
+    expect(setTagsText({ status: 'ok', tags: ['tea'] })).toBe(TAG_EDITOR_TEXT.saved);
+    expect(setTagsText({ status: 'refused', reason: 'invalid-tag' })).toBe(PROJECT_REFUSAL_MESSAGES['invalid-tag']);
+    expect(setTagsText({ status: 'refused', reason: 'limit' })).toBe(PROJECT_REFUSAL_MESSAGES.limit);
+    expect(setTagsText(null)).toMatch(/went wrong/);
   });
 
   test('retention-view-policy-form', () => {
@@ -202,12 +545,13 @@ describe('projects view', () => {
     expect(compactText({ status: 'refused', reason: 'compact-failed' })).toBe(RETENTION_REFUSAL_MESSAGES['compact-failed']);
     expect(RETENTION_REFUSAL_MESSAGES['compact-failed']).not.toBe(RETENTION_REFUSAL_MESSAGES['store-failed']);
     expect(compactText(null)).toBe('The database could not be compacted. Try again.');
-    const usage: RetentionUsage = { projectId: P1, captures: 3, versions: 3, sharedVersions: 1, snapshotBytes: 12_000, diffBytes: 800, screenshots: 2, files: { count: 1, bytes: 1_500, missing: 1, shared: 1 }, database: { bytes: 2_000_000, walBytes: 400_000 } };
+    const usage: RetentionUsage = { projectId: P1, captures: 3, versions: 3, sharedVersions: 1, snapshotBytes: 12_000, diffBytes: 800, readingBytes: 0, screenshots: 2, files: { count: 1, bytes: 1_500, missing: 1, shared: 1 }, database: { bytes: 2_000_000, walBytes: 400_000 } };
     expect(usageRows(usage)).toEqual([
       { id: 'captures', label: 'Captures', value: '3' },
       { id: 'versions', label: 'Versions', value: '3 (1 also in another project)' },
       { id: 'screenshots', label: 'Screenshots', value: '2' },
       { id: 'stored', label: 'Stored snapshots and diffs', value: '12.0 kB + 800 B' },
+      { id: 'readings', label: 'Search readings', value: '0 B' },
       { id: 'files', label: 'Screenshot files', value: '1 file, 1.5 kB (1 also in another project) · 1 missing' },
       { id: 'database', label: 'Database file (all projects)', value: '2.4 MB' },
     ]);
@@ -220,6 +564,16 @@ describe('projects view', () => {
     expect(line.reason).toBe('Purge now');
     expect(line.what).toBe('2 captures, 2 versions, 2 diffs and 0 screenshots · 1.2 kB');
     expect(line.when).toBe(new Date(Date.UTC(2026, 9, 1, 12)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
+  });
+
+  // spec: specs/workspace-db.feature.md — usage-rows-show-readings; specs/retention.spec.ts (RetentionUsage.readingBytes)
+  test('usage-rows-show-readings', () => {
+    const usage: RetentionUsage = { projectId: P1, captures: 2, versions: 2, sharedVersions: 0, snapshotBytes: 4_000, diffBytes: 0, readingBytes: 48_500, screenshots: 0, files: { count: 0, bytes: 0, missing: 0, shared: 0 }, database: null };
+    const rows = usageRows(usage);
+    expect(rows.find((row) => row.id === 'readings')).toEqual({ id: 'readings', label: 'Search readings', value: formatBytes(48_500) });
+    expect(formatBytes(48_500)).toBe('48.5 kB');
+    // Right after the stored snapshots and diffs.
+    expect(rows.map((row) => row.id)).toEqual(['captures', 'versions', 'screenshots', 'stored', 'readings', 'files', 'database']);
   });
 
   test('retention-palette-actions', async () => {

@@ -95,6 +95,8 @@ export interface RetentionUsage {
   /** Stored UTF-8 bytes of the versions' snapshots and of their diffs. */
   snapshotBytes: number;
   diffBytes: number;
+  /** Stored UTF-8 bytes of the SERP readings kept with captures (`workspace-db.feature.md`). */
+  readingBytes: number;
   screenshots: number;
   /**
    * The screenshot files the rows name, each once, measured with `lstat`; a missing or non-regular one

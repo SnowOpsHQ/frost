@@ -1,11 +1,16 @@
 import { TRPCError } from '@trpc/server';
 import type { RetentionMode } from '@app/specs/capture-db.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
+import type { CaptureCadence, EntryKind } from '@app/specs/workspace-db.spec';
 import {
+  AddCompetitorAnswerSchema,
+  AddCompetitorInputSchema,
   AddPageAnswerSchema,
   AddPageInputSchema,
   AddQueryAnswerSchema,
   AddQueryInputSchema,
+  BulkAddAnswerSchema,
+  BulkAddSearchesInputSchema,
   CancelRunAnswerSchema,
   CreateProjectAnswerSchema,
   CreateProjectInputSchema,
@@ -15,17 +20,31 @@ import {
   ProjectDetailSchema,
   ProjectIdInputSchema,
   ProjectsAnswerSchema,
+  RemoveCompetitorInputSchema,
   RemovePageInputSchema,
   RemoveQueryInputSchema,
   RenameProjectInputSchema,
   RunStateInputSchema,
   RunStateSchema,
+  SetAutoCaptureInputSchema,
+  SetCadenceInputSchema,
+  SetFavoriteInputSchema,
   SetProjectProfileInputSchema,
+  SetSiteAnswerSchema,
+  SetSiteInputSchema,
+  SetTagsAnswerSchema,
+  SetTagsInputSchema,
   StartRunAnswerSchema,
   StartRunInputSchema,
+  type AddCompetitorAnswer,
   type AddPageAnswer,
   type AddQueryAnswer,
+  type BulkAddAnswer,
+  type BulkSearchesInput,
+  type RunScope,
   type SavedSearchInput,
+  type SetSiteAnswer,
+  type SetTagsAnswer,
   type CreateProjectAnswer,
   type DeleteProjectAnswer,
   type ProjectChangeAnswer,
@@ -59,6 +78,11 @@ import { enforceSender, middleware, publicProcedure, router } from './trpc';
 // closed without the service), and takes a strict input. Answers are checked against their schemas
 // on the way out. Queries are added and removed by `addSearch` / `removeSearch`: no
 // procedure name says "query" (`db-only-in-main`: no IPC procedure reads as being about the database).
+// Phase 10 Task 4 adds the project workspace (`projects.feature.md`, Site and competitors, Tags, Bulk
+// add, Favorites and sort, Run scope): `setFavorite`, `setSite`, `addCompetitor`, `removeCompetitor`,
+// `setTags`, `addSearches`, and `startRun`'s `scope`. Task 8 adds `setCadence` and `setAutoCapture`
+// (`projects.feature.md`, Cadence); main asks the rank run disclosure inside `startRun` and
+// `setCadence` (Searches in a run), so no input can skip it.
 
 /**
  * The retention procedures' half of the service (main's `apps/desktop/src/main/changes/retention.ts`;
@@ -104,12 +128,32 @@ export interface ProjectsService extends RetentionService {
   removeQuery(projectId: string, queryId: string): Promise<ProjectChangeAnswer>;
   /** Live projects listing `url` as a page. */
   forPage(url: string): Promise<ProjectsAnswer>;
-  /** Starts "Capture now" for the project (one run at a time, app-wide). */
-  startRun(projectId: string, screenshot: boolean): Promise<StartRunAnswer>;
+  /**
+   * Starts a run of the project (one at a time, app-wide): `all` its pages and searches ("Capture
+   * now"; the default), or only its `searches`.
+   */
+  startRun(projectId: string, screenshot: boolean, scope?: RunScope): Promise<StartRunAnswer>;
   /** Cancels the run under way; whether there was one. */
   cancelRun(): boolean;
   /** The run's state once newer than `sinceVersion`, else after `runStateWatchTimeoutMs` (long-poll). */
   runState(sinceVersion: number): Promise<RunState>;
+  // ---- The project workspace (Phase 10 Task 4; main's `apps/desktop/src/main/changes/workspace.ts`) ----
+  /** Stars (or unstars) the project; device-local, never its `updated_at`. */
+  setFavorite(projectId: string, favorite: boolean): Promise<ProjectChangeAnswer>;
+  /** Sets the site from a domain or URL as typed (`normalizeSiteDomain`), or clears it (`null`); never on Unfiled. */
+  setSite(projectId: string, domain: string | null, subdomains: boolean): Promise<SetSiteAnswer>;
+  /** Adds a competitor from a domain or URL as typed (its live one when the project has it); never on Unfiled. */
+  addCompetitor(projectId: string, domain: string): Promise<AddCompetitorAnswer>;
+  removeCompetitor(projectId: string, competitorId: string): Promise<ProjectChangeAnswer>;
+  /** Makes a page's (`page`) or saved search's (`search`) tags exactly `tags` (as typed; `normalizeTag`). */
+  setTags(projectId: string, entryKind: EntryKind, entryId: string, tags: readonly string[]): Promise<SetTagsAnswer>;
+  /** Bulk add: each line's searches (locales × devices) through the saved-search path; per-line outcomes. */
+  addSearches(projectId: string, searches: BulkSearchesInput): Promise<BulkAddAnswer>;
+  // ---- The cadence (Phase 10 Task 8; main's `apps/desktop/src/main/changes/projects.ts`) ----
+  /** Sets the project's cadence (a due notice only; never on Unfiled; `unavailable` while `RANK_CHECK_AVAILABLE` is `false`); main asks the disclosure before one is first set. */
+  setCadence(projectId: string, cadence: CaptureCadence): Promise<ProjectChangeAnswer>;
+  /** Whether its due runs start by themselves: `unavailable` while `AUTO_CAPTURE_AVAILABLE` is `false`. */
+  setAutoCapture(projectId: string, on: boolean): Promise<ProjectChangeAnswer>;
 }
 
 /** Hands the procedure main's `ProjectsService` (after `enforceSender`; fails closed without it). */
@@ -196,7 +240,7 @@ export const projectsRouter = router({
     .use(requireProjects)
     .input(StartRunInputSchema)
     .output(StartRunAnswerSchema)
-    .mutation(({ ctx, input }) => ctx.projects.startRun(input.projectId, input.screenshot)),
+    .mutation(({ ctx, input }) => ctx.projects.startRun(input.projectId, input.screenshot, input.scope)),
   cancelRun: publicProcedure
     .use(enforceSender)
     .use(requireProjects)
@@ -208,6 +252,56 @@ export const projectsRouter = router({
     .input(RunStateInputSchema)
     .output(RunStateSchema)
     .query(({ ctx, input }) => ctx.projects.runState(input.sinceVersion)),
+  // The project workspace (Phase 10 Task 4): domains and tags come in as typed; main normalizes them.
+  setFavorite: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(SetFavoriteInputSchema)
+    .output(ProjectChangeAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.setFavorite(input.projectId, input.favorite)),
+  setSite: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(SetSiteInputSchema)
+    .output(SetSiteAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.setSite(input.projectId, input.domain, input.subdomains)),
+  addCompetitor: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(AddCompetitorInputSchema)
+    .output(AddCompetitorAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.addCompetitor(input.projectId, input.domain)),
+  removeCompetitor: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(RemoveCompetitorInputSchema)
+    .output(ProjectChangeAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.removeCompetitor(input.projectId, input.competitorId)),
+  setTags: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(SetTagsInputSchema)
+    .output(SetTagsAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.setTags(input.projectId, input.entryKind, input.entryId, input.tags)),
+  addSearches: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(BulkAddSearchesInputSchema)
+    .output(BulkAddAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.addSearches(input.projectId, input.searches)),
+  // The cadence (Phase 10 Task 8): main asks the disclosure itself before a cadence is first set.
+  setCadence: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(SetCadenceInputSchema)
+    .output(ProjectChangeAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.setCadence(input.projectId, input.cadence)),
+  setAutoCapture: publicProcedure
+    .use(enforceSender)
+    .use(requireProjects)
+    .input(SetAutoCaptureInputSchema)
+    .output(ProjectChangeAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.projects.setAutoCapture(input.projectId, input.on)),
   // Retention and disk usage (Task 7; spec `retention.schema.ts`): no path, file name or hash comes in.
   setRetention: publicProcedure
     .use(enforceSender)

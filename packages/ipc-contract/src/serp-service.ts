@@ -1,3 +1,4 @@
+import type { AiDestinationId, OpenDestinationResult } from '@app/specs/ai-destinations.spec';
 import type { IntentAnswer, IntentEnableOutcome, IntentState } from '@app/specs/intent-classifier.spec';
 import type { PackUpdateOutcome } from '@app/specs/serp-selector-pack.spec';
 import type { PackStatus, SerpState, SerpTabState } from '@app/specs/serp-service.schema';
@@ -67,6 +68,14 @@ export interface SerpService extends SerpProbesService {
   enableIntent(): Promise<IntentEnableOutcome>;
   /** Classifies any query on this computer (`IntentAnswer`); never downloads, never fetches, never rejects. */
   classify(query: string): Promise<IntentAnswer>;
+  /**
+   * The user's "Open in" an AI engine (Phase 10 Task 10, `ai-destinations.spec.ts`): opens the tab's
+   * **own** search (its SERP state's query; never text from the renderer) at `destination`'s fixed
+   * URL (`aiDestinationUrl`) in a background tab, through the browser controller's
+   * `openBackgroundTab` (browse guards, tab cap). `no-search` for a tab showing no search, `no-tab`
+   * when no tab opened (or main wired no opener). Only on the user's action; never throws.
+   */
+  openDestination(tabId: number, destination: AiDestinationId): OpenDestinationResult;
 }
 
 /**

@@ -1,5 +1,5 @@
 // Spec: specs/browser-session-db.spec.ts (MIGRATIONS_TABLE, SESSION_TABLES), specs/render-profile.feature.md (pins),
-// specs/seo-content.spec.ts (CONTENT_TABLES), specs/ai-checks.spec.ts (AI_CHECKS_TABLES)
+// specs/seo-content.spec.ts (CONTENT_TABLES), specs/ai-checks.spec.ts (AI_CHECKS_TABLES), specs/workspace-db.spec.ts (WORKSPACE_TABLES)
 // Acceptance: specs/browser-session-db.feature.md (Migrations)
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
@@ -8,8 +8,10 @@ import { MIGRATIONS_TABLE, SESSION_TABLES } from '@app/specs/browser-session-db.
 import { CONTENT_TABLES } from '@app/specs/seo-content.spec';
 import { CHANGE_INTEL_TABLES } from '@app/specs/capture-db.spec';
 import { AI_CHECKS_TABLES } from '@app/specs/ai-checks.spec';
+import { WORKSPACE_TABLES } from '@app/specs/workspace-db.spec';
 import { seoAiChecks } from '../ai-checks-schema';
 import * as changeIntel from '../change-intel/schema';
+import * as workspace from '../change-intel/workspace-schema';
 import { seoSnippetVariants, seoTargetQueries } from '../content-schema';
 import { appSettings } from '../settings-schema';
 import { MIGRATIONS, runMigrations, type Migration } from '../migrations';
@@ -69,7 +71,7 @@ describe('migrations', () => {
   test('migrations-create-schema', () => {
     const db = memory();
     expect(runMigrations(db)).toEqual(MIGRATIONS.map((m) => m.id));
-    expect(tableNames(db)).toEqual([...SESSION_TABLES, ...CHANGE_INTEL_TABLES, MIGRATIONS_TABLE, ...AGENT_TABLES, ...AI_CHECKS_TABLES].sort());
+    expect(tableNames(db)).toEqual([...SESSION_TABLES, ...CHANGE_INTEL_TABLES, MIGRATIONS_TABLE, ...AGENT_TABLES, ...AI_CHECKS_TABLES, ...WORKSPACE_TABLES].sort());
     // Phase 2.5 Task 3's Content panel notes are session tables too (`seo-content.feature.md`, content-tables-migrate).
     expect(SESSION_TABLES).toEqual(expect.arrayContaining([...CONTENT_TABLES]));
     for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, renderProfilePins, seoTargetQueries, seoSnippetVariants, appSettings, seoAiChecks]) {
@@ -78,7 +80,7 @@ describe('migrations', () => {
     }
     // The schema's indexes exist too.
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row['name']);
-    expect(indexes).toEqual([recentVisits, renderProfilePins, ...Object.values(changeIntel)].flatMap((table) => getTableConfig(table).indexes.map((index) => index.config.name)).sort());
+    expect(indexes).toEqual([recentVisits, renderProfilePins, ...Object.values(changeIntel), ...Object.values(workspace)].flatMap((table) => getTableConfig(table).indexes.map((index) => index.config.name)).sort());
     expect(recordedIds(db)).toEqual(MIGRATIONS.map((m) => m.id));
   });
 

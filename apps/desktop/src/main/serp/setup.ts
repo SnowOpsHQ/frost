@@ -13,6 +13,7 @@ import { createIntent } from '../intent/setup';
 import type { AnalysisWorker } from '../seo/analysis';
 import { createBoundedFetcher, type Hop, type Resolve } from '../seo/fetcher';
 import { BUNDLED_PACK } from './bundled';
+import { createDestinations } from './destinations';
 import { runOutline, watchOutline } from './outline';
 import { boundedPackFetch, createPackStore, fileStorage, type PackFiles } from './pack-store';
 import { createProbeParser } from './probe-parser';
@@ -45,6 +46,9 @@ import { createSerpService, type Serp, type SerpTabs } from './service';
 // - each browse-session tab's page events (`did-finish-load`, `did-navigate`, `did-navigate-in-page`,
 //   `destroyed`), subscribed from `web-contents-created` here (and for any tab already open), so
 //   `main/index.ts` holds only the registration lines;
+// - "Open in" an AI engine (Phase 10 Task 10, `destinations.ts`): the tab's own search at a fixed
+//   destination, for the active tab only, opened through main's `openBackgroundTab` (none given:
+//   `no-tab`), on the user's action only;
 // - disposal on `will-quit`.
 
 /** The parts of Electron's `app` the setup uses. */
@@ -74,6 +78,11 @@ export interface SerpSetupOptions {
   /** `app.commandLine`. */
   readonly switches: { hasSwitch(name: string): boolean; getSwitchValue(name: string): string };
   readonly log: (message: string) => void;
+  /**
+   * The browser controller's `openBackgroundTab(url, false)` (its browse guards and tab cap): how an
+   * AI destination opens (`serp.openDestination`). Absent: every destination answers `no-tab`.
+   */
+  readonly openBackgroundTab?: (url: string) => number | null;
   /** Test seams: the SERP lane itself, the analysis and probe workers, the classifier, the bundled pack and the WebContents already open. */
   readonly fetcher?: BoundedFetcher;
   readonly spawnAnalysis?: () => AnalysisWorker;
@@ -173,7 +182,10 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
     },
     log,
   });
-  const service: SerpService = { ...serp, runProbes: probes.run, stopProbes: probes.stop, probes: probes.state, watchProbes: probes.watch };
+  // AI destinations: the tab's own search (its SERP state), opened only when the user asks.
+  // Only the active tab's, its state read passively (no read is started for it).
+  const destinations = createDestinations({ state: (tabId) => serp.peek(tabId), activeTabId: () => browser.getState().activeTabId, openBackgroundTab: options.openBackgroundTab });
+  const service: SerpService = { ...serp, runProbes: probes.run, stopProbes: probes.stop, probes: probes.state, watchProbes: probes.watch, openDestination: destinations.open };
   const readApi: SerpReadApi = { ...serp.readApi, probes: probes.state, runProbes: probes.run };
   // The stored remote pack, verified again at every start (never fetched here).
   void packs.load().catch((error: unknown) => log(`serp: the stored selector pack could not be loaded: ${error instanceof Error ? error.message : String(error)}`));

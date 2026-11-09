@@ -8,7 +8,7 @@ import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { SERP_PACK_PUBLIC_KEYS } from '@app/specs/serp-selector-pack.spec';
 import type { EngineLayout } from '@app/specs/serp-selector-pack.schema';
-import { SerpStateSchema, SerpTabStateSchema, type SerpTabState } from '@app/specs/serp-service.schema';
+import { SerpParamNamesSchema, SerpStateSchema, SerpTabStateSchema, type SerpTabState } from '@app/specs/serp-service.schema';
 import { MAX_PENDING_SERP_WATCHES, SERP_INPAGE_DEBOUNCE_MS, SERP_OUTLINE_ACTIVE_POLL_MS } from '@app/specs/serp-service.spec';
 import { SERP_READ_TIMEOUT_MS, type SerpDevice } from '@app/specs/serp.spec';
 import { createFakeIntentClassifier } from '../../intent/fake';
@@ -130,6 +130,35 @@ describe('SERP service', () => {
     expect(s.read).toHaveBeenCalledTimes(2);
   });
 
+  // Acceptance: specs/serp-panels.feature.md (Edit search, Main) — the pack's names for the SERP parameter editor.
+  test('serp-service-param-names', async () => {
+    const s = setup();
+    s.t.add(1, 'about:blank');
+    // No result page: no names.
+    expect(valid(s.serp.state(1)).paramNames ?? null).toBeNull();
+    await load(s, 1, GOOGLE);
+    expect(valid(s.serp.state(1)).paramNames).toEqual({ query: 'q', gl: 'gl', hl: 'hl' });
+    await load(s, 1, BING);
+    expect(valid(s.serp.state(1)).paramNames).toEqual({ query: 'q', gl: 'cc', hl: 'setlang' });
+    // A pending page has them too; DuckDuckGo names no language.
+    s.t.navigate(1, 'https://duckduckgo.com/?q=tea&kl=de-de');
+    s.t.get(1).loading = true;
+    s.serp.navigated(s.t.get(1).contentsId);
+    expect(valid(s.serp.state(1))).toMatchObject({ serp: { status: 'pending' }, paramNames: { query: 'q', gl: 'kl', hl: null } });
+    await load(s, 1, NOT_SERP);
+    expect(valid(s.serp.state(1)).paramNames ?? null).toBeNull();
+    // The answer's names are distinct (a name twice would make one parameter mean two things).
+    expect(SerpParamNamesSchema.safeParse({ query: 'q', gl: 'gl', hl: null }).success).toBe(true);
+    for (const names of [
+      { query: 'q', gl: 'q', hl: null },
+      { query: 'q', gl: null, hl: 'q' },
+      { query: 'q', gl: 'loc', hl: 'loc' },
+    ]) {
+      expect(SerpParamNamesSchema.safeParse(names).success, JSON.stringify(names)).toBe(false);
+      expect(SerpTabStateSchema.safeParse({ ...s.serp.state(1), paramNames: names }).success).toBe(false);
+    }
+  });
+
   test('serp-service-state-per-tab', async () => {
     const s = setup();
     s.t.add(1, 'about:blank');
@@ -229,6 +258,39 @@ describe('SERP service', () => {
     expect(s.serp.state(1).serp.status).toBe('not-serp');
     await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS * 2);
     expect(s.read).toHaveBeenCalledTimes(2);
+  });
+
+  // spec: specs/serp-service.spec.ts — The service (an in-page move that changes a known filter is read again)
+  test('serp-service-inpage-filter-change-reads-again', async () => {
+    vi.useFakeTimers();
+    const s = setup();
+    s.t.add(1, GOOGLE);
+    s.serp.loaded(s.t.get(1).contentsId);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.read).toHaveBeenCalledTimes(1);
+    expect(s.serp.state(1).serp.status).toBe('ready');
+    const move = (url: string) => {
+      s.t.get(1).url = url;
+      s.serp.navigatedInPage(s.t.get(1).contentsId, url);
+    };
+    // The same canonical search with a time filter (past week): the old reading goes, and the page is read again.
+    move(`${GOOGLE}&tbs=qdr:w`);
+    expect(s.serp.state(1).serp).toMatchObject({ status: 'pending', url: `${GOOGLE}&tbs=qdr:w` });
+    await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS);
+    expect(s.read).toHaveBeenCalledTimes(2);
+    expect(s.serp.state(1).serp).toMatchObject({ status: 'ready', url: `${GOOGLE}&tbs=qdr:w` });
+    // Another value of the filter, or the filter dropped: read again each time.
+    move(`${GOOGLE}&tbs=qdr:m`);
+    await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS);
+    expect(s.read).toHaveBeenCalledTimes(3);
+    move(GOOGLE);
+    await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS);
+    expect(s.read).toHaveBeenCalledTimes(4);
+    // A tracking parameter only: the reading stays (no read).
+    move(`${GOOGLE}&ved=abc&ei=x`);
+    await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS * 2);
+    expect(s.read).toHaveBeenCalledTimes(4);
+    expect(s.serp.state(1).serp).toMatchObject({ status: 'ready', url: `${GOOGLE}&ved=abc&ei=x` });
   });
 
   test('serp-service-watch-wakes-times-out-capped', async () => {
