@@ -35,8 +35,9 @@ import '../../rankings.css';
 // A project's Rankings view (Phase 10 Task 6; acceptance `rankings.feature.md`, The views): the rank
 // table of its tracked searches over a range and a tag, the history note, the empty states, Copy CSV
 // and Save CSV… (main writes the clipboard and asks for the file), and one search's series with "Open
-// this result page". Everything from a reading (queries, URLs, domains) is React text in a `<bdi>`;
-// the trend is an SVG polyline drawn from numbers (`trendPoints`); no inline styles (strict CSP).
+// this result page"; with no site set, a button to the project's Settings (Task 7). Everything from a
+// reading (queries, URLs, domains) is React text in a `<bdi>`; the trend is an SVG polyline drawn from
+// numbers (`trendPoints`); no inline styles (strict CSP).
 
 function Text({ value, className, testId }: { readonly value: string; readonly className?: string; readonly testId?: string }) {
   return (
@@ -218,6 +219,7 @@ export function Rankings({
   busy,
   onOpenUrl,
   say,
+  onOpenSettings,
 }: {
   readonly projectId: string;
   /** Changes when the project was read again (a run captured): the table is read again. */
@@ -227,6 +229,8 @@ export function Rankings({
   /** Loads `url` in the active tab through `browser.navigate` (and closes the sheet). */
   readonly onOpenUrl: (url: string) => void;
   readonly say: (text: string) => void;
+  /** Shows the project's Settings view (where its site is set; Phase 10 Task 7). */
+  readonly onOpenSettings?: () => void;
 }) {
   const id = useId();
   const [filter, setFilter] = useState<RankFilter>({ range: DEFAULT_RANK_RANGE, tag: null });
@@ -333,6 +337,14 @@ export function Rankings({
       {states.includes('no-site') ? (
         <p className="rankings-notice" data-testid="rankings-no-site">
           {RANK_VIEW_TEXT.noSite}
+          {onOpenSettings !== undefined ? (
+            <>
+              {' '}
+              <button type="button" className="projects-link-button" data-testid="rankings-open-settings" onClick={onOpenSettings}>
+                Open Settings
+              </button>
+            </>
+          ) : null}
         </p>
       ) : null}
       {ok !== null && input.tag !== undefined && rows.length === 0 ? (

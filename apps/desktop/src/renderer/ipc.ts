@@ -10,6 +10,8 @@ import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
 import type { HistoryCursorAnswer, HistoryPageAnswer, JumpBackInAnswer } from '@app/ipc-contract';
 import type { SearchEngineId } from '@app/specs/browser-polish.spec';
 import type { CompareAnswer, CopyCsvAnswer, RankCsvKind, RankRange, RankSeriesAnswer, RankTableAnswer, ReadingDatesAnswer, SaveCsvAnswer } from '@app/specs/rankings.spec';
+import type { AddCompetitorAnswer, BulkAddAnswer, BulkSearchesInput, ProjectChangeAnswer, SetSiteAnswer, SetTagsAnswer } from '@app/specs/projects.spec';
+import type { EntryKind } from '@app/specs/workspace-db.spec';
 
 // The chrome's one IPC client (the sender-guarded `browser.*` and `seo.*` procedures, `ping`) and
 // the user intents it sends. All browser state, and every SEO audit, lives in main. The chrome never
@@ -92,4 +94,19 @@ export const rankingsActions = {
   compare: (projectId: string, a: string, b: string): Promise<CompareAnswer | null> => ipc.rankings.compare.query({ projectId, a, b }).catch(() => null),
   copyCsv: (projectId: string, kind: RankCsvKind, range: RankRange, tag: string | null): Promise<CopyCsvAnswer> => ipc.rankings.copyCsv.mutate({ projectId, kind, range, ...(tag === null ? {} : { tag }) }).catch(() => null),
   saveCsv: (projectId: string, kind: RankCsvKind, range: RankRange, tag: string | null): Promise<SaveCsvAnswer | null> => ipc.rankings.saveCsv.mutate({ projectId, kind, range, ...(tag === null ? {} : { tag }) }).catch(() => null),
+};
+
+/**
+ * The project workspace's procedures (`projects.*`, Phase 10 Task 4; the sheet's star, Settings, tag
+ * editor and Bulk add, acceptance `projects.feature.md`, The sheet). Each resolves `null` on an IPC
+ * failure (the sheet says "Something went wrong"); main reads every domain and tag again.
+ */
+export const projectsActions = {
+  setFavorite: (projectId: string, favorite: boolean): Promise<ProjectChangeAnswer | null> => ipc.projects.setFavorite.mutate({ projectId, favorite }).catch(() => null),
+  setSite: (projectId: string, domain: string | null, subdomains: boolean): Promise<SetSiteAnswer | null> => ipc.projects.setSite.mutate({ projectId, domain, subdomains }).catch(() => null),
+  addCompetitor: (projectId: string, domain: string): Promise<AddCompetitorAnswer | null> => ipc.projects.addCompetitor.mutate({ projectId, domain }).catch(() => null),
+  removeCompetitor: (projectId: string, competitorId: string): Promise<ProjectChangeAnswer | null> => ipc.projects.removeCompetitor.mutate({ projectId, competitorId }).catch(() => null),
+  setTags: (projectId: string, entryKind: EntryKind, entryId: string, tags: readonly string[]): Promise<SetTagsAnswer | null> => ipc.projects.setTags.mutate({ projectId, entryKind, entryId, tags: [...tags] }).catch(() => null),
+  addSearches: (projectId: string, searches: BulkSearchesInput): Promise<BulkAddAnswer | null> =>
+    ipc.projects.addSearches.mutate({ projectId, searches: { ...searches, locales: [...searches.locales], devices: [...searches.devices], tags: [...searches.tags] } }).catch(() => null),
 };

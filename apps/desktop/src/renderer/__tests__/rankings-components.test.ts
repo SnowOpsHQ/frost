@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
-// Spec: specs/rankings.spec.ts (RANK_VIEW_TEXT, RANKINGS_REFUSAL_MESSAGES), specs/projects.spec.ts (PROJECT_VIEWS)
+// Spec: specs/rankings.spec.ts (RANK_VIEW_TEXT, RANKINGS_REFUSAL_MESSAGES), specs/projects.spec.ts (PROJECT_VIEWS,
+// PROJECT_REFUSAL_MESSAGES, BULK_ADD_TEXT, PROJECT_SETTINGS_TEXT)
 // Acceptance: specs/rankings.feature.md (The views: compare-keeps-picks-on-refresh,
 // compare-shares-one-dates-read, compare-drops-a-stale-answer, compare-says-refusals,
-// series-close-returns-focus); specs/projects.feature.md (The sheet: projects-run-progress-on-every-view)
+// series-close-returns-focus); specs/projects.feature.md (The sheet: projects-run-progress-on-every-view;
+// Phase 10 Task 7's star and sort, Settings, tags and Bulk add)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import { BULK_ADD_TEXT, PROJECT_REFUSAL_MESSAGES, PROJECT_SETTINGS_TEXT, PROJECT_VIEWS, type ProjectSummary } from '@app/specs/projects.spec';
 import { RANKINGS_REFUSAL_MESSAGES, type RankPoint, type RankTableRow, type ReadingDate, type SearchParamsShape } from '@app/specs/rankings.spec';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -37,10 +41,12 @@ const comparison = (a: string, b: string) => ({
 const fakes = vi.hoisted(() => ({
   rankings: { table: vi.fn(), series: vi.fn(), readingDates: vi.fn(), compare: vi.fn(), copyCsv: vi.fn(), saveCsv: vi.fn() },
   projects: { list: vi.fn(), get: vi.fn(), runState: vi.fn() },
+  workspace: { setFavorite: vi.fn(), setSite: vi.fn(), addCompetitor: vi.fn(), removeCompetitor: vi.fn(), setTags: vi.fn(), addSearches: vi.fn() },
 }));
 
 vi.mock('../ipc', () => ({
   rankingsActions: fakes.rankings,
+  projectsActions: fakes.workspace,
   actions: { focusPage: vi.fn(async () => true), navigate: vi.fn(async () => true) },
   ipc: {
     projects: {
@@ -71,9 +77,32 @@ const select = async (testId: string, value: string) => {
   });
 };
 const click = (testId: string) => act(async () => $<HTMLButtonElement>(testId)!.click());
+/** Types `value` into a React-controlled input or text area. */
+const type = (element: HTMLInputElement | HTMLTextAreaElement, value: string) =>
+  act(async () => {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element) as object, 'value')!.set!.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+const all = <T extends Element = HTMLElement>(testId: string) => [...host.querySelectorAll<T>(`[data-testid="${testId}"]`)];
+
+const P2 = '01920000-0000-7000-8000-0000000000a2';
+const PAGE = '01920000-0000-7000-8000-0000000000b1';
+const COMPETITOR = '01920000-0000-7000-8000-0000000000c1';
+const summary = (id: string, name: string, more: Partial<ProjectSummary> = {}): ProjectSummary => ({ id, name, unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 1, lastCapturedAt: null, ...more });
+
+/** Renders the sheet on `project` (no run under way). */
+async function openSheet(project: ProjectSummary, detail: Record<string, unknown> = {}, list: ProjectSummary[] = [project]) {
+  fakes.projects.list.mockResolvedValue({ projects: list });
+  fakes.projects.get.mockImplementation(async () => ({ project, pages: [], queries: [], competitors: [], ...detail }));
+  fakes.projects.runState.mockReturnValue(new Promise(() => undefined));
+  const { openProjects } = await import('../components/changes/projects-sheet');
+  openProjects({ projectId: project.id });
+  await act(async () => root.render(createElement(Projects, { tab: undefined, onClose: vi.fn() })));
+  await flush();
+}
 
 beforeEach(() => {
-  for (const fake of [...Object.values(fakes.rankings), ...Object.values(fakes.projects)]) fake.mockReset();
+  for (const fake of [...Object.values(fakes.rankings), ...Object.values(fakes.projects), ...Object.values(fakes.workspace)]) fake.mockReset();
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -170,6 +199,191 @@ describe('rankings components', () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  // spec: specs/projects.feature.md — The sheet (Settings); rankings.feature.md — Empty states (rankings-open-settings)
+  test('projects-settings-view-sets-site-and-competitors', async () => {
+    const project = summary(P1, 'Shop');
+    await openSheet(project, { competitors: [{ id: COMPETITOR, domain: 'rival.com' }] });
+    // The Rankings view's no-site notice leads to Settings.
+    fakes.rankings.table.mockResolvedValue({ ...tableAnswer([]), site: null });
+    await click('projects-view-rankings');
+    await flush();
+    await click('rankings-open-settings');
+    await flush();
+    expect($('projects-detail')!.dataset.view).toBe('settings');
+    // Focus follows to the site input.
+    expect(document.activeElement).toBe($('projects-site-input'));
+    expect($<HTMLButtonElement>('projects-view-settings')!.getAttribute('aria-selected')).toBe('true');
+    // Subdomains on with no site; a refused domain is said and nothing is sent.
+    expect($<HTMLInputElement>('projects-site-subdomains')!.checked).toBe(true);
+    expect($('projects-site-clear')).toBeNull();
+    await type($<HTMLInputElement>('projects-site-input')!, 'localhost');
+    await click('projects-site-save');
+    expect($('projects-status')!.textContent).toBe(PROJECT_REFUSAL_MESSAGES['invalid-domain']);
+    expect(fakes.workspace.setSite).not.toHaveBeenCalled();
+    // A valid one goes as its host; main's refusal is said.
+    fakes.workspace.setSite.mockResolvedValueOnce({ status: 'refused', reason: 'invalid-domain' });
+    await type($<HTMLInputElement>('projects-site-input')!, 'https://WWW.Shop.co.uk/a');
+    await act(async () => $<HTMLInputElement>('projects-site-subdomains')!.click());
+    await click('projects-site-save');
+    expect(fakes.workspace.setSite).toHaveBeenLastCalledWith(P1, 'www.shop.co.uk', false);
+    expect($('projects-status')!.textContent).toBe(PROJECT_REFUSAL_MESSAGES['invalid-domain']);
+    fakes.workspace.setSite.mockResolvedValueOnce({ status: 'ok', site: { domain: 'www.shop.co.uk', subdomains: false } });
+    await click('projects-site-save');
+    expect($('projects-status')!.textContent).toBe(PROJECT_SETTINGS_TEXT.siteSaved);
+    // Competitors: listed with Remove; one added; the count of the cap.
+    expect(all('projects-competitor').map((row) => row.dataset.domain)).toEqual(['rival.com']);
+    expect($('projects-competitor-count')!.textContent).toBe('1 of 10');
+    fakes.workspace.addCompetitor.mockResolvedValueOnce({ status: 'added', competitor: { id: COMPETITOR, domain: 'rival.com' } });
+    await type($<HTMLInputElement>('projects-competitor-input')!, 'shop.Rival.com');
+    await click('projects-competitor-add');
+    expect(fakes.workspace.addCompetitor).toHaveBeenLastCalledWith(P1, 'shop.rival.com');
+    expect($('projects-status')!.textContent).toBe(PROJECT_SETTINGS_TEXT.competitorExists);
+    // Remove is disabled while a remove is in flight.
+    let answerRemove!: (value: unknown) => void;
+    fakes.workspace.removeCompetitor.mockReturnValueOnce(new Promise((resolve) => (answerRemove = resolve)));
+    await click('projects-competitor-remove');
+    expect(fakes.workspace.removeCompetitor).toHaveBeenLastCalledWith(P1, COMPETITOR);
+    expect($<HTMLButtonElement>('projects-competitor-remove')!.disabled).toBe(true);
+    await click('projects-competitor-remove');
+    expect(fakes.workspace.removeCompetitor).toHaveBeenCalledTimes(1);
+    await act(async () => answerRemove({ status: 'refused', reason: 'not-found' }));
+    expect($('projects-status')!.textContent).toBe(PROJECT_REFUSAL_MESSAGES['not-found']);
+    expect($<HTMLButtonElement>('projects-competitor-remove')!.disabled).toBe(false);
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Settings: Unfiled has no site or competitors)
+  test('projects-settings-unfiled-offers-nothing', async () => {
+    await openSheet(summary(UNFILED_PROJECT_ID, 'Unfiled', { unfiled: true }));
+    // Its Rankings view says no site is set, without a way to set one.
+    fakes.rankings.table.mockResolvedValue({ ...tableAnswer([]), site: null });
+    await click('projects-view-rankings');
+    await flush();
+    expect($('rankings-no-site')).not.toBeNull();
+    expect($('rankings-open-settings')).toBeNull();
+    await click('projects-view-settings');
+    expect($('projects-settings-unfiled')!.textContent).toBe(PROJECT_SETTINGS_TEXT.unfiled);
+    expect($('projects-site-input')).toBeNull();
+    expect($('projects-competitor-input')).toBeNull();
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Bulk add)
+  test('projects-bulk-add-shows-outcomes', async () => {
+    await openSheet(summary(P1, 'Shop'));
+    await click('projects-bulk-open');
+    expect($('projects-bulk')!.getAttribute('role')).toBe('dialog');
+    expect(document.activeElement).toBe($('projects-bulk-text'));
+    expect($('projects-bulk-note')!.textContent).toBe(BULK_ADD_TEXT.note);
+    await type($<HTMLTextAreaElement>('projects-bulk-text')!, 'green tea, black tea\n<b>tea</b>');
+    await select('projects-bulk-engine', 'duckduckgo');
+    await type(all<HTMLInputElement>('projects-bulk-country')[0]!, 'DE');
+    await type(all<HTMLInputElement>('projects-bulk-language')[0]!, 'de');
+    await click('projects-bulk-locale-add');
+    await act(async () => $<HTMLInputElement>('projects-bulk-device-mobile')!.click());
+    await type($<HTMLInputElement>('projects-bulk-tags')!, 'Tea');
+    expect($('projects-bulk-summary')!.textContent).toBe('3 queries × 2 locales × 2 devices: 12 searches. The project can hold 50 more.');
+    fakes.workspace.addSearches.mockResolvedValueOnce({
+      status: 'done',
+      lines: [
+        { query: 'green tea', outcome: 'added', added: 4 },
+        { query: 'black tea', outcome: 'exists', added: 0 },
+        { query: '<b>tea</b>', outcome: 'invalid', added: 0 },
+      ],
+    });
+    await click('projects-bulk-submit');
+    expect(fakes.workspace.addSearches).toHaveBeenCalledWith(P1, {
+      text: 'green tea\nblack tea\n<b>tea</b>',
+      engine: 'duckduckgo',
+      locales: [{ country: 'de', language: 'de' }, { country: null, language: null }],
+      devices: ['desktop', 'mobile'],
+      tags: ['tea'],
+    });
+    expect(all('projects-bulk-outcome').map((row) => [row.dataset.outcome, row.querySelector('bdi')!.textContent])).toEqual([
+      ['added', 'green tea'],
+      ['exists', 'black tea'],
+      ['invalid', '<b>tea</b>'],
+    ]);
+    // Query text stays text.
+    expect(host.querySelector('.projects-bulk-outcomes b')).toBeNull();
+    expect($('projects-status')!.textContent).toBe('Added 4 searches from 3 lines.');
+    expect($<HTMLTextAreaElement>('projects-bulk-text')!.value).toBe('');
+    // A refusal is said; Esc closes the dialog (not the sheet) and focus goes back to Bulk add.
+    fakes.workspace.addSearches.mockResolvedValueOnce({ status: 'refused', reason: 'limit' });
+    await type($<HTMLTextAreaElement>('projects-bulk-text')!, 'oolong');
+    await click('projects-bulk-submit');
+    expect($('projects-status')!.textContent).toBe(PROJECT_REFUSAL_MESSAGES.limit);
+    await act(async () => $('projects-bulk-text')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    await flush();
+    expect($('projects-bulk')).toBeNull();
+    expect($('projects-view')).not.toBeNull();
+    expect(document.activeElement).toBe($('projects-bulk-open'));
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Star and sort; Tags)
+  test('projects-star-sort-and-tags', async () => {
+    const unfiled = summary(UNFILED_PROJECT_ID, 'Unfiled', { unfiled: true });
+    const shop = summary(P1, 'Shop', { createdAt: 10 });
+    const blog = summary(P2, 'Blog', { createdAt: 20, favorite: true });
+    await openSheet(shop, { pages: [{ id: PAGE, url: 'https://shop.com/', tags: ['sale'], lastCapturedAt: null, changeCount: null }] }, [unfiled, shop, blog]);
+    const names = () => all('projects-item').map((item) => item.querySelector('.projects-item-name')!.textContent);
+    // Unfiled, then favorites, then the rest; the sort is view state.
+    expect(names()).toEqual(['Unfiled', 'Blog', 'Shop']);
+    await select('projects-sort', 'created');
+    expect($<HTMLSelectElement>('projects-sort')!.value).toBe('created');
+    const stars = all<HTMLButtonElement>('projects-star');
+    expect(stars.map((star) => [star.getAttribute('aria-label'), star.getAttribute('aria-pressed')])).toEqual([
+      ['Favorite Unfiled', 'false'],
+      ['Favorite Blog', 'true'],
+      ['Favorite Shop', 'false'],
+    ]);
+    fakes.workspace.setFavorite.mockResolvedValueOnce({ status: 'ok' });
+    fakes.projects.list.mockResolvedValue({ projects: [unfiled, { ...shop, favorite: true }, blog] });
+    await act(async () => stars[2]!.click());
+    await flush();
+    expect(fakes.workspace.setFavorite).toHaveBeenCalledWith(P1, true);
+    expect(names()).toEqual(['Unfiled', 'Blog', 'Shop']);
+    // Unstarring Blog moves it below Shop; its star gets focus back (a browser drops focus from a
+    // moved node, which jsdom does not: the blur below stands in for it).
+    let answerFavorite!: (value: unknown) => void;
+    fakes.workspace.setFavorite.mockReturnValueOnce(new Promise((resolve) => (answerFavorite = resolve)));
+    fakes.projects.list.mockResolvedValue({ projects: [unfiled, { ...shop, favorite: true }, { ...blog, favorite: false }] });
+    const blogStar = () => host.querySelector<HTMLButtonElement>(`[data-project="${P2}"] [data-testid="projects-star"]`)!;
+    blogStar().focus();
+    await act(async () => blogStar().click());
+    blogStar().blur();
+    expect(document.activeElement).not.toBe(blogStar());
+    await act(async () => answerFavorite({ status: 'ok' }));
+    await flush();
+    expect(fakes.workspace.setFavorite).toHaveBeenLastCalledWith(P2, false);
+    expect(names()).toEqual(['Unfiled', 'Shop', 'Blog']);
+    expect(blogStar().getAttribute('aria-pressed')).toBe('false');
+    expect(document.activeElement).toBe(blogStar());
+    // Tags on a page row: shown as text; edited inline; a refused tag is said and nothing is sent.
+    expect(all('projects-tag').map((tag) => tag.textContent)).toEqual(['sale']);
+    // The button's accessible name starts with its visible text.
+    expect($('projects-page-tags-edit')!.textContent).toBe('Edit tags');
+    expect($('projects-page-tags-edit')!.getAttribute('aria-label')).toBe('Edit tags for https://shop.com/');
+    await click('projects-page-tags-edit');
+    const input = $<HTMLInputElement>('projects-tags-input')!;
+    expect(input.value).toBe('sale');
+    expect(input.getAttribute('aria-label')).toBe('Tags for https://shop.com/');
+    await type(input, 'sale, x\u0007y');
+    await click('projects-tags-save');
+    expect(fakes.workspace.setTags).not.toHaveBeenCalled();
+    expect($('projects-tags-editor')!.textContent).toContain(PROJECT_REFUSAL_MESSAGES['invalid-tag']);
+    fakes.workspace.setTags.mockResolvedValueOnce({ status: 'ok', tags: ['sale', 'summer'] });
+    await type($<HTMLInputElement>('projects-tags-input')!, 'Sale,  Summer ');
+    await click('projects-tags-save');
+    expect(fakes.workspace.setTags).toHaveBeenCalledWith(P1, 'page', PAGE, ['sale', 'summer']);
+    await flush();
+    expect($('projects-tags-editor')).toBeNull();
+    expect(document.activeElement).toBe($('projects-page-tags-edit'));
+    // Esc cancels an edit without closing the sheet.
+    await click('projects-page-tags-edit');
+    await act(async () => $('projects-tags-input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect($('projects-tags-editor')).toBeNull();
+    expect($('projects-view')).not.toBeNull();
+  });
+
   test('projects-run-progress-on-every-view', async () => {
     const project = { id: P1, name: 'Shop', unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 1, lastCapturedAt: null };
     fakes.projects.list.mockResolvedValue({ projects: [project] });
@@ -182,7 +396,7 @@ describe('rankings components', () => {
     await act(async () => root.render(createElement(Projects, { tab: undefined, onClose: vi.fn() })));
     await flush();
     expect($('projects-view')!.dataset.running).toBe('true');
-    for (const view of ['overview', 'rankings', 'compare']) {
+    for (const view of PROJECT_VIEWS) {
       await click(`projects-view-${view}`);
       expect($('projects-detail')!.dataset.view).toBe(view);
       expect($('projects-run'), view).not.toBeNull();

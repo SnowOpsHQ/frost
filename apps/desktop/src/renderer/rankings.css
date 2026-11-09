@@ -305,3 +305,216 @@
 .compare-row[data-role='site'] {
   background: var(--accent-soft);
 }
+
+/* Star and sort, Settings, tags and Bulk add (Phase 10 Task 7) ------------------------------------
+   specs/projects.feature.md, The sheet. Inside the sheet's list and main column; user text wraps or
+   ellipsises, never widens the sheet. */
+
+.projects-sort {
+  margin-bottom: 6px;
+}
+
+.projects-sort .projects-select {
+  flex: 1 1 auto;
+}
+
+.projects-star {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.projects-star[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+.projects-star-icon {
+  fill: none;
+}
+
+.projects-star[aria-pressed='true'] .projects-star-icon {
+  fill: currentColor;
+}
+
+.projects-link-button {
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.projects-link-button:hover {
+  text-decoration: underline;
+}
+
+.projects-link-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.projects-entry-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-bottom: 4px;
+}
+
+.projects-entry-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+}
+
+.projects-tag {
+  max-width: 16em;
+  overflow: hidden;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-tags-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.projects-tags-editor .projects-input {
+  flex: 1 1 14em;
+  min-width: 0;
+}
+
+.projects-tags-editor .projects-note {
+  flex-basis: 100%;
+}
+
+.project-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.project-settings-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 12px;
+}
+
+.project-settings-form .projects-field-wide {
+  flex: 1 1 18em;
+  min-width: 0;
+}
+
+.project-settings-competitor {
+  padding: 6px 4px;
+}
+
+.project-settings-competitor .projects-entry-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.projects-bulk {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--bg-chrome-edge);
+  border-radius: var(--radius-field);
+}
+
+.projects-bulk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.projects-bulk-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.projects-bulk-form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.projects-bulk-form > .panel-button {
+  align-self: flex-start;
+}
+
+.projects-textarea {
+  min-height: 6em;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.projects-bulk-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 6px 12px;
+  margin: 0;
+  padding: 6px 8px 8px;
+  border: 1px solid var(--bg-chrome-edge);
+  border-radius: var(--radius-control);
+}
+
+.projects-bulk-group legend {
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.projects-bulk-locale {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+}
+
+.projects-bulk-outcomes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.projects-bulk-outcome {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.projects-bulk-outcome .projects-entry-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.projects-bulk-outcome-text {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.projects-bulk-outcome[data-outcome='invalid'] .projects-bulk-outcome-text,
+.projects-bulk-outcome[data-outcome='limit'] .projects-bulk-outcome-text {
+  color: var(--danger);
+}

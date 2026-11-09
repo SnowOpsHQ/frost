@@ -1,18 +1,43 @@
 import { SEARCH_ENGINES } from '@app/specs/browser-polish.spec';
-import { UNFILED_PROJECT_ID, type RetentionMode } from '@app/specs/capture-db.spec';
+import { MAX_PROJECT_QUERIES, UNFILED_PROJECT_ID, type RetentionMode } from '@app/specs/capture-db.spec';
 import {
+  BULK_LINE_OUTCOME_LABELS,
+  BULK_SEARCH_LIMITS,
+  FAVORITE_TEXT,
   PROJECT_REFUSAL_MESSAGES,
+  PROJECT_SETTINGS_TEXT,
+  PROJECT_SORTS,
+  PROJECT_SORT_LABELS,
   QUERY_FIELD_MAX_CHARS,
   RUN_REFUSAL_MESSAGES,
   RUN_STATE_LABELS,
+  SITE_INPUT_MAX_CHARS,
+  TAG_EDITOR_TEXT,
+  TAG_INPUT_MAX_CHARS,
+  normalizeSiteDomain,
+  normalizeTags,
+  sortProjects,
+  splitBulkSearches,
+  type AddCompetitorAnswer,
   type AddPageAnswer,
+  type BulkAddAnswer,
+  type BulkLineOutcome,
+  type BulkLocale,
+  type BulkSearchesInput,
+  type ProjectChangeAnswer,
+  type ProjectCompetitor,
   type ProjectRefusal,
+  type ProjectSite,
+  type ProjectSort,
   type ProjectSummary,
   type RunState,
   type SavedSearchInput,
   type RunStateName,
+  type SetSiteAnswer,
+  type SetTagsAnswer,
   type StartRunAnswer,
 } from '@app/specs/projects.spec';
+import { MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY } from '@app/specs/workspace-db.spec';
 import { QUICK_RENDER_PROFILES, isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import { SERP_DEVICES } from '@app/specs/serp.spec';
 import {
@@ -35,8 +60,9 @@ import { parseWebUrl } from '@app/specs/web-url.spec';
 
 // The Projects sheet's pure helpers (acceptance `projects.feature.md`, The sheet): the render-profile
 // choice, the query form, a page address as typed, the wording of captures, runs and refusals, and the
-// Changes panel's default project; and the retention section's policy form and wording (acceptance
-// `retention.feature.md`, The project view). No React, no IPC.
+// Changes panel's default project; the retention section's policy form and wording (acceptance
+// `retention.feature.md`, The project view); and (Phase 10 Task 7) the list's star and sort, the
+// Settings view's site and competitors, the tag editor and the Bulk add form. No React, no IPC.
 
 /** The render-profile choices of a project: frost's default, or one of the quick profiles. */
 export const PROJECT_PROFILE_CHOICES: readonly { readonly id: string; readonly label: string; readonly profile: RenderProfile | null }[] = [
@@ -85,10 +111,17 @@ export function queryFromForm(form: QueryForm): { readonly search: SavedSearchIn
   const device = SERP_DEVICES.find((candidate) => candidate === form.device);
   if (engine === undefined) return { problem: 'Choose a search engine.' };
   if (query === '') return { problem: 'Enter a query.' };
-  if (country !== '' && !COUNTRY.test(country)) return { problem: 'A country is two letters, like “de”.' };
-  if (language !== '' && (!LANGUAGE.test(language) || language.length > QUERY_FIELD_MAX_CHARS.language)) return { problem: 'A language is a code like “en” or “pt-br”.' };
+  const locale = localeProblem(country, language);
+  if (locale !== null) return { problem: locale };
   if (device === undefined) return { problem: 'Choose a device.' };
   return { search: { engine, query, country: country === '' ? null : country, language: language === '' ? null : language, device } };
+}
+
+/** A country as the forms take it, and a language (as `SavedSearchInputSchema`). */
+function localeProblem(country: string, language: string): string | null {
+  if (country !== '' && !COUNTRY.test(country)) return 'A country is two letters, like “de”.';
+  if (language !== '' && (!LANGUAGE.test(language) || language.length > QUERY_FIELD_MAX_CHARS.language)) return 'A language is a code like “en” or “pt-br”.';
+  return null;
 }
 
 /** Loopback hosts a scheme-less address gets `http:` for (as the address bar: `LOOPBACK_HTTP_HOSTS`, `LOOPBACK_IPV4_PATTERN`). */
@@ -180,6 +213,215 @@ export function pickedProject(list: readonly Pick<ProjectSummary, 'id'>[], curre
 export function pickerProjects(projects: readonly ProjectSummary[]): ProjectSummary[] {
   const seen = new Set<string>();
   return projects.filter((project) => !seen.has(project.id) && (seen.add(project.id), true));
+}
+
+// ---- Star and sort (Phase 10 Task 7) -------------------------------------------------------------
+
+/** The sort menu's options, in `PROJECT_SORTS` order. */
+export const PROJECT_SORT_OPTIONS: readonly { readonly value: ProjectSort; readonly label: string }[] = PROJECT_SORTS.map((value) => ({ value, label: PROJECT_SORT_LABELS[value] }));
+
+/** The sort a menu value names (`name` for anything else). */
+export function projectSortOf(value: string): ProjectSort {
+  return PROJECT_SORTS.find((sort) => sort === value) ?? 'name';
+}
+
+/** The list as shown: `sortProjects` (Unfiled first, then favorites); the answer is left as it is. */
+export function listedProjects<T extends Parameters<typeof sortProjects>[0][number]>(projects: readonly T[], sort: ProjectSort): T[] {
+  return sortProjects(projects, sort);
+}
+
+/** The star of a project: whether it is pressed, what a press sets, and its (fixed) accessible name. */
+export function favoriteButton(project: Pick<ProjectSummary, 'name' | 'favorite'>): { readonly pressed: boolean; readonly next: boolean; readonly label: string } {
+  return { pressed: project.favorite, next: !project.favorite, label: FAVORITE_TEXT.label.replace('{name}', () => project.name) };
+}
+
+/** What starring (`favorite`) or unstarring said. */
+export function favoriteText(answer: ProjectChangeAnswer | null, favorite: boolean): string {
+  return refusalText(answer) ?? (favorite ? FAVORITE_TEXT.added : FAVORITE_TEXT.removed);
+}
+
+// ---- Settings: site and competitors (Phase 10 Task 7) --------------------------------------------
+
+/** The site form as typed. */
+export interface SiteForm {
+  readonly domain: string;
+  readonly subdomains: boolean;
+}
+
+/** The form showing a project's site (subdomains on when it has none, as main's default). */
+export function siteFormOf(site: ProjectSite | null): SiteForm {
+  return site === null ? { domain: '', subdomains: true } : { domain: site.domain, subdomains: site.subdomains };
+}
+
+const INVALID_DOMAIN = PROJECT_REFUSAL_MESSAGES['invalid-domain'];
+
+/** A domain or address as typed, read as main reads it (`normalizeSiteDomain`; main reads it again). */
+function domainOf(text: string): string | null {
+  return text.length > SITE_INPUT_MAX_CHARS ? null : normalizeSiteDomain(text);
+}
+
+/** The `setSite` the form describes: its host, or `null` (empty: clear the site); or what to fix. */
+export function siteFromForm(form: SiteForm): { readonly site: { readonly domain: string | null; readonly subdomains: boolean } } | { readonly problem: string } {
+  if (form.domain.trim() === '') return { site: { domain: null, subdomains: form.subdomains } };
+  const domain = domainOf(form.domain);
+  return domain === null ? { problem: INVALID_DOMAIN } : { site: { domain, subdomains: form.subdomains } };
+}
+
+/** Whether the form shows another site than the saved one. */
+export function siteFormChanged(form: SiteForm, site: ProjectSite | null): boolean {
+  const domain = form.domain.trim();
+  if (site === null) return domain !== '';
+  return domain !== site.domain || form.subdomains !== site.subdomains;
+}
+
+/** What saving (or clearing) the site said. */
+export function siteText(answer: SetSiteAnswer | null): string {
+  const problem = refusalText(answer);
+  if (problem !== null || answer === null || answer.status !== 'ok') return problem ?? '';
+  return answer.site === null ? PROJECT_SETTINGS_TEXT.siteCleared : PROJECT_SETTINGS_TEXT.siteSaved;
+}
+
+/** Whether the project has a Settings form (Unfiled has no site or competitors). */
+export const settingsAvailable = (project: Pick<ProjectSummary, 'unfiled'>): boolean => !project.unfiled;
+
+/** A competitor as typed: its host, or what to fix. */
+export function competitorFromInput(text: string): { readonly domain: string } | { readonly problem: string } {
+  const domain = domainOf(text);
+  return domain === null ? { problem: INVALID_DOMAIN } : { domain };
+}
+
+/** How many competitors the project has, of `MAX_PROJECT_COMPETITORS`, and whether one more fits. */
+export function competitorRoom(count: number): { readonly canAdd: boolean; readonly text: string } {
+  return { canAdd: count < MAX_PROJECT_COMPETITORS, text: `${count} of ${MAX_PROJECT_COMPETITORS}` };
+}
+
+/** What adding a competitor said (`competitors`: the list before; another host of one of them answers it). */
+export function addCompetitorText(answer: AddCompetitorAnswer | null, competitors: readonly Pick<ProjectCompetitor, 'id'>[]): string {
+  const problem = refusalText(answer);
+  if (problem !== null || answer === null || answer.status !== 'added') return problem ?? '';
+  return competitors.some((competitor) => competitor.id === answer.competitor.id) ? PROJECT_SETTINGS_TEXT.competitorExists : PROJECT_SETTINGS_TEXT.competitorAdded;
+}
+
+/** What removing a competitor said. */
+export function removeCompetitorText(answer: ProjectChangeAnswer | null): string {
+  return refusalText(answer) ?? PROJECT_SETTINGS_TEXT.competitorRemoved;
+}
+
+// ---- Tags (Phase 10 Task 7) ----------------------------------------------------------------------
+
+/** The tag editor's input bound: `MAX_TAGS_PER_ENTRY` tags of the longest typed length, with ", " between. */
+export const TAGS_TEXT_MAX_CHARS = MAX_TAGS_PER_ENTRY * (TAG_INPUT_MAX_CHARS + 2);
+
+/** Tags as typed (comma-separated, blanks dropped), as main reads them (`normalizeTags`); or what to fix. */
+export function tagsFromText(text: string): { readonly tags: string[] } | { readonly problem: string } {
+  const invalid = { problem: PROJECT_REFUSAL_MESSAGES['invalid-tag'] };
+  if (text.length > TAGS_TEXT_MAX_CHARS) return invalid;
+  // Only white space between commas is blank; anything else is read (and maybe refused) by `normalizeTag`.
+  // `normalizeTags` caps the count after repeats are dropped (`Tea, tea` is one tag).
+  const tags = normalizeTags(text.split(',').filter((part) => part.trim() !== ''));
+  return tags === null ? invalid : { tags };
+}
+
+/** An entry's tags as the editor shows them. */
+export const tagsTextOf = (tags: readonly string[]): string => tags.join(', ');
+
+/** The tag editor's accessible name for the entry labelled `label`. */
+export const tagEditorLabel = (label: string): string => TAG_EDITOR_TEXT.label.replace('{label}', () => label);
+
+/** What saving an entry's tags said. */
+export function setTagsText(answer: SetTagsAnswer | null): string {
+  return refusalText(answer) ?? TAG_EDITOR_TEXT.saved;
+}
+
+// ---- Bulk add (Phase 10 Task 7) ------------------------------------------------------------------
+
+/** The Bulk add form as typed. */
+export interface BulkForm {
+  readonly text: string;
+  readonly engine: string;
+  readonly locales: readonly { readonly country: string; readonly language: string }[];
+  readonly devices: readonly string[];
+  readonly tags: string;
+}
+
+export const EMPTY_BULK_FORM: BulkForm = { text: '', engine: SEARCH_ENGINES[0].id, locales: [{ country: '', language: '' }], devices: ['desktop'], tags: '' };
+
+/** What a valid form makes: how many queries, locales and devices, and their product. */
+export interface BulkCounts {
+  readonly lines: number;
+  readonly locales: number;
+  readonly devices: number;
+  readonly searches: number;
+}
+
+/** Whether the form can take one more locale row (`BULK_SEARCH_LIMITS.maxLocales`). */
+export const canAddLocale = (form: Pick<BulkForm, 'locales'>): boolean => form.locales.length < BULK_SEARCH_LIMITS.maxLocales;
+
+/**
+ * The `addSearches` the form describes (as `BulkSearchesInputSchema` takes it: the lines as main splits
+ * them, a locale given twice once, the devices in `SERP_DEVICES` order, the tags normalized), with its
+ * counts; or what to fix. Main checks it again and is the authority.
+ */
+export function bulkFromForm(form: BulkForm): ({ readonly input: BulkSearchesInput } & BulkCounts) | { readonly problem: string } {
+  const tooMany = { problem: `Enter at most ${BULK_SEARCH_LIMITS.maxLines} queries at once.` };
+  if (form.text.length > BULK_SEARCH_LIMITS.maxTextChars) return tooMany;
+  const lines = splitBulkSearches(form.text);
+  if (lines.length === 0) return { problem: 'Enter at least one query.' };
+  if (lines.length > BULK_SEARCH_LIMITS.maxLines) return tooMany;
+  const engine = SEARCH_ENGINES.find((candidate) => candidate.id === form.engine)?.id;
+  if (engine === undefined) return { problem: 'Choose a search engine.' };
+  if (form.locales.length === 0) return { problem: 'Add a country and language (or leave both empty).' };
+  if (form.locales.length > BULK_SEARCH_LIMITS.maxLocales) return { problem: `At most ${BULK_SEARCH_LIMITS.maxLocales} countries and languages.` };
+  const locales: BulkLocale[] = [];
+  for (const row of form.locales) {
+    const country = row.country.trim().toLowerCase();
+    const language = row.language.trim().toLowerCase();
+    const problem = localeProblem(country, language);
+    if (problem !== null) return { problem };
+    const locale = { country: country === '' ? null : country, language: language === '' ? null : language };
+    if (!locales.some((seen) => seen.country === locale.country && seen.language === locale.language)) locales.push(locale);
+  }
+  const devices = SERP_DEVICES.filter((device) => form.devices.includes(device));
+  if (devices.length === 0) return { problem: 'Choose at least one device.' };
+  const tags = tagsFromText(form.tags);
+  if ('problem' in tags) return tags;
+  const input: BulkSearchesInput = { text: lines.join('\n'), engine, locales, devices, tags: tags.tags };
+  return { input, lines: lines.length, locales: locales.length, devices: devices.length, searches: lines.length * locales.length * devices.length };
+}
+
+const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/** What the form makes, in a line, and how many more searches the project (holding `saved`) can take. */
+export function bulkSummaryText(counts: BulkCounts, saved: number): string {
+  const room = Math.max(0, MAX_PROJECT_QUERIES - saved);
+  const made = `${count(counts.lines, 'query', 'queries')} × ${count(counts.locales, 'locale', 'locales')} × ${count(counts.devices, 'device', 'devices')}: ${count(counts.searches, 'search', 'searches')}.`;
+  return `${made} ${room === 0 ? 'The project is full.' : `The project can hold ${room} more.`}`;
+}
+
+/** One line's outcome as the dialog lists it (the query is shown as text). */
+export interface BulkOutcomeRow {
+  readonly query: string;
+  readonly outcome: BulkLineOutcome;
+  readonly text: string;
+}
+
+/** The per-line outcomes of a Bulk add, in order (none for a refusal). */
+export function bulkOutcomeRows(answer: BulkAddAnswer | null): BulkOutcomeRow[] {
+  if (answer === null || answer.status !== 'done') return [];
+  return answer.lines.map((line) => {
+    let text: string = BULK_LINE_OUTCOME_LABELS[line.outcome];
+    if (line.outcome === 'added') text = `Added ${count(line.added, 'search', 'searches')}`;
+    else if (line.outcome === 'limit' && line.added > 0) text = `${text} (${count(line.added, 'search', 'searches')} added first)`;
+    return { query: line.query, outcome: line.outcome, text };
+  });
+}
+
+/** What a Bulk add said, in a line. */
+export function bulkResultText(answer: BulkAddAnswer | null): string {
+  const problem = refusalText(answer);
+  if (problem !== null || answer === null || answer.status !== 'done') return problem ?? '';
+  const added = answer.lines.reduce((sum, line) => sum + line.added, 0);
+  return `Added ${count(added, 'search', 'searches')} from ${count(answer.lines.length, 'line', 'lines')}.`;
 }
 
 // ---- Retention (Task 7) -------------------------------------------------------------------------

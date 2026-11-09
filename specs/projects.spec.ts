@@ -21,7 +21,7 @@ import { isIpLiteral, isPublicHost } from './private-address.spec';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from './render-profile.spec';
 import type { SearchParams } from './serp-search-params.schema';
 import { SERP_DEVICE_LABELS, SERP_PARAM_LIMITS, type SerpDevice } from './serp.spec';
-import { DOMAIN_MAX_CHARS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from './workspace-db.spec';
+import { DOMAIN_MAX_CHARS, MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from './workspace-db.spec';
 
 // ---- The capture run ---------------------------------------------------------------------------
 
@@ -516,17 +516,73 @@ export type BulkAddAnswer = { status: 'done'; lines: BulkLineResult[] } | Projec
 export const PROJECTS_TITLE = 'Projects' as const;
 
 /**
- * The views of one project in the sheet (Phase 10 Task 6; `projects.feature.md`, The sheet), in the
- * switch's order: `overview` (pages, queries, Capture now, retention), `rankings` (the rank table and
- * a search's series) and `compare` (two readings side by side). Task 7 adds Settings.
+ * The views of one project in the sheet (Phase 10 Tasks 6 and 7; `projects.feature.md`, The sheet), in
+ * the switch's order: `overview` (pages, queries, Capture now, retention), `rankings` (the rank table
+ * and a search's series), `compare` (two readings side by side) and `settings` (the site, include
+ * subdomains and the competitors; Task 8 adds the cadence).
  */
-export const PROJECT_VIEWS = ['overview', 'rankings', 'compare'] as const;
+export const PROJECT_VIEWS = ['overview', 'rankings', 'compare', 'settings'] as const;
 export type ProjectViewId = (typeof PROJECT_VIEWS)[number];
 
 export const PROJECT_VIEW_LABELS: Readonly<Record<ProjectViewId, string>> = {
   overview: 'Overview',
   rankings: 'Rankings',
   compare: 'Compare',
+  settings: 'Settings',
+};
+
+/** The project list's sort when the sheet opens (view state: not persisted). */
+export const DEFAULT_PROJECT_SORT: ProjectSort = 'name';
+
+/** The project list's star and what it says (Phase 10 Task 7). */
+export const FAVORITE_TEXT = {
+  /** The star's accessible name, `{name}` the project's (its state is `aria-pressed`). */
+  label: 'Favorite {name}',
+  added: 'Added to favorites.',
+  removed: 'Removed from favorites.',
+} as const;
+
+/** The Settings view's wording (Phase 10 Task 7; plan Decision 7). */
+export const PROJECT_SETTINGS_TEXT = {
+  siteTitle: 'Site',
+  siteLabel: 'Site domain',
+  siteNote: 'Whose positions the Rankings view shows. Type a domain or paste a web address: frost keeps only its host.',
+  subdomains: 'Include subdomains',
+  subdomainsNote: 'On, every host of the domain counts as the site (shop.example.com too). Off, only this host does, with or without www.',
+  siteSaved: 'Site saved.',
+  siteCleared: 'Site cleared.',
+  competitorsTitle: 'Competitors',
+  competitorLabel: 'Competitor domain',
+  competitorsNote: `Up to ${MAX_PROJECT_COMPETITORS}, each kept as its domain. Their positions come from the same readings, so adding one shows its history at once.`,
+  noCompetitors: 'No competitors yet.',
+  competitorAdded: 'Competitor added.',
+  competitorExists: 'That domain is already a competitor.',
+  competitorRemoved: 'Competitor removed.',
+  unfiled: 'Unfiled is where captures land when no project was chosen: it has no site or competitors.',
+} as const;
+
+/** The tag editor of a page or saved search (Phase 10 Task 7; plan Decision 8). */
+export const TAG_EDITOR_TEXT = {
+  /** The editor's accessible name, `{label}` the page's URL or the search's `queryLabel`. */
+  label: 'Tags for {label}',
+  note: `Separate tags with commas; at most ${MAX_TAGS_PER_ENTRY}. Tags filter the Rankings view.`,
+  saved: 'Tags saved.',
+} as const;
+
+/** The Bulk add dialog (Phase 10 Task 7; plan Decision 8). */
+export const BULK_ADD_TEXT = {
+  title: 'Bulk add searches',
+  textLabel: 'Queries, one per line or separated by commas',
+  /** What Bulk add does and does not do: it never contacts a search engine. */
+  note: 'Bulk add only saves searches. Nothing is sent to a search engine until you run Check rankings (or Capture now).',
+} as const;
+
+/** A Bulk add line's outcome in words (`BULK_LINE_OUTCOMES`). */
+export const BULK_LINE_OUTCOME_LABELS: Readonly<Record<BulkLineOutcome, string>> = {
+  added: 'Added',
+  exists: 'Already saved',
+  invalid: 'Not a search frost can make',
+  limit: 'Not added: the project is full',
 };
 
 /** Said beside Capture now: what a run does, and what it may meet. */

@@ -229,7 +229,7 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 - **Views (Phase 10 Task 6).** One project shows in one of its views (`PROJECT_VIEWS`,
   `PROJECT_VIEW_LABELS`): **Overview** (everything above: Capture now, pages, queries, retention),
   **Rankings** (the rank table and a search's series) and **Compare** (two readings side by side), both
-  `rankings.feature.md`'s (The views); Task 7 adds **Settings**. The switch is a tablist of real buttons
+  `rankings.feature.md`'s (The views), and **Settings** (Task 7, below). The switch is a tablist of real buttons
   under the project's name (`data-testid="projects-views"`, each `projects-view-<id>` with
   `aria-selected`; Left/Right/Home/End move between them), and the shown view is a tabpanel
   (`data-view` on `projects-detail`). It opens on Overview; the palette's "Open rankings" and
@@ -237,6 +237,61 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   (`data-running`) whatever the view, the run's progress and Cancel show above the view (whichever it
   is), and nothing in a view opens a page (the run's tab is in front). Scenario
   `projects-run-progress-on-every-view` (`renderer/__tests__/rankings-components.test.ts`).
+- **Star and sort (Phase 10 Task 7).** Each project in the list has a star (`data-testid="projects-star"`,
+  a toggle button named `FAVORITE_TEXT.label` with `aria-pressed`) that calls `setFavorite`; Unfiled
+  can be starred too. A sort menu above the list (`projects-sort`, a labelled `<select>` of
+  `PROJECT_SORTS` with `PROJECT_SORT_LABELS`, `DEFAULT_PROJECT_SORT` when the sheet opens) orders it
+  with `sortProjects`: Unfiled first, then favorites, then the rest. The sort is view state, never
+  sent to main or kept.
+- **Settings (Phase 10 Task 7).** The **Settings** view (`ProjectSettings.tsx`, `PROJECT_SETTINGS_TEXT`)
+  holds:
+  - the **site**: a domain or address input (`projects-site-input`, bounded to
+    `SITE_INPUT_MAX_CHARS`), the "Include subdomains" switch (`projects-site-subdomains`, on for a
+    project with no site), Save (`projects-site-save`) and Clear (`projects-site-clear`, only with a
+    site set). The chrome reads the input with `normalizeSiteDomain` first (a refused one says
+    `PROJECT_REFUSAL_MESSAGES['invalid-domain']` and sends nothing); an empty input clears the site.
+    Main reads it again and is the authority (e.g. a bare public suffix);
+  - the **competitors**: each with Remove (`projects-competitor`, `projects-competitor-remove`), an
+    input and Add (`projects-competitor-input`, `projects-competitor-add`, read the same way), "n of
+    `MAX_PROJECT_COMPETITORS`", Add disabled at the cap; adding a domain the project has says
+    `competitorExists`;
+  - Task 8's cadence part, after them.
+
+  For Unfiled the view says `PROJECT_SETTINGS_TEXT.unfiled` and offers nothing to set. The Rankings
+  view's "Set your site's domain to see its position" notice carries a button
+  (`rankings-open-settings`) that switches to Settings.
+- **Tags (Phase 10 Task 7).** Each page and saved search row of Overview shows its tags
+  (`projects-page-tags`, `projects-query-tags`, each tag `projects-tag`) and an "Edit tags" button
+  (`projects-page-tags-edit`, `projects-query-tags-edit`) that opens an inline editor: one text
+  input (`projects-tags-input`, named `TAG_EDITOR_TEXT.label`, comma-separated), Save
+  (`projects-tags-save`) and Cancel (`projects-tags-cancel`; Esc cancels too, without closing the
+  sheet). The chrome reads the text with `normalizeTags` (a refused tag or more than
+  `MAX_TAGS_PER_ENTRY` says `PROJECT_REFUSAL_MESSAGES['invalid-tag']` and sends nothing) and sends the
+  entry's tags afterwards with `setTags`.
+- **Bulk add (Phase 10 Task 7).** "Bulk add…" (`projects-bulk-open`, in Overview's Search queries)
+  opens the Bulk add dialog (`BulkAdd.tsx`, `role="dialog"`, `projects-bulk`) in place of the query
+  form; focus goes to its text, Esc or Close (`projects-bulk-close`) closes it and gives focus back
+  to "Bulk add…". It has:
+  - the queries (`projects-bulk-text`, `BULK_ADD_TEXT.textLabel`, at most
+    `BULK_SEARCH_LIMITS.maxTextChars`), one per line or comma-separated (`splitBulkSearches`; at most
+    `maxLines`);
+  - one engine (`projects-bulk-engine`, `SEARCH_ENGINES`);
+  - 1–`BULK_SEARCH_LIMITS.maxLocales` country/language pairs (`projects-bulk-locales`; each row
+    `projects-bulk-country`, `projects-bulk-language`, `projects-bulk-locale-remove`; "Add a locale"
+    `projects-bulk-locale-add`, disabled at the cap), checked as the query form checks them, a pair
+    given twice sent once;
+  - devices (`projects-bulk-devices`, a checkbox each `projects-bulk-device-<device>`, at least one);
+  - tags for the searches it adds (`projects-bulk-tags`, as the tag editor reads them);
+  - a summary of how many searches it makes (`projects-bulk-summary`) and how many more the project
+    can hold;
+  - the note `BULK_ADD_TEXT.note` (`projects-bulk-note`): it only saves searches, and nothing is sent
+    until you run Check rankings (or Capture now);
+  - Add searches (`projects-bulk-submit`), then the per-line outcomes (`projects-bulk-outcomes`, each
+    `projects-bulk-outcome` with `data-outcome`, `BULK_LINE_OUTCOME_LABELS`, the query as text). The
+    text is cleared once lines were added.
+- Every refusal of these (`setFavorite`, `setSite`, `addCompetitor`, `removeCompetitor`, `setTags`,
+  `addSearches`) shows its `PROJECT_REFUSAL_MESSAGES` text in the sheet's status line; an IPC failure
+  says "Something went wrong. Try again.".
 
 ## Changes panel
 - A project picker next to Capture now: it lists the projects, starts on the first project listing the
@@ -333,7 +388,12 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   `apps/desktop/src/renderer/__tests__/projects-view.test.ts`: `projects-view-profile-choice`,
   `projects-view-query-form`, `projects-view-page-input`, `projects-view-wording`,
   `projects-view-picked-project`, `projects-view-default-capture-project`, `projects-palette-actions`
-  (with "Open rankings" and "Compare searches");
+  (with "Open rankings" and "Compare searches"); Phase 10 Task 7's `projects-view-favorites-and-sort`,
+  `projects-view-settings-form` (site and competitors), `projects-view-bulk-add-form`,
+  `projects-view-tags`; and the wiring in `rankings-components.test.ts`:
+  `projects-settings-view-sets-site-and-competitors`, `projects-settings-unfiled-offers-nothing`,
+  `projects-bulk-add-shows-outcomes`,
+  `projects-star-sort-and-tags`;
   `use-projects-sheet.test.ts` `projects-and-history-sheets-exclude-each-other`; and
   `palette-all-features.test.ts` `palette-features-register-together`.
 

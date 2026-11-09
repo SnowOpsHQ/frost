@@ -3,6 +3,7 @@ import type { TabState } from '@app/specs/browser.spec';
 import { PROJECT_NAME_MAX_CHARS, PROJECT_QUERY_MAX_CHARS } from '@app/specs/capture-db.spec';
 import {
   CAPTURE_RUN_NOTE,
+  DEFAULT_PROJECT_SORT,
   DELETED_NOT_PURGED,
   PROJECTS_TITLE,
   PROJECT_VIEWS,
@@ -10,37 +11,52 @@ import {
   QUERY_FIELD_MAX_CHARS,
   RUN_TARGET_OUTCOME_LABELS,
   queryLabel,
+  TAG_EDITOR_TEXT,
   type ProjectDetail,
+  type ProjectSort,
   type ProjectSummary,
   type ProjectViewId,
   type RunState,
 } from '@app/specs/projects.spec';
+import type { EntryKind } from '@app/specs/workspace-db.spec';
 import { SERP_DEVICE_LABELS, SERP_DEVICES } from '@app/specs/serp.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { CloseIcon, PlusIcon } from '../../icons';
-import { actions, ipc } from '../../ipc';
+import { actions, ipc, projectsActions } from '../../ipc';
 import { registerPaletteActions } from '../../palette/registry';
 import { projectsPaletteSources, retentionPaletteSources } from '../../projects-palette';
 import {
   EMPTY_QUERY_FORM,
   PROJECT_PROFILE_CHOICES,
+  PROJECT_SORT_OPTIONS,
   QUERY_ENGINES,
+  TAGS_TEXT_MAX_CHARS,
   addPageText,
   changeCountText,
+  favoriteButton,
+  favoriteText,
   lastCaptureText,
+  listedProjects,
   pageUrlFromInput,
   profileChoiceOf,
   profileOfChoice,
+  projectSortOf,
   queryFromForm,
   refusalText,
   runActive,
   runProgressText,
+  setTagsText,
   startRunText,
+  tagEditorLabel,
+  tagsFromText,
+  tagsTextOf,
   type QueryForm,
 } from '../../projects-view';
 import { isolatedTooltip } from '../../seo-view';
 import { tablistFocusTarget } from '../../tablist-keys';
+import { BulkAdd } from './BulkAdd';
 import { Compare } from './Compare';
+import { ProjectSettings } from './ProjectSettings';
 import { lastOpenedProject, notifyProjectsChanged, openProjects, setLastOpenedProject, useProjectsRequest } from './projects-sheet';
 import { Rankings } from './Rankings';
 import { Retention } from './Retention';
@@ -53,7 +69,10 @@ import { Retention } from './Retention';
 // shrinks to a band (`data-running`), so the run's tab is shown (a viewport screenshot captures what
 // is on screen). Everything from the user or a page is React text in a `<bdi>`; no inline styles
 // (strict CSP). A project shows in one of its views (`PROJECT_VIEWS`, a tablist under its name):
-// Overview (all of the above), Rankings (`Rankings.tsx`) and Compare (`Compare.tsx`), Phase 10 Task 6.
+// Overview (all of the above), Rankings (`Rankings.tsx`) and Compare (`Compare.tsx`), Phase 10 Task 6,
+// and Settings (`ProjectSettings.tsx`: site and competitors), Task 7. Task 7 also adds the list's star
+// and sort menu (view state, not kept), the tags of pages and saved searches (an inline editor on each
+// row) and Bulk add (`BulkAdd.tsx`, in place of the query form).
 
 // The palette's Projects and retention actions (`projects-palette.ts`), once per module instance.
 const unregisterPaletteActions = registerPaletteActions(
@@ -109,6 +128,15 @@ function Text({ value, className, testId }: { readonly value: string; readonly c
 
 // ---- The project list ----------------------------------------------------------------------------
 
+/** frost's own star: a five-pointed outline, filled by CSS when pressed. */
+function StarIcon() {
+  return (
+    <svg className="icon projects-star-icon" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z" />
+    </svg>
+  );
+}
+
 function ProjectItem({
   project,
   selected,
@@ -116,6 +144,7 @@ function ProjectItem({
   onSelect,
   onRename,
   onAddHere,
+  onFavorite,
 }: {
   readonly project: ProjectSummary;
   readonly selected: boolean;
@@ -123,7 +152,9 @@ function ProjectItem({
   readonly onSelect: () => void;
   readonly onRename: (name: string) => Promise<boolean>;
   readonly onAddHere: () => void;
+  readonly onFavorite: (favorite: boolean) => void;
 }) {
+  const star = favoriteButton(project);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(project.name);
   const save = async (event: FormEvent) => {
@@ -139,7 +170,10 @@ function ProjectItem({
     setName(project.name);
   };
   return (
-    <li className="projects-item" data-testid="projects-item" data-project={project.id} data-selected={selected} data-unfiled={project.unfiled}>
+    <li className="projects-item" data-testid="projects-item" data-project={project.id} data-selected={selected} data-unfiled={project.unfiled} data-favorite={project.favorite}>
+      <button type="button" className="projects-icon-button projects-star" data-testid="projects-star" aria-pressed={star.pressed} aria-label={star.label} title={star.pressed ? 'Remove from favorites' : 'Add to favorites'} onClick={() => onFavorite(star.next)}>
+        <StarIcon />
+      </button>
       {renaming ? (
         <form className="projects-rename" onSubmit={(event) => void save(event)}>
           <input
@@ -177,17 +211,122 @@ function ProjectItem({
 
 // ---- One project ---------------------------------------------------------------------------------
 
-/** A page or query: a click opens it in the active tab (not while a run is under way: the run's tab is in front). */
-function EntryRow({ testId, url, label, lastCapturedAt, changeCount, running, onOpen, onRemove }: { readonly testId: string; readonly url: string; readonly label: string; readonly lastCapturedAt: number | null; readonly changeCount: number | null; readonly running: boolean; readonly onOpen: () => void; readonly onRemove: () => void }) {
+/** An entry's tags, edited inline: comma-separated, read as main reads them (`normalizeTags`). */
+function TagEditor({ label, tags, onSave, onDone }: { readonly label: string; readonly tags: readonly string[]; readonly onSave: (tags: string[]) => Promise<boolean>; readonly onDone: () => void }) {
+  const [text, setText] = useState(tagsTextOf(tags));
+  const [problem, setProblem] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const noteId = useId();
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    const parsed = tagsFromText(text);
+    if ('problem' in parsed) return setProblem(parsed.problem);
+    setProblem(null);
+    setSaving(true);
+    try {
+      if (await onSave(parsed.tags)) onDone();
+    } finally {
+      setSaving(false);
+    }
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (event.key !== 'Escape') return;
+    // Esc ends the edit here, not the sheet.
+    event.preventDefault();
+    event.stopPropagation();
+    onDone();
+  };
+  return (
+    <form className="projects-tags-editor" data-testid="projects-tags-editor" onSubmit={(event) => void save(event)} onKeyDown={onKeyDown}>
+      <input
+        className="projects-input"
+        data-testid="projects-tags-input"
+        type="text"
+        spellCheck={false}
+        autoComplete="off"
+        autoFocus
+        aria-label={tagEditorLabel(label)}
+        aria-describedby={noteId}
+        aria-invalid={problem !== null ? 'true' : undefined}
+        maxLength={TAGS_TEXT_MAX_CHARS}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+      />
+      <button type="submit" className="projects-small-button" data-testid="projects-tags-save" disabled={saving}>
+        Save
+      </button>
+      <button type="button" className="projects-small-button" data-testid="projects-tags-cancel" onClick={onDone}>
+        Cancel
+      </button>
+      <span className="projects-note" id={noteId} role={problem !== null ? 'alert' : undefined}>
+        {problem ?? TAG_EDITOR_TEXT.note}
+      </span>
+    </form>
+  );
+}
+
+/** A page or query: a click opens it in the active tab (not while a run is under way: the run's tab is in front); its tags, with an editor. */
+function EntryRow({
+  testId,
+  url,
+  label,
+  lastCapturedAt,
+  changeCount,
+  tags,
+  running,
+  onOpen,
+  onRemove,
+  onSaveTags,
+}: {
+  readonly testId: string;
+  readonly url: string;
+  readonly label: string;
+  readonly lastCapturedAt: number | null;
+  readonly changeCount: number | null;
+  readonly tags: readonly string[];
+  readonly running: boolean;
+  readonly onOpen: () => void;
+  readonly onRemove: () => void;
+  readonly onSaveTags: (tags: string[]) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const editButton = useRef<HTMLButtonElement>(null);
+  // Its accessible name starts with its visible text.
+  const tagsButtonText = tags.length === 0 ? 'Add tags' : 'Edit tags';
+  const returnFocus = useRef(false);
+  // Focus goes back to the button the editor was opened from, once it is shown again.
+  useEffect(() => {
+    if (editing || !returnFocus.current) return;
+    returnFocus.current = false;
+    editButton.current?.focus();
+  }, [editing]);
+  const done = () => {
+    returnFocus.current = true;
+    setEditing(false);
+  };
   return (
     <li className="projects-entry" data-testid={testId} data-url={url} data-captured={lastCapturedAt !== null}>
-      <button type="button" className="projects-entry-open" data-testid={`${testId}-open`} title={isolatedTooltip(url)} disabled={running} onClick={onOpen}>
-        <Text value={label} className="projects-entry-label" />
-        <span className="projects-entry-meta">
-          <span data-testid={`${testId}-last`}>{lastCaptureText(lastCapturedAt)}</span>
-          {lastCapturedAt !== null ? <span data-testid={`${testId}-changes`}>{changeCountText(changeCount, true)}</span> : null}
-        </span>
-      </button>
+      <div className="projects-entry-main">
+        <button type="button" className="projects-entry-open" data-testid={`${testId}-open`} title={isolatedTooltip(url)} disabled={running} onClick={onOpen}>
+          <Text value={label} className="projects-entry-label" />
+          <span className="projects-entry-meta">
+            <span data-testid={`${testId}-last`}>{lastCaptureText(lastCapturedAt)}</span>
+            {lastCapturedAt !== null ? <span data-testid={`${testId}-changes`}>{changeCountText(changeCount, true)}</span> : null}
+          </span>
+        </button>
+        {editing ? (
+          <TagEditor label={label} tags={tags} onSave={onSaveTags} onDone={done} />
+        ) : (
+          <div className="projects-entry-tags" data-testid={`${testId}-tags`}>
+            {tags.map((tag) => (
+              <Text key={tag} value={tag} className="projects-tag" testId="projects-tag" />
+            ))}
+            <button ref={editButton} type="button" className="projects-link-button" data-testid={`${testId}-tags-edit`} aria-label={`${tagsButtonText} for ${label}`} onClick={() => setEditing(true)}>
+              {tagsButtonText}
+            </button>
+          </div>
+        )}
+      </div>
       <button type="button" className="projects-icon-button" data-testid={`${testId}-remove`} aria-label={`Remove ${label}`} title="Remove" onClick={onRemove}>
         <CloseIcon />
       </button>
@@ -282,11 +421,20 @@ function ProjectView({
   readonly onOpenUrl: (url: string) => void;
   readonly say: (text: string) => void;
 }) {
-  const { project, pages, queries } = detail;
+  const { project, pages, queries, competitors } = detail;
   const projectId = project.id;
   const [pageInput, setPageInput] = useState('');
   const [form, setForm] = useState<QueryForm>(EMPTY_QUERY_FORM);
   const [screenshots, setScreenshots] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const bulkButton = useRef<HTMLButtonElement>(null);
+  const bulkReturnFocus = useRef(false);
+  // Focus goes back to "Bulk add…" once the dialog closed and it is shown again.
+  useEffect(() => {
+    if (bulkOpen || !bulkReturnFocus.current) return;
+    bulkReturnFocus.current = false;
+    bulkButton.current?.focus();
+  }, [bulkOpen]);
   const busy = run !== null && runActive(run.state);
   const mine = run !== null && run.projectId === projectId && run.state !== 'idle';
   const field = (key: keyof QueryForm) => ({ value: form[key], onChange: (event: { target: { value: string } }) => setForm((current) => ({ ...current, [key]: event.target.value })) });
@@ -339,12 +487,35 @@ function ProjectView({
     const problem = startRunText(answer);
     if (problem !== null) say(problem);
   };
+  const saveTags = async (entryKind: EntryKind, entryId: string, tags: string[]): Promise<boolean> => {
+    const answer = await projectsActions.setTags(projectId, entryKind, entryId, tags);
+    say(setTagsText(answer));
+    onChanged();
+    return answer?.status === 'ok';
+  };
+  const closeBulk = () => {
+    bulkReturnFocus.current = true;
+    setBulkOpen(false);
+  };
   const choice = profileChoiceOf(project.renderProfile);
   const canAddCurrent = tab !== undefined && isWebUrl(tab.url);
   const panelId = useId();
+  const detailRef = useRef<HTMLDivElement>(null);
+  const focusSettings = useRef(false);
+  // "Open Settings" (the Rankings view's no-site notice): focus goes to the site input once it shows.
+  useEffect(() => {
+    if (view !== 'settings' || !focusSettings.current) return;
+    focusSettings.current = false;
+    const target = detailRef.current?.querySelector<HTMLElement>('[data-testid="projects-site-input"]') ?? detailRef.current?.querySelector<HTMLElement>('[data-testid="projects-view-settings"]');
+    target?.focus();
+  }, [view]);
+  const openSettings = () => {
+    focusSettings.current = true;
+    onView('settings');
+  };
 
   return (
-    <div className="projects-detail" data-testid="projects-detail" data-project={projectId} data-view={view}>
+    <div ref={detailRef} className="projects-detail" data-testid="projects-detail" data-project={projectId} data-view={view}>
       <header className="projects-detail-head">
         <h2 className="projects-detail-name" data-testid="projects-name">
           <Text value={project.name} />
@@ -362,8 +533,19 @@ function ProjectView({
       {mine && run ? <RunProgress run={run} onCancel={() => void ipc.projects.cancelRun.mutate().catch(() => false)} /> : null}
 
       <div className="projects-view-panel" id={panelId} role="tabpanel" aria-labelledby={`${panelId}-${view}`} data-testid="projects-view-panel">
-        {view === 'rankings' ? <Rankings projectId={projectId} refreshKey={detail} busy={busy} onOpenUrl={onOpenUrl} say={say} /> : null}
+        {view === 'rankings' ? <Rankings projectId={projectId} refreshKey={detail} busy={busy} onOpenUrl={onOpenUrl} say={say} onOpenSettings={project.unfiled ? undefined : openSettings} /> : null}
         {view === 'compare' ? <Compare projectId={projectId} refreshKey={detail} /> : null}
+        {view === 'settings' ? (
+          <ProjectSettings
+            project={project}
+            competitors={competitors}
+            onChanged={() => {
+              notifyProjectsChanged();
+              onChanged();
+            }}
+            say={say}
+          />
+        ) : null}
         {view === 'overview' ? (
           <>
             <section className="projects-section projects-capture" aria-label="Capture now">
@@ -406,9 +588,11 @@ function ProjectView({
                     label={page.url}
                     lastCapturedAt={page.lastCapturedAt}
                     changeCount={page.changeCount}
+                    tags={page.tags}
                     running={busy}
                     onOpen={() => onOpenUrl(page.url)}
                     onRemove={() => void change(ipc.projects.removePage.mutate({ projectId, pageId: page.id }).catch(() => null))}
+                    onSaveTags={(tags) => saveTags('page', page.id, tags)}
                   />
                 ))}
               </ul>
@@ -438,50 +622,59 @@ function ProjectView({
                     label={queryLabel(query.params)}
                     lastCapturedAt={query.lastCapturedAt}
                     changeCount={query.changeCount}
+                    tags={query.tags}
                     running={busy}
                     onOpen={() => onOpenUrl(query.url)}
                     onRemove={() => void change(ipc.projects.removeSearch.mutate({ projectId, queryId: query.id }).catch(() => null))}
+                    onSaveTags={(tags) => saveTags('search', query.id, tags)}
                   />
                 ))}
               </ul>
-              <form className="projects-query-form" onSubmit={(event) => void addQuery(event)}>
-                <label className="projects-field projects-field-wide">
-                  <span>Query</span>
-                  <input className="projects-input" data-testid="projects-query-text" type="text" spellCheck={false} autoComplete="off" maxLength={PROJECT_QUERY_MAX_CHARS} {...field('query')} />
-                </label>
-                <label className="projects-field">
-                  <span>Engine</span>
-                  <select className="projects-select" data-testid="projects-query-engine" {...field('engine')}>
-                    {QUERY_ENGINES.map((engine) => (
-                      <option key={engine.id} value={engine.id}>
-                        {engine.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="projects-field projects-field-short">
-                  <span>Country</span>
-                  <input className="projects-input" data-testid="projects-query-country" type="text" spellCheck={false} autoComplete="off" placeholder="de" maxLength={2} {...field('country')} />
-                </label>
-                <label className="projects-field projects-field-short">
-                  <span>Language</span>
-                  <input className="projects-input" data-testid="projects-query-language" type="text" spellCheck={false} autoComplete="off" placeholder="en" maxLength={QUERY_FIELD_MAX_CHARS.language} {...field('language')} />
-                </label>
-                <label className="projects-field">
-                  <span>Device</span>
-                  <select className="projects-select" data-testid="projects-query-device" {...field('device')}>
-                    {SERP_DEVICES.map((device) => (
-                      <option key={device} value={device}>
-                        {SERP_DEVICE_LABELS[device]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button type="submit" className="projects-small-button" data-testid="projects-query-add">
-                  <PlusIcon />
-                  <span>Add query</span>
-                </button>
-              </form>
+              {bulkOpen ? (
+                <BulkAdd projectId={projectId} savedSearches={queries.length} onClose={closeBulk} onChanged={onChanged} say={say} />
+              ) : (
+                <form className="projects-query-form" onSubmit={(event) => void addQuery(event)}>
+                  <label className="projects-field projects-field-wide">
+                    <span>Query</span>
+                    <input className="projects-input" data-testid="projects-query-text" type="text" spellCheck={false} autoComplete="off" maxLength={PROJECT_QUERY_MAX_CHARS} {...field('query')} />
+                  </label>
+                  <label className="projects-field">
+                    <span>Engine</span>
+                    <select className="projects-select" data-testid="projects-query-engine" {...field('engine')}>
+                      {QUERY_ENGINES.map((engine) => (
+                        <option key={engine.id} value={engine.id}>
+                          {engine.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="projects-field projects-field-short">
+                    <span>Country</span>
+                    <input className="projects-input" data-testid="projects-query-country" type="text" spellCheck={false} autoComplete="off" placeholder="de" maxLength={2} {...field('country')} />
+                  </label>
+                  <label className="projects-field projects-field-short">
+                    <span>Language</span>
+                    <input className="projects-input" data-testid="projects-query-language" type="text" spellCheck={false} autoComplete="off" placeholder="en" maxLength={QUERY_FIELD_MAX_CHARS.language} {...field('language')} />
+                  </label>
+                  <label className="projects-field">
+                    <span>Device</span>
+                    <select className="projects-select" data-testid="projects-query-device" {...field('device')}>
+                      {SERP_DEVICES.map((device) => (
+                        <option key={device} value={device}>
+                          {SERP_DEVICE_LABELS[device]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button type="submit" className="projects-small-button" data-testid="projects-query-add">
+                    <PlusIcon />
+                    <span>Add query</span>
+                  </button>
+                  <button ref={bulkButton} type="button" className="projects-small-button" data-testid="projects-bulk-open" aria-haspopup="dialog" onClick={() => setBulkOpen(true)}>
+                    Bulk add…
+                  </button>
+                </form>
+              )}
             </section>
 
             <Retention projectId={projectId} retention={project.retention} refreshKey={detail} busy={busy} say={say} onChanged={onChanged} />
@@ -504,7 +697,11 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
   const [view, setView] = useState<ProjectViewId>(request?.view ?? 'overview');
   const [newName, setNewName] = useState('');
   const [status, setStatus] = useState('');
+  // View state only: never sent to main or kept.
+  const [sort, setSort] = useState<ProjectSort>(DEFAULT_PROJECT_SORT);
   const sheet = useRef<HTMLElement>(null);
+  /** The project whose star was just pressed: its star gets focus back once the list (maybe reordered) shows. */
+  const focusStar = useRef<string | null>(null);
 
   const loadList = useCallback(() => {
     void ipc.projects.list
@@ -594,6 +791,18 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
     }
     reload();
   };
+  useEffect(() => {
+    const projectId = focusStar.current;
+    if (projectId === null || projects === null) return;
+    focusStar.current = null;
+    const item = [...(sheet.current?.querySelectorAll<HTMLElement>('[data-testid="projects-item"]') ?? [])].find((element) => element.dataset.project === projectId);
+    item?.querySelector<HTMLElement>('[data-testid="projects-star"]')?.focus();
+  }, [projects]);
+  const favorite = async (projectId: string, next: boolean) => {
+    focusStar.current = projectId;
+    setStatus(favoriteText(await projectsActions.setFavorite(projectId, next), next));
+    reload();
+  };
   const openUrl = (url: string) => {
     onClose();
     void actions.navigate(url);
@@ -624,8 +833,18 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
         ) : null}
         <div className="projects-body">
           <nav className="projects-list" aria-label="Projects">
+            <label className="projects-field projects-sort">
+              <span>Sort by</span>
+              <select className="projects-select" data-testid="projects-sort" value={sort} onChange={(event) => setSort(projectSortOf(event.target.value))}>
+                {PROJECT_SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <ul className="projects-items">
-              {(projects ?? []).map((project) => (
+              {listedProjects(projects ?? [], sort).map((project) => (
                 <ProjectItem
                   key={`${project.id} ${project.name}`}
                   project={project}
@@ -634,6 +853,7 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
                   onSelect={() => setSelected(project.id)}
                   onRename={(name) => rename(project.id, name)}
                   onAddHere={() => void addHere(project.id)}
+                  onFavorite={(next) => void favorite(project.id, next)}
                 />
               ))}
             </ul>

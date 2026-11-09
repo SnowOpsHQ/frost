@@ -244,7 +244,8 @@ unchanged). Pure view model: `apps/desktop/src/renderer/rankings-view.ts`; compo
   (`All searches`, then the project's tags as main answers them). A tag the project no longer has is
   dropped from the request (all searches); the rows shown keep only searches carrying the tag. With a
   tag and no row: `RANK_VIEW_TEXT.noTagged`.
-- **Empty states.** No site set (`site` `null`): "Set your site's domain to see its position". No row
+- **Empty states.** No site set (`site` `null`): "Set your site's domain to see its position", with a
+  button (`rankings-open-settings`, Phase 10 Task 7) that opens the project's Settings view. No row
   with a reading: "No readings yet: capture a search or run Check rankings". Both may show.
 - **History note.** When the project keeps limited history (retention `versions` or `days`) the view
   shows `rankHistoryNote(retention)`; with `forever` only `RANK_HISTORY_NOTE.profile` (positions are as

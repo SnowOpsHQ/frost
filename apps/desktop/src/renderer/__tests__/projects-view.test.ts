@@ -1,10 +1,31 @@
 // Spec: specs/projects.spec.ts (PROJECT_REFUSAL_MESSAGES, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS), specs/render-profile.spec.ts
 // (QUICK_RENDER_PROFILES), specs/command-palette.spec.ts (Registration API)
-// Acceptance: specs/projects.feature.md (The sheet; Changes panel picker; Command palette)
+// Acceptance: specs/projects.feature.md (The sheet, with Phase 10 Task 7's star and sort, Settings, tags
+// and Bulk add; Changes panel picker; Command palette)
 import { describe, expect, test, vi } from 'vitest';
 import type { TabState } from '@app/specs/browser.spec';
-import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
-import { PROJECT_REFUSAL_MESSAGES, QUERY_FIELD_MAX_CHARS, RUN_REFUSAL_MESSAGES, RUN_STATE_LABELS, type RunState } from '@app/specs/projects.spec';
+import { MAX_PROJECT_QUERIES, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import {
+  BULK_ADD_TEXT,
+  BULK_LINE_OUTCOME_LABELS,
+  BULK_SEARCH_LIMITS,
+  DEFAULT_PROJECT_SORT,
+  FAVORITE_TEXT,
+  PROJECT_REFUSAL_MESSAGES,
+  PROJECT_SETTINGS_TEXT,
+  PROJECT_SORTS,
+  PROJECT_SORT_LABELS,
+  PROJECT_VIEWS,
+  PROJECT_VIEW_LABELS,
+  QUERY_FIELD_MAX_CHARS,
+  RUN_REFUSAL_MESSAGES,
+  RUN_STATE_LABELS,
+  SITE_INPUT_MAX_CHARS,
+  TAG_EDITOR_TEXT,
+  type ProjectSummary,
+  type RunState,
+} from '@app/specs/projects.spec';
+import { MAX_PROJECT_COMPETITORS, MAX_TAGS_PER_ENTRY, TAG_MAX_CHARS } from '@app/specs/workspace-db.spec';
 import { DEFAULT_RENDER_PROFILE, QUICK_RENDER_PROFILES } from '@app/specs/render-profile.spec';
 import { RETENTION_REFUSAL_MESSAGES, RETENTION_RULE_NOTES, USAGE_NOTE, formatBytes, type RetentionUsage } from '@app/specs/retention.spec';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
@@ -12,8 +33,33 @@ import { projectsPaletteSources, retentionPaletteSources } from '../projects-pal
 import {
   EMPTY_QUERY_FORM,
   PROJECT_PROFILE_CHOICES,
+  EMPTY_BULK_FORM,
+  PROJECT_SORT_OPTIONS,
+  TAGS_TEXT_MAX_CHARS,
+  addCompetitorText,
   addPageText,
+  bulkFromForm,
+  bulkOutcomeRows,
+  bulkResultText,
+  bulkSummaryText,
+  canAddLocale,
   changeCountText,
+  competitorFromInput,
+  competitorRoom,
+  favoriteButton,
+  favoriteText,
+  listedProjects,
+  projectSortOf,
+  removeCompetitorText,
+  setTagsText,
+  settingsAvailable,
+  siteFormChanged,
+  siteFormOf,
+  siteFromForm,
+  siteText,
+  tagEditorLabel,
+  tagsFromText,
+  tagsTextOf,
   compactText,
   previewText,
   purgeLogText,
@@ -174,6 +220,195 @@ describe('projects view', () => {
     expect(api.startRun).toHaveBeenCalledWith(P1);
     api.startRun.mockResolvedValueOnce({ status: 'refused', reason: 'busy' } as never);
     expect(await action('projects.capture-now').run(ctx(tab()))).toBe(RUN_REFUSAL_MESSAGES.busy);
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Star and sort); projects.spec.ts sortProjects, PROJECT_SORTS
+  test('projects-view-favorites-and-sort', () => {
+    const summary = (id: string, name: string, more: Partial<ProjectSummary> = {}): ProjectSummary => ({ id, name, unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 1, lastCapturedAt: null, ...more });
+    const P3 = '01920000-0000-7000-8000-0000000000a3';
+    const unfiled = summary(UNFILED_PROJECT_ID, 'Unfiled', { unfiled: true, createdAt: 0 });
+    const beta = summary(P1, 'beta', { createdAt: 30, lastCapturedAt: 100 });
+    const alpha = summary(P2, 'Alpha', { createdAt: 10, lastCapturedAt: null });
+    const gamma = summary(P3, 'Gamma', { favorite: true, createdAt: 20, lastCapturedAt: 50 });
+    const list = [beta, alpha, gamma, unfiled];
+    const order = (sort: string) => listedProjects(list, projectSortOf(sort)).map((project) => project.name);
+    // The menu: every sort with its label; Name when the sheet opens; anything else is Name.
+    expect(PROJECT_SORT_OPTIONS).toEqual(PROJECT_SORTS.map((value) => ({ value, label: PROJECT_SORT_LABELS[value] })));
+    expect(DEFAULT_PROJECT_SORT).toBe('name');
+    expect(projectSortOf('created')).toBe('created');
+    expect(projectSortOf('last-captured')).toBe('last-captured');
+    expect(projectSortOf('bogus')).toBe('name');
+    expect(projectSortOf('__proto__')).toBe('name');
+    // Unfiled first, then favorites, then the rest, each by the sort.
+    expect(order('name')).toEqual(['Unfiled', 'Gamma', 'Alpha', 'beta']);
+    expect(order('created')).toEqual(['Unfiled', 'Gamma', 'beta', 'Alpha']);
+    expect(order('last-captured')).toEqual(['Unfiled', 'Gamma', 'beta', 'Alpha']);
+    // View state only: the answer's order is left as it was.
+    expect(list.map((project) => project.name)).toEqual(['beta', 'Alpha', 'Gamma', 'Unfiled']);
+    // The star: a toggle with a fixed name and its state in aria-pressed; Unfiled has one too.
+    expect(favoriteButton(beta)).toEqual({ pressed: false, next: true, label: 'Favorite beta' });
+    expect(favoriteButton(gamma)).toEqual({ pressed: true, next: false, label: 'Favorite Gamma' });
+    expect(favoriteButton(unfiled).label).toBe(FAVORITE_TEXT.label.replace('{name}', 'Unfiled'));
+    // A `$&` in a name stays text.
+    expect(favoriteButton(summary(P1, 'A $& B')).label).toBe('Favorite A $& B');
+    expect(favoriteText({ status: 'ok' }, true)).toBe(FAVORITE_TEXT.added);
+    expect(favoriteText({ status: 'ok' }, false)).toBe(FAVORITE_TEXT.removed);
+    expect(favoriteText({ status: 'refused', reason: 'not-found' }, true)).toBe(PROJECT_REFUSAL_MESSAGES['not-found']);
+    expect(favoriteText(null, true)).toMatch(/went wrong/);
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Settings: site and competitors); plan Decision 7
+  test('projects-view-settings-form', () => {
+    expect(PROJECT_VIEWS).toEqual(['overview', 'rankings', 'compare', 'settings']);
+    expect(PROJECT_VIEW_LABELS.settings).toBe('Settings');
+    // The site form: subdomains on for a project with no site.
+    expect(siteFormOf(null)).toEqual({ domain: '', subdomains: true });
+    expect(siteFormOf({ domain: 'shop.com', subdomains: false })).toEqual({ domain: 'shop.com', subdomains: false });
+    // Read as main reads it (normalizeSiteDomain): the host of an address, lowercase, IDN as punycode.
+    expect(siteFromForm({ domain: ' https://WWW.Shop.com/path?q=1 ', subdomains: false })).toEqual({ site: { domain: 'www.shop.com', subdomains: false } });
+    expect(siteFromForm({ domain: 'bücher.de', subdomains: true })).toEqual({ site: { domain: 'xn--bcher-kva.de', subdomains: true } });
+    // Empty clears the site.
+    expect(siteFromForm({ domain: '   ', subdomains: true })).toEqual({ site: { domain: null, subdomains: true } });
+    for (const bad of ['localhost', '192.168.0.1', '[::1]', 'ftp://shop.com', 'me@shop.com', 'shop.example', 'two words.com', 'intranet', 'x'.repeat(SITE_INPUT_MAX_CHARS + 1)]) {
+      expect(siteFromForm({ domain: bad, subdomains: true }), bad).toEqual({ problem: PROJECT_REFUSAL_MESSAGES['invalid-domain'] });
+    }
+    expect(siteFormChanged({ domain: 'shop.com', subdomains: true }, { domain: 'shop.com', subdomains: true })).toBe(false);
+    expect(siteFormChanged({ domain: ' shop.com ', subdomains: true }, { domain: 'shop.com', subdomains: true })).toBe(false);
+    expect(siteFormChanged({ domain: 'shop.com', subdomains: false }, { domain: 'shop.com', subdomains: true })).toBe(true);
+    expect(siteFormChanged({ domain: 'other.com', subdomains: true }, { domain: 'shop.com', subdomains: true })).toBe(true);
+    expect(siteFormChanged({ domain: '', subdomains: true }, null)).toBe(false);
+    expect(siteFormChanged({ domain: 'shop.com', subdomains: true }, null)).toBe(true);
+    expect(siteText({ status: 'ok', site: { domain: 'shop.com', subdomains: true } })).toBe(PROJECT_SETTINGS_TEXT.siteSaved);
+    expect(siteText({ status: 'ok', site: null })).toBe(PROJECT_SETTINGS_TEXT.siteCleared);
+    expect(siteText({ status: 'refused', reason: 'invalid-domain' })).toBe(PROJECT_REFUSAL_MESSAGES['invalid-domain']);
+    expect(siteText({ status: 'refused', reason: 'unfiled' })).toBe(PROJECT_REFUSAL_MESSAGES.unfiled);
+    expect(siteText(null)).toMatch(/went wrong/);
+    // Unfiled has no site or competitors.
+    expect(settingsAvailable({ unfiled: true })).toBe(false);
+    expect(settingsAvailable({ unfiled: false })).toBe(true);
+    // Competitors: read the same way, at most MAX_PROJECT_COMPETITORS.
+    expect(competitorFromInput(' Rival.COM ')).toEqual({ domain: 'rival.com' });
+    expect(competitorFromInput('https://shop.rival.com/x')).toEqual({ domain: 'shop.rival.com' });
+    for (const bad of ['', '  ', 'localhost', '10.0.0.1', 'javascript:alert(1)']) expect(competitorFromInput(bad), bad).toEqual({ problem: PROJECT_REFUSAL_MESSAGES['invalid-domain'] });
+    expect(MAX_PROJECT_COMPETITORS).toBe(10);
+    expect(competitorRoom(0)).toEqual({ canAdd: true, text: `0 of ${MAX_PROJECT_COMPETITORS}` });
+    expect(competitorRoom(3)).toEqual({ canAdd: true, text: `3 of ${MAX_PROJECT_COMPETITORS}` });
+    expect(competitorRoom(MAX_PROJECT_COMPETITORS)).toEqual({ canAdd: false, text: `${MAX_PROJECT_COMPETITORS} of ${MAX_PROJECT_COMPETITORS}` });
+    const rival = { id: P2, domain: 'rival.com' };
+    expect(addCompetitorText({ status: 'added', competitor: rival }, [])).toBe(PROJECT_SETTINGS_TEXT.competitorAdded);
+    // Another host of a competitor's domain answers that competitor.
+    expect(addCompetitorText({ status: 'added', competitor: rival }, [rival])).toBe(PROJECT_SETTINGS_TEXT.competitorExists);
+    expect(addCompetitorText({ status: 'refused', reason: 'limit' }, [])).toBe(PROJECT_REFUSAL_MESSAGES.limit);
+    expect(addCompetitorText({ status: 'refused', reason: 'invalid-domain' }, [])).toBe(PROJECT_REFUSAL_MESSAGES['invalid-domain']);
+    expect(addCompetitorText(null, [])).toMatch(/went wrong/);
+    expect(removeCompetitorText({ status: 'ok' })).toBe(PROJECT_SETTINGS_TEXT.competitorRemoved);
+    expect(removeCompetitorText({ status: 'refused', reason: 'not-found' })).toBe(PROJECT_REFUSAL_MESSAGES['not-found']);
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Bulk add); Bulk add; projects.spec.ts BULK_SEARCH_LIMITS, splitBulkSearches
+  test('projects-view-bulk-add-form', () => {
+    expect(EMPTY_BULK_FORM).toEqual({ text: '', engine: 'google', locales: [{ country: '', language: '' }], devices: ['desktop'], tags: '' });
+    const form = {
+      text: 'green tea\nblack tea,  green  tea\n\n',
+      engine: 'bing',
+      locales: [{ country: ' DE ', language: 'de' }, { country: '', language: '' }, { country: 'de', language: 'DE' }],
+      devices: ['tablet', 'desktop'],
+      tags: 'Tea, drinks',
+    };
+    // Lines as main splits them; a pair given twice sent once; devices in SERP_DEVICES order; tags normalized.
+    expect(bulkFromForm(form)).toEqual({
+      input: { text: 'green tea\nblack tea', engine: 'bing', locales: [{ country: 'de', language: 'de' }, { country: null, language: null }], devices: ['desktop', 'tablet'], tags: ['drinks', 'tea'] },
+      lines: 2,
+      locales: 2,
+      devices: 2,
+      searches: 8,
+    });
+    expect(bulkFromForm({ ...EMPTY_BULK_FORM, text: 'tea' })).toEqual({ input: { text: 'tea', engine: 'google', locales: [{ country: null, language: null }], devices: ['desktop'], tags: [] }, lines: 1, locales: 1, devices: 1, searches: 1 });
+    const many = Array.from({ length: BULK_SEARCH_LIMITS.maxLines + 1 }, (_, index) => `q${index}`).join('\n');
+    const problems: [Partial<typeof form>, string][] = [
+      [{ text: ' \n , ' }, 'Enter at least one query.'],
+      [{ text: many }, `Enter at most ${BULK_SEARCH_LIMITS.maxLines} queries at once.`],
+      [{ text: 'x'.repeat(BULK_SEARCH_LIMITS.maxTextChars + 1) }, `Enter at most ${BULK_SEARCH_LIMITS.maxLines} queries at once.`],
+      [{ engine: 'other' }, 'Choose a search engine.'],
+      [{ locales: [{ country: 'deu', language: '' }] }, 'A country is two letters, like “de”.'],
+      [{ locales: [{ country: '', language: 'english!' }] }, 'A language is a code like “en” or “pt-br”.'],
+      [{ locales: [{ country: '', language: 'a'.repeat(QUERY_FIELD_MAX_CHARS.language + 1) }] }, 'A language is a code like “en” or “pt-br”.'],
+      [{ locales: [] }, 'Add a country and language (or leave both empty).'],
+      [{ locales: Array.from({ length: BULK_SEARCH_LIMITS.maxLocales + 1 }, (_, index) => ({ country: String.fromCharCode(97 + index).repeat(2), language: '' })) }, `At most ${BULK_SEARCH_LIMITS.maxLocales} countries and languages.`],
+      [{ devices: [] }, 'Choose at least one device.'],
+      [{ devices: ['watch'] }, 'Choose at least one device.'],
+      [{ tags: Array.from({ length: MAX_TAGS_PER_ENTRY + 1 }, (_, index) => `t${index}`).join(',') }, PROJECT_REFUSAL_MESSAGES['invalid-tag']],
+    ];
+    for (const [change, problem] of problems) expect(bulkFromForm({ ...form, ...change }), JSON.stringify(change).slice(0, 80)).toEqual({ problem });
+    // Locale rows: up to maxLocales.
+    expect(BULK_SEARCH_LIMITS.maxLocales).toBe(5);
+    expect(canAddLocale(EMPTY_BULK_FORM)).toBe(true);
+    expect(canAddLocale({ ...EMPTY_BULK_FORM, locales: Array.from({ length: BULK_SEARCH_LIMITS.maxLocales }, () => ({ country: '', language: '' })) })).toBe(false);
+    // The summary: what it makes, and the room left in the project.
+    expect(bulkSummaryText({ lines: 2, locales: 2, devices: 2, searches: 8 }, MAX_PROJECT_QUERIES - 10)).toBe('2 queries × 2 locales × 2 devices: 8 searches. The project can hold 10 more.');
+    expect(bulkSummaryText({ lines: 1, locales: 1, devices: 1, searches: 1 }, 0)).toBe(`1 query × 1 locale × 1 device: 1 search. The project can hold ${MAX_PROJECT_QUERIES} more.`);
+    expect(bulkSummaryText({ lines: 1, locales: 1, devices: 1, searches: 1 }, MAX_PROJECT_QUERIES)).toBe('1 query × 1 locale × 1 device: 1 search. The project is full.');
+    // The note: frost's own words, nothing sent.
+    expect(BULK_ADD_TEXT.note).toContain('only saves searches');
+    expect(BULK_ADD_TEXT.note).toContain('Nothing is sent to a search engine until you run Check rankings');
+    // Per-line outcomes, in order, the query as text.
+    const answer = {
+      status: 'done' as const,
+      lines: [
+        { query: 'green tea', outcome: 'added' as const, added: 3 },
+        { query: 'one', outcome: 'added' as const, added: 1 },
+        { query: 'black tea', outcome: 'exists' as const, added: 0 },
+        { query: '<b>x</b>', outcome: 'invalid' as const, added: 0 },
+        { query: 'white tea', outcome: 'limit' as const, added: 1 },
+        { query: 'oolong', outcome: 'limit' as const, added: 0 },
+      ],
+    };
+    expect(bulkOutcomeRows(answer)).toEqual([
+      { query: 'green tea', outcome: 'added', text: 'Added 3 searches' },
+      { query: 'one', outcome: 'added', text: 'Added 1 search' },
+      { query: 'black tea', outcome: 'exists', text: BULK_LINE_OUTCOME_LABELS.exists },
+      { query: '<b>x</b>', outcome: 'invalid', text: BULK_LINE_OUTCOME_LABELS.invalid },
+      { query: 'white tea', outcome: 'limit', text: `${BULK_LINE_OUTCOME_LABELS.limit} (1 search added first)` },
+      { query: 'oolong', outcome: 'limit', text: BULK_LINE_OUTCOME_LABELS.limit },
+    ]);
+    expect(bulkOutcomeRows(null)).toEqual([]);
+    expect(bulkOutcomeRows({ status: 'refused', reason: 'invalid-tag' })).toEqual([]);
+    expect(bulkResultText(answer)).toBe('Added 5 searches from 6 lines.');
+    expect(bulkResultText({ status: 'done', lines: [{ query: 'a', outcome: 'exists', added: 0 }] })).toBe('Added 0 searches from 1 line.');
+    expect(bulkResultText({ status: 'refused', reason: 'limit' })).toBe(PROJECT_REFUSAL_MESSAGES.limit);
+    expect(bulkResultText({ status: 'refused', reason: 'unfiled' })).toBe(PROJECT_REFUSAL_MESSAGES.unfiled);
+    expect(bulkResultText(null)).toMatch(/went wrong/);
+  });
+
+  // spec: specs/projects.feature.md — The sheet (Tags); Tags; projects.spec.ts normalizeTags
+  test('projects-view-tags', () => {
+    expect(tagsFromText(' Tea,  Green   Tea ,tea, ')).toEqual({ tags: ['green tea', 'tea'] });
+    expect(tagsFromText('')).toEqual({ tags: [] });
+    expect(tagsFromText(' , ,')).toEqual({ tags: [] });
+    // The cap counts tags after repeats are dropped: more typed parts than MAX_TAGS_PER_ENTRY can still fit.
+    const repeated = [...Array.from({ length: MAX_TAGS_PER_ENTRY }, (_, index) => `t${index}`), 'T0', ' t1 '].join(',');
+    expect(tagsFromText(repeated)).toEqual({ tags: Array.from({ length: MAX_TAGS_PER_ENTRY }, (_, index) => `t${index}`).sort() });
+    expect(tagsFromText(Array.from({ length: MAX_TAGS_PER_ENTRY }, (_, index) => `t${index}`).join(', '))).toEqual({ tags: Array.from({ length: MAX_TAGS_PER_ENTRY }, (_, index) => `t${index}`).sort() });
+    for (const bad of [
+      Array.from({ length: MAX_TAGS_PER_ENTRY + 1 }, (_, index) => `t${index}`).join(','),
+      'x'.repeat(TAG_MAX_CHARS + 1),
+      'bad\u0007tag',
+      'rtl‮tag',
+      'x'.repeat(TAGS_TEXT_MAX_CHARS + 1),
+    ]) {
+      expect(tagsFromText(bad), bad.slice(0, 40)).toEqual({ problem: PROJECT_REFUSAL_MESSAGES['invalid-tag'] });
+    }
+    // The bound of the input holds MAX_TAGS_PER_ENTRY tags of the longest typed length, with separators.
+    expect(TAGS_TEXT_MAX_CHARS).toBeGreaterThanOrEqual(MAX_TAGS_PER_ENTRY * TAG_MAX_CHARS);
+    expect(tagsTextOf([])).toBe('');
+    expect(tagsTextOf(['green tea', 'tea'])).toBe('green tea, tea');
+    expect(tagsFromText(tagsTextOf(['green tea', 'tea']))).toEqual({ tags: ['green tea', 'tea'] });
+    expect(tagEditorLabel('“tea” on Google')).toBe(TAG_EDITOR_TEXT.label.replace('{label}', '“tea” on Google'));
+    expect(tagEditorLabel('$&')).toBe('Tags for $&');
+    expect(setTagsText({ status: 'ok', tags: ['tea'] })).toBe(TAG_EDITOR_TEXT.saved);
+    expect(setTagsText({ status: 'refused', reason: 'invalid-tag' })).toBe(PROJECT_REFUSAL_MESSAGES['invalid-tag']);
+    expect(setTagsText({ status: 'refused', reason: 'limit' })).toBe(PROJECT_REFUSAL_MESSAGES.limit);
+    expect(setTagsText(null)).toMatch(/went wrong/);
   });
 
   test('retention-view-policy-form', () => {
