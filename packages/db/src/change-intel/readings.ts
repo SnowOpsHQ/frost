@@ -265,27 +265,35 @@ export function createReadingOperations(db: SessionDatabase): ReadingOperations 
 
     async readingSearches(projectId) {
       if (!isId(projectId)) return [];
-      // One row per (key, key version); the bare columns come from the row with the newest `observed_at`.
+      // One row per (key, key version) with its count and newest time, and the id of its newest reading
+      // in the reads' own order (`observed_at`, then `id`, newest first): SQLite leaves a bare column of a
+      // grouped query to any row of a tie, so the parameters and filters are read from that row.
       const last = sql<unknown>`max(${ciSerpReadings.observedAt})`;
-      const rows = await db
-        .select({
-          searchKey: capped(ciSerpReadings.searchKey, 64),
-          searchKeyVersion: ciSerpReadings.searchKeyVersion,
-          searchParams: capped(ciSerpReadings.searchParams, MAX_SEARCH_PARAMS_JSON_BYTES),
-          filters: capped(ciSerpReadings.filters, MAX_SERP_FILTERS_JSON_BYTES),
-          readings: count(),
-          lastObservedAt: last,
-        })
+      const newest = sql<unknown>`(SELECT n.id FROM ci_serp_readings n WHERE n.project_id = ${projectId} AND n.search_key = ci_serp_readings.search_key AND n.search_key_version = ci_serp_readings.search_key_version AND (n.source <> 'capture' OR EXISTS (SELECT 1 FROM ci_captures c WHERE c.id = n.capture_id)) ORDER BY n.observed_at DESC, n.id DESC LIMIT 1)`;
+      const groups = await db
+        .select({ searchKey: capped(ciSerpReadings.searchKey, 64), searchKeyVersion: ciSerpReadings.searchKeyVersion, newestId: newest, readings: count(), lastObservedAt: last })
         .from(ciSerpReadings)
         .where(and(eq(ciSerpReadings.projectId, projectId), notOrphan))
         .groupBy(ciSerpReadings.searchKey, ciSerpReadings.searchKeyVersion)
         .orderBy(desc(last), asc(ciSerpReadings.searchKey), asc(ciSerpReadings.searchKeyVersion))
         .limit(MAX_READINGS_PER_READ);
-      return rows.flatMap(({ searchKey, searchKeyVersion, searchParams, filters, readings, lastObservedAt }) =>
-        isHash(searchKey) && isCount(searchKeyVersion, 1) && isJson(searchParams, MAX_SEARCH_PARAMS_JSON_BYTES) && isJson(filters, MAX_SERP_FILTERS_JSON_BYTES) && isCount(readings, 1) && isTime(lastObservedAt)
+      const ids = groups.flatMap(({ newestId }) => (isId(newestId) ? [newestId] : []));
+      const newestRows = new Map<string, { searchParams: unknown; filters: unknown }>();
+      for (const part of chunks(ids)) {
+        const rows = await db
+          .select({ id: ciSerpReadings.id, searchParams: capped(ciSerpReadings.searchParams, MAX_SEARCH_PARAMS_JSON_BYTES), filters: capped(ciSerpReadings.filters, MAX_SERP_FILTERS_JSON_BYTES) })
+          .from(ciSerpReadings)
+          .where(inArray(ciSerpReadings.id, part));
+        for (const { id, searchParams, filters } of rows) if (typeof id === 'string') newestRows.set(id, { searchParams, filters });
+      }
+      return groups.flatMap(({ searchKey, searchKeyVersion, newestId, readings, lastObservedAt }) => {
+        const row = typeof newestId === 'string' ? newestRows.get(newestId) : undefined;
+        const searchParams = row?.searchParams;
+        const filters = row?.filters;
+        return isHash(searchKey) && isCount(searchKeyVersion, 1) && isJson(searchParams, MAX_SEARCH_PARAMS_JSON_BYTES) && isJson(filters, MAX_SERP_FILTERS_JSON_BYTES) && isCount(readings, 1) && isTime(lastObservedAt)
           ? [{ searchKey, searchKeyVersion, searchParamsJson: searchParams, filtersJson: filters, readings, lastObservedAt }]
-          : [],
-      );
+          : [];
+      });
     },
 
     async reading(id) {

@@ -663,6 +663,51 @@ const DRIVERS: readonly DriverCase[] = [
   { kind: 'libsql', open: (file) => openLibsqlDriver({ url: libsqlFileUrl(file) }) },
 ];
 
+// spec: specs/workspace-db.feature.md — `readingSearches` (each key with its newest reading's parameters and filters)
+describe.each(DRIVERS)('reading-searches-take-the-newest-row ($kind)', (driverCase) => {
+  let dir: string;
+  let driver: SqlDriver | null = null;
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'frost-reading-searches-'));
+  });
+  afterEach(async () => {
+    await driver?.close();
+    driver = null;
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (process.platform !== 'win32' || (code !== 'EPERM' && code !== 'EBUSY')) throw error;
+    }
+  });
+
+  test('reading-searches-take-the-newest-row', async () => {
+    driver = await driverCase.open(path.join(dir, 'readings.db'));
+    await runMigrationsOver(driver);
+    const repo = createChangeIntelRepository(createDrizzleOver(driver));
+    const columns = 'id, project_id, capture_id, source, search_key, search_key_version, search_params, filters, page_url, status, pack_version, reading, reading_bytes, observed_at, created_at';
+    // One key, rows whose parameters and filters differ (an older key version regrouped, a relabel):
+    // the newest is stored between two older ones, so neither the first nor the last row scanned is it.
+    const rows = [
+      { at: 1_000, params: '{"engine":"google","engineLabel":"Old","query":"green tea"}', filters: '{"tbs":"qdr:d"}' },
+      { at: 3_000, params: '{"engine":"google","engineLabel":"Newest","query":"green tea"}', filters: '{}' },
+      { at: 2_000, params: '{"engine":"google","engineLabel":"Middle","query":"green tea"}', filters: '{"tbs":"qdr:w"}' },
+    ];
+    for (const row of rows) {
+      const values = [uuidv7(row.at), UNFILED_PROJECT_ID, null, 'serp-api', KEY, 1, row.params, row.filters, null, 'ready', 3, '{"status":"ready"}', 18, row.at, row.at];
+      await driver.execute(`INSERT INTO ci_serp_readings (${columns}) VALUES (${values.map(() => '?').join(', ')})`, values, 'run');
+    }
+    expect(await repo.readingSearches(UNFILED_PROJECT_ID)).toEqual([{ searchKey: KEY, searchKeyVersion: 1, searchParamsJson: rows[1]!.params, filtersJson: '{}', readings: 3, lastObservedAt: 3_000 }]);
+    // Two rows at the newest time: the one with the greater id (the reads' own order: `observed_at`, then `id`, newest first).
+    const tie = '{"engine":"google","engineLabel":"Tie","query":"green tea"}';
+    const values = [uuidv7(3_000).replace(/.$/, 'f'), UNFILED_PROJECT_ID, null, 'serp-api', KEY, 1, tie, '{"num":"20"}', null, 'ready', 3, '{"status":"ready"}', 18, 3_000, 3_000];
+    await driver.execute(`INSERT INTO ci_serp_readings (${columns}) VALUES (${values.map(() => '?').join(', ')})`, values, 'run');
+    const [newest] = await repo.readingSearches(UNFILED_PROJECT_ID);
+    const top = (await repo.readings({ projectId: UNFILED_PROJECT_ID, searchKey: KEY, limit: 1 }))[0]!;
+    expect(newest).toMatchObject({ searchParamsJson: top.searchParamsJson, filtersJson: top.filtersJson, readings: 4, lastObservedAt: 3_000 });
+  });
+});
+
 describe.each(DRIVERS)('serp-reading-replace-over-capture-id-refused ($kind)', (driverCase) => {
   let dir: string;
   let driver: SqlDriver | null = null;

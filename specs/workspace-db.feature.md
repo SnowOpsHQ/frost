@@ -87,7 +87,9 @@ test; unless named otherwise it is in `packages/db/src/change-intel/__tests__/wo
   newest first, at most `limit` (clamped as `readings`): ids, `observed_at` and status only, the reading
   JSON never loaded (the Compare view's date picker);
   `readingSearches(projectId)` each search key (with its key version) seen, with its newest reading's
-  parameters and filters, its count and newest time; `reading(id)` one reading. Every read skips a
+  parameters and filters (the newest in the reads' own order, `observed_at` then `id`: read from that
+  row, never a grouped query's bare column, which SQLite may take from any row of a tie), its count and
+  newest time; `reading(id)` one reading. Every read skips a
   tampered row (each value checked, text read only up to its cap plus one) and a **capture-sourced**
   reading whose capture is gone. `deleteOrphanReadings(projectId?)` deletes the capture-sourced
   readings whose capture row is gone (of one project, or all) and answers how many: a reading of
@@ -168,6 +170,9 @@ test; unless named otherwise it is in `packages/db/src/change-intel/__tests__/wo
   purge delete the purged captures' readings in their batch; kept captures keep theirs.
 - **Scenario: purge-plan-counts-reading-bytes** — `planPurge`'s `bytes` include the purged readings'
   stored bytes, and the `ci_purges` row records that figure.
+- **Scenario: reading-searches-take-the-newest-row** (both drivers) — one key whose readings' parameters
+  and filters differ answers the newest reading's, also when it was stored between older ones, and on a
+  tie at the newest time the row `readings` answers first.
 - **Scenario: readings-read-is-bounded** — a `limit` above `MAX_READINGS_PER_READ` answers that many,
   newest first; readings of `MAX_SERP_READING_JSON_BYTES` each answer only the newest 64 (exactly
   `MAX_READING_BYTES_PER_READ`).
