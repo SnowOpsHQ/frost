@@ -32,6 +32,7 @@ import { changesRouter, screenshotsRouter } from './changes-router';
 import { projectsRouter } from './projects-router';
 import { inspectorRouter } from './inspector-router';
 import { seoExportRouter } from './seo-export-router';
+import { tabOverridesRouter } from './tab-overrides-router';
 
 // Every procedure starts `publicProcedure.use(enforceSender)` (spec `ipc-sender.feature.md`,
 // `every-procedure-enforces-sender`; Semgrep `ipc-sender-guard` in Task 5).
@@ -311,6 +312,8 @@ export const appRouter = router({
   aiChecks: aiChecksRouter,
   // Phase 11 Task 1 (`seo-exports.feature.md`): the Images, Headings and Speed tables as CSV, written by main.
   seoExport: seoExportRouter,
+  // Phase 11 Task 6 (`render-profile.feature.md`, Tab overrides): CSS off, cookies off and geolocation for one tab.
+  tabOverrides: tabOverridesRouter,
 });
 
 export type AppRouter = typeof appRouter;

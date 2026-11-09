@@ -5745,6 +5745,23 @@ input {
   margin-left: 0;
 }
 
+/* Tab overrides (Phase 11 Task 6): beside the profile's chip, or alone at the right. */
+.status-render-profile + .status-tab-overrides {
+  margin-left: 6px;
+}
+
+.render-geo-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.render-geo-field {
+  flex: 0 1 110px;
+  min-width: 80px;
+  max-width: 130px;
+}
+
 .status-render-profile-icon {
   width: 13px;
   height: 13px;

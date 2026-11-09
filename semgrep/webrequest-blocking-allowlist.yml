@@ -1,0 +1,80 @@
+# Blocking webRequest allowlist rule (CI gate; acceptance: specs/ci-gates.feature.md, "Semgrep
+# webrequest-blocking-allowlist"; specs/render-profile.feature.md, Page writes). A blocking
+# `webRequest` listener (`onBeforeRequest`, `onBeforeSendHeaders`, `onHeadersReceived`) holds every
+# request of its session until main answers, and can rewrite or cancel it. Electron keeps one listener
+# per event per session (a second registration silently replaces the first). So they are registered
+# only in the modules that own them:
+#   - protocol/requests.ts  — the default session's `onBeforeRequest` (who may load `app://`);
+#   - security/register.ts  — the default session's `onHeadersReceived` (the app CSP);
+#   - update/fetch.ts       — the update session's pair (its own in-memory partition);
+#   - browser/cookie-block.ts — a browse-class session's pair, only while one of its tabs has
+#     cookies off (Phase 11 Task 6; `COOKIE_BLOCK` in specs/render-profile.spec.ts).
+#
+#   Rule test (fixtures):   pnpm security:semgrep:test
+#   Repo scan (0 findings): pnpm security:semgrep:scan
+#
+# Any read of one of the three members is flagged elsewhere — a call, an alias, an index access, a
+# destructured binding (typed or not, in a declaration, a parameter or an assignment) or a reflective
+# read by name — so no module can register one through a helper. (A name computed at run time is out
+# of a static rule's reach; review catches that.) Never exclude the fixture (`semgrep --test` would
+# pass vacuously).
+rules:
+  - id: webrequest-blocking-outside-allowlisted-modules
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Blocking webRequest listener (onBeforeRequest / onBeforeSendHeaders / onHeadersReceived) used
+      outside an allowlisted module. Only protocol/requests.ts, security/register.ts, update/fetch.ts
+      and browser/cookie-block.ts (specs/render-profile.feature.md, Page writes; COOKIE_BLOCK in
+      specs/render-profile.spec.ts) register them; a new module joins the allowlist in
+      semgrep/webrequest-blocking-allowlist.yml in a reviewed PR.
+    paths:
+      exclude:
+        # Allowlisted modules.
+        - /apps/desktop/src/main/protocol/requests.ts
+        - /apps/desktop/src/main/security/register.ts
+        - /apps/desktop/src/main/update/fetch.ts
+        - /apps/desktop/src/main/browser/cookie-block.ts
+        # Test-only code: never bundled into the app.
+        - "__tests__/"
+        - "*.test.ts"
+        - /apps/desktop/src/test/
+        - /apps/desktop/e2e/
+    pattern-either:
+      - pattern: $X.onBeforeRequest
+      - pattern: $X.onBeforeSendHeaders
+      - pattern: $X.onHeadersReceived
+      - pattern: $X["onBeforeRequest"]
+      - pattern: $X["onBeforeSendHeaders"]
+      - pattern: $X["onHeadersReceived"]
+      - pattern: "const { ..., onBeforeRequest: $V, ... } = $E;"
+      - pattern: "const { ..., onBeforeSendHeaders: $V, ... } = $E;"
+      - pattern: "const { ..., onHeadersReceived: $V, ... } = $E;"
+      - pattern: "let { ..., onBeforeRequest: $V, ... } = $E;"
+      - pattern: "let { ..., onBeforeSendHeaders: $V, ... } = $E;"
+      - pattern: "let { ..., onHeadersReceived: $V, ... } = $E;"
+      - pattern: "function $F(..., { ..., onBeforeRequest: $V, ... }: $T, ...) { ... }"
+      - pattern: "function $F(..., { ..., onBeforeSendHeaders: $V, ... }: $T, ...) { ... }"
+      - pattern: "function $F(..., { ..., onHeadersReceived: $V, ... }: $T, ...) { ... }"
+      - pattern: "(..., { ..., onBeforeRequest: $V, ... }: $T, ...) => $BODY"
+      - pattern: "(..., { ..., onBeforeSendHeaders: $V, ... }: $T, ...) => $BODY"
+      - pattern: "(..., { ..., onHeadersReceived: $V, ... }: $T, ...) => $BODY"
+      # Untyped parameters, a destructuring assignment, and reflective reads by name.
+      - pattern: "function $F(..., { ..., onBeforeRequest: $V, ... }, ...) { ... }"
+      - pattern: "function $F(..., { ..., onBeforeSendHeaders: $V, ... }, ...) { ... }"
+      - pattern: "function $F(..., { ..., onHeadersReceived: $V, ... }, ...) { ... }"
+      - pattern: "(..., { ..., onBeforeRequest: $V, ... }, ...) => $BODY"
+      - pattern: "(..., { ..., onBeforeSendHeaders: $V, ... }, ...) => $BODY"
+      - pattern: "(..., { ..., onHeadersReceived: $V, ... }, ...) => $BODY"
+      - pattern: "({ ..., onBeforeRequest: $V, ... } = $E)"
+      - pattern: "({ ..., onBeforeSendHeaders: $V, ... } = $E)"
+      - pattern: "({ ..., onHeadersReceived: $V, ... } = $E)"
+      - pattern: Reflect.get($X, "onBeforeRequest", ...)
+      - pattern: Reflect.get($X, "onBeforeSendHeaders", ...)
+      - pattern: Reflect.get($X, "onHeadersReceived", ...)
+      - pattern: Reflect.getOwnPropertyDescriptor($X, "onBeforeRequest")
+      - pattern: Reflect.getOwnPropertyDescriptor($X, "onBeforeSendHeaders")
+      - pattern: Reflect.getOwnPropertyDescriptor($X, "onHeadersReceived")
+      - pattern: Object.getOwnPropertyDescriptor($X, "onBeforeRequest")
+      - pattern: Object.getOwnPropertyDescriptor($X, "onBeforeSendHeaders")
+      - pattern: Object.getOwnPropertyDescriptor($X, "onHeadersReceived")

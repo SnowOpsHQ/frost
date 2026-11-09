@@ -505,6 +505,7 @@ function start(): void {
         gsc: gsc.service,
         aiChecks,
         seoExport: seoExports,
+        tabOverrides: browser.tabOverrides,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

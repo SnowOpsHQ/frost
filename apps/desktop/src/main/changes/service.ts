@@ -8,6 +8,7 @@ import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-pa
 import type { SearchParamsOf } from './serp-params';
 import { CAPTURE_BUSY, CAPTURE_STALE_RETRIES, DiffSummarySchema, type CaptureAnswer, type CaptureRefusal, type HistoryVersion } from '@app/specs/changes.schema';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
+import { isDefaultTabOverrides, type TabOverrides } from '@app/specs/render-profile.spec';
 import type { z } from 'zod';
 import type { LoadTimes } from './loads';
 import { recordedProfile } from './profile-in-effect';
@@ -31,6 +32,13 @@ export interface ChangesTabs {
   getAudit(tabId: number): SeoAuditResponse;
   /** When the tab last loaded (`LoadTimes`, `loads.ts`); `null`: not since it was watched. */
   loadedAt(tabId: number): number | null;
+  /**
+   * Whether the tab's overrides are on now **or** its document was loaded under overrides (Phase 11
+   * Task 6, `TabState.tabOverrides` / `loadedUnderOverrides`); absent (older fakes): off.
+   */
+  overridesOn?(tabId: number): boolean;
+  /** The tab's override revision (`TabState.overridesRevision`); absent: no revision check. */
+  overridesRevision?(tabId: number): number;
 }
 
 export interface ChangesServiceDeps {
@@ -152,18 +160,44 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     const contents = tabs.contentsOf(tabId);
     if (!contents || (response.status === 'unavailable' && response.reason === 'no-tab')) return 'no-tab';
     if (tabs.activeTabId() !== tabId) return 'not-active';
+    // The tab's overrides are on, or its document loaded under them (Decision 8: the live arm and the marker).
+    if (tabs.overridesOn?.(tabId) === true) return 'tab-emulation-on';
     const page = storedPageUrl(contents.getURL());
     // A URL longer than a snapshot keeps can never be captured (its audit holds it cut): say so.
     if (page !== null && page.length > CAPTURE_LIMITS.maxUrlChars) return 'invalid-page';
     if (response.status !== 'ready' || page === null || storedPageUrl(response.audit.url) !== page) return 'no-audit';
     const loadedAt = tabs.loadedAt(tabId);
     if (response.audit.indexability.robots?.outcome === 'pending' || (loadedAt !== null && response.audit.takenAt <= loadedAt)) return 'no-audit';
+    // The audit ran under overrides (its stamp), even if they are off now: reloading re-audits.
+    if (stampedOn(response.tabOverrides)) return 'tab-emulation-on';
     return { contents, response, page };
+  };
+  /** Whether an audit's stamp shows any override on (absent: all off). */
+  const stampedOn = (stamp: TabOverrides | undefined): boolean => stamp !== undefined && !isDefaultTabOverrides(stamp);
+  /** The tab's override revision now (`undefined`: not known, so not checked). */
+  const revisionOf = (tabId: number): number | undefined => tabs.overridesRevision?.(tabId);
+  /**
+   * Whether the tab's overrides moved since `start` (the revision changed, or the marker or an
+   * override is on now): the capture is refused before it is stored. A failure to tell refuses too.
+   */
+  const overridesMoved = (tabId: number, start: number | undefined): boolean => {
+    try {
+      return tabs.overridesOn?.(tabId) === true || (start !== undefined && revisionOf(tabId) !== start);
+    } catch {
+      return true;
+    }
   };
   /** A `readyTab` refusal: `invalid-page` is a failure (logged), the others are states. */
   const notReady = (reason: CaptureRefusal): CaptureAnswer => (reason === 'invalid-page' ? failed(reason, 'its URL is longer than a snapshot keeps') : refused(reason));
 
   async function captureTab(tabId: number, options: CaptureOptions): Promise<CaptureAnswer> {
+    // The override revision when the capture starts: if it moves before the capture is stored, nothing is.
+    let revision: number | undefined;
+    try {
+      revision = revisionOf(tabId);
+    } catch {
+      return failed('no-audit', 'the tab or its audit could not be read');
+    }
     let tab: ReturnType<typeof readyTab>;
     try {
       tab = readyTab(tabId);
@@ -256,6 +290,8 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
             if (before !== null && cutShort(snapshot) && found.changeCount === 0) reuse = head.snapshotHash;
             else diff = fitDiff(found);
           }
+          // An override changed (or the marker got set) since the capture started: nothing is stored.
+          if (overridesMoved(tabId, revision)) return refused('tab-emulation-on');
           const at = now();
           const ids = { captureId: uuid(at), versionId: uuid(at) };
           const diffInput =
@@ -369,13 +405,28 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
   return service;
 }
 
+/** What `changesTabs` reads of a tab's state (`TabState`): its overrides, document marker and revision. */
+interface OverridesOfTab {
+  readonly id: number;
+  readonly tabOverrides?: TabOverrides;
+  readonly loadedUnderOverrides?: boolean;
+  readonly overridesRevision?: number;
+}
+
 /** `ChangesTabs` over the browser controller, main's map of tab WebContents (`contentsOf`) and the tabs' load times. */
 export function changesTabs(
-  browser: { getState(): { readonly activeTabId: number | null }; readonly seo: { getAudit(tabId: number): SeoAuditResponse } },
+  browser: { getState(): { readonly activeTabId: number | null; readonly tabs?: readonly OverridesOfTab[] }; readonly seo: { getAudit(tabId: number): SeoAuditResponse } },
   contentsOf: (tabId: number) => RegionTarget | null,
   loads: LoadTimes,
 ): ChangesTabs {
+  const tabOf = (tabId: number): OverridesOfTab | undefined => browser.getState().tabs?.find((tab) => tab.id === tabId);
   return {
+    // The live overrides or the document marker (Phase 11 Task 6); a tab no state names: off.
+    overridesOn: (tabId) => {
+      const tab = tabOf(tabId);
+      return tab !== undefined && ((tab.tabOverrides !== undefined && !isDefaultTabOverrides(tab.tabOverrides)) || tab.loadedUnderOverrides === true);
+    },
+    overridesRevision: (tabId) => tabOf(tabId)?.overridesRevision ?? 0,
     activeTabId: () => browser.getState().activeTabId,
     contentsOf,
     getAudit: (tabId) => browser.seo.getAudit(tabId),

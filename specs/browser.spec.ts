@@ -15,7 +15,7 @@ import { MEDIA_TYPES, PERMISSION_DECISIONS, PROMPTABLE_PERMISSIONS } from './per
 import { HIGHLIGHT_MODES } from './seo-sidebar.spec';
 import { HIGHLIGHT_PHRASE_MAX_CHARS } from './seo-limits.spec';
 import { PALETTE_RETURN_FOCUS } from './command-palette.spec';
-import { TabRenderProfileSchema } from './render-profile.schema.spec';
+import { TabOverridesSchema, TabRenderProfileSchema } from './render-profile.schema.spec';
 import { BrowserPolishStateShape } from './browser-polish.schema';
 import { DEFAULT_SEARCH_ENGINE, searchEngine } from './browser-polish.spec';
 
@@ -207,6 +207,30 @@ export const TabStateSchema = z.strictObject({
    * and around the page area (`render-profile.feature.md`).
    */
   renderProfile: TabRenderProfileSchema.nullable(),
+  /**
+   * The tab's overrides (Phase 11 Task 6; `render-profile.spec.ts`, `TabOverrides`): CSS off, cookies
+   * off and a browser geolocation, beside the render profile and never part of it. All off by
+   * default; they end with the tab and are never pinned or inherited.
+   */
+  tabOverrides: TabOverridesSchema,
+  /**
+   * The document marker (Decision 8): the tab's current main-frame document **loaded** under an
+   * override. Set when a main-frame document commits, or is still loading, while any override is on
+   * (also one switched on mid-load), and (security-review ruling, stricter than Decision 8's wording)
+   * whenever an override turns on while the tab shows a committed document, even one that finished
+   * loading; cleared only by a later main-frame navigation to a new document
+   * during which no override was on at any point between the navigation's start and its completion.
+   * When both rules meet, setting wins. Same-document navigations neither set nor clear it, and
+   * turning the overrides off never clears it. Capture and screenshots refuse while it is set.
+   */
+  loadedUnderOverrides: z.boolean(),
+  /**
+   * The tab's override revision (Decision 8): raised on every `tabOverrides.set` of the tab and every
+   * time the document marker is set; `0` for a tab that never had either. A capture or screenshot
+   * records it when it starts and refuses (`tab-emulation-on`, nothing stored) if it moved before
+   * the result is stored.
+   */
+  overridesRevision: z.int().nonnegative(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 

@@ -238,7 +238,7 @@ function PanelBody({
     default:
       return (
         <>
-          <AuditProfileNote renderProfile={response.renderProfile ?? null} />
+          <AuditProfileNote renderProfile={response.renderProfile ?? null} tabOverrides={response.tabOverrides ?? null} />
           <Overview audit={response.audit} tab={tab} onOpenPanel={onOpenPanel} notesGeneration={notesGeneration} />
         </>
       );

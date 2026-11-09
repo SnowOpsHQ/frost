@@ -5,7 +5,7 @@ import type { SeoAuditRef } from '@app/ipc-contract';
 import type { CopyValueKey, OpenInTemplateId } from '@app/specs/command-palette.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
-import type { RenderProfile } from '@app/specs/render-profile.spec';
+import type { RenderProfile, TabOverrides } from '@app/specs/render-profile.spec';
 import type { HighlightMode, ImageFilter } from '@app/specs/seo-sidebar.spec';
 import type { SeoExportKind } from '@app/specs/seo-exports.spec';
 import type { HistoryCursorAnswer, HistoryPageAnswer, JumpBackInAnswer } from '@app/ipc-contract';
@@ -69,6 +69,8 @@ export const actions = {
   setRenderProfile: (tabId: number, profile: RenderProfile, pin?: boolean) => ipc.browser.setRenderProfile.mutate({ tabId, profile, ...(pin === undefined ? {} : { pin }) }).catch(() => false),
   /** Reset: the tab's render profile and this site's pin go; resolves whether it had one. */
   clearRenderProfile: (tabId: number) => ipc.browser.clearRenderProfile.mutate({ tabId }).catch(() => false),
+  /** Sets the tab's overrides (CSS off, cookies off, location; all off: normal); resolves whether it was set (Phase 11 Task 6). */
+  setTabOverrides: (tabId: number, overrides: TabOverrides) => ipc.tabOverrides.set.mutate({ tabId, overrides }).catch(() => false),
   // Browser polish (`browser-polish.feature.md`): find in page, history, reopen tab, search engine.
   /** Opens the active tab's find bar (as Mod+F). */
   openFind: () => ipc.find.open.mutate().catch(ignore),

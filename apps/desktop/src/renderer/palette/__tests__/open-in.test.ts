@@ -219,7 +219,7 @@ describe('open in', () => {
     const consent = createConsentStore({ getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => void storage.set(key, value) });
     const registry = createPaletteRegistry();
     registry.register(...builtinPaletteSources({ openTool: async () => ({ status: 'opened', tabId: 2 }) } as unknown as PaletteApi, consent));
-    const tab = { id: 1, url: PAGE, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null };
+    const tab = { id: 1, url: PAGE, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false, overridesRevision: 0 };
     const ctx = { state: { version: 1, tabs: [tab], activeTabId: 1 }, tab, audit: null, sidebarOpen: false, chrome: { openPanel: () => undefined, setSidebarOpen: () => undefined } } as unknown as PaletteContext;
     for (const template of backlinks) {
       const action = registry.resolve(ctx).find((a) => a.id === `open-in.${template.id}`)!;

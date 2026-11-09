@@ -21,6 +21,7 @@ import type { TelemetryService } from './telemetry-service';
 import type { GscIpcService } from './gsc-service';
 import type { AiChecksService } from './ai-checks-service';
 import type { SeoExportService } from './seo-export-service';
+import type { TabOverridesService } from './tab-overrides-router';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -206,4 +207,6 @@ export interface IpcServices {
   readonly aiChecks?: AiChecksService;
   /** SEO table exports as CSV (Phase 11 Task 1, `seo-export-service.ts`). */
   readonly seoExport?: SeoExportService;
+  /** Tab overrides: CSS off, cookies off, geolocation (Phase 11 Task 6, `tab-overrides-router.ts`). */
+  readonly tabOverrides?: TabOverridesService;
 }

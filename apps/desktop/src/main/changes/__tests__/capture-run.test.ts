@@ -8,7 +8,9 @@ import type { CaptureAnswer } from '@app/specs/changes.spec';
 import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, TABLET_QUERY_PROFILE, type RunState } from '@app/specs/projects.spec';
 import { DEFAULT_RENDER_PROFILE, isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
+import { DEFAULT_TAB_OVERRIDES } from '@app/specs/render-profile.spec';
 import { createCaptureRuns, stopRunOnQuit, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
+import { changesTabs } from '../service';
 
 const PROJECT = '01920000-0000-7000-8000-0000000000aa';
 const ID = '01920000-0000-7000-8000-000000000001';
@@ -618,5 +620,31 @@ describe('capture run', () => {
     await expect(polls[0]).resolves.toBe(idle);
     await vi.advanceTimersByTimeAsync(PROJECT_RUN_LIMITS.runStateWatchTimeoutMs);
     await Promise.all(polls);
+  });
+});
+
+describe('capture run and tab overrides (Phase 11 Task 6, Decision 8)', () => {
+  test('project-run-capture-not-refused', async () => {
+    // The user's own tab (1) has CSS off and its document was loaded under overrides; the run opens
+    // its own tabs, which start with every override off, so its captures are never refused.
+    const fake = fakeBrowser();
+    const overridesOf = (id: number) => (id === 1 ? { tabOverrides: { ...DEFAULT_TAB_OVERRIDES, cssDisabled: true }, loadedUnderOverrides: true, overridesRevision: 4 } : { tabOverrides: DEFAULT_TAB_OVERRIDES, loadedUnderOverrides: false, overridesRevision: 0 });
+    const state = () => {
+      const base = fake.browser.getState();
+      return { ...base, tabs: base.tabs.map((tab) => ({ ...tab, ...overridesOf(tab.id) })) };
+    };
+    // The live half of the capture's guard, as `changesTabs` fills it from the browser state.
+    const tabs = changesTabs({ getState: state, seo: { getAudit: () => ({ status: 'pending', url: '' }) } }, () => null, { loadedAt: () => null, watch: () => undefined });
+    expect(tabs.overridesOn!(1)).toBe(true);
+    const capture = vi.fn(async (tabId: number): Promise<CaptureAnswer> => (tabs.overridesOn!(tabId) ? { status: 'refused', reason: 'tab-emulation-on' } : CAPTURED));
+    const screenshot = vi.fn(async (): Promise<TakeScreenshotAnswer> => ({ status: 'saved', id: ID, kind: 'viewport', width: 800, height: 600, bytes: 10, truncated: false }));
+    const runs = createCaptureRuns({ browser: { ...fake.browser, getState: state }, capture, screenshot, uuidv7: () => ID });
+    await runs.start(plan(pages(A, B), { screenshot: true }));
+    await run();
+    expect(capture.mock.calls.map(([tabId]) => tabId)).toEqual([10, 10]);
+    expect(outcomes(runs.state())).toEqual(['captured', 'captured']);
+    expect(screenshot).toHaveBeenCalledTimes(2);
+    // The run never sets an override (its browser has no way to).
+    expect(Object.keys(fake.browser)).not.toContain('tabOverrides');
   });
 });

@@ -182,7 +182,14 @@ export interface ServiceSetup {
   readonly files: ScreenshotFiles;
   readonly imaging: ReturnType<typeof fakeImaging>;
   readonly tabs: Map<number, FakeTab>;
-  readonly state: { active: number | null; profiles: Map<number, RenderProfile | AuditRenderProfile | null> };
+  readonly state: {
+    active: number | null;
+    profiles: Map<number, RenderProfile | AuditRenderProfile | null>;
+    /** A tab's live overrides or document marker (`ScreenshotTabs.overridesOn`); absent: off. */
+    overrides: Map<number, boolean>;
+    /** A tab's override revision (`ScreenshotTabs.overridesRevision`); absent: 0. */
+    revisions: Map<number, number>;
+  };
   readonly logs: string[];
   readonly revealed: string[];
   readonly cleanup: () => Promise<void>;
@@ -199,7 +206,7 @@ export function serviceSetup(deps: Partial<ScreenshotsServiceDeps> = {}): Servic
     [1, new FakeTab()],
     [2, new FakeTab({ url: 'https://example.com/other' })],
   ]);
-  const state = { active: 1 as number | null, profiles: new Map<number, RenderProfile | AuditRenderProfile | null>() };
+  const state = { active: 1 as number | null, profiles: new Map<number, RenderProfile | AuditRenderProfile | null>(), overrides: new Map<number, boolean>(), revisions: new Map<number, number>() };
   const logs: string[] = [];
   const revealed: string[] = [];
   let clock = 1_700_000_000_000;
@@ -218,6 +225,8 @@ export function serviceSetup(deps: Partial<ScreenshotsServiceDeps> = {}): Servic
         const profile = state.profiles.get(tabId) ?? null;
         return profile === null ? null : 'partial' in profile ? profile : { profile, partial: false };
       },
+      overridesOn: (tabId) => state.overrides.get(tabId) ?? false,
+      overridesRevision: (tabId) => state.revisions.get(tabId) ?? 0,
     },
     reveal: (file) => revealed.push(file),
     now: () => (clock += 1_000),

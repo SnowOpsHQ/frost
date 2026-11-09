@@ -27,9 +27,20 @@ import { SEO_RULE_SPECS, type SeoCategory, type SeoRuleId } from './seo-rules.sp
  * - `extract-failed`: the region extraction failed, timed out, or answered something invalid;
  * - `invalid-page`: the snapshot built from the page does not fit `CaptureSnapshotSchema` (or the
  *   search parameters given do not fit theirs);
- * - `store-failed`: the database refused or failed the write (twice, on a lane that kept moving).
+ * - `store-failed`: the database refused or failed the write (twice, on a lane that kept moving);
+ * - `tab-emulation-on` (Phase 11 Task 6, Decision 8): the tab's overrides (`TabOverrides`: CSS off,
+ *   cookies off, geolocation) are in the way. Refused when the audit's stamp (`seo.getAudit`'s ready
+ *   `tabOverrides`) **or** the live tab shows an override on, **or** the tab's document was loaded
+ *   under overrides (`TabState.loadedUnderOverrides`), **or** the tab's override revision changed (or
+ *   the marker got set) between the capture's start and its persistence. Nothing is stored. Checked
+ *   before the region extraction and again after it (an override turned on meanwhile is refused).
+ *   The service reads the live state through `ChangesTabs.overridesOn?` (live overrides or the
+ *   marker; absent: off) and the revision through `ChangesTabs.overridesRevision?` (absent: no
+ *   revision check), both filled from `TabState`.
+ *   The lane key never reads the overrides, so a capture's lane is unchanged by them. Project runs
+ *   open their own tabs with default overrides and are never refused this way.
  */
-export const CAPTURE_REFUSALS = ['no-tab', 'not-active', 'no-audit', 'busy', 'no-project', 'extract-failed', 'invalid-page', 'store-failed'] as const;
+export const CAPTURE_REFUSALS = ['no-tab', 'not-active', 'no-audit', 'busy', 'no-project', 'extract-failed', 'invalid-page', 'store-failed', 'tab-emulation-on'] as const;
 export type CaptureRefusal = (typeof CAPTURE_REFUSALS)[number];
 
 /** How the Changes panel explains a refusal (frost's own wording). */
@@ -42,6 +53,7 @@ export const CAPTURE_REFUSAL_MESSAGES: Readonly<Record<CaptureRefusal, string>> 
   'extract-failed': 'The page could not be read. Reload it and try again.',
   'invalid-page': 'This page could not be turned into a capture.',
   'store-failed': 'The capture could not be saved.',
+  'tab-emulation-on': 'This tab has CSS, cookies or location changed. Set them back to normal, reload the page, then capture it.',
 };
 
 /** The refusal a capture answers while another capture of the same tab runs. */

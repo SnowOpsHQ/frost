@@ -22,8 +22,9 @@ rules:
     message: >-
       webContents.debugger used outside an allowlisted module. CDP is reachable only through
       apps/desktop/src/main/browser/render-profile-debugger.ts, which attaches to browse-session
-      tabs only and sends only RENDER_PROFILE_CDP_METHODS (specs/render-profile.spec.ts); a new
-      module joins the allowlist in semgrep/debugger-allowlist.yml in a reviewed PR.
+      tabs only and sends only RENDER_PROFILE_CDP_METHODS (specs/render-profile.spec.ts; the tab
+      overrides' geolocation and document.cookie methods too, render-profile.feature.md, Tab
+      overrides); a new module joins the allowlist in semgrep/debugger-allowlist.yml in a reviewed PR.
     paths:
       exclude:
         # Allowlisted modules.

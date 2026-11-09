@@ -12,7 +12,7 @@ const URL_A = 'https://www.example.com/a';
 const TAKEN_AT = 1_760_000_000_000;
 
 function tab(changes: Partial<TabState> = {}): TabState {
-  return { id: 3, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, ...changes };
+  return { id: 3, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false, overridesRevision: 0, ...changes };
 }
 
 function ready(page: { title?: string | null; description?: string | null } = {}): SeoAuditResponse {

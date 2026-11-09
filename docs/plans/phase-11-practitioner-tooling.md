@@ -1055,3 +1055,21 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   same pattern as Decision 1). Source views re-read on a `tab.url` change. The source view renders at
   most 1,000 rows of 500 characters at once (windowed around a find jump). `skipExtraText` is
   Phase 12's and was not added.
+- **Task 6:** all three spikes passed (Known limits in `render-profile.feature.md`): CSS off works
+  from world 1_701 with JavaScript on or off (shadow-root styles stay); the cookie pair's edits take
+  effect and the hub's `onSendHeaders` sees the edited request; `webContentsId` is set for frames,
+  subresources and dedicated workers but not service workers; the geolocation override reaches
+  `getCurrentPosition` after frost's Allow, cross-site frames included. CSS off has no CDP part, so on
+  its own it never attaches the debugger; the override commands go last in the merged list. The
+  security review kept CSS off. Lead rulings from that review: the **document marker is also set
+  when an override turns on over a committed document** (stricter than Decision 8: an override used
+  after load, e.g. location then a "near me" click, otherwise left a dirty page capturable); cookies
+  off does not cover the Cookie Store API (stated in the hint and Known limits, pinned in e2e); a
+  response cached while cookies were off can be reused later (Known limits); a screenshot refused
+  at its last check deletes its file under the hash lock. The revision rises on every
+  `tabOverrides.set` and every marker set. Capture checks live overrides and the marker right after
+  `not-active`, the stamp after the ready-audit checks, and the revision inside the write queue.
+  The Semgrep rule carries the debugger rule's full pattern set. Overrides are not inherited by
+  popups. UI: a "This tab only" row in the render-profile bar (CSS off, Cookies off, Location with
+  six presets or custom, Back to normal) and a status-bar chip. `router.ts` got two lines (import +
+  entry) plus one each in `services.ts`, ipc-contract `index.ts` and `StatusBar.tsx`.

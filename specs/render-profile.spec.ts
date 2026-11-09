@@ -220,6 +220,11 @@ export const RENDER_PROFILE_CDP_METHODS = [
   'Network.setCacheDisabled',
   'Network.enable',
   'Network.disable',
+  // Tab overrides (Phase 11 Task 6, `TabOverrides` below): never part of a profile, sent in the same
+  // merged list. Browser geolocation, and `document.cookie` (HTTP cookies: `COOKIE_BLOCK`).
+  'Emulation.setGeolocationOverride',
+  'Emulation.clearGeolocationOverride',
+  'Emulation.setDocumentCookieDisabled',
 ] as const;
 export type RenderProfileCdpMethod = (typeof RENDER_PROFILE_CDP_METHODS)[number];
 
@@ -253,7 +258,9 @@ export const CHILD_RESUME_TIMEOUT_MS = 1_000;
 /**
  * The profile commands a child frame gets: all of them but the viewport (`Emulation.*DeviceMetrics*`
  * is refused on anything but the tab's top-level target; a cross-site frame keeps the size its
- * parent lays it out at). A dedicated worker gets only the user agent and the cache switch.
+ * parent lays it out at). A dedicated worker gets only the user agent and the cache switch. The tab
+ * overrides' commands (geolocation, `document.cookie`) are in the child frames' share too (they are
+ * not top-level only), and in no worker's.
  */
 export const TOP_LEVEL_ONLY_METHODS = ['Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride'] as const satisfies readonly RenderProfileCdpMethod[];
 export const WORKER_METHODS = ['Network.setUserAgentOverride', 'Network.setCacheDisabled', 'Network.enable', 'Network.disable'] as const satisfies readonly RenderProfileCdpMethod[];
@@ -428,4 +435,121 @@ export const PROFILE_FAILED_NOTE = 'This profile could not be applied; the page 
 /** The lab-data caveat of page speed under a profile (the Speed panel's `LAB_DATA_NOTE` otherwise). */
 export function profileLabDataNote(profile: RenderProfile): string {
   return `Lab data: one visit, measured in this tab on this machine under the render profile “${renderProfileSummary(profile)}” (device, user agent and network are emulated; CPU is not). Real visitors’ experience (field data) can be very different.`;
+}
+
+// ---- Tab overrides (Phase 11 Task 6, Decision 8) ------------------------------------------------
+
+/**
+ * Tab-local emulation beside the render profile: CSS off, cookies off and a browser geolocation.
+ * **Not** part of `RenderProfile` (nor `RenderProfileSchema`, `sameRenderProfile`,
+ * `isDefaultRenderProfile`): it never reaches pins, project profiles, lane keys, captures or sync. Main
+ * holds it per tab (`TabState.tabOverrides`); it ends when the tab closes, is never pinned to a site,
+ * and a tab opened from another does not inherit it. Every audit records the overrides it ran under
+ * (`seo.getAudit`'s ready answer, `tabOverrides`; absent: all off), separately from its profile.
+ * Acceptance: `render-profile.feature.md`, Tab overrides.
+ */
+export interface GeolocationOverride {
+  /** Degrees, −90 to 90, at most `GEOLOCATION_LIMITS.decimals` decimals. */
+  readonly latitude: number;
+  /** Degrees, −180 to 180, at most `GEOLOCATION_LIMITS.decimals` decimals. */
+  readonly longitude: number;
+  /** Metres, a whole number from `GEOLOCATION_LIMITS.minAccuracy` to `maxAccuracy`. */
+  readonly accuracy: number;
+}
+
+export interface TabOverrides {
+  /** CSS off: the top frame's stylesheets (and adopted sheets) are disabled (`TAB_OVERRIDES_WORLD_ID`). */
+  readonly cssDisabled: boolean;
+  /** Cookies off: `document.cookie` (CDP) and the HTTP `Cookie` / `Set-Cookie` headers (`COOKIE_BLOCK`). */
+  readonly cookiesDisabled: boolean;
+  /** What the browser's location API answers (after the page's permission prompt); `null`: no override. */
+  readonly geolocation: GeolocationOverride | null;
+}
+
+export const DEFAULT_TAB_OVERRIDES: TabOverrides = { cssDisabled: false, cookiesDisabled: false, geolocation: null };
+
+/** Whether `a` and `b` are the same overrides. */
+export function sameTabOverrides(a: TabOverrides, b: TabOverrides): boolean {
+  const ga = a.geolocation;
+  const gb = b.geolocation;
+  const sameGeo = ga === gb || (ga !== null && gb !== null && ga.latitude === gb.latitude && ga.longitude === gb.longitude && ga.accuracy === gb.accuracy);
+  return a.cssDisabled === b.cssDisabled && a.cookiesDisabled === b.cookiesDisabled && sameGeo;
+}
+
+/** Whether `overrides` changes nothing (all off). */
+export function isDefaultTabOverrides(overrides: TabOverrides): boolean {
+  return sameTabOverrides(overrides, DEFAULT_TAB_OVERRIDES);
+}
+
+/** The bounds of a geolocation override (`TabOverridesSchema`): anything else is refused, never clamped or rounded. */
+export const GEOLOCATION_LIMITS = { maxLatitude: 90, maxLongitude: 180, minAccuracy: 1, maxAccuracy: 100_000, decimals: 5 } as const;
+
+/** Whether `value` is finite and has at most `GEOLOCATION_LIMITS.decimals` decimals. */
+export function hasGeolocationPrecision(value: number): boolean {
+  const scale = 10 ** GEOLOCATION_LIMITS.decimals;
+  return Number.isFinite(value) && Math.round(value * scale) / scale === value;
+}
+
+/** Ready-made locations (frost's own choice of cities; city-centre coordinates rounded to 4 decimals, 100 m accuracy). */
+export const GEOLOCATION_PRESETS = [
+  { id: 'new-york', label: 'New York', geolocation: { latitude: 40.7128, longitude: -74.006, accuracy: 100 } },
+  { id: 'london', label: 'London', geolocation: { latitude: 51.5074, longitude: -0.1278, accuracy: 100 } },
+  { id: 'berlin', label: 'Berlin', geolocation: { latitude: 52.52, longitude: 13.405, accuracy: 100 } },
+  { id: 'tokyo', label: 'Tokyo', geolocation: { latitude: 35.6762, longitude: 139.6503, accuracy: 100 } },
+  { id: 'sydney', label: 'Sydney', geolocation: { latitude: -33.8688, longitude: 151.2093, accuracy: 100 } },
+  { id: 'sao-paulo', label: 'São Paulo', geolocation: { latitude: -23.5505, longitude: -46.6333, accuracy: 100 } },
+] as const satisfies readonly { id: string; label: string; geolocation: GeolocationOverride }[];
+
+/**
+ * The isolated world CSS off runs in (Phase 11 reserves `1_700`–`1_709`, Decision 17). It is in
+ * `NON_AGENT_WORLD_IDS` (`agent-page-tools.spec.ts`). Its script is the one emulation that writes to
+ * the page: it sets `disabled` on the top frame's stylesheets, on the user's request only.
+ */
+export const TAB_OVERRIDES_WORLD_ID = 1_701;
+
+/**
+ * Cookies off on HTTP (`browser/cookie-block.ts`): a blocking `onBeforeSendHeaders` /
+ * `onHeadersReceived` pair on the tab's own session (registered only while a tab of that session has
+ * cookies off) removes these headers (any letter case) from the requests and responses of those tabs
+ * only (`webContentsId`), subframes and dedicated workers included. A request with no
+ * `webContentsId` (a service worker's) is not the tab's and keeps its cookies. A listener that fails
+ * passes the request on unchanged and logs one line (fail-open: `COOKIES_OFF_HINT`).
+ */
+export const COOKIE_BLOCK = {
+  requestHeaders: ['cookie'],
+  responseHeaders: ['set-cookie'],
+  urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'],
+} as const;
+
+// ---- Tab overrides: wording (frost's own) -------------------------------------------------------
+
+export const TAB_OVERRIDE_LABELS = { cssDisabled: 'CSS off', cookiesDisabled: 'Cookies off', geolocation: 'Location' } as const;
+
+/** The badge text of CSS off: it disables stylesheets only (inline styles stay). */
+export const CSS_OFF_BADGE = 'CSS off (stylesheets)' as const;
+
+export const CSS_OFF_HINT = 'Turns off this page’s stylesheets in this tab: the top page only, while the switch is on. Inline styles, shadow roots and frames keep theirs, and the page can tell.' as const;
+
+/**
+ * The cookies-off switch's hint: what it covers, what it costs and when it does not apply. It says
+ * plainly that the page's script can still use the Cookie Store API (`cookieStore`): no allowlisted
+ * CDP method turns it off (security review).
+ */
+export const COOKIES_OFF_HINT =
+  'Sends no cookies from this tab and keeps none it is sent, as a crawler would. Slightly slows loading in all tabs while on. The page’s script can still read and write cookies through the Cookie Store API, service-worker requests keep their cookies, and if frost cannot apply it to a request, that request is sent as normal.' as const;
+
+export const GEOLOCATION_HINT = 'What this tab’s pages get from the browser’s location API, once you allow it. Search results, your IP address, time zone and language are unchanged.' as const;
+
+/** Where a value names the location (`48.85660, 2.35220`): five decimals, as entered. */
+export function geolocationText(geolocation: GeolocationOverride): string {
+  return `${geolocation.latitude.toFixed(GEOLOCATION_LIMITS.decimals)}, ${geolocation.longitude.toFixed(GEOLOCATION_LIMITS.decimals)}`;
+}
+
+/** The overrides in a few words (`CSS off (stylesheets) · Cookies off · Location 48.85660, 2.35220`); `''` when all off. */
+export function tabOverridesSummary(overrides: TabOverrides): string {
+  const parts: string[] = [];
+  if (overrides.cssDisabled) parts.push(CSS_OFF_BADGE);
+  if (overrides.cookiesDisabled) parts.push(TAB_OVERRIDE_LABELS.cookiesDisabled);
+  if (overrides.geolocation) parts.push(`${TAB_OVERRIDE_LABELS.geolocation} ${geolocationText(overrides.geolocation)}`);
+  return parts.join(' · ');
 }

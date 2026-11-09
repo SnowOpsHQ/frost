@@ -1,6 +1,11 @@
 import {
   CUSTOM_USER_AGENT_PATTERN,
   DEFAULT_RENDER_PROFILE,
+  GEOLOCATION_LIMITS,
+  GEOLOCATION_PRESETS,
+  hasGeolocationPrecision,
+  isDefaultTabOverrides,
+  tabOverridesSummary,
   fitRenderViewport,
   isCrawlerProfile,
   isDefaultRenderProfile,
@@ -12,6 +17,8 @@ import {
   type NetworkPresetId,
   type Rect,
   type RenderProfile,
+  type GeolocationOverride,
+  type TabOverrides,
   type TabRenderProfile,
   type UserAgentId,
 } from '@app/specs/render-profile.spec';
@@ -89,4 +96,49 @@ export function profileOfDraft(draft: ProfileDraft): { readonly ok: true; readon
     cacheDisabled: draft.cacheDisabled,
   };
   return { ok: true, profile, isDefault: isDefaultRenderProfile(profile) };
+}
+
+// ---- Tab overrides (Phase 11 Task 6, `render-profile.feature.md`, Tab overrides: Visible state) ----
+
+/** The status bar's overrides chip, or `null` when every override is off. */
+export function overridesChipText(overrides: TabOverrides): string | null {
+  return isDefaultTabOverrides(overrides) ? null : tabOverridesSummary(overrides);
+}
+
+/** The location menu's choice: off, a preset's id, or a custom location. */
+export type GeolocationChoice = 'off' | 'custom' | (typeof GEOLOCATION_PRESETS)[number]['id'];
+
+/** Which choice a tab's location is: a preset when it is exactly one, else custom. */
+export function geolocationChoiceOf(geolocation: GeolocationOverride | null): GeolocationChoice {
+  if (geolocation === null) return 'off';
+  const preset = GEOLOCATION_PRESETS.find((p) => p.geolocation.latitude === geolocation.latitude && p.geolocation.longitude === geolocation.longitude && p.geolocation.accuracy === geolocation.accuracy);
+  return preset ? preset.id : 'custom';
+}
+
+/** The custom location form: the three fields as typed. */
+export interface GeolocationDraft {
+  readonly latitude: string;
+  readonly longitude: string;
+  readonly accuracy: string;
+}
+
+export function geolocationDraftOf(geolocation: GeolocationOverride | null): GeolocationDraft {
+  return geolocation ? { latitude: String(geolocation.latitude), longitude: String(geolocation.longitude), accuracy: String(geolocation.accuracy) } : { latitude: '', longitude: '', accuracy: '100' };
+}
+
+/**
+ * The location a custom form stands for, or why not (main would refuse it: `GEOLOCATION_LIMITS`).
+ * Never rounded or clamped: the user sees what is wrong.
+ */
+export function geolocationOfDraft(draft: GeolocationDraft): { readonly ok: true; readonly geolocation: GeolocationOverride } | { readonly ok: false; readonly error: string } {
+  const number = (text: string): number => (/^\s*-?\d+(\.\d+)?\s*$/.test(text) ? Number(text) : Number.NaN);
+  const latitude = number(draft.latitude);
+  const longitude = number(draft.longitude);
+  const accuracy = number(draft.accuracy);
+  const { maxLatitude, maxLongitude, minAccuracy, maxAccuracy, decimals } = GEOLOCATION_LIMITS;
+  if (!Number.isFinite(latitude) || Math.abs(latitude) > maxLatitude) return { ok: false, error: `Latitude: a number from −${maxLatitude} to ${maxLatitude}` };
+  if (!Number.isFinite(longitude) || Math.abs(longitude) > maxLongitude) return { ok: false, error: `Longitude: a number from −${maxLongitude} to ${maxLongitude}` };
+  if (!hasGeolocationPrecision(latitude) || !hasGeolocationPrecision(longitude)) return { ok: false, error: `At most ${decimals} decimals` };
+  if (!Number.isInteger(accuracy) || accuracy < minAccuracy || accuracy > maxAccuracy) return { ok: false, error: `Accuracy: whole metres from ${minAccuracy} to ${maxAccuracy.toLocaleString('en-US')}` };
+  return { ok: true, geolocation: { latitude, longitude, accuracy } };
 }

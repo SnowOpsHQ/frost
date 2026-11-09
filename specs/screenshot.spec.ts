@@ -86,9 +86,16 @@ export type ScreenshotLimits = { readonly [K in keyof typeof SCREENSHOT_LIMITS]:
  * - `capture-failed`: the page could not be captured, measured or scrolled, or the full page ran
  *   past its deadline;
  * - `store-failed`: the file or its row could not be written;
- * - `no-project`: the project does not exist or was deleted.
+ * - `no-project`: the project does not exist or was deleted;
+ * - `tab-emulation-on` (Phase 11 Task 6, Decision 8): the tab's overrides (`TabOverrides`) are on
+ *   now, or its document was loaded under overrides (`TabState.loadedUnderOverrides`), or the tab's
+ *   override revision changed (or the marker got set) while the screenshot was taken: refused before
+ *   it is persisted, so no row and no file are kept. A screenshot reads the live page, so the audit's
+ *   stamp is not consulted. The service learns this through `ScreenshotTabs.overridesOn?` (live
+ *   overrides or the marker; absent: off) and `ScreenshotTabs.overridesRevision?` (absent: no
+ *   revision check). Project runs' tabs have default overrides and are never refused this way.
  */
-export const SCREENSHOT_REFUSALS = ['no-tab', 'not-active', 'no-page', 'busy', 'cancelled', 'too-large', 'capture-failed', 'store-failed', 'no-project'] as const;
+export const SCREENSHOT_REFUSALS = ['no-tab', 'not-active', 'no-page', 'busy', 'cancelled', 'too-large', 'capture-failed', 'store-failed', 'no-project', 'tab-emulation-on'] as const;
 export type ScreenshotRefusal = (typeof SCREENSHOT_REFUSALS)[number];
 
 /** How the Changes panel explains a refusal (frost's own wording). */
@@ -102,6 +109,7 @@ export const SCREENSHOT_REFUSAL_MESSAGES: Readonly<Record<ScreenshotRefusal, str
   'capture-failed': 'The page could not be captured. Reload it and try again.',
   'store-failed': 'The screenshot could not be saved.',
   'no-project': 'That project no longer exists.',
+  'tab-emulation-on': 'This tab has CSS, cookies or location changed. Set them back to normal, reload the page, then take the screenshot.',
 };
 
 /** Said beside Full page: the page is scrolled to be captured, and the page itself can tell. */

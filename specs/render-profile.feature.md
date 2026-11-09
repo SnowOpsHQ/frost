@@ -49,8 +49,9 @@ the procedures' inputs, `TabRenderProfileSchema`). Phase 2.5 Task 1. Each line m
   GREASE brand and `Chromium` in the engine's own order (`clientHintsBrands`), platform, mobile), the
   network condition, device metrics and touch, then the JavaScript switch. Every method is on the
   allowlist. (`cdp-commands-for-profile`, `cdp-commands-are-allowlisted`, `client-hints-grease`)
-- The debugger is attached only to a tab that has a profile, and only by main. Reset detaches it,
-  which clears every override at once; closing the tab detaches it. A detach main did not ask for is
+- The debugger is attached only to a tab that has a profile (or tab overrides, below), and only by
+  main. Reset detaches it, which clears every override at once (unless the tab has overrides: then
+  the merged list goes out with frost's defaults for the profile part); closing the tab detaches it. A detach main did not ask for is
   answered with one new attach and the profile sent again; a failed attach or command marks the
   profile `failed` (the chrome says so) and never throws into browsing.
   (`debugger-attaches-lazily-and-detaches`, `unexpected-detach-reattaches-once`, `apply-failure-is-visible`)
@@ -115,6 +116,109 @@ the procedures' inputs, `TabRenderProfileSchema`). Phase 2.5 Task 1. Each line m
   shows it, and the Speed panel's lab-data caveat names it (`profileLabDataNote`).
   (`audit-records-profile`, `held-audit-keeps-its-profile`)
 
+## Page writes (Phase 11 Task 6, under its security review)
+- Emulation never writes to the page, with **one stated exception**: **CSS off** (Tab overrides,
+  below) sets `disabled` on the top frame's stylesheets and adopted sheets from its own isolated world
+  (`TAB_OVERRIDES_WORLD_ID`), and only while the user has the switch on for that tab. It adds no
+  element and no attribute, and changes nothing else, but the page can observe it
+  (`document.styleSheets[i].disabled`), so the switch's badge says "CSS off (stylesheets)". This is the
+  user-requested exception to the page-integrity statements of `devtools.spec.ts` (the drawer "never
+  runs script in a page and never edits a page's DOM"), `devtools.feature.md` and
+  `STORAGE_USAGE_NOTE`: those still hold for the drawer; CSS off is not the drawer.
+- **Cookie block exception** to `web-request.ts`'s rule "no blocking listener on the browse
+  session": the rule now reads "none unless a tab of that session has cookies off". While at least one
+  tab of a browse-class session has cookies off, `browser/cookie-block.ts` (the only module allowed
+  to, Semgrep `webrequest-blocking-outside-allowlisted-modules`) registers a blocking
+  `onBeforeSendHeaders` / `onHeadersReceived` pair on that tab's own session (`contents.session`),
+  acting only on those tabs' `webContentsId`s (`COOKIE_BLOCK`); the pair goes when the session's last
+  cookies-off tab closes or turns it off. Electron's filters cannot select a `webContentsId`, so while
+  the pair is registered **every** request of every tab of that session passes through main (answered
+  at once for other tabs): "Slightly slows loading in all tabs while on" (`COOKIES_OFF_HINT`).
+
+## Tab overrides (Phase 11 Task 6, Decision 8)
+Spec: `render-profile.spec.ts` (`TabOverrides`, `DEFAULT_TAB_OVERRIDES`, `GEOLOCATION_LIMITS`,
+`GEOLOCATION_PRESETS`, `TAB_OVERRIDES_WORLD_ID`, `COOKIE_BLOCK`, labels and hints),
+`render-profile.schema.spec.ts` (`TabOverridesSchema`, `SetTabOverridesInputSchema`), `browser.spec.ts`
+(`TabState.tabOverrides`, `loadedUnderOverrides`, `overridesRevision`).
+- **Tab-local, not a profile.** CSS off, cookies off and a browser geolocation are a separate per-tab
+  value, `TabOverrides`, held by main (`browser/tab-overrides.ts`) and shown in `TabState`. They are
+  not in `RenderProfile` / `RenderProfileSchema`, so they never reach pins, project profiles, lane
+  keys (`laneKeyFor`), `storableProfile`, captures or sync; they end when the tab closes, are never
+  pinned to a site and are not inherited by a tab opened from it. (`emulation-is-tab-local-and-not-pinned`,
+  `emulation-ends-with-the-tab`, `render-profile-schema-rejects-emulation-fields`, `lane-key-unchanged-by-emulation`)
+- **One merged command list per tab.** `render-profile.ts` owns, per tab, one list built from the
+  effective profile (frost's defaults when there is none) **and** the tab's overrides
+  (`entry.tabOverrides`; `entry.emulation` stays the viewport fit), sent whole through
+  `ProfileDebugger.send`, so the debugger's child-frame share and its re-attach after a
+  Chromium-initiated detach always restore both. The overrides' commands come last:
+  `Emulation.setDocumentCookieDisabled`, then `Emulation.setGeolocationOverride` (or
+  `Emulation.clearGeolocationOverride`). A profile change re-sends the list (overrides kept); an
+  overrides change re-sends it (profile kept). The debugger is attached when either is set and
+  detached (`apply()` and Reset) only when the profile is default **and** the overrides are all off.
+  `tab-overrides.ts` keeps the state and asks `render-profile.ts` to re-apply; it never talks to the
+  debugger. (`emulation-survives-profile-reset`, `emulation-applies-with-default-profile`,
+  `profile-change-keeps-emulation-and-child-share`, `emulation-change-keeps-profile`,
+  `reattach-restores-emulation`, `detaches-only-when-both-default`, `entry-field-is-tabOverrides-not-emulation`,
+  `geolocation-to-tab-and-frames`, `cookies-off-sends-document-cookie-disabled`, `unlisted-method-still-refused`)
+- **CSS off** runs a self-contained script in `TAB_OVERRIDES_WORLD_ID` in the **top frame** only: it
+  disables every stylesheet and adopted sheet, and watches for new ones (a `MutationObserver`, a
+  capturing `load` listener for stylesheets that finish loading, and a periodic sweep for adopted
+  sheets) until it is turned off, which re-enables exactly the sheets it disabled. It runs on each new
+  document the tab commits while on. Inline `style` attributes, shadow roots' own styles and frames'
+  styles stay. Isolated worlds run under JavaScript off, so it works there too. (`world-1701-only`,
+  `top-frame-only`, `new-stylesheets-disabled`, `off-reenables`, `works-with-javascript-off`)
+- **Cookies off** sends `Emulation.setDocumentCookieDisabled` (in the merged list) and turns on the
+  cookie block for the tab (Page writes, above): `Cookie` is removed from its requests and
+  `Set-Cookie` from its responses, subframes (cross-site too) and dedicated workers included. The
+  `onSendHeaders` observer of the `web-request.ts` hub sees the request **after** the edit, so the
+  devtools drawer shows what was sent. (`strips-only-listed-tabs`, `registered-only-while-needed`,
+  `removed-on-tab-close-and-switch-off`, `registers-on-the-tabs-own-session`,
+  `other-tabs-and-default-session-untouched`, `subframe-requests-of-the-tab-stripped`)
+- **Fail-open, on purpose.** Each listener body is `try` / `catch` / `finally`: the `catch` logs one
+  line (the listener's name and the error's code or name, never a URL or a header value) and
+  swallows the error; the `finally` always calls `callback`, with the edited headers on success and
+  `{}` (the request or response passed through unchanged) on error. Electron's filters cannot select
+  a `webContentsId`, so the listeners see every tab's requests; an error in the tab lookup cannot tell
+  whether the request is a cookies-off tab's, and failing closed would break or log out tabs that
+  never asked. Cookies off is an SEO testing aid ("see the page as a cookieless crawler"), not a
+  privacy guarantee; `COOKIES_OFF_HINT` says the page's script can still use the Cookie Store API,
+  that some requests (service workers) keep cookies and that a request frost cannot apply it to is
+  sent as normal. (`listener-always-answers`,
+  `listener-error-passes-request-unchanged-and-logs`)
+- **Geolocation** sends `Emulation.setGeolocationOverride` (cleared with
+  `Emulation.clearGeolocationOverride`); the page still goes through frost's permission prompt.
+  Browser geolocation only: not search or IP location, time zone or language.
+- **Recorded with audits (the stamp).** Every audit records the tab's overrides when its extraction
+  starts, whether or not a profile is set, in a separate weak map (`overridesOf(audit)` beside
+  `profileOf` on `AuditProfiles`); the ready `seo.getAudit` answer carries it as `tabOverrides`
+  (absent: all off). `AuditRenderProfile`, `auditProfile()`, `recordedProfile` and `laneKeyFor` are
+  unchanged. The Overview's profile note shows the overrides. (`audit-stamps-emulation`,
+  `audit-stamps-emulation-with-no-profile`, `audit-profile-unchanged-by-stamp`, `get-audit-carries-the-stamp`)
+- **The document marker** (`TabState.loadedUnderOverrides`): set when a main-frame document commits,
+  or is still loading, while any override is on, and (security-review ruling, stricter than Decision
+  8's wording) whenever an override turns on while the tab shows a committed document, even one that
+  finished loading (CSS off or cookies off may already have changed what the page did, stored or
+  sent); cleared only by a later main-frame navigation to a
+  new document during which no override was on at any point from its start to its completion (its
+  load finishing). An override on at a navigation's start and turned off before it completes keeps
+  it set; setting wins. Same-document navigations and turning overrides off never clear it.
+  (`marker-set-when-a-document-loads-under-overrides`, `marker-set-when-an-override-turns-on-after-load`,
+  `marker-kept-when-overrides-turned-off`,
+  `marker-cleared-only-by-a-clean-navigation`, `marker-kept-when-override-on-at-navigation-start`)
+- **The override revision** (`TabState.overridesRevision`) rises on every `tabOverrides.set` of the
+  tab and every time the marker is set. (`override-revision-raised-on-change-and-marker-set`)
+- **Capture and screenshots refuse** with `tab-emulation-on` (`changes.spec.ts`,
+  `screenshot.spec.ts`): Capture now on the audit's stamp, the live overrides or the marker, before
+  and after its extraction, and when the revision moved (or the marker got set) before it is stored;
+  a screenshot on the live overrides or the marker, and when the revision moved before it is stored
+  (no row, no file). Project runs open their own tabs with default overrides and are never refused.
+- **Procedure:** `tabOverrides.set({ tabId, overrides })`: `enforceSender` first, then Zod
+  (`SetTabOverridesInputSchema`); an id that names no open tab answers `false`.
+  (`set-tab-overrides-validates`)
+- **Visible state:** the render-profile toggle is marked while a tab has overrides; the status bar
+  shows them (`tabOverridesSummary`), the editor bar holds the three switches with their hints, and
+  the Overview's profile note names the overrides an audit ran under.
+
 ## The page cannot see or defeat it
 - No domain that observes the page is ever enabled (resuming a paused cross-site frame with
   `Runtime.runIfWaitingForDebugger` does not enable the Runtime domain), so nothing the page does (console getters,
@@ -157,6 +261,35 @@ the procedures' inputs, `TabRenderProfileSchema`). Phase 2.5 Task 1. Each line m
   a fresh tab (restored, opened from another, or empty) gets one only from its first load, so frost
   never awaits them before loading (see How it is applied).
 
+## Known limits (Phase 11 Task 6 spike, Electron 45, loopback pages)
+- **CSS off (Open question 1):** setting `disabled` on `document.styleSheets` and
+  `document.adoptedStyleSheets` from world `1_701` takes effect in the page (computed styles fall back
+  to the defaults; inline `style` attributes stay), with the page's JavaScript on and off (a
+  `MutationObserver` in the world still runs under JavaScript off). The page sees `disabled === true`
+  on its sheets. A shadow root's own `<style>` is **not** reached (it is not in `document.styleSheets`)
+  and keeps its styling; a `<style>` added later is disabled only by the world's observer.
+- **Cookies off (Open question 2):** removing `Cookie` in a blocking `onBeforeSendHeaders` and
+  `Set-Cookie` in `onHeadersReceived` on the tab's session takes effect: the server received no
+  cookie, and a `Set-Cookie` under the block was never stored. The session's `onSendHeaders`
+  observer saw the request **after** the edit (no `Cookie`). `details.webContentsId` was the tab's
+  for its main frame, same- and cross-site subframes, images, `fetch`, a dedicated worker's script
+  and its `fetch`; it was **absent** for a service worker's script and its `fetch` (so they keep
+  cookies), and for frost's own fetches (robots.txt, the served-source fetch), which send no cookies
+  anyway. `Emulation.setDocumentCookieDisabled` makes `document.cookie` read `''` and ignore writes.
+- **Cookie Store API (security review):** cookies off does **not** reach the Cookie Store API: the
+  page's script can still read and write cookies through it (`cookieStore.getAll()` returns the
+  session's cookies, `cookieStore.set` writes to the jar every tab shares). No allowlisted CDP method
+  turns it off, so `COOKIES_OFF_HINT` says so (e2e `cookies-off-sends-no-cookie-header` pins it).
+- **HTTP cache:** a response cached while a tab had cookies off (served for a cookieless request)
+  can be reused by a later navigation with cookies on, in that tab or another; "cache off" in the
+  render profile, or Clear Browsing Data, avoids it.
+- **Geolocation (Open question 3):** after `Emulation.setGeolocationOverride` and the user's Allow in
+  frost's prompt, `getCurrentPosition` answered the override's latitude, longitude and accuracy with
+  no location provider, also in a cross-site `allow="geolocation"` frame (the top-level session's
+  override reached it); after `Emulation.clearGeolocationOverride` it failed again (code 2).
+- **Tab-local route (Open question 10):** the overrides never enter `RenderProfileSchema` (strict),
+  pins, lane keys, captures, screenshots or sync; see the unit tests named above.
+
 ## Command palette (`apps/desktop/src/renderer/__tests__/render-profile-palette.test.ts`)
 Registered with `registerPaletteActions` (`command-palette.spec.ts`) in the Page group:
 - "Render as …", one per `QUICK_RENDER_PROFILES` entry: sets it as the active tab's own profile
@@ -185,3 +318,15 @@ Registered with `registerPaletteActions` (`command-palette.spec.ts`) in the Page
   script runs.
 - `reset-restores-defaults`: Reset → after reload the page sees frost's own user agent and width.
 - `pin-persists-across-relaunch`: a pinned site comes back emulated after a relaunch.
+- `geolocation-override-after-permission-allow`: a preset location → after the page's prompt is
+  allowed, `getCurrentPosition` answers it.
+- `cookies-off-sends-no-cookie-header`: cookies off → after reload the server gets no `Cookie` (nor
+  does a subresource), a `Set-Cookie` is not stored, and `document.cookie` is `''`; another tab still
+  sends its cookies; off again → they are sent.
+- `css-off-disables-stylesheets`: CSS off → the page's stylesheets are disabled (inline style kept);
+  off again → they apply.
+- `capture-now-refused-with-emulation`: CSS turned off after a clean audit → Capture now is refused
+  `tab-emulation-on` (the live arm).
+- `screenshot-refused-with-emulation`: with CSS off a screenshot is refused `tab-emulation-on`.
+- `emulation-survives-profile-reset`: a profile and a location → Reset → the location stays in
+  effect and the debugger stays attached.

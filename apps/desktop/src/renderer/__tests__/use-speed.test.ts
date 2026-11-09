@@ -37,6 +37,9 @@ const tabAt = (documentSeq: number): TabState => ({
   highlight: 'off',
   highlightPhrase: null,
   renderProfile: null,
+  tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null },
+  loadedUnderOverrides: false,
+  overridesRevision: 0,
 });
 const pending = (url: string): SpeedResponse => ({ status: 'pending', url });
 

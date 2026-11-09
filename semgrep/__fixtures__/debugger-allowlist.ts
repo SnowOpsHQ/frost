@@ -38,6 +38,9 @@ const untypedArrow = ({ debugger: dbg }) => dbg;
 function untypedFunction({ debugger: dbg }) {
   return dbg;
 }
+// A tab override's method (Phase 11 Task 6) is still only for render-profile-debugger.ts.
+// ruleid: debugger-outside-allowlisted-modules
+void contents.debugger.sendCommand('Emulation.setGeolocationOverride', { latitude: 48.8566, longitude: 2.3522, accuracy: 100 });
 
 // ok: debugger-outside-allowlisted-modules
 const tools = contents.isDevToolsOpened();

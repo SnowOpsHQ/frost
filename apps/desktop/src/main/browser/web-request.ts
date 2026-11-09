@@ -19,8 +19,14 @@ import type {
 //   `app://`); `onHeadersReceived` — `security/register.ts` (the app CSP);
 // - browse session (`persist:frost-browser`, the tabs'): `onBeforeRedirect`, `onResponseStarted`,
 //   `onErrorOccurred` — here, for main-frame requests only (`MAIN_FRAME_FILTER`). No blocking
-//   listener (`onBeforeRequest`, `onBeforeSendHeaders`, `onHeadersReceived`) is installed on it:
-//   these are observers, so no request ever waits for main.
+//   listener (`onBeforeRequest`, `onBeforeSendHeaders`, `onHeadersReceived`) is installed on it
+//   **unless a tab of that session has cookies off** (Phase 11 Task 6, `render-profile.feature.md`,
+//   Page writes): then `browser/cookie-block.ts` owns `onBeforeSendHeaders` / `onHeadersReceived` on
+//   it (on any browse-class session, the tab's own), removed again with its last cookies-off tab, and
+//   every request of the session passes through main while they are registered. Nothing else may
+//   register a blocking listener there (Semgrep `webrequest-blocking-outside-allowlisted-modules`).
+//   The observers here never hold a request; `onSendHeaders` sees a request after the cookie block's
+//   edit (verified, Electron 45).
 //   Since Phase 2.5 Task 5 (`devtools.feature.md`, Request observers) the devtools drawer's recorder
 //   subscribes too, with `observeRequests`: `onSendHeaders` and `onCompleted` are owned here as
 //   well, and once a request observer exists every one of the five listens to every resource type

@@ -8,12 +8,16 @@ import { z } from 'zod';
 import {
   CUSTOM_USER_AGENT_PATTERN,
   DEVICE_PRESET_IDS,
+  GEOLOCATION_LIMITS,
+  hasGeolocationPrecision,
   MAX_CUSTOM_USER_AGENT_LENGTH,
   NETWORK_PRESET_IDS,
   RENDER_PROFILE_SOURCES,
   RENDER_PROFILE_STATUSES,
   USER_AGENT_IDS,
+  type GeolocationOverride,
   type RenderProfile,
+  type TabOverrides,
 } from './render-profile.spec';
 
 /**
@@ -62,3 +66,36 @@ export const TabRenderProfileSchema = z.strictObject({
   needsReload: z.boolean(),
   status: z.enum(RENDER_PROFILE_STATUSES),
 });
+
+// ---- Tab overrides (Phase 11 Task 6, Decision 8) ------------------------------------------------
+
+/**
+ * A browser geolocation override (`GeolocationOverride`): latitude ±90 and longitude ±180 with at
+ * most `GEOLOCATION_LIMITS.decimals` decimals, accuracy a whole number of metres from
+ * `minAccuracy` to `maxAccuracy`. Anything else is refused (`BAD_REQUEST`), never rounded.
+ */
+export const GeolocationOverrideSchema = z.strictObject({
+  latitude: z.number().min(-GEOLOCATION_LIMITS.maxLatitude).max(GEOLOCATION_LIMITS.maxLatitude).refine(hasGeolocationPrecision, 'too many decimals'),
+  longitude: z.number().min(-GEOLOCATION_LIMITS.maxLongitude).max(GEOLOCATION_LIMITS.maxLongitude).refine(hasGeolocationPrecision, 'too many decimals'),
+  accuracy: z.int().min(GEOLOCATION_LIMITS.minAccuracy).max(GEOLOCATION_LIMITS.maxAccuracy),
+}) satisfies z.ZodType<GeolocationOverride>;
+
+/**
+ * A tab's overrides (`TabOverrides`; `TabState.tabOverrides`). Strict: a render-profile field here,
+ * or an override field in `RenderProfileSchema`, is refused (they never mix).
+ */
+export const TabOverridesSchema = z.strictObject({
+  cssDisabled: z.boolean(),
+  cookiesDisabled: z.boolean(),
+  geolocation: GeolocationOverrideSchema.nullable(),
+}) satisfies z.ZodType<TabOverrides>;
+
+/**
+ * `tabOverrides.set` input: the tab and its whole overrides (all off: back to normal). Answers whether
+ * the tab's overrides were set (an id that names no open tab is a no-op answering `false`).
+ */
+export const SetTabOverridesInputSchema = z.strictObject({
+  tabId: z.int().positive(),
+  overrides: TabOverridesSchema,
+});
+export type SetTabOverridesInput = z.infer<typeof SetTabOverridesInputSchema>;
