@@ -12,6 +12,7 @@ import {
   type HistoryRetention,
   type SearchEngineId,
 } from '@app/specs/browser-polish.spec';
+import { isAppVersion, WHATS_NEW_SEEN_SETTING_KEY } from '@app/specs/help.spec';
 import type { SessionDatabase } from './client';
 import { appSettings } from './settings-schema';
 
@@ -36,6 +37,13 @@ export interface SettingsRepository {
   historySettings(): Promise<HistorySettings>;
   /** Stores both; `false` (nothing written) for an unknown retention or a non-boolean. */
   setHistorySettings(settings: HistorySettings, at: number): Promise<boolean>;
+  /**
+   * Phase 11 Task 11 (`help.spec.ts`, `WHATS_NEW_SEEN_SETTING_KEY`): the app version whose What's New
+   * was last shown; `null` when none is stored (a first run), `''` for a stored value that is not a version.
+   */
+  whatsNewSeenVersion(): Promise<string | null>;
+  /** Stores it; `false` (nothing written) for anything but an app version (`isAppVersion`). */
+  setWhatsNewSeenVersion(version: string, at: number): Promise<boolean>;
 }
 
 export interface HistorySettings {
@@ -94,6 +102,18 @@ export function createSettingsRepository(db: SessionDatabase): SettingsRepositor
     async setHistorySettings({ retention, keepProjectPages }, at) {
       if (!isHistoryRetention(retention) || typeof keepProjectPages !== 'boolean' || !Number.isFinite(at)) return false;
       await db.batch([write(HISTORY_RETENTION_SETTING_KEY, retention, at), write(HISTORY_KEEP_PROJECT_PAGES_KEY, keepProjectPages ? '1' : '0', at)]);
+      return true;
+    },
+
+    async whatsNewSeenVersion() {
+      const value = await read(WHATS_NEW_SEEN_SETTING_KEY);
+      if (value === undefined || value === null) return null;
+      return isAppVersion(value) ? value : '';
+    },
+
+    async setWhatsNewSeenVersion(version, at) {
+      if (!isAppVersion(version) || !Number.isFinite(at)) return false;
+      await write(WHATS_NEW_SEEN_SETTING_KEY, version, at);
       return true;
     },
   };

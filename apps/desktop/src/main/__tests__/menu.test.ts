@@ -1,6 +1,7 @@
 // Spec: specs/browser.spec.ts (TAB_SHORTCUT_COUNT), specs/page-commands.spec.ts
 // Acceptance: specs/tabs.feature.md (Menu), specs/page-commands.feature.md (Menu), specs/seo-sidebar.feature.md (Toggle),
-// specs/command-palette.feature.md (palette-menu-item), specs/devtools.feature.md (devtools-menu-item)
+// specs/command-palette.feature.md (palette-menu-item), specs/devtools.feature.md (devtools-menu-item),
+// specs/help.feature.md (Menu: help-menu-items, every-menu-accelerator-is-listed, every-listed-shortcut-exists; specs/help.spec.ts)
 import type { MenuItemConstructorOptions } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
@@ -8,6 +9,7 @@ import { TAB_SHORTCUT_COUNT } from '@app/specs/browser.spec';
 import { SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
 import { COMMAND_PALETTE_MENU_ID, COMMAND_PALETTE_MENU_LABEL } from '@app/specs/command-palette.spec';
 import { DEVTOOLS_MENU_ID, DEVTOOLS_MENU_LABEL } from '@app/specs/devtools.spec';
+import { acceleratorToShortcut, canonicalShortcut, HELP_MENU, KEYBOARD_SHORTCUTS, shortcutKeysFor, shortcutToAccelerator, SHORTCUTS_SHORTCUT } from '@app/specs/help.spec';
 import { appMenuTemplate, installAppMenu, type AppMenuCommands } from '../menu';
 
 vi.mock('electron', async () => (await import('../../test/electron-fake')).electronFake());
@@ -28,6 +30,9 @@ function fakeCommands() {
     openCommandPalette: vi.fn(),
     toggleDevtools: vi.fn(),
     clearBrowsingData: vi.fn(),
+    showShortcuts: vi.fn(),
+    showWhatsNew: vi.fn(),
+    openHelpLink: vi.fn(),
   } satisfies AppMenuCommands;
 }
 
@@ -247,6 +252,96 @@ describe('application menu', () => {
     const history = template.find((item) => item.label === 'History');
     expect(allItems(view?.submenu as MenuItemConstructorOptions[]).map((item) => item.id).filter(Boolean)).toEqual(expect.arrayContaining(['reload', 'hard-reload', 'stop', 'zoom-in', 'zoom-out', 'zoom-reset']));
     expect(allItems(history?.submenu as MenuItemConstructorOptions[]).map((item) => item.id).filter(Boolean)).toEqual(expect.arrayContaining(['back', 'forward']));
+  });
+
+  test.each(PLATFORMS)('help-menu-items (%s)', (platform) => {
+    const commands = fakeCommands();
+    const template = appMenuTemplate(commands, platform);
+    // Last in the menu bar, with the help role (macOS adds its search field).
+    const help = template[template.length - 1]!;
+    expect(help.role).toBe('help');
+    expect(help.label).toBe(HELP_MENU.label);
+    const submenu = help.submenu as MenuItemConstructorOptions[];
+    // The items in order, a separator between groups (and nowhere else).
+    const expected: string[] = [];
+    HELP_MENU.items.forEach((item, i) => {
+      if (i > 0 && HELP_MENU.items[i - 1]!.group !== item.group) expected.push('separator');
+      expected.push(item.id);
+    });
+    expect(submenu.map((item) => (item.type === 'separator' ? 'separator' : item.id))).toEqual(expected);
+    for (const spec of HELP_MENU.items) {
+      const item = itemById(template, spec.id);
+      expect(item.label, spec.id).toBe(spec.label);
+      expect(item.accelerator, spec.id).toBe(spec.shortcut === undefined ? undefined : shortcutToAccelerator(spec.shortcut));
+    }
+    expect(itemById(template, 'help-shortcuts').accelerator).toBe('CmdOrCtrl+/');
+    expect(shortcutToAccelerator(SHORTCUTS_SHORTCUT)).toBe('CmdOrCtrl+/');
+    // Each click calls its own command, with the window the menu acted on.
+    const window = { id: 41 };
+    const clickIn = (id: string) => (itemById(template, id).click as unknown as (...args: unknown[]) => void)(itemById(template, id), window, {});
+    clickIn('help-shortcuts');
+    expect(commands.showShortcuts).toHaveBeenCalledExactlyOnceWith(41);
+    clickIn('help-whats-new');
+    expect(commands.showWhatsNew).toHaveBeenCalledExactlyOnceWith(41);
+    clickIn('help-frost');
+    expect(commands.openHelpLink).toHaveBeenLastCalledWith('help');
+    clickIn('help-report-issue');
+    expect(commands.openHelpLink).toHaveBeenLastCalledWith('issue');
+    expect(commands.openHelpLink).toHaveBeenCalledTimes(2);
+    for (const [name, fn] of Object.entries(commands)) if (!['showShortcuts', 'showWhatsNew', 'openHelpLink'].includes(name)) expect(fn, name).not.toHaveBeenCalled();
+    // No other item takes Mod+/ (nor any key the shortcuts screen lists twice: see every-listed-shortcut-exists).
+    expect(allItems(template).filter((item) => item.accelerator === 'CmdOrCtrl+/')).toHaveLength(1);
+  });
+
+  /** The shortcuts `KEYBOARD_SHORTCUTS` lists for `platform`, canonical (each with its entry id). */
+  function listedShortcuts(platform: (typeof PLATFORMS)[number]): Map<string, string> {
+    const mac = platform === 'darwin';
+    const listed = new Map<string, string>();
+    for (const group of KEYBOARD_SHORTCUTS) {
+      for (const shortcut of group.shortcuts) {
+        for (const key of shortcutKeysFor(shortcut.keys, mac)) {
+          const canonical = canonicalShortcut(key, mac);
+          expect(canonical, `${shortcut.id}: ${key}`).not.toBe('');
+          expect(listed.get(canonical), `${canonical} is listed by ${listed.get(canonical)} and ${shortcut.id}`).toBeUndefined();
+          listed.set(canonical, shortcut.id);
+        }
+      }
+    }
+    return listed;
+  }
+
+  /** The accelerators `platform`'s template sets, canonical: every explicit one, hidden ones included. */
+  function menuAccelerators(platform: (typeof PLATFORMS)[number]): Set<string> {
+    const mac = platform === 'darwin';
+    const out = new Set<string>();
+    for (const item of allItems(appMenuTemplate(fakeCommands(), platform))) {
+      if (typeof item.accelerator === 'string') {
+        const canonical = acceleratorToShortcut(item.accelerator, mac);
+        expect(canonical, `${item.id ?? item.role}: ${item.accelerator}`).not.toBe('');
+        out.add(canonical);
+      }
+      // The macOS app menu's Quit keeps its role's own Cmd+Q (no accelerator in the template).
+      if (mac && item.role === 'quit' && item.accelerator === undefined) out.add(acceleratorToShortcut('Cmd+Q', true));
+    }
+    return out;
+  }
+
+  test.each(PLATFORMS)('every-menu-accelerator-is-listed (%s)', (platform) => {
+    const listed = listedShortcuts(platform);
+    const accelerators = menuAccelerators(platform);
+    expect(accelerators.size).toBeGreaterThan(30);
+    for (const accelerator of accelerators) expect(listed.has(accelerator), `${accelerator} (${platform}) is not on the shortcuts screen`).toBe(true);
+  });
+
+  test.each(PLATFORMS)('every-listed-shortcut-exists (%s)', (platform) => {
+    const accelerators = menuAccelerators(platform);
+    for (const [shortcut, id] of listedShortcuts(platform)) expect(accelerators.has(shortcut), `${id}: ${shortcut} (${platform}) is no menu accelerator`).toBe(true);
+    // Spot checks of the notation.
+    const mac = platform === 'darwin';
+    expect(acceleratorToShortcut('CmdOrCtrl+Plus', mac)).toBe('Mod+Shift+=');
+    expect(acceleratorToShortcut('CmdOrCtrl+numadd', mac)).toBe('Mod+NumpadAdd');
+    expect(acceleratorToShortcut('Ctrl+Tab', mac)).toBe(mac ? 'Ctrl+Tab' : 'Mod+Tab');
+    expect(acceleratorToShortcut('Cmd+[', mac)).toBe(mac ? 'Mod+[' : '');
   });
 
   test('install-app-menu-sets-application-menu', async () => {

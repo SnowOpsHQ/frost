@@ -78,3 +78,40 @@ export function onSettingsRequest(listener: Listener): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+
+// ---- Phase 11 Task 11 (`help.feature.md`): Settings and the Help sheets show one at a time --------
+
+const openedListeners = new Set<() => void>();
+type CloseListener = () => boolean;
+const closeListeners = new Set<CloseListener>();
+
+/** Says that the Settings sheet opened (any way: the palette, the menu, a sign-in waiting for its confirmation). */
+export function settingsOpened(): void {
+  for (const listener of [...openedListeners]) listener();
+}
+
+/** Subscribes to Settings opening; answers the unsubscribe. */
+export function onSettingsOpened(listener: () => void): () => void {
+  openedListeners.add(listener);
+  return () => {
+    openedListeners.delete(listener);
+  };
+}
+
+/**
+ * Asks Settings to close because another sheet opens: `false` if it stays (a sign-in waits for its
+ * confirmation there, which is never hidden), else `true`.
+ */
+export function askSettingsToClose(): boolean {
+  let closed = true;
+  for (const listener of [...closeListeners]) if (!listener()) closed = false;
+  return closed;
+}
+
+/** Answers `askSettingsToClose` (`false`: Settings stays); answers the unsubscribe. */
+export function onSettingsCloseAsked(listener: CloseListener): () => void {
+  closeListeners.add(listener);
+  return () => {
+    closeListeners.delete(listener);
+  };
+}

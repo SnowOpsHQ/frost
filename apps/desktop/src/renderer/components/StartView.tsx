@@ -5,11 +5,13 @@ import { monogram, visitHost, visitLabel } from '../history-view';
 import { FrostMark } from '../icons';
 import { actions } from '../ipc';
 import { isolatedTooltip } from '../seo-view';
+import { SetupChecklist } from './SetupChecklist';
 
 // An empty tab's start view in the browser chrome (`App.tsx`; spec `browser-chrome.feature.md`, Layout). Styling is the
 // bundled styles.css only (strict CSP). "Jump back in" (spec `browser-polish.feature.md`, New-tab page):
 // the most visited and recent pages from the local `recent_visits`, as frost-drawn tiles (a monogram,
 // the title and the host as text; no favicon, nothing remote); a tile opens its page in this tab.
+// Phase 11 Task 11 (`help.feature.md`): the setup checklist under it, from local state only.
 
 function Tile({ visit }: { readonly visit: HistoryVisitAnswer }) {
   return (
@@ -59,6 +61,7 @@ export function StartView({ tabId }: { readonly tabId?: number | undefined }) {
           </ul>
         </section>
       ) : null}
+      <SetupChecklist tabId={tabId} />
     </section>
   );
 }

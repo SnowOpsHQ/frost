@@ -63,6 +63,7 @@ import { createMainProjects } from './changes/projects-main';
 import { lateSearchParams } from './changes/serp-params';
 import { createMainInspector } from './inspector/service';
 import { createAiChecksMain } from './ai-checks/main';
+import { createHelpMain } from './help/main';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -454,6 +455,8 @@ function start(): void {
     // The AI agent (specs/agent-host.feature.md): its SERP, intent, probe and Search Console tools. Not gated: no
     // entitlements port is passed (it must not be wired to the account; specs/entitlements-client.feature.md).
     const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, consumeGesture: (windowId) => account.gestures.consume(windowId), ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) } });
+    // Help, keyboard shortcuts and What's New (specs/help.feature.md): bundled notes, fixed pages opened on a gesture only.
+    const help = createHelpMain({ app, settings: sessionStore.settings, consumeGesture: (windowId) => account.gestures.consume(windowId), log: logSession });
     // AI checks (specs/ai-checks.feature.md): off by default; only the audit's cookieless served HTML (peeked), on the agent's own route and model.
     const aiChecks = createAiChecksMain({ browser, isBrowseContents, served: () => served, tabUserAgent, tabScripting, agent: agent.checks, sessionStore, log: logSession });
     attachIpcHandler({
@@ -510,6 +513,7 @@ function start(): void {
         aiChecks,
         seoExport: seoExports,
         tabOverrides: browser.tabOverrides,
+        help: help.service,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
@@ -544,7 +548,7 @@ function start(): void {
     });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu
     // accelerators calling the controller directly (specs/tabs.feature.md, page-commands.feature.md).
-    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.(), ...account.menu });
+    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.(), ...account.menu, ...help.menu });
     // What the last launch saved, after the sessions are hardened and before any tab or window
     // exists: remembered decisions answer the first requests, and the chrome's first state already
     // has the restored tabs.

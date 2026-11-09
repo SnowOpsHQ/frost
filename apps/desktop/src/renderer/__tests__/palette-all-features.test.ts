@@ -21,6 +21,7 @@ import { inspectorPaletteSources } from '../inspector-palette';
 import { aiReadinessPaletteSources } from '../ai-readiness-palette';
 import { aiChecksPaletteSources } from '../ai-checks-palette';
 import { exportPaletteSources } from '../export-palette';
+import { helpPaletteSources } from '../help-palette';
 
 const URL_A = 'https://www.example.com/a';
 const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, schema: { blocks: [] } } as unknown as SeoAudit };
@@ -51,6 +52,7 @@ function everySource(): PaletteSource[] {
     ...aiReadinessPaletteSources(),
     ...aiChecksPaletteSources({ checkNow: yes, openSettings: vi.fn() }),
     ...exportPaletteSources({ copySeoCsv: vi.fn(async () => 1) }),
+    ...helpPaletteSources({ openSheet: vi.fn(), openLink: vi.fn(async () => 'opened' as const) }),
   ];
 }
 

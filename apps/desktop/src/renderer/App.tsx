@@ -24,6 +24,8 @@ import type { PanelJump } from './palette/registry';
 import { Projects } from './components/changes/Projects';
 import { useProjectsSheet } from './components/changes/projects-sheet';
 import { ScreenshotEditorSheet } from './components/changes/ScreenshotEditor';
+import { ShortcutsSheet } from './components/ShortcutsView';
+import { WhatsNewSheet } from './components/WhatsNewView';
 
 // The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`). Its rows: the
 // tab strip, the toolbar, the permission prompt bar, the render-profile editor bar while open
@@ -79,6 +81,8 @@ export function App() {
             {historyOpen ? <HistoryView onClose={closeHistory} /> : null}
             {projectsOpen ? <Projects tab={tab} onClose={closeProjects} /> : null}
             <ScreenshotEditorSheet />
+            <ShortcutsSheet tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
+            <WhatsNewSheet tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <SettingsSlot tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
           </div>

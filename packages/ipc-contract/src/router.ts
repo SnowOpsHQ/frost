@@ -33,6 +33,7 @@ import { projectsRouter } from './projects-router';
 import { inspectorRouter } from './inspector-router';
 import { seoExportRouter } from './seo-export-router';
 import { tabOverridesRouter } from './tab-overrides-router';
+import { helpRouter } from './help-router';
 
 // Every procedure starts `publicProcedure.use(enforceSender)` (spec `ipc-sender.feature.md`,
 // `every-procedure-enforces-sender`; Semgrep `ipc-sender-guard` in Task 5).
@@ -314,6 +315,8 @@ export const appRouter = router({
   seoExport: seoExportRouter,
   // Phase 11 Task 6 (`render-profile.feature.md`, Tab overrides): CSS off, cookies off and geolocation for one tab.
   tabOverrides: tabOverridesRouter,
+  // Phase 11 Task 11 (`help.feature.md`): the Help menu's sheets, What's New and Help's fixed pages.
+  help: helpRouter,
 });
 
 export type AppRouter = typeof appRouter;

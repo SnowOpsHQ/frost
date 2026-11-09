@@ -1120,3 +1120,14 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   at start, daily and after a stored change. Clear-range also forgets the recently-closed-tabs list
   (stated in the dialog). `changeCount` = the page's `ci_versions` at that URL minus its capture
   lanes. The project filter lists every live project, Unfiled included.
+- **Task 11:** Help URLs are the README (`#readme`) and `/issues/new` (Open question 8). `openLink`
+  takes `help`, `issue` or a release version, never a URL; menu clicks are the gesture, and from the
+  palette or a What's New button main spends the window's live gesture only after the request
+  resolves. `KEYBOARD_SHORTCUTS` is built from the existing constants; `WINDOW_SHORTCUTS` (Close
+  Window, Quit) is the only new shortcut spec; `Mod+/` is a menu accelerator only. The `help.*`
+  procedure schemas live in `specs/whats-new.schema.ts` (`help.spec.ts` stays Zod-free). What's New:
+  a first run records the version silently; a version change (or a stored value that is not a
+  version) shows it once, for the first chrome to ask, after the active tab stops loading; an
+  invalid running version turns it off. Help sheets, Settings, Projects and History show one at a
+  time and close on a page change. The release-notes entry covers Phases 8, 9 and 11; **the Phase 10
+  line is for the lead who merges Phase 10 to add**.
