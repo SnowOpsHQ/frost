@@ -529,3 +529,6 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   the pages starts its picker on the project and shows its version.
 - **Scenario: projects-delete-purges** — Cancel in main's dialog keeps it; confirmed, the project, its
   captures and its screenshot files are gone, and the Changes panel shows no captures.
+- **Scenario: projects-bulk-add-with-tags** — in `apps/desktop/e2e/rankings.e2e.ts` (`rankings.feature.md`,
+  End to end): Bulk add with three lines × two devices and a tag makes six tagged saved searches, the
+  Rankings tag filter shows only them, and nothing is requested.

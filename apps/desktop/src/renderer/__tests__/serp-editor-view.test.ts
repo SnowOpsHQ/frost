@@ -228,6 +228,25 @@ describe('the SERP parameter editor', () => {
     expect(new URL(editedSearchUrl(bingThird, { gl: 'de', hl: 'de' }, editorParamNames('bing', null))!).searchParams.has('first')).toBe(false);
   });
 
+  test('editor-keeps-the-pages-port', () => {
+    // spec: specs/serp-panels.feature.md — editor-keeps-the-pages-port
+    const names = { query: 'q', gl: 'gl', hl: 'hl' };
+    // The canonical URL (Phase 3's `params.url`) has no port; the page's own URL has it.
+    const served = serpEditorModel(tabState(other({ page: 3, offset: 20, url: 'http://search.frost-e2e.net/find?q=tea&start=20' }), 'http://search.frost-e2e.net:8123/find?q=tea&start=20&x=1', names))!;
+    expect(editorApply(served, { gl: 'de', hl: 'de' }).url).toBe('http://search.frost-e2e.net:8123/find?q=tea&gl=de&hl=de');
+    // The same page on its default port: unchanged.
+    const plain = serpEditorModel(tabState(other(), 'http://search.frost-e2e.net/find?q=tea', names))!;
+    expect(editorApply(plain, { gl: 'de', hl: '' }).url).toBe('http://search.frost-e2e.net/find?q=tea&gl=de');
+    // A page URL of another host, scheme or path is not the search's: the canonical origin stays.
+    for (const pageUrl of ['http://evil.com:8123/find?q=tea', 'https://search.frost-e2e.net:8123/find?q=tea', 'http://search.frost-e2e.net:8123/other?q=tea', 'not a url']) {
+      const model = serpEditorModel(tabState(other(), pageUrl, names))!;
+      expect(editorApply(model, { gl: 'de', hl: '' }).url, pageUrl).toBe('http://search.frost-e2e.net/find?q=tea&gl=de');
+    }
+    // Google: the chosen domain over https:, never the page's port.
+    const google8443 = serpEditorModel(tabState(google({ url: 'https://www.google.com/search?q=green+tea&gl=de&hl=de' }), 'https://www.google.com:8443/search?q=green+tea&gl=de&hl=de'))!;
+    expect(editorApply(google8443, { ...google8443.initial, host: 'www.google.fr' }).url).toBe('https://www.google.fr/search?q=green%20tea&gl=de&hl=de');
+  });
+
   test('trackable-search-rules', () => {
     // An engine of SEARCH_ENGINES, its default address, page 1, no filters: the Phase 6 shape.
     expect(trackableSearch(google({ gl: 'de', hl: 'en', device: 'mobile' }), {})).toEqual({ engine: 'google', query: 'green tea', country: 'de', language: 'en', device: 'mobile' });

@@ -71,10 +71,28 @@ export function editorFieldRows(model: SerpEditorModel, state: EditorState): Edi
 /** What the editor says when the engine has no settings it can edit. */
 export const EDITOR_NO_FIELDS = 'frost has no settings to edit for this engine.';
 
+/**
+ * The search Apply builds from: the tab's search whose canonical URL (Phase 3's `params.url`, which has
+ * no port) takes the page's own port when the page is that search's scheme, host and path, so an engine
+ * served on a port is edited on it (`editor-keeps-the-pages-port`); otherwise the search as it is.
+ * Google's chosen domain replaces the origin anyway.
+ */
+function applySource(model: SerpEditorModel): SearchParams {
+  try {
+    const canonical = new URL(model.params.url);
+    const page = new URL(model.pageUrl);
+    if (page.port === '' || page.protocol !== canonical.protocol || page.hostname !== canonical.hostname || page.pathname !== canonical.pathname) return model.params;
+    canonical.port = page.port;
+    return { ...model.params, url: canonical.href };
+  } catch {
+    return model.params;
+  }
+}
+
 /** Apply's URL (`null`: disabled) and, when there is none, why. */
 export function editorApply(model: SerpEditorModel, state: EditorState): { readonly url: string | null; readonly problem: string | null } {
   if (model.fields.length === 0) return { url: null, problem: EDITOR_NO_FIELDS };
-  const url = editedSearchUrl(model.params, state, model.names);
+  const url = editedSearchUrl(applySource(model), state, model.names);
   if (url !== null) return { url, problem: null };
   if (model.fields.some((field) => field.kind === 'host') && (state.host ?? '') === '') return { url: null, problem: 'Choose a Google domain.' };
   return { url: null, problem: 'frost cannot build this search with these settings.' };

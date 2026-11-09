@@ -147,6 +147,10 @@ it lands on is filed under that page's own search key).
   or a state value with `&`, `#`, `=`, `%`, a newline, `//evil.com` or `@` can never add a parameter or
   change the host or path (a value outside a field's list gives `null`).
 - **Scenario: edited-url-resets-page** — a page-3 search loads page 1 (no offset parameter).
+- **Scenario: editor-keeps-the-pages-port** — Phase 3's canonical `params.url` has no port, so Apply
+  builds from the page's own origin when it is the same scheme, host and path: an engine served on a
+  port (the e2e's synthetic engine) is edited on that port; Google's chosen domain stays `https:`
+  without one; a page URL of another host or path changes nothing.
 - **Scenario: trackable-search-rules** — only an engine of `SEARCH_ENGINES`, on its default address,
   page 1, no filters, a query and locale a saved search takes; otherwise `null` with the reason; a
   DuckDuckGo region becomes its country and language.
@@ -213,6 +217,9 @@ stated beside it before any click. The palette offers the same, asking first wit
   answer (`openDestinationMessage`).
 
 ### End to end (`apps/desktop/e2e/rankings.e2e.ts`)
+- **Scenario: serp-editor-applies-country-and-language** — on page 3 of a synthetic search, Edit search
+  sets country and language: the tab's URL is the same origin and path with the query and the pack's
+  `gl`/`hl` names only (page reset to 1). (`rankings.feature.md`, End to end.)
 - **Scenario: serp-open-in-perplexity** — on the synthetic result page, the panel's
   `serp-open-in-perplexity` button opens a new tab whose address is the built URL; the destination
   host resolves to `~NOTFOUND`, so nothing loads.

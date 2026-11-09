@@ -402,3 +402,42 @@ unchanged). Pure view model: `apps/desktop/src/renderer/rankings-view.ts`; compo
   not the empty state; a refused dates read says so and Compare waits. (`rankings-components.test.ts`)
 - **Scenario: series-close-returns-focus** — closing the series focuses its row's button.
   (`rankings-components.test.ts`)
+
+## End to end (`apps/desktop/e2e/rankings.e2e.ts`; plan Task 11)
+Over the built app, loopback only (`apps/desktop/e2e/rank-fixtures.ts`): frost's own synthetic result
+pages on `search.frost-e2e.net` (a query's first request has the site third, every later request has
+it second, a new domain third and another one down), a challenge page, and the signed test pack and
+key of `serp-fixtures.ts` through the unpackaged-only `--frost-e2e-serp-pack-url` /
+`--frost-e2e-serp-pack-key` seams. `--host-resolver-rules` maps the engine and the result domains (the
+site `leafhouse-frost-e2e.net`, the competitor `brewguide-frost-e2e.net`, two others) to `127.0.0.1`,
+all named in `--frost-e2e-public-hosts` (never `.example`, which is not public), and
+`www.perplexity.ai`, `chatgpt.com`, `www.google.com` and then every other name (`MAP * ~NOTFOUND`) to
+`~NOTFOUND`. The result domains are mapped to loopback so nothing of theirs reaches the network, but
+nothing listens on their ports, so the fixture server cannot count a request for one. It records every
+request on its own port: each scenario checks none was for a host other than the engine's, and the
+scenarios that must send nothing check its count did not move. No run is started (saved
+searches use the bundled pack's real engines): the disclosure, pacing and challenge stop are
+unit-tested (`projects.feature.md`, Searches in a run).
+- **Scenario: rankings-two-captures-show-change** — a project with the site and the competitor
+  (Settings); the synthetic result page captured into it from the Changes panel, reloaded (a new
+  order) and captured again: Rankings shows position `2`, change `+1` (up), a trend of two points
+  (best 2, worst 3), the competitor's column at `1`, and the series lists both readings newest first.
+- **Scenario: rankings-compare-two-dates** — Compare opens on the search with A the older reading and
+  B the newer; the comparison shows the site `up` (role `site`), the competitor `same` (role
+  `competitor`), a domain `new` and one `down`.
+- **Scenario: rankings-copy-csv** — a second search whose query starts with `=` is captured; Copy CSV
+  writes main's clipboard (read in main): CRLF lines, the header (`RANK_CSV_COLUMNS` then the
+  competitor's host) and two rows; the `=` query is written `"'=…"` (guarded, quoted), the other row's
+  position, change, best and competitor cells are plain numbers. (Titles are not exported, so the
+  guarded cell is the query.)
+- **Scenario: projects-bulk-add-with-tags** — Bulk add with three lines, one locale and two devices and
+  a tag: three lines `added`, six saved searches each carrying the tag; Rankings lists them first
+  (`No reading`) and, filtered by the tag, only them; the fixture server saw no request and no tab
+  opened.
+- **Scenario: serp-editor-applies-country-and-language** — on page 3 of a synthetic search, Edit
+  search sets country and language: the tab loads the same origin (its port too) and path with the
+  query and the pack's `gl`/`hl` names only, page 1 (`serp-panels.feature.md`, Edit search).
+- **Scenario: serp-open-in-perplexity** — the panel's Perplexity button opens a background tab whose
+  address is `aiDestinationUrl` of the tab's query; the result page stays in front; the host does not
+  resolve, so the tab ends on its load error and nothing reached the fixture server
+  (`serp-panels.feature.md`, Open in an AI engine).
