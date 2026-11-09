@@ -161,5 +161,7 @@ export function isEngineResultPath(url: string, pack: SelectorPack | null = bund
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
   const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  // An engine's bare home page (DuckDuckGo's result path is `/`) sends no search: a page (council review).
+  if (parsed.pathname === '/' && (parsed.searchParams.get('q') ?? '').trim() === '') return false;
   return pack.engines.some((engine) => engine.hosts.includes(host) && engine.paths.includes(parsed.pathname));
 }

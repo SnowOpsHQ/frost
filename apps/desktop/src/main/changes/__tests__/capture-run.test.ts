@@ -1239,16 +1239,28 @@ describe('searches in a run', () => {
   });
   // spec: specs/projects.feature.md — Searches in a run (council review: a page off an engine's result paths is a page target)
   test('capture-run-engine-page-off-result-paths-is-a-page', async () => {
-    const targets = [...pages(MAPS), ...pages('https://duckduckgo.com/about'), ...pages(A)];
+    const targets = [...pages(MAPS), ...pages('https://duckduckgo.com/about'), ...pages('https://duckduckgo.com/'), ...pages(A)];
     const fake = setup({ serpVerdictOf: () => 'not-serp' });
     const at = timedNavigations(fake);
     await fake.runs.start(plan(targets));
     await run(RETRY * 8);
     // Captured as pages (no verdict asked, no spacing), and the run goes on to the end.
     expect(fake.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
-    expect(outcomes(fake.runs.state())).toEqual(['captured', 'captured', 'captured']);
-    expect(fake.seen.map((seen) => seen.url)).toEqual([MAPS, 'https://duckduckgo.com/about', A]);
-    expect(at[2]![1] - at[0]![1]).toBeLessThan(SPACING);
+    expect(outcomes(fake.runs.state())).toEqual(['captured', 'captured', 'captured', 'captured']);
+    expect(fake.seen.map((seen) => seen.url)).toEqual([MAPS, 'https://duckduckgo.com/about', 'https://duckduckgo.com/', A]);
+    expect(at[3]![1] - at[0]![1]).toBeLessThan(SPACING);
+  });
+  // spec: specs/projects.feature.md — Searches in a run (3. a page target that is a result page is not held to a device)
+  test('capture-run-result-page-target-ignores-the-device', async () => {
+    // The user pinned a phone profile to the engine; the project keeps the default profile.
+    const fake = deviceAware({ serpVerdictOf: () => 'ready' });
+    fake.pins.set('https://www.google.com', PHONE);
+    await fake.runs.start(plan([...pages(SEARCH), ...pages(A)]));
+    await run(RETRY * 12);
+    // Captured on the device in effect (mobile), and the run goes on: a page target has no saved search to split.
+    expect(fake.runs.state()).toMatchObject({ state: 'done', blockedReason: null });
+    expect(outcomes(fake.runs.state())).toEqual(['captured', 'captured']);
+    expect(fake.seen.find((seen) => seen.options.searchParams !== null)!.options.searchParams?.device).toBe('mobile');
   });
   // spec: specs/projects.feature.md — Capture now (4. a search target's verdict is checked again before each attempt)
   test('capture-run-retry-checks-the-verdict-again', async () => {

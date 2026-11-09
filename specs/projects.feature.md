@@ -181,7 +181,9 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
      (`serpFiltersOf`) must be the target URL's (none for a saved search), so a reading a run stores
      is always under its search's key (`rankings.feature.md`). Another device (a site's pin, a run
      tab whose profile could not be set) or other filters is `mismatch`, nothing stored. A page target
-     that is a result page is compared on the device of its group's profile (the project's).
+     that is a result page has no saved search, so it is compared on everything but the device (council
+     review: a site's pin on an engine never stops a run there); its reading files under the device in
+     effect. An engine's bare home page (`/` with no `q`) is an ordinary page.
      `ready` with no tab parameters is `no-reading`;
   4. otherwise it blocks **without capturing**: `unreadable`, `not-serp` (`not-a-result-page`),
      `disabled` (`serp-off`), `ready` for another search (`mismatch`), still `pending` after the wait

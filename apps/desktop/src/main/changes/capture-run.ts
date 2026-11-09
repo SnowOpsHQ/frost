@@ -21,7 +21,6 @@ import {
 import { sameRunSearch, serpFiltersOf } from '@app/specs/rankings-url.spec';
 import { sortedJson, type SerpRunVerdict } from '@app/specs/rankings.spec';
 import { isDefaultRenderProfile, sameRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
-import { SERP_DEVICE_OF_PRESET } from '@app/specs/serp.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
 import { isEngineResultPath, searchParamsForUrl, type SearchParamsOf, type SerpVerdictOf } from './serp-params';
 import { storedPageUrl } from './snapshot';
@@ -418,12 +417,14 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     /** The page of the first commit after the navigation (a redirect allowed): the capture must be of it. */
     let landed: string | null = null;
     let sawLoading = false;
+    /** The target's search (a query's, or a result page's own): `null` for a page that is not one. */
+    const search = runSearchOf(target);
     /**
-     * The target's search (a query's, or a result page's own on the device of its profile, the project's):
-     * `null` for a page that is not one.
+     * Whether `at` is the target's search. A query is held to its saved device (its reading files under its
+     * saved search's key); a page target has no saved search, so it is compared on everything but the device
+     * (council review: a pinned engine site must not stop a run at a result-page page target).
      */
-    const own = runSearchOf(target);
-    const search = own === null || target.kind === 'query' ? own : { ...own, device: SERP_DEVICE_OF_PRESET[profileFor(target, plan.profile)?.device ?? 'none'] };
+    const isTargetSearch = (at: SearchParams, wanted: SearchParams): boolean => sameRunSearch(at, target.kind === 'query' ? wanted : { ...wanted, device: at.device });
     /** The target URL's filters (none for a saved search): the landed page must carry the same. */
     const filtersOf = (url: string | null): string => (url === null || search === null ? '' : sortedJson(serpFiltersOf(url, search.engine)));
     /** Gated: a query, a result page, or any page on an engine's result path (one without a search blocks as it lands). */
@@ -457,7 +458,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       if (page === null || wanted === null) return false;
       try {
         const at = searchParamsForUrl(page, wanted.device);
-        return at !== null && sameRunSearch(at, wanted);
+        return at !== null && isTargetSearch(at, wanted);
       } catch {
         return false;
       }
@@ -546,7 +547,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
         const tabParams = tabParamsOf(tabId, landed);
         if (tabParams === null) return blocked('no-reading');
         // Another device (a pin, a profile not set) or other filters would file the reading under another key.
-        if (!sameRunSearch(tabParams, search!) || filtersOf(landed) !== filtersOf(target.url)) return blocked('mismatch');
+        if (!isTargetSearch(tabParams, search!) || filtersOf(landed) !== filtersOf(target.url)) return blocked('mismatch');
         passed = tabParams;
       }
 
