@@ -32,11 +32,12 @@ import {
 import { knownProbes } from '../../visibility-view';
 import { Flash, useFlash } from './actions';
 import { PageText, Section } from './parts';
-import { SearchTools } from './SerpEditor';
+import { OpenInAi, SearchTools } from './SerpEditor';
 import { OutlineIcon, SerpIcon } from './serp-icons';
 
 // The SERP panel (acceptance `serp-panels.feature.md`): the tab's search parameters (with "Edit
-// search" and "Track this search…", `SerpEditor.tsx`), the query's intent, what the result page is
+// search" and "Track this search…", `SerpEditor.tsx`), "Open in" an AI engine (Phase 10 Task 10,
+// `OpenInAi`: on the user's click only), the query's intent, what the result page is
 // made of, who owns it and its results, the outlines toggle, and the selector pack with "Check for
 // selector updates"; or the page's state (not a result page, being read, couldn't read this layout,
 // reading off). It renders from `serp.watch` alone, never
@@ -348,6 +349,7 @@ export function Serp({ tab }: { readonly tab: TabState }) {
     <div className="serp" data-testid="serp-panel" data-state={state.serp.status}>
       {params ? <ParamsBar params={params} /> : null}
       {params ? <SearchTools state={state} /> : null}
+      {params ? <OpenInAi tabId={tab.id} testId="serp-open-in" /> : null}
       {params ? <IntentLine state={state} intentState={intentState} onEnabled={refreshIntent} /> : null}
       {ready ? (
         <>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { AiDestinationId } from '@app/specs/ai-destinations.spec';
 import type { IntentState } from '@app/specs/intent-classifier.spec';
 import type { SerpTabState } from '@app/specs/serp-service.schema';
 import type { ProbesState } from '@app/specs/visibility-probes.schema';
@@ -40,6 +41,8 @@ export const serpActions = {
   classify: (query: string) => ipc.serp.classify.query({ query }).catch(() => null),
   runProbes: (tabId: number) => ipc.serp.runProbes.mutate({ tabId }).catch(() => false),
   stopProbes: (tabId: number) => ipc.serp.stopProbes.mutate({ tabId }).catch(() => false),
+  // "Open in" an AI engine (Phase 10 Task 10): the tab and a table id only, on the user's click or palette action.
+  openDestination: (tabId: number, destination: AiDestinationId) => ipc.serp.openDestination.mutate({ tabId, destination }).catch(() => null),
 };
 
 /** A long-poll loop over `watch` for `tabId`, keeping the latest answer for that tab. */

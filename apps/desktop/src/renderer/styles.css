@@ -9537,3 +9537,20 @@ input {
 .serp-editor-hint {
   font-size: 11px;
 }
+
+/* "Open in" an AI engine (Phase 10 Task 10): the panel's row and the editor's. While the editor is
+   open its own row stands in for the panel's. */
+.serp-open-in {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.serp-open-in .seo-note {
+  margin: 0;
+}
+
+.serp-search-tools:has(.serp-editor) + .serp-open-in {
+  display: none;
+}

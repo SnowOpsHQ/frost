@@ -1,8 +1,10 @@
 // Spec: specs/command-palette.spec.ts (FEATURE_PANEL_JUMPS, Registration API), specs/intent-classifier.spec.ts
 // (INTENT_ENABLE_PROMPT, INTENT_ENABLE_MESSAGES), specs/serp-selector-pack.spec.ts (PACK_UPDATE_MESSAGES),
-// specs/visibility-probes.spec.ts (PROBE_DISCLOSURE), specs/serp-param-editor.spec.ts (TRACK_REFUSAL_MESSAGES)
-// Acceptance: specs/serp-panels.feature.md (Command palette; Edit search, Command palette)
+// specs/visibility-probes.spec.ts (PROBE_DISCLOSURE), specs/serp-param-editor.spec.ts (TRACK_REFUSAL_MESSAGES),
+// specs/ai-destinations.spec.ts (AI_SEARCH_DESTINATIONS, AI_DESTINATION_NOTE, openDestinationMessage)
+// Acceptance: specs/serp-panels.feature.md (Command palette; Edit search, Command palette; Open in an AI engine, Command palette)
 import { describe, expect, test, vi } from 'vitest';
+import { AI_DESTINATION_NOTE, AI_SEARCH_DESTINATIONS, OPEN_DESTINATION_REFUSAL_MESSAGES, openDestinationMessage } from '@app/specs/ai-destinations.spec';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
 import { FEATURE_PANEL_JUMPS } from '@app/specs/command-palette.spec';
 import { INTENT_ENABLE_MESSAGES, INTENT_ENABLE_PROMPT, type IntentState } from '@app/specs/intent-classifier.spec';
@@ -49,6 +51,7 @@ function setup(context: Partial<PaletteContext> = {}, known: Known = {}) {
     runProbes: vi.fn(async () => true),
     stopProbes: vi.fn(async () => true),
     openEditor: vi.fn(),
+    openDestination: vi.fn(async (_tabId: number, _destination: string) => ({ status: 'opened' as const, tabId: 11 })),
     knownSerp: () => known.serp,
     knownProbes: () => known.probes,
     knownIntent: () => known.intent,
@@ -208,5 +211,41 @@ describe('SERP palette actions', () => {
       expect(context.ids()).not.toContain('serp.edit');
       expect(context.ids()).not.toContain('serp.track');
     }
+  });
+
+  test('serp-palette-ai-destinations', async () => {
+    const IDS = AI_SEARCH_DESTINATIONS.map((d) => `serp.open-in-${d.id}`);
+    // On a known result page (pending, ready, or unreadable with its parameters): one action per destination.
+    for (const known of [serpState('pending'), serpState('ready', { serp: { status: 'ready', tabId: 3, documentSeq: 1, url: URL_A, readAt: 1, snapshot: { params: { engine: 'google', engineLabel: 'Google', query: 'tea', gl: null, hl: null, device: 'desktop', page: 1, offset: null, url: URL_A } } } as unknown as SerpTabState['serp'] })]) {
+      expect(setup({}, { serp: known }).ids(), known.serp.status).toEqual(expect.arrayContaining(IDS));
+    }
+    // Not on a page known not to be a result page, before the chrome has seen one, without a tab,
+    // on a non-web page, or for a state of another tab.
+    for (const context of [setup({}, { serp: serpState('not-serp') }), setup(), setup({ tab: undefined }, { serp: serpState('pending') }), setup({ tab: tab({ url: 'about:blank' }) }, { serp: serpState('pending') }), setup({ tab: tab({ id: 4 }) }, { serp: serpState('pending') })]) {
+      for (const id of IDS) expect(context.ids()).not.toContain(id);
+    }
+    const { ctx, action, api } = setup({}, { serp: serpState('pending') });
+    for (const [index, destination] of AI_SEARCH_DESTINATIONS.entries()) {
+      const item = action(`serp.open-in-${destination.id}`);
+      expect(item.label).toBe(`Open search in ${destination.label}`);
+      expect(item.group).toBe('open-in');
+      // It asks first, with the note; nothing is called until it runs.
+      const confirm = item.confirm!(ctx)!;
+      expect(confirm.note).toBe(AI_DESTINATION_NOTE);
+      expect(confirm.message).toContain(destination.label);
+      expect(api.openDestination).toHaveBeenCalledTimes(index);
+      // Running it names the tab and the table id only.
+      await expect(Promise.resolve(item.run(ctx))).resolves.toBe(openDestinationMessage(destination, { status: 'opened', tabId: 11 }));
+      expect(api.openDestination).toHaveBeenLastCalledWith(3, destination.id);
+      expect((api.openDestination as ReturnType<typeof vi.fn>).mock.lastCall).toHaveLength(2);
+    }
+    expect(api.openDestination).toHaveBeenCalledTimes(AI_SEARCH_DESTINATIONS.length);
+    // Main's refusals and an IPC failure are reported.
+    const refused = setup({}, { serp: serpState('pending') });
+    (refused.api.openDestination as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ status: 'refused', reason: 'no-tab' }).mockResolvedValueOnce({ status: 'refused', reason: 'no-search' }).mockResolvedValueOnce(null);
+    const perplexity = () => refused.action('serp.open-in-perplexity');
+    await expect(Promise.resolve(perplexity().run(refused.ctx))).resolves.toBe(OPEN_DESTINATION_REFUSAL_MESSAGES['no-tab']);
+    await expect(Promise.resolve(perplexity().run(refused.ctx))).resolves.toBe(OPEN_DESTINATION_REFUSAL_MESSAGES['no-search']);
+    await expect(Promise.resolve(perplexity().run(refused.ctx))).resolves.toBe(OPEN_DESTINATION_REFUSAL_MESSAGES['no-tab']);
   });
 });

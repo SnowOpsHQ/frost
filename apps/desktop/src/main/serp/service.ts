@@ -89,8 +89,8 @@ export interface SerpServiceOptions {
 /** The SERP overlay's read API (`SerpReadApi` without the probes, which `setup.ts` joins from `probes.ts`). */
 export type SerpOverlayReadApi = Omit<SerpReadApi, 'probes' | 'runProbes'>;
 
-/** The SERP overlay's part of `SerpService` (the probes' part is `probes.ts`, joined in `setup.ts`). */
-export interface Serp extends Omit<SerpService, keyof SerpProbesService> {
+/** The SERP overlay's part of `SerpService` (the probes' part is `probes.ts` and `openDestination` is `destinations.ts`, joined in `setup.ts`). */
+export interface Serp extends Omit<SerpService, keyof SerpProbesService | 'openDestination'> {
   /** The read API for Phase 5 (`SerpReadApi`, the probes aside). */
   readonly readApi: SerpOverlayReadApi;
   /** A page finished loading (`did-finish-load`): read it if it is a result page. */
@@ -105,6 +105,8 @@ export interface Serp extends Omit<SerpService, keyof SerpProbesService> {
   forget(): void;
   /** The app is quitting: timers stop, watchers answer, nothing runs again. */
   dispose(): void;
+  /** The tab's SERP state as it stands, passively: no read is started and no reading dropped (Phase 10 Task 10, `destinations.ts`). */
+  peek(tabId: number): SerpState;
   /** How many `watch` calls wait. */
   pendingWatches(): number;
 }
@@ -506,6 +508,8 @@ export function createSerpService(options: SerpServiceOptions): Serp {
     intentState: () => classifier.state(),
     enableIntent: () => classifier.ensureModel().catch(() => 'storage' as const),
     classify: (query) => classifier.classify(query).catch((): IntentAnswer => ({ state: 'unavailable' })),
+
+    peek: (tabId) => serpState(tabId, true).serp,
 
     readApi: {
       snapshot: (tabId) => serpState(tabId).serp,

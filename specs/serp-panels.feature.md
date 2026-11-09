@@ -166,6 +166,57 @@ it lands on is filed under that page's own search key).
   panel with the editor; "Track this search…" opens it with the project picker when the search is
   trackable, and answers the reason when it is not; neither on a page known not to be a result page.
 
+## Open in an AI engine (Phase 10 Task 10; `specs/ai-destinations.spec.ts`; plan Decision 13)
+On a result page (a `pending`, `ready` or `unreadable` reading with search parameters) the SERP panel
+shows an **Open in** row under the search tools, and the editor shows the same row: one button per
+`AI_SEARCH_DESTINATIONS` entry (Perplexity, ChatGPT, Google AI Mode), with `AI_DESTINATION_NOTE`
+stated beside it before any click. The palette offers the same, asking first with the note.
+- **The tab's own search.** A button or palette action calls `serp.openDestination` with the tab id and
+  the destination id only. Main reads the tab's SERP state, takes its `params.query`, builds the URL
+  with `aiDestinationUrl` (the table's fixed `https:` origin and path, the query as one encoded value)
+  and opens it with the browser controller's `openBackgroundTab(url, false)` (browse guards, tab cap,
+  no render profile inherited). Nothing the renderer typed reaches the URL.
+- **Only on the user's action.** Nothing opens a destination by itself: no page load, reading, watch
+  or panel mount calls `serp.openDestination`.
+- **Refusals** (`OPEN_DESTINATION_REFUSALS`): `no-search` for a tab showing no search (not a result
+  page, reading off, an unreadable page without parameters, a URL that does not fit); `no-tab` when no
+  tab opened (the tab cap, no window, no opener wired). The status line says
+  `OPEN_DESTINATION_REFUSAL_MESSAGES[reason]`, or that the destination opened in a background tab.
+- **Not a result page of frost's.** The destinations' pages are never read as SERPs: the bundled
+  pack's `matchSerp` answers `null` for each URL (Google AI Mode's `udm=50` hits the pack's `reject`
+  rule). frost runs nothing specific there (the generic audit runs as on any page).
+
+### Main (`apps/desktop/src/main/serp/__tests__/destinations.test.ts`)
+- **Scenario: destination-urls-are-fixed-https** — each URL is the table's `https:` origin and path
+  with exactly its parameters; a query with `&`, `#`, `/`, `=`, `@`, `//evil.com`, a newline or a lone
+  surrogate stays one value; a blank query or one past `OPEN_IN_URL_MAX_LENGTH` gives `null`.
+- **Scenario: destination-uses-the-tabs-own-query** — the URL carries the tab's `params.query` (from a
+  `pending`, `ready` or `unreadable` state); a tab that is not a SERP (`not-serp`, `disabled`, an
+  unreadable page without parameters) is `no-search`, and the opener is never called.
+- **Scenario: destination-opener-gets-only-table-urls** — the injected opener receives exactly
+  `aiDestinationUrl(destination, query)` and nothing else, once per call.
+- **Scenario: ai-destinations-are-not-serps** — the bundled pack's `matchSerp` gives `null` for every
+  destination URL, on every device.
+- **Scenario: destination-no-tab-at-the-cap** — an opener answering `null` (the tab cap) gives
+  `no-tab`; so does a service set up without an opener.
+
+### Router (`packages/ipc-contract/src/__tests__/serp-router.test.ts`)
+- **Scenario: open-destination-enforces-sender** — `serp.openDestination` refuses a foreign sender
+  before the service is touched, takes `{ tabId, destination }` strictly (no query, URL or host;
+  an unknown destination is refused), fails closed without the service and answers
+  `OpenDestinationAnswerSchema`.
+
+### Command palette (`serp-palette.test.ts`)
+- **Scenario: serp-palette-ai-destinations** — one action per destination on a known result page
+  (none on a page known not to be one, before the chrome has seen one, or without a tab), asking first
+  with `AI_DESTINATION_NOTE`; running it calls `openDestination(tabId, id)` only, and reports the
+  answer (`openDestinationMessage`).
+
+### End to end (`apps/desktop/e2e/rankings.e2e.ts`)
+- **Scenario: serp-open-in-perplexity** — on the synthetic result page, the panel's
+  `serp-open-in-perplexity` button opens a new tab whose address is the built URL; the destination
+  host resolves to `~NOTFOUND`, so nothing loads.
+
 ## End to end (`apps/desktop/e2e/serp.e2e.ts`, `apps/desktop/e2e/visibility.e2e.ts`)
 Synthetic result pages (frost's own minimal markup) served by a loopback server under a public-looking
 name (`--host-resolver-rules`, `--frost-e2e-public-hosts`). The test makes an ephemeral Ed25519

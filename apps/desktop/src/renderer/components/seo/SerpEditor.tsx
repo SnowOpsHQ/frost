@@ -1,7 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { AI_DESTINATION_NOTE, AI_DESTINATION_ROW_LABEL, AI_SEARCH_DESTINATIONS, aiDestinationHost, aiDestinationLabel, openDestinationMessage } from '@app/specs/ai-destinations.spec';
 import type { ProjectSummary } from '@app/specs/projects.spec';
 import type { EditorState } from '@app/specs/serp-param-editor.spec';
 import type { SerpTabState } from '@app/specs/serp-service.schema';
+import { serpActions } from '../../hooks/useSerp';
 import { actions, ipc } from '../../ipc';
 import { onSerpEditorRequest, serpEditorModel, takeSerpEditorRequest, editorApply, editorFieldRows, trackAnswerText, trackProjectChoices, trackView, unsupportedNote, type SerpEditorMode, type SerpEditorModel } from '../../serp-editor-view';
 import { notifyProjectsChanged, openProjects } from '../changes/projects-sheet';
@@ -13,9 +15,54 @@ import { Flash, useFlash } from './actions';
 // URL to `browser.navigate`, the address bar's path with its browse guards, and nothing else. No page
 // script runs. "Track this search…" saves the tab's search to a project through `projects.addSearch`
 // (Phase 6's validated path: main builds and reads the URL again), or says why it cannot.
+// `OpenInAi` (Phase 10 Task 10; `serp-panels.feature.md`, Open in an AI engine) is the "Open in" row:
+// one button per AI destination, the note stated before any click; a click sends main the tab id and
+// the destination id only (`serp.openDestination`), and main builds the URL from the tab's own search.
+
+/**
+ * "Open in" an AI engine: a button per `AI_SEARCH_DESTINATIONS` entry, with `AI_DESTINATION_NOTE`.
+ * It opens only on a click (nothing here runs on mount or on a new reading). `testId` prefixes each
+ * hook (`serp-open-in` in the panel: `serp-open-in-perplexity` …; `serp-edit-open-in` in the editor).
+ */
+export function OpenInAi({ tabId, testId }: { readonly tabId: number; readonly testId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [message, flash] = useFlash();
+  const noteId = useId();
+  return (
+    <div className="serp-open-in" data-testid={testId} role="group" aria-label="Open this search in an AI engine" aria-describedby={noteId}>
+      <span className="serp-editor-label">{AI_DESTINATION_ROW_LABEL}</span>
+      <div className="seo-panel-tools">
+        {AI_SEARCH_DESTINATIONS.map((destination) => (
+          <button
+            key={destination.id}
+            type="button"
+            className="panel-button"
+            data-testid={`${testId}-${destination.id}`}
+            aria-label={aiDestinationLabel(destination)}
+            title={`${aiDestinationLabel(destination)} (${aiDestinationHost(destination)})`}
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              void serpActions.openDestination(tabId, destination.id).then((result) => {
+                setBusy(false);
+                flash(openDestinationMessage(destination, result));
+              });
+            }}
+          >
+            {destination.label}
+          </button>
+        ))}
+        <Flash message={message} testId={`${testId}-flash`} />
+      </div>
+      <p className="seo-note" id={noteId} data-testid={`${testId}-note`}>
+        {AI_DESTINATION_NOTE}
+      </p>
+    </div>
+  );
+}
 
 /** The editor: one labelled menu per field, Apply (disabled while there is no URL) and Cancel. */
-function Editor({ model, onClose }: { readonly model: SerpEditorModel; readonly onClose: () => void }) {
+function Editor({ model, tabId, onClose }: { readonly model: SerpEditorModel; readonly tabId: number; readonly onClose: () => void }) {
   const [state, setState] = useState<EditorState>(model.initial);
   const [busy, setBusy] = useState(false);
   const [message, flash] = useFlash();
@@ -73,7 +120,8 @@ function Editor({ model, onClose }: { readonly model: SerpEditorModel; readonly 
         </p>
       )}
       <p className="seo-note">The search opens in this tab, on page 1. frost sends only these settings and the page’s own query.</p>
-      {/* Phase 10 Task 10 adds its "Open in" row (AI destinations) here. */}
+      {/* "Open in" an AI engine (Phase 10 Task 10): the tab's own search as it is now, not these settings. */}
+      <OpenInAi tabId={tabId} testId="serp-edit-open-in" />
       <div className="seo-panel-tools">
         <button type="submit" className="panel-button" data-testid="serp-edit-apply" disabled={apply.url === null || busy} data-busy={busy}>
           Apply
@@ -246,7 +294,7 @@ export function SearchTools({ state }: { readonly state: SerpTabState }) {
           {track.reason}
         </p>
       )}
-      {mode === 'edit' && model.fields.length > 0 ? <Editor key={pageKey} model={model} onClose={close} /> : null}
+      {mode === 'edit' && model.fields.length > 0 ? <Editor key={pageKey} model={model} tabId={tabId} onClose={close} /> : null}
       {mode === 'track' && track.search !== null ? <Track key={pageKey} model={model} onClose={close} /> : null}
     </div>
   );

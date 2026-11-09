@@ -22,6 +22,7 @@
  * `url` is the page's own URL (the reading is of that page); the canonical one is `params.url`.
  */
 import { z } from 'zod';
+import { AI_DESTINATION_IDS, OPEN_DESTINATION_REFUSALS, type OpenDestinationResult } from './ai-destinations.spec';
 import { INTENT_LIMITS, INTENT_STATES, INTENT_ENABLE_OUTCOMES, type IntentAnswer } from './intent-classifier.spec';
 import { IntentResultSchema } from './intent-classifier.schema';
 import { PACK_SOURCES, PACK_UPDATE_OUTCOMES } from './serp-selector-pack.spec';
@@ -147,3 +148,20 @@ export type SerpTabInput = z.infer<typeof SerpTabInputSchema>;
 export type SerpWatchInput = z.infer<typeof SerpWatchInputSchema>;
 export type SerpOutlinesInput = z.infer<typeof SerpOutlinesInputSchema>;
 export type SerpClassifyInput = z.infer<typeof SerpClassifyInputSchema>;
+
+/**
+ * `serp.openDestination` input (Phase 10 Task 10; `ai-destinations.spec.ts`): the tab and a
+ * destination id of `AI_SEARCH_DESTINATIONS`, nothing else. Never a query, a URL or a host: main
+ * builds the URL from the table and the tab's own search.
+ */
+export const OpenDestinationInputSchema = z.strictObject({ tabId, destination: z.enum(AI_DESTINATION_IDS) });
+export type OpenDestinationInput = z.infer<typeof OpenDestinationInputSchema>;
+/** `serp.openDestination`'s answer (`OpenDestinationResult`): the tab opened, or why not (`OPEN_DESTINATION_REFUSALS`). */
+export const OpenDestinationAnswerSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('opened'), tabId }),
+  z.strictObject({ status: z.literal('refused'), reason: z.enum(OPEN_DESTINATION_REFUSALS) }),
+]);
+type OpenDestinationAnswerParsed = z.infer<typeof OpenDestinationAnswerSchema>;
+// The schema and the spec's type describe one shape.
+const _destinationMatches: [OpenDestinationAnswerParsed extends OpenDestinationResult ? true : false, OpenDestinationResult extends OpenDestinationAnswerParsed ? true : false] = [true, true];
+void _destinationMatches;
