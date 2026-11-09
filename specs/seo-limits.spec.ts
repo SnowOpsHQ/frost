@@ -107,6 +107,15 @@ export const MAX_TEXT_HIGHLIGHT_TARGETS = 20;
 export const MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET = 16;
 
 /**
+ * The keyphrase highlight (Phase 11 Task 2; `seo-sidebar.spec.ts`, `HIGHLIGHT_MODES` `keyphrase`):
+ * every whole-word occurrence of the phrase is boxed, the first `MAX_KEYPHRASE_MATCHES` in page order
+ * (each with at most `MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET` rects), found by the same bounded text walk.
+ * The phrase `seo.setHighlight` names is 1 to `HIGHLIGHT_PHRASE_MAX_CHARS` characters on one line.
+ */
+export const MAX_KEYPHRASE_MATCHES = 500;
+export const HIGHLIGHT_PHRASE_MAX_CHARS = 100;
+
+/**
  * Caps on the snapshot. Lists keep their **first** `max…` entries in document order and report the
  * page's full count beside them (`…Total`); strings keep their first `max…Chars` characters and,
  * where a rule measures the value, its full length too (`CappedText.length`).

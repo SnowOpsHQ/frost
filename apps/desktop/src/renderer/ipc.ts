@@ -35,8 +35,8 @@ export const actions = {
   rerunAudit: (tabId: number) => ipc.seo.rerun.mutate({ tabId }).catch(ignore),
   /** Opens an `http(s)` URL from a panel in a background tab (main checks the scheme); resolves the tab's id or `null`. */
   openBackgroundTab: (url: string, options: { readonly inherit?: boolean } = {}) => ipc.browser.openBackgroundTab.mutate({ url, ...(options.inherit === true ? { inherit: true } : {}) }).catch(() => null),
-  /** Sets the tab's highlight overlay (`seo.setHighlight`); resolves whether it was set. */
-  setHighlight: (tabId: number, mode: HighlightMode) => ipc.seo.setHighlight.mutate({ tabId, mode }).catch(() => false),
+  /** Sets the tab's highlight overlay (`seo.setHighlight`; `phrase` only for `keyphrase`); resolves whether it was set. */
+  setHighlight: (tabId: number, mode: HighlightMode, phrase?: string) => ipc.seo.setHighlight.mutate(phrase === undefined ? { tabId, mode } : { tabId, mode, phrase }).catch(() => false),
   /** Copies the filtered links of the audit on screen as CSV through main's clipboard; resolves how many rows (`null`: nothing copied). */
   copyLinksCsv: (tabId: number, audit: SeoAuditRef, filter: LinkFilter) => ipc.seo.copyLinksCsv.mutate({ tabId, audit, filter }).catch(() => null),
   /** Copies a URL the audit on screen lists through main's clipboard; resolves whether it was copied. */

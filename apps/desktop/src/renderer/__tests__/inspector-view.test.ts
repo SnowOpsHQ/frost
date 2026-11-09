@@ -169,7 +169,7 @@ describe('inspector view', () => {
     const registry = createPaletteRegistry();
     registry.register(...builtinPaletteSources(new Proxy({}, { get: () => vi.fn(async () => true) }) as PaletteApi), ...inspectorPaletteSources(api));
     const ctxFor = (changes: Partial<TabState> | undefined): PaletteContext => {
-      const active = changes === undefined ? undefined : ({ id: 3, url: URL_A, title: 'A', loading: false, crashed: false, documentSeq: 1, highlight: 'off', ...changes } as TabState);
+      const active = changes === undefined ? undefined : ({ id: 3, url: URL_A, title: 'A', loading: false, crashed: false, documentSeq: 1, highlight: 'off', highlightPhrase: null, ...changes } as TabState);
       const state = { version: 1, tabs: active ? [active] : [], activeTabId: active?.id ?? null } as unknown as BrowserState;
       const audit: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1 } as unknown as SeoAudit };
       return { state, tab: active, audit, sidebarOpen: false, chrome: { openPanel: vi.fn(), setSidebarOpen: vi.fn() } };

@@ -331,6 +331,7 @@ function start(): void {
     renderProfiles,
     searchEngine: () => searchEngine.searchEngine(),
     contentNotesGeneration: () => content.generation(),
+    targetQuery: (url) => content.targetQueryOf(url),
   });
 
   // Change intelligence (specs/changes-capture.feature.md): the active tab's ready audit and its regions, captured into the session database.

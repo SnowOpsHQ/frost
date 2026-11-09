@@ -6235,7 +6235,7 @@ input {
 
 .seo-ngram {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 2px 10px;
   padding: 6px 0 7px;
@@ -6280,6 +6280,41 @@ input {
   grid-column: 3;
   display: inline-flex;
   gap: 2px;
+}
+
+/* An n-gram row's keyphrase highlight (Phase 11): icon only, pressed while it shows that phrase. */
+.seo-ngram-highlight {
+  grid-row: 1 / 3;
+  grid-column: 4;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--icon);
+}
+
+.seo-ngram-highlight .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.seo-ngram-highlight:hover {
+  border-color: var(--border-field);
+}
+
+.seo-ngram-highlight:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.seo-ngram-highlight[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
 }
 
 .seo-ngram-place {

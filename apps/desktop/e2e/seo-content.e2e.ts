@@ -1,6 +1,6 @@
 // Specs: specs/seo-content.spec.ts (SNIPPET_BUDGETS_PX, SNIPPET_ELLIPSIS, TARGET_QUERY_PLACES, Copy as HTML,
 // READABILITY_FORMULAS, INFLESZ_BANDS, SENTENCE_LIMITS), specs/seo-sidebar.spec.ts (SEO_PANELS, HIGHLIGHT_MODES,
-// HIGHLIGHT_STYLES, TextHighlightTarget), specs/seo-limits.spec.ts (SEO_WORLD_ID), specs/gsc-targets.spec.ts
+// HIGHLIGHT_STYLES, TextHighlightTarget; keyphrase, Phase 11), specs/seo-limits.spec.ts (SEO_WORLD_ID), specs/gsc-targets.spec.ts
 // (GSC_TARGET_SUGGESTIONS, GSC_TARGETS_COPY)
 // Acceptance: specs/seo-content.feature.md (End to end)
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -83,12 +83,20 @@ ${filler(21, 20)}
 <p id="last">${easy} ${LONG_SENTENCES.last}</p></main></body></html>`;
 }
 
+/** "running shoes" four times in four blocks, once in capitals, and once inside a longer word ("shoestring"). */
+const KEYPHRASE_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Shoes for trail runs</title></head>
+<body><main><h1>Running shoes for trails</h1>
+<p>Good running shoes grip on wet rock.</p>
+<p>Light RUNNING SHOES dry fast. A running shoestring budget is not enough.</p>
+<p>Old running shoes go in the bin.</p></main></body></html>`;
+
 async function startSite() {
   const server = createServer((request, response) => {
     const pathname = new URL(request.url ?? '/', 'http://x').pathname;
     const html = (body: string) => response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(body);
     if (pathname === '/guides/green-tea') html(article());
     else if (pathname === '/inert') html(INERT_PAGE);
+    else if (pathname === '/guides/shoes') html(KEYPHRASE_PAGE);
     else if (pathname === '/es/te-verde') html(SPANISH_PAGE);
     else if (pathname === '/guides/long') response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': STRICT_CSP }).end(longArticle());
     else html('<!doctype html><html lang="en"><title>loopback</title><p>loopback</p></html>');
@@ -553,6 +561,36 @@ test('content-highlight-sentences-leaves-no-residue', async () => {
   const nextId = await contentsIdAt(next);
   expect(await overlay(nextId)).toBeNull();
   expect((await pageDom(nextId)).html).not.toContain('aria-hidden');
+});
+
+test('highlight-keyphrase-from-ngram', async () => {
+  const url = `${site.origin}/guides/shoes`;
+  await openContent(url);
+  const id = await contentsIdAt(url);
+  const before = await pageDom(id);
+  await page.locator('[data-testid="seo-ngram-size"][data-size="2"]').click();
+  const row = page.getByTestId('seo-ngram').filter({ has: page.getByTestId('seo-ngram-text').getByText('running shoes', { exact: true }) });
+  await expect(row.getByTestId('seo-ngram-count')).toHaveText('4');
+  const toggle = row.getByTestId('seo-ngram-highlight');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  // Every whole-word occurrence (the heading's, the capitalised one), each on one line; not "running shoestring".
+  await expect.poll(async () => (await overlay(id))?.drawn.map((box) => box.label)).toEqual(Array.from({ length: 4 }, () => HIGHLIGHT_STYLES.keyphrase.label));
+  expect((await overlay(id))!.mode).toBe('keyphrase');
+  const places = await Promise.all(['h1', 'p:nth-of-type(1)', 'p:nth-of-type(2)', 'p:nth-of-type(3)'].map((selector) => elementBox(id, `main > ${selector}`)));
+  (await overlay(id))!.drawn.forEach((box, i) => expect(inside(box, places[i]!), `occurrence ${i + 1}: ${JSON.stringify(box)}`).toBe(true));
+  // Nothing of it reaches the page's own world; one host element of frost's own.
+  expect(await run(id, "typeof window.__frostSeoHighlight === 'undefined'")).toBe(true);
+  expect((await pageDom(id)).children).toBe(before.children + 1);
+  // Leaving the Content panel removes it and leaves the page as it was.
+  await railItem('overview').click();
+  await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'overview');
+  await expect.poll(async () => (await pageDom(id)).html).toBe(before.html);
+  expect(await overlay(id)).toBeNull();
+  await railItem('content').click();
+  await page.locator('[data-testid="seo-ngram-size"][data-size="2"]').click();
+  await expect(row.getByTestId('seo-ngram-highlight')).toHaveAttribute('aria-pressed', 'false');
 });
 
 // Search Console under the target query (seo-content.feature.md, Search Console targets): connected at

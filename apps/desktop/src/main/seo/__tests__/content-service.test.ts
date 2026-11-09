@@ -1,5 +1,5 @@
 // Spec: specs/seo-content.spec.ts (Copy as HTML, SNIPPET_HTML_SOURCES), specs/seo-content.schema.ts
-// Acceptance: specs/seo-content.feature.md (Copy)
+// Acceptance: specs/seo-content.feature.md (Copy; Keyphrase highlight, Phase 11 Task 2: the stored target query)
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -115,6 +115,24 @@ describe('content service', () => {
     expect(await service.notes(URL_A)).toMatchObject({ query: 'oolong', variants: [{ slot: 0, title: 'Fresh' }], generation: 1 });
     expect(await service.deleteVariant(URL_A, 0, 1)).toBe(true);
     expect((await service.notes(URL_A)).variants).toEqual([]);
+  });
+
+  test('target-query-known-for-keyphrase', async () => {
+    const { service, notes } = setup();
+    expect(service.targetQueryOf(URL_A)).toBeNull();
+    // Read with the page's notes, or written through the service (trimmed, as stored).
+    await notes.setTargetQuery(URL_A, 'green tea', 1);
+    await service.notes(URL_A);
+    expect(service.targetQueryOf(URL_A)).toBe('green tea');
+    // Keyed as the database keys notes: the fragment does not count.
+    expect(service.targetQueryOf(`${URL_A}#brewing`)).toBe('green tea');
+    await expect(service.setTargetQuery(URL_A, '  black tea ', service.generation())).resolves.toBe(true);
+    expect(service.targetQueryOf(URL_A)).toBe('black tea');
+    // A refused write (another generation) changes nothing; deleting every note forgets them all.
+    await expect(service.setTargetQuery(URL_A, 'oolong', service.generation() + 1)).resolves.toBe(false);
+    expect(service.targetQueryOf(URL_A)).toBe('black tea');
+    await service.deleteAllNotes();
+    expect(service.targetQueryOf(URL_A)).toBeNull();
   });
 
   test('copy-snippet-html-variant', async () => {

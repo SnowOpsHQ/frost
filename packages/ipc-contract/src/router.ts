@@ -235,7 +235,7 @@ const seoRouter = router({
     .use(enforceSender)
     .use(requireSeo)
     .input(SeoHighlightInputSchema)
-    .mutation(({ ctx, input }) => ctx.seo.setHighlight(input.tabId, input.mode) === true),
+    .mutation(({ ctx, input }) => ctx.seo.setHighlight(input.tabId, input.mode, input.phrase) === true),
   copyLinksCsv: publicProcedure
     .use(enforceSender)
     .use(requireSeo)

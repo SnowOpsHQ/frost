@@ -1,5 +1,6 @@
-import { HIGHLIGHT_BUDGET_MS, HIGHLIGHT_FRAME_MS, MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET, MAX_TEXT_HIGHLIGHT_TARGETS, SEO_WORLD_ID, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
-import { HIGHLIGHT_STYLES, TEXT_HIGHLIGHT_UNMATCHED_NOTE, type HighlightKind, type HighlightMode, type TextHighlightTarget } from '@app/specs/seo-sidebar.spec';
+import { CONTENT_LIMITS, VISIBLE_TEXT_BLOCKS } from '@app/specs/seo-content.spec';
+import { HIGHLIGHT_BUDGET_MS, HIGHLIGHT_FRAME_MS, MAX_KEYPHRASE_MATCHES, MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET, MAX_TEXT_HIGHLIGHT_TARGETS, SEO_WORLD_ID, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
+import { HIGHLIGHT_STYLES, KEYPHRASE_UNMATCHED_NOTE, TEXT_HIGHLIGHT_UNMATCHED_NOTE, type HighlightKind, type HighlightMode, type TextHighlightTarget } from '@app/specs/seo-sidebar.spec';
 import type { ExtractTarget } from './extract';
 
 // Highlight mode (spec `seo-sidebar.spec.ts`, `HIGHLIGHT_MODES` / `HIGHLIGHT_STYLES`,
@@ -32,6 +33,14 @@ import type { ExtractTarget } from './extract';
 // is not boxed again). A `Range` only points at page nodes: creating one changes nothing in the
 // page. The texts reach the script as JSON data, never as code, and are only compared, never
 // inserted. Texts not found are counted and said in the overlay (`unmatchedNote`).
+//
+// Phase 11 Task 2 (`seo-panels.feature.md`, `seo-content.feature.md`, Keyphrase highlight): `internal`
+// and `external` outline only links of that kind (a `nofollow` one still as `nofollow`),
+// `lazy-images` the `loading="lazy"` images (`lazy-first-viewport` over the first viewport), and
+// `all` the links, headings and lazy images at once. `keyphrase` is a text mode whose plan is
+// `planTextHighlight` with its "every occurrence" option (`TextEvery`): every whole-word occurrence
+// of the phrase's words, by the same `Intl.Segmenter` segmentation and normalisation as the audit's
+// n-grams, never across a block boundary the walk saw (as the extractor's visible text breaks there).
 
 /** An element to outline: its kind and its `getBoundingClientRect()` (viewport coordinates). */
 export interface HighlightItem {
@@ -84,6 +93,19 @@ export interface TextPlan {
   /** Texts not found (or empty). */
   readonly unmatched: number;
 }
+/**
+ * `planTextHighlight`'s "every occurrence" option (`keyphrase`): each target's `terms` are found as
+ * whole words, every occurrence, at most `maxMatches` spans in all; words are normalised as
+ * `normaliseTerm` does (cut to `maxWordChars` code points). `breaks`: the indexes of the text nodes
+ * that start a new block (a word or a phrase never spans one).
+ */
+export interface TextEvery {
+  readonly maxMatches: number;
+  readonly maxWordChars: number;
+  readonly breaks?: readonly number[];
+  /** A `performance.now()` deadline: past it the plan stops with the spans found so far. */
+  readonly until?: number;
+}
 
 /**
  * Finds the first `max` of `targets` in `texts` (the page's text nodes' text, in document order,
@@ -92,8 +114,17 @@ export interface TextPlan {
  * zero-width ones included, must match as it is. Each target is looked for after the previous
  * target's match (targets come in page order), so equal texts take successive occurrences. Pure and
  * self-contained: it is serialised into the overlay script too.
+ *
+ * With `every` (`keyphrase`), each target is instead found by its words (`terms`, normalised, in the
+ * language `lang`): the page's text is segmented into words with `Intl.Segmenter` (a run of letters
+ * and digits without it), each word normalised as the audit's are, and every run of words equal to
+ * `terms`, with only white space, a hyphen or an apostrophe between two of them (never another
+ * punctuation mark or a block break), is a span, in page order, without overlaps, at most
+ * `every.maxMatches` in all. Words are matched as they are segmented: it stops at `maxMatches` and
+ * at the `every.until` deadline, with what it found. A target without terms, or with no occurrence,
+ * is unmatched.
  */
-export function planTextHighlight(texts: readonly string[], targets: readonly TextHighlightTarget[], max: number): TextPlan {
+export function planTextHighlight(texts: readonly string[], targets: readonly TextHighlightTarget[], max: number, every?: TextEvery): TextPlan {
   // The collapsed text, and where each node's part of it starts.
   const starts: number[] = [];
   /** Whether the node's leading white space joined the run before it (and so adds nothing). */
@@ -139,6 +170,96 @@ export function planTextHighlight(texts: readonly string[], targets: readonly Te
   };
   const spans: TextSpan[] = [];
   let unmatched = 0;
+  /** The span from collapsed position `at` to `end` (exclusive; its last character is not white space). */
+  const span = (kind: HighlightKind, at: number, end: number): TextSpan => {
+    const last = end - 1;
+    const first = nodeAt(at);
+    const lastNode = nodeAt(last);
+    return { kind, start: [first, rawOffset(first, at - starts[first]!)], end: [lastNode, rawOffset(lastNode, last - starts[lastNode]!) + 1] };
+  };
+  if (every) {
+    /** Non-word segments a phrase may run across, as the audit's word runs (`wordRuns`): white space, one hyphen or apostrophe. */
+    const JOINER = /^[^\S\n]*(?:[-‐‑'’][^\S\n]*)?$/u;
+    const normalise = (word: string, lang: string | null): string => {
+      let folded = word.normalize('NFKC');
+      try {
+        folded = lang === null ? folded.toLowerCase() : folded.toLocaleLowerCase(lang);
+      } catch {
+        folded = folded.toLowerCase();
+      }
+      folded = folded.replace(/i̇/g, 'i').replace(/ß/g, 'ss').replace(/’/g, "'");
+      return folded.length <= every.maxWordChars ? folded : [...folded].slice(0, every.maxWordChars).join('');
+    };
+    // The blocks' bounds in the collapsed text: a word never spans one.
+    const bounds = [0];
+    for (const index of every.breaks ?? []) {
+      const at = Number.isInteger(index) && index > 0 && index < starts.length ? starts[index]! : -1;
+      if (at > bounds[bounds.length - 1]!) bounds.push(at);
+    }
+    bounds.push(flat.length);
+    const until = typeof every.until === 'number' ? every.until : Number.POSITIVE_INFINITY;
+    let late = false;
+    let seen = 0;
+    /** Past the deadline (read every 64 segments, as reading the clock costs too). */
+    const overdue = (): boolean => {
+      seen += 1;
+      if (!late && (seen & 63) === 0 && performance.now() > until) late = true;
+      return late;
+    };
+    for (const target of targets.slice(0, Math.max(0, max))) {
+      const terms = Array.isArray(target.terms) ? target.terms.map((term) => String(term)) : [];
+      const lang = typeof target.lang === 'string' && target.lang !== '' ? target.lang : null;
+      let found = 0;
+      if (terms.length > 0 && terms.every((term) => term !== '')) {
+        let segmenter: Intl.Segmenter | null = null;
+        if (typeof Intl === 'object' && typeof Intl.Segmenter === 'function') {
+          try {
+            segmenter = new Intl.Segmenter(lang ?? undefined, { granularity: 'word' });
+          } catch {
+            segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+          }
+        }
+        // The words read since the last break (punctuation, a block), at most as many as the phrase has:
+        // the phrase is found when they are its terms. Matched while segmenting, so the walk stops as soon
+        // as `maxMatches` spans are found or the deadline passes.
+        let window: { readonly term: string; readonly start: number; readonly end: number }[] = [];
+        const word = (raw: string, start: number): boolean => {
+          window.push({ term: normalise(raw, lang), start, end: start + raw.length });
+          if (window.length > terms.length) window.shift();
+          if (window.length === terms.length && window.every((w, j) => w.term === terms[j])) {
+            spans.push(span(target.kind, window[0]!.start, window[window.length - 1]!.end));
+            found += 1;
+            window = [];
+          }
+          return spans.length >= every.maxMatches;
+        };
+        blocks: for (let b = 0; b + 1 < bounds.length; b++) {
+          const offset = bounds[b]!;
+          const block = flat.slice(offset, bounds[b + 1]!);
+          window = [];
+          if (segmenter) {
+            for (const segment of segmenter.segment(block)) {
+              if (overdue()) break blocks;
+              if (segment.isWordLike) {
+                if (word(segment.segment, offset + segment.index)) break blocks;
+              } else if (!JOINER.test(segment.segment)) window = [];
+            }
+          } else {
+            let previous = -1;
+            for (const match of block.matchAll(/[\p{L}\p{N}]+/gu)) {
+              if (overdue()) break blocks;
+              const at = match.index ?? 0;
+              if (previous >= 0 && !JOINER.test(block.slice(previous, at))) window = [];
+              if (word(match[0], offset + at)) break blocks;
+              previous = at + match[0].length;
+            }
+          }
+        }
+      }
+      if (found === 0) unmatched += 1;
+    }
+    return { spans, unmatched };
+  }
   let from = 0;
   for (const target of targets.slice(0, Math.max(0, max))) {
     const needle = String(target.text).replace(/\s+/g, ' ').trim();
@@ -148,10 +269,7 @@ export function planTextHighlight(texts: readonly string[], targets: readonly Te
       continue;
     }
     // The needle is trimmed: its last character is one code unit of the page's text, not white space.
-    const last = at + needle.length - 1;
-    const first = nodeAt(at);
-    const end = nodeAt(last);
-    spans.push({ kind: target.kind, start: [first, rawOffset(first, at - starts[first]!)], end: [end, rawOffset(end, last - starts[end]!) + 1] });
+    spans.push(span(target.kind, at, at + needle.length));
     from = at + needle.length;
   }
   return { spans, unmatched };
@@ -190,6 +308,7 @@ interface PageWalkNode {
   readonly localName?: string;
   hasAttribute?(name: string): boolean;
   readonly data?: string;
+  readonly parentNode?: PageWalkNode | null;
 }
 interface PageRange {
   setStart(node: PageWalkNode, offset: number): void;
@@ -204,6 +323,9 @@ interface ResizeEntry {
 interface OverlayView {
   readonly scrollX: number;
   readonly scrollY: number;
+  /** The first viewport (`lazy-images`): the top `innerHeight` × `innerWidth` of the document. */
+  readonly innerWidth: number;
+  readonly innerHeight: number;
   addEventListener(type: 'resize' | 'pagehide', listener: Listener): void;
   removeEventListener(type: 'resize' | 'pagehide', listener: Listener): void;
   requestAnimationFrame?(callback: () => void): number;
@@ -217,6 +339,7 @@ export interface OverlayDocument {
   readonly documentElement: (OverlayElement & { appendChild(node: OverlayElement): unknown }) | null;
   readonly body: unknown;
   readonly links: PageList<PageTarget>;
+  readonly images: PageList<PageTarget>;
   readonly defaultView: OverlayView | null;
   createElement(name: string): OverlayElement;
   querySelectorAll(selectors: string): PageList<PageTarget>;
@@ -254,6 +377,8 @@ export interface OverlayConfig {
   readonly key: string;
   readonly maxLinks: number;
   readonly maxHeadings: number;
+  /** Lazy images outlined at most (`lazy-images`, `all`). */
+  readonly maxImages: number;
   /** Measuring time in all, per drawing pass. */
   readonly budgetMs: number;
   /** Measuring time per animation frame. */
@@ -268,13 +393,22 @@ export interface OverlayConfig {
   readonly maxTextScanChars: number;
   /** What the overlay says when texts were not found (`{n}`: how many). */
   readonly unmatchedNote: { readonly one: string; readonly many: string };
+  /** The text modes that box every whole-word occurrence (`keyphrase`), at most `maxKeyphraseMatches`, and what they say when none is left. */
+  readonly everyModes: readonly HighlightMode[];
+  readonly maxKeyphraseMatches: number;
+  readonly maxWordChars: number;
+  readonly everyUnmatchedNote: string;
+  /** Elements that start a block of text (`VISIBLE_TEXT_BLOCKS`, as the extractor's visible text). */
+  readonly blocks: readonly string[];
 }
 
 /** The isolated world's global property holding the overlay state. */
 export const OVERLAY_KEY = '__frostSeoHighlight';
 
 /** The modes that box texts main hands in (`TextHighlightTarget`) rather than elements. */
-export const TEXT_HIGHLIGHT_MODES: readonly HighlightMode[] = ['sentences'];
+export const TEXT_HIGHLIGHT_MODES: readonly HighlightMode[] = ['sentences', 'keyphrase'];
+/** The text modes that box every whole-word occurrence of their one target (`TextEvery`). */
+export const EVERY_OCCURRENCE_MODES: readonly HighlightMode[] = ['keyphrase'];
 
 /**
  * Removes any overlay this world drew in the page, then (unless `mode` is `off`) draws the new
@@ -314,9 +448,8 @@ export function paintHighlight(
   } catch {
     // No site: every web link is external.
   }
-  const linkKind = (el: PageTarget): HighlightKind => {
-    const rel = (el.getAttribute('rel') ?? '').toLowerCase().split(/[\s,]+/);
-    if (rel.includes('nofollow')) return 'nofollow';
+  /** A link's type, `nofollow` aside: `internal`, `external` or `other`. */
+  const linkType = (el: PageTarget): HighlightKind => {
     try {
       const url = new URL((el.getAttribute('href') ?? '').trim(), document.baseURI);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return 'other';
@@ -325,6 +458,8 @@ export function paintHighlight(
       return 'other';
     }
   };
+  const nofollow = (el: PageTarget): boolean => (el.getAttribute('rel') ?? '').toLowerCase().split(/[\s,]+/).includes('nofollow');
+  const linkKind = (el: PageTarget): HighlightKind => (nofollow(el) ? 'nofollow' : linkType(el));
   // `broken`: a link whose target, resolved and without its fragment, is one of `targets`.
   const brokenSet = new Set(targets);
   const isBroken = (el: PageTarget): boolean => {
@@ -406,6 +541,7 @@ export function paintHighlight(
   // text node (nothing is changed). One range across nodes would also give, among its client rects,
   // the border box of every element wholly inside it (an `<em>`, a link): a second box over the same words.
   const textMode = config.textModes.includes(mode);
+  const everyMode = textMode && config.everyModes.includes(mode);
   const found: { readonly kind: HighlightKind; readonly ranges: readonly PageRange[] }[] = [];
   let unmatched = 0;
   const result = (boxes: number): OverlayResult => (textMode ? { mode, boxes, unmatched } : { mode, boxes });
@@ -440,7 +576,7 @@ export function paintHighlight(
       font: '600 11px/16px system-ui, -apple-system, "Segoe UI", sans-serif',
       'pointer-events': 'none',
     });
-    note.textContent = unmatched === 1 ? config.unmatchedNote.one : config.unmatchedNote.many.replace('{n}', String(unmatched));
+    note.textContent = everyMode ? config.everyUnmatchedNote : unmatched === 1 ? config.unmatchedNote.one : config.unmatchedNote.many.replace('{n}', String(unmatched));
     shadow.append(note);
   };
   /**
@@ -452,6 +588,20 @@ export function paintHighlight(
   const STOP = {};
   const texts: string[] = [];
   const nodes: PageWalkNode[] = [];
+  /**
+   * The text nodes that start a new block: an element of `config.blocks` came before them (a `<br>`
+   * too), or (`keyphrase`) their nearest block ancestor is not the previous text node's, so leaving a
+   * block breaks as well as entering one.
+   */
+  const breaks: number[] = [];
+  let blockBreak = false;
+  let lastBlock: PageWalkNode | null = null;
+  /** The nearest ancestor of `node` that is a block (looked for at most 64 levels up). */
+  const blockOf = (node: PageWalkNode): PageWalkNode | null => {
+    let up = node.parentNode ?? null;
+    for (let depth = 0; up && depth < 64; depth++, up = up.parentNode ?? null) if (up.nodeType === 1 && config.blocks.includes(up.localName ?? '')) return up;
+    return null;
+  };
   let scanned = 0;
   let visited = 0;
   let walkSpent = 0;
@@ -463,7 +613,9 @@ export function paintHighlight(
             visited += 1;
             if (visited > config.maxTextNodes * 4 || ((visited & 255) === 0 && walkSpent + (performance.now() - sliceStart) > config.budgetMs)) throw STOP;
             if (node.nodeType !== 1) return 1;
-            return SKIP.includes(node.localName ?? '') || node.hasAttribute?.('hidden') === true ? 2 : 3;
+            if (SKIP.includes(node.localName ?? '') || node.hasAttribute?.('hidden') === true) return 2;
+            if (config.blocks.includes(node.localName ?? '')) blockBreak = true;
+            return 3;
           },
         })
       : null;
@@ -488,6 +640,13 @@ export function paintHighlight(
         const data = node.data ?? '';
         const take = Math.min(data.length, config.maxTextScanChars - scanned);
         scanned += take;
+        if (everyMode) {
+          const owner = blockOf(node);
+          if (nodes.length > 0 && owner !== lastBlock) blockBreak = true;
+          lastBlock = owner;
+        }
+        if (blockBreak) breaks.push(nodes.length);
+        blockBreak = false;
         nodes.push(node);
         texts.push(take < data.length ? data.slice(0, take) : data);
       }
@@ -500,7 +659,12 @@ export function paintHighlight(
       frame = nextFrame(walk);
       return;
     }
-    const planned = planText ? planText(texts, textTargets, config.maxTextTargets) : { spans: [], unmatched: Math.min(textTargets.length, config.maxTextTargets) };
+    const most = everyMode ? 1 : config.maxTextTargets;
+    // `keyphrase` plans within what is left of the budget (at least one frame's worth), then draws what it found.
+    const until = performance.now() + Math.max(config.frameMs, config.budgetMs - walkSpent);
+    const planned = planText
+      ? planText(texts, textTargets, most, everyMode ? { maxMatches: config.maxKeyphraseMatches, maxWordChars: config.maxWordChars, breaks, until } : undefined)
+      : { spans: [], unmatched: Math.min(textTargets.length, most) };
     unmatched = planned.unmatched;
     for (const span of planned.spans) {
       if (!Object.prototype.hasOwnProperty.call(config.styles, span.kind)) {
@@ -522,8 +686,11 @@ export function paintHighlight(
         unmatched += 1;
       }
     }
+    // `keyphrase` says it found nothing only when no occurrence is drawn at all (one range failing is not that).
+    if (everyMode) unmatched = found.length === 0 ? 1 : 0;
     texts.length = 0;
     nodes.length = 0;
+    breaks.length = 0;
     sayUnmatched();
     pass();
   };
@@ -540,33 +707,60 @@ export function paintHighlight(
     }
     measuring = true;
     dirty = false;
-    const linkMode = mode === 'links' || mode === 'broken';
-    const list: PageList<PageTarget> = textMode ? { length: 0 } : linkMode ? document.links : document.querySelectorAll('h1, h2, h3, h4, h5, h6');
-    const count = textMode ? found.length : list.length;
-    const max = textMode ? config.maxTextTargets * config.maxRectsPerTarget : linkMode ? config.maxLinks : config.maxHeadings;
+    // What this mode outlines: one or more lists of elements, each with its own cap and the kind
+    // each element draws as (`null`: not drawn). A text mode measures its found texts instead.
+    interface Source {
+      readonly list: PageList<PageTarget>;
+      readonly max: number;
+      readonly kind: (el: PageTarget) => HighlightKind | null;
+    }
+    const sources: Source[] = [];
+    if (mode === 'links' || mode === 'all') sources.push({ list: document.links, max: config.maxLinks, kind: linkKind });
+    if (mode === 'broken') sources.push({ list: document.links, max: config.maxLinks, kind: (el) => (isBroken(el) ? 'broken' : null) });
+    if (mode === 'internal' || mode === 'external') sources.push({ list: document.links, max: config.maxLinks, kind: (el) => (linkType(el) !== mode ? null : nofollow(el) ? 'nofollow' : mode) });
+    if (mode === 'headings' || mode === 'all') sources.push({ list: document.querySelectorAll('h1, h2, h3, h4, h5, h6'), max: config.maxHeadings, kind: (el) => `h${Math.min(6, Math.max(1, Number(el.localName.slice(1)) || 1))}` as HighlightKind });
+    if (mode === 'lazy-images' || mode === 'all') sources.push({ list: document.images, max: config.maxImages, kind: (el) => ((el.getAttribute('loading') ?? '').trim().toLowerCase() === 'lazy' ? 'lazy' : null) });
+    const max = textMode ? (everyMode ? config.maxKeyphraseMatches : config.maxTextTargets) * config.maxRectsPerTarget : sources.reduce((sum, source) => sum + source.max, 0);
     const items: HighlightItem[] = [];
     let index = 0;
+    let part = 0;
+    let taken = 0;
     let spent = 0;
+    const more = (): boolean => (textMode ? index < found.length : part < sources.length) && items.length < max;
     const step = (): void => {
       frame = undefined;
       if (stopped) return;
       const sliceStart = performance.now();
-      while (index < count && items.length < max) {
+      while (more()) {
         if (spent + (performance.now() - sliceStart) > config.budgetMs) break;
         if (performance.now() - sliceStart > config.frameMs) break;
         if (textMode) {
           measureText(found[index++]!, items);
           continue;
         }
-        const el = list[index++];
-        if (!el || !shown(el) || (mode === 'broken' && !isBroken(el))) continue;
-        const kind: HighlightKind = mode === 'broken' ? 'broken' : mode === 'links' ? linkKind(el) : (`h${Math.min(6, Math.max(1, Number(el.localName.slice(1)) || 1))}` as HighlightKind);
+        const source = sources[part]!;
+        if (index >= source.list.length || taken >= source.max) {
+          part += 1;
+          index = 0;
+          taken = 0;
+          continue;
+        }
+        const el = source.list[index++];
+        if (!el || !shown(el)) continue;
+        let kind = source.kind(el);
+        if (kind === null) continue;
         // Document coordinates as of now: the scroll offset may differ by the next slice.
         const r = el.getBoundingClientRect();
-        items.push({ kind, rect: { left: r.left + view.scrollX, top: r.top + view.scrollY, width: r.width, height: r.height } });
+        const rect = { left: r.left + view.scrollX, top: r.top + view.scrollY, width: r.width, height: r.height };
+        // A lazy image over the first viewport (the top `innerHeight` × `innerWidth` of the document).
+        if (kind === 'lazy' && rect.top < view.innerHeight && rect.top + rect.height > 0 && rect.left < view.innerWidth && rect.left + rect.width > 0) kind = 'lazy-first-viewport';
+        // Each list keeps its own cap: an element without a box (collapsed, not laid out) is neither drawn nor counted.
+        if (![rect.left, rect.top, rect.width, rect.height].every(Number.isFinite) || rect.width < 1 || rect.height < 1) continue;
+        items.push({ kind, rect });
+        taken += 1;
       }
       spent += performance.now() - sliceStart;
-      if (index < count && items.length < max && spent <= config.budgetMs) {
+      if (more() && spent <= config.budgetMs) {
         frame = nextFrame(step);
         return;
       }
@@ -653,6 +847,7 @@ export const OVERLAY_CONFIG: OverlayConfig = {
   key: OVERLAY_KEY,
   maxLinks: SNAPSHOT_LIMITS.maxLinks,
   maxHeadings: SNAPSHOT_LIMITS.maxHeadings,
+  maxImages: SNAPSHOT_LIMITS.maxImages,
   budgetMs: HIGHLIGHT_BUDGET_MS,
   frameMs: HIGHLIGHT_FRAME_MS,
   styles: HIGHLIGHT_STYLES,
@@ -662,18 +857,27 @@ export const OVERLAY_CONFIG: OverlayConfig = {
   maxTextNodes: SNAPSHOT_LIMITS.maxTextNodes,
   maxTextScanChars: SNAPSHOT_LIMITS.maxTextScanChars,
   unmatchedNote: TEXT_HIGHLIGHT_UNMATCHED_NOTE,
+  everyModes: EVERY_OCCURRENCE_MODES,
+  maxKeyphraseMatches: MAX_KEYPHRASE_MATCHES,
+  maxWordChars: CONTENT_LIMITS.maxWordChars,
+  everyUnmatchedNote: KEYPHRASE_UNMATCHED_NOTE,
+  blocks: VISIBLE_TEXT_BLOCKS,
 };
 
 /**
  * The script that sets the overlay to `mode` in the isolated world (removing any before); `targets`:
  * the URLs `broken` outlines (at most `maxLinks`); `textTargets`: the texts a text mode boxes (at
- * most `MAX_TEXT_HIGHLIGHT_TARGETS`). Both travel as JSON data, and only for their modes.
+ * most `MAX_TEXT_HIGHLIGHT_TARGETS`; `keyphrase`: one, with its `terms` and `lang`). All travel as
+ * JSON data, and only for their modes.
  */
 export function highlightScript(mode: HighlightMode, targets: readonly string[] = [], textTargets: readonly TextHighlightTarget[] = []): string {
   const outlined = mode === 'broken' ? targets.slice(0, SNAPSHOT_LIMITS.maxLinks) : [];
   const call = `(${paintHighlight.toString()})(document, ${JSON.stringify(mode)}, ${JSON.stringify(OVERLAY_CONFIG)}, ${planHighlight.toString()}, globalThis, ${JSON.stringify(outlined)}`;
   if (!TEXT_HIGHLIGHT_MODES.includes(mode)) return `${call})`;
-  const texts = textTargets.slice(0, MAX_TEXT_HIGHLIGHT_TARGETS).map((target) => ({ text: String(target.text), kind: target.kind }));
+  const every = EVERY_OCCURRENCE_MODES.includes(mode);
+  const texts = textTargets
+    .slice(0, every ? 1 : MAX_TEXT_HIGHLIGHT_TARGETS)
+    .map((target) => (every ? { text: String(target.text), kind: target.kind, terms: (target.terms ?? []).map(String), lang: typeof target.lang === 'string' ? target.lang : null } : { text: String(target.text), kind: target.kind }));
   return `${call}, ${JSON.stringify(texts)}, ${planTextHighlight.toString()})`;
 }
 

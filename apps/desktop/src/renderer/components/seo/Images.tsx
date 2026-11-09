@@ -6,7 +6,7 @@ import { exportStatus } from '../../export-palette';
 import { CopyIcon } from '../../icons';
 import { actions } from '../../ipc';
 import { declaredSize, formatCount, formatSize, oversizeRatio } from '../../seo-view';
-import { auditRef, Flash, PanelIssues, UrlActions, useFlash } from './actions';
+import { auditRef, Flash, HighlightToggle, PanelIssues, UrlActions, useFlash } from './actions';
 import { PageText } from './parts';
 
 // Images (acceptance `seo-panels.feature.md`, Images): each image's source (text; only http(s)
@@ -181,6 +181,7 @@ export function Images({ audit, tab }: { readonly audit: SeoAudit; readonly tab:
           ))}
         </div>
         <div className="seo-panel-tools">
+          <HighlightToggle tab={tab} mode="lazy-images" label="Highlight lazy images" testId="seo-highlight-lazy-images" />
           <button
             type="button"
             className="seo-toggle"

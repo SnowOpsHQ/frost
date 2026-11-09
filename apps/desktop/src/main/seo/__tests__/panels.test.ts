@@ -1,7 +1,8 @@
 // Spec: specs/seo-sidebar.spec.ts (HIGHLIGHT_MODES, LINKS_CSV_COLUMNS, TextHighlightTarget), specs/browser.spec.ts (TabState.highlight,
 // OpenBackgroundTabInputSchema), specs/seo-snapshot.spec.ts (LinkFilterSchema)
 // Acceptance: specs/seo-panels.feature.md (Controller), specs/seo-schema.feature.md (Controller and router),
-// specs/seo-content.feature.md (Highlight, Phase 8)
+// specs/seo-content.feature.md (Highlight, Phase 8; Keyphrase highlight, Phase 11 Task 2: spec specs/seo-snapshot.spec.ts
+// SeoHighlightInputSchema phrase, specs/browser.spec.ts TabState.highlightPhrase)
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { formatJson, linksCsv } from '@app/seo-core';
 import { AUDIT_DEBOUNCE_MS } from '@app/specs/seo-limits.spec';
@@ -40,6 +41,8 @@ let watches: Watch[];
 let clipboard: { writeText: ReturnType<typeof vi.fn<(text: string) => void>> };
 /** What each extraction answers for the tab's URL. */
 let snapshotOf: (url: string) => unknown;
+/** The stored target query of each page URL (the content notes main holds). */
+let storedQueries: Map<string, string>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -48,6 +51,7 @@ beforeEach(() => {
   watches = [];
   clipboard = { writeText: vi.fn<(text: string) => void>() };
   snapshotOf = (url) => rawSnapshot(url);
+  storedQueries = new Map();
   win = new FakeHostWindow();
   controller = createBrowserController({
     createView: () => {
@@ -69,6 +73,7 @@ beforeEach(() => {
         }),
     },
     clipboard,
+    targetQuery: (url) => storedQueries.get(url) ?? null,
   });
   controller.attach(win as unknown as HostWindow);
 });
@@ -304,6 +309,78 @@ describe('sentences highlight', () => {
     commit(contents, A, 'A');
     expect(tabState().highlight).toBe('off');
     expect(paints).toHaveLength(count);
+  });
+});
+
+describe('keyphrase highlight', () => {
+  // "running shoes" twice (a 2-gram), "trail running shoes" twice (a 3-gram).
+  const TEXT = 'Trail running shoes are light. Trail running shoes grip well. Socks are soft.';
+  const withText = (text: string) => (url: string) => rawSnapshot(url, { visibleText: { text, truncated: false } });
+
+  test('keyphrase-must-be-an-audit-ngram', async () => {
+    snapshotOf = withText(TEXT);
+    // No ready audit yet: refused, nothing painted.
+    const contents = load(A);
+    expect(controller.seo.setHighlight(activeId(), 'keyphrase', 'running shoes')).toBe(false);
+    expect(paints).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
+    await flush();
+    // An n-gram of the ready audit (any size): main paints its own copy, with the audit's words and declared language.
+    expect(controller.seo.setHighlight(activeId(), 'keyphrase', 'running shoes')).toBe(true);
+    expect(paints.at(-1)).toMatchObject({ contents, mode: 'keyphrase', textTargets: [{ text: 'running shoes', kind: 'keyphrase', terms: ['running', 'shoes'], lang: 'en' }] });
+    expect(tabState().highlight).toBe('keyphrase');
+    expect(tabState().highlightPhrase).toBe('running shoes');
+    paints.at(-1)!.resolve({ mode: 'keyphrase', boxes: 2, unmatched: 0 });
+    await flush();
+    expect(tabState().highlightPhrase).toBe('running shoes');
+    expect(controller.seo.setHighlight(activeId(), 'keyphrase', 'trail running shoes')).toBe(true);
+    expect(tabState().highlightPhrase).toBe('trail running shoes');
+    expect(controller.seo.setHighlight(activeId(), 'keyphrase', 'socks')).toBe(true);
+    // Any other phrase: refused, nothing painted, the current highlight kept.
+    const count = paints.length;
+    for (const other of ['Running Shoes', 'shoes grip well today', 'evil', ' socks', '']) expect(controller.seo.setHighlight(activeId(), 'keyphrase', other), other).toBe(false);
+    // No phrase for keyphrase, or a phrase for another mode: refused.
+    expect(controller.seo.setHighlight(activeId(), 'keyphrase')).toBe(false);
+    expect(controller.seo.setHighlight(activeId(), 'links', 'socks')).toBe(false);
+    expect(paints).toHaveLength(count);
+    expect(tabState().highlightPhrase).toBe('socks');
+    // The page's stored target query is accepted too, as main stored it.
+    storedQueries.set(A, 'Light trail shoes');
+    expect(controller.seo.setHighlight(activeId(), 'keyphrase', 'Light trail shoes')).toBe(true);
+    expect(paints.at(-1)).toMatchObject({ mode: 'keyphrase', textTargets: [{ text: 'Light trail shoes', kind: 'keyphrase', terms: ['light', 'trail', 'shoes'], lang: 'en' }] });
+    expect(tabState().highlightPhrase).toBe('Light trail shoes');
+    // Another mode clears the phrase.
+    expect(controller.seo.setHighlight(activeId(), 'links')).toBe(true);
+    expect(tabState().highlightPhrase).toBeNull();
+    expect(paints.at(-1)).toMatchObject({ mode: 'links', textTargets: [] });
+  });
+
+  test('keyphrase-resets-on-navigation', async () => {
+    snapshotOf = withText(TEXT);
+    const contents = await audited(A);
+    controller.seo.setHighlight(activeId(), 'keyphrase', 'running shoes');
+    paints[0]!.resolve();
+    await flush();
+    // A fragment change keeps it.
+    pushState(contents, `${A}#part`);
+    expect(tabState()).toMatchObject({ highlight: 'keyphrase', highlightPhrase: 'running shoes' });
+    // An in-page navigation to another URL: off, the phrase gone, the overlay removed.
+    pushState(contents, `${A}/route`);
+    expect(tabState()).toMatchObject({ highlight: 'off', highlightPhrase: null });
+    expect(paints.at(-1)).toMatchObject({ contents, mode: 'off' });
+    // A new document: off, the phrase gone.
+    await audited(B, contents);
+    expect(controller.seo.setHighlight(activeId(), 'keyphrase', 'running shoes')).toBe(true);
+    commit(contents, A, 'A');
+    expect(tabState()).toMatchObject({ highlight: 'off', highlightPhrase: null });
+    // The page removing the overlay: off, the phrase gone.
+    await audited(B, contents);
+    controller.seo.setHighlight(activeId(), 'keyphrase', 'running shoes');
+    paints.at(-1)!.resolve();
+    await flush();
+    watches.at(-1)!.resolve('removed');
+    await flush();
+    expect(tabState()).toMatchObject({ highlight: 'off', highlightPhrase: null });
   });
 });
 

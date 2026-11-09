@@ -292,6 +292,36 @@ and said in the overlay (`TEXT_HIGHLIGHT_UNMATCHED_NOTE`).
   sentences become targets of kind `long-sentence` / `complex-sentence`, in order, capped; none
   for an audit without sentence statistics.
 
+## Keyphrase highlight (Phase 11 Task 2)
+Each n-gram row of "Frequent words and phrases" has a highlight toggle (pressed while that phrase is
+the tab's `keyphrase`, `TabState.highlightPhrase`), and a non-empty target query has "Highlight on
+page": a click first saves the query (waiting for any save already sent), then asks for it. The chrome names the phrase (`seo.setHighlight` with `phrase`); main boxes it only when
+it is one of its ready audit's n-grams (any size) or the page's stored target query, else `false`,
+and hands the painter its own copy: the phrase's text, its normalised words (`terms`, as `wordRuns`
+reads them) and the page's declared language. The painter is Phase 8's `planTextHighlight` with its
+"every occurrence" option: it segments the page's text with `Intl.Segmenter` for that language,
+normalises each word as the audit does, and boxes each run of words equal to `terms` (white space,
+one hyphen or one apostrophe between them, never punctuation), at most `MAX_KEYPHRASE_MATCHES` in
+page order. Matching is by whole word: `cat` never matches inside `category`, and a Japanese phrase
+only where the segmenter puts its word boundaries. No occurrence left: the overlay says so
+(`KEYPHRASE_UNMATCHED_NOTE`). It goes off like every overlay (leaving the panel, the page changing).
+- **Scenario: plan-text-highlight-every-occurrence-capped** (`highlight.test.ts`) — with the option,
+  every whole-word occurrence of the phrase is a span, in page order, across text nodes and case and
+  width differences, capped at the option's maximum; without it the planner is Phase 8's.
+- **Scenario: keyphrase-whole-words-only** — `cat` matches `Cat` and `cat` but not `category` or
+  `concat`; a phrase does not match across punctuation; a Japanese phrase matches at segmenter word
+  boundaries only.
+- **Scenario: keyphrase-highlight-leaves-page-untouched** (`extract-dom.test.ts`, the stringified
+  script) — while drawn and after `off`: the only change is the overlay's one host, its shadow root
+  closed; the page's DOM is as before after `off`.
+- **Scenario: ngram-row-highlight-toggle** (`content-view.test.ts`) — a row's toggle is pressed only
+  for the tab's `keyphrase` with that phrase; pressing it asks for `keyphrase` with the row's text,
+  pressing it again for `off`.
+- **Scenario: highlight-keyphrase-from-ngram** (`seo-content.e2e.ts`) — a loopback article: an
+  n-gram row's toggle boxes every whole-word occurrence of the phrase on the page (not the longer
+  word holding it); the toggle is pressed; leaving the panel removes the boxes and leaves the page's
+  `<html>` as it was.
+
 ## Command palette (`apps/desktop/src/renderer/__tests__/content-palette.test.ts`)
 Registered with `registerPaletteActions` (`command-palette.spec.ts`); the Content panel's jump is
 this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second one.

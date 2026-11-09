@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { MAX_TABS, NOTICE_KINDS } from './tabs.spec';
 import { MEDIA_TYPES, PERMISSION_DECISIONS, PROMPTABLE_PERMISSIONS } from './permissions.spec';
 import { HIGHLIGHT_MODES } from './seo-sidebar.spec';
+import { HIGHLIGHT_PHRASE_MAX_CHARS } from './seo-limits.spec';
 import { PALETTE_RETURN_FOCUS } from './command-palette.spec';
 import { TabRenderProfileSchema } from './render-profile.schema.spec';
 import { BrowserPolishStateShape } from './browser-polish.schema';
@@ -194,6 +195,12 @@ export const TabStateSchema = z.strictObject({
    * is no longer the active one.
    */
   highlight: z.enum(HIGHLIGHT_MODES),
+  /**
+   * The phrase the `keyphrase` highlight boxes (Phase 11 Task 2; `seo-snapshot.spec.ts`,
+   * `SeoHighlightInputSchema`): main's own copy of the phrase it accepted, `null` in every other mode.
+   * It goes back to `null` with the mode (navigation, another tab, the page removing the overlay).
+   */
+  highlightPhrase: z.string().max(HIGHLIGHT_PHRASE_MAX_CHARS).nullable(),
   /**
    * The tab's render profile (`render-profile.spec.ts`, `TabRenderProfile`): its own, or its site's
    * pin; `null` while it renders as frost does by default. Always shown on the tab, in the status bar

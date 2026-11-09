@@ -1,4 +1,4 @@
-// Specs: specs/seo-sidebar.spec.ts (Links, Images, Social, HIGHLIGHT_MODES), specs/seo-snapshot.spec.ts,
+// Specs: specs/seo-sidebar.spec.ts (Links, Images, Social, HIGHLIGHT_MODES, HIGHLIGHT_STYLES), specs/seo-snapshot.spec.ts,
 // specs/seo-limits.spec.ts (SEO_WORLD_ID, SNAPSHOT_LIMITS), specs/seo-rules.spec.ts, specs/browser.spec.ts
 // Acceptance: specs/seo-panels.feature.md (End to end)
 import { createServer } from 'node:http';
@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { crc32, deflateSync } from 'node:zlib';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SEO_WORLD_ID, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
-import { LINKS_CSV_COLUMNS } from '@app/specs/seo-sidebar.spec';
+import { HIGHLIGHT_STYLES, LINKS_CSV_COLUMNS } from '@app/specs/seo-sidebar.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -469,6 +469,45 @@ test('highlight-follows-the-sidebar-and-the-page', async () => {
   await expect(toggle).toHaveAttribute('aria-pressed', 'false');
   expect(await overlay(id)).toBeNull();
   expect((await pageDom(id)).html).toBe(clean.html);
+});
+
+test('highlight-external-only', async () => {
+  const id = await audit(`${site.origin}/links`);
+  await showPanel('links');
+  const before = await pageDom(id);
+  const toggle = page.getByTestId('seo-highlight-external');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  // The two links to other sites only (the nofollow one drawn as nofollow); none of the internal or other links.
+  await expect.poll(async () => (await overlay(id))?.kinds).toEqual(['nofollow', 'ext']);
+  expect((await overlay(id))!.mode).toBe('external');
+  await expect(page.getByTestId('seo-highlight-links')).toHaveAttribute('aria-pressed', 'false');
+  // Internal replaces it: the three same-site links.
+  await page.getByTestId('seo-highlight-internal').click();
+  await expect.poll(async () => (await overlay(id))?.kinds).toEqual(['int', 'int', 'int']);
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  // Off: the page's DOM is exactly as it was.
+  await page.getByTestId('seo-highlight-internal').click();
+  await expect.poll(async () => (await pageDom(id)).html).toBe(before.html);
+  expect(await overlay(id)).toBeNull();
+});
+
+test('highlight-lazy-images', async () => {
+  const id = await audit(`${site.origin}/images`);
+  await showPanel('images');
+  const before = await pageDom(id);
+  const toggle = page.getByTestId('seo-highlight-lazy-images');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  // The lazy image at the top is the one to fix; the one far below is lazy as it should be; eager images are not drawn.
+  await expect.poll(async () => (await overlay(id))?.kinds).toEqual([HIGHLIGHT_STYLES['lazy-first-viewport'].label, HIGHLIGHT_STYLES.lazy.label]);
+  // Leaving the panel that owns it removes it.
+  await showPanel('links');
+  await expect.poll(async () => (await pageDom(id)).html).toBe(before.html);
+  expect(await overlay(id)).toBeNull();
+  await showPanel('images');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('highlight-headings-on-strict-csp-page', async () => {

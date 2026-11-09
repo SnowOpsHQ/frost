@@ -130,6 +130,8 @@ export function Links({ audit, tab }: { readonly audit: SeoAudit; readonly tab: 
         ) : null}
         <div className="seo-panel-tools">
           <HighlightToggle tab={tab} mode="links" label="Highlight on page" testId="seo-highlight-links" />
+          <HighlightToggle tab={tab} mode="internal" label="Internal" testId="seo-highlight-internal" />
+          <HighlightToggle tab={tab} mode="external" label="External" testId="seo-highlight-external" />
           <button
             type="button"
             className="seo-toggle"

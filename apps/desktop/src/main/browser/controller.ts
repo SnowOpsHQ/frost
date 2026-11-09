@@ -20,7 +20,7 @@ import { sameAudit } from '../seo/audit-ref';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
 import { withKnown } from '../seo/context-source';
 import { createTabHighlights, type HighlightPainter } from '../seo/highlights';
-import { sentenceHighlightTargets } from '../seo/highlight-targets';
+import { keyphraseHighlightTarget, sentenceHighlightTargets } from '../seo/highlight-targets';
 import { createTabSpeed, type TabSpeedOptions } from '../seo/vitals-tabs';
 import { matchDevtoolsShortcut, matchFindStepShortcut, matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 import { createStateWatch } from './state-watch';
@@ -198,6 +198,11 @@ export interface BrowserControllerOptions {
    */
   readonly highlight?: HighlightPainter;
   /**
+   * The page's stored target query (the Content panel's notes, as main last read or wrote them for
+   * that URL), or `null`: the `keyphrase` highlight accepts it as a phrase (Phase 11 Task 2).
+   */
+  readonly targetQuery?: (url: string) => string | null;
+  /**
    * The page-speed collector and its analysis (`runVitals` in `../seo/vitals.ts`, the worker's
    * `analyseSpeed`): `seo.measureSpeed` measures the active tab (`seo-speed.feature.md`). Without it
    * every measurement stays `pending`.
@@ -256,7 +261,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const snapshot = (): BrowserState => ({
     version: stateWatch.version(),
-    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight, renderProfile: renderProfiles.state(tab) })),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight, highlightPhrase: tab.highlightPhrase, renderProfile: renderProfiles.state(tab) })),
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     toggleSidebarSeq,
@@ -341,14 +346,19 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   });
 
   // The SEO highlight overlay, on the active tab only (it goes when the page changes or the tab is left).
-  // `sentences` boxes the difficult sentences of the tab's own ready audit (never text from the chrome).
+  // `sentences` boxes the difficult sentences of the tab's own ready audit (never text from the chrome);
+  // `keyphrase` the phrase the chrome names, only if it is one of that audit's n-grams or the page's
+  // stored target query (`targetQuery`), as main's own copy.
   const highlights = createTabHighlights({
     painter: options.highlight,
     isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
-    textTargets: (tab, mode) => {
-      if (mode !== 'sentences') return [];
+    textTargets: (tab, mode, phrase) => {
+      if (mode !== 'sentences' && mode !== 'keyphrase') return [];
       const response = audits.response(tab);
-      return response.status === 'ready' ? sentenceHighlightTargets(response.audit) : [];
+      if (response.status !== 'ready') return [];
+      if (mode === 'sentences') return sentenceHighlightTargets(response.audit);
+      const target = phrase === undefined ? null : keyphraseHighlightTarget(response.audit, phrase, options.targetQuery?.(response.audit.url) ?? null);
+      return target ? [target] : [];
     },
     changed,
   });
@@ -1095,9 +1105,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         return tab && response.status === 'ready' ? { ...response, accessibilityRun: a11y.state(tab), renderProfile: auditProfiles?.profileOf(response.audit) ?? null } : response;
       },
       measureSpeed: (tabId) => speeds.measure(strip.tabs.find((tab) => tab.id === tabId)),
-      setHighlight: (tabId, mode) => {
+      setHighlight: (tabId, mode, phrase) => {
         const tab = strip.tabs.find((t) => t.id === tabId);
-        return tab !== undefined && highlights.set(tab, mode);
+        return tab !== undefined && highlights.set(tab, mode, phrase);
       },
       // All three copy only what the tab's ready audit holds, through main's clipboard, and only from
       // the audit the panel shows (`SeoAuditRefSchema`).

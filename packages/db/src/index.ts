@@ -4,6 +4,7 @@
 // repository and writer are the package's own (its tests import them from their modules).
 export type { SavedSession, StoredDecision, StoredRenderProfilePin } from './repository';
 export type { ContentNotes, ContentNotesRepository, SnippetVariant } from './content-notes';
+export { noteUrl } from './content-notes';
 export { openSessionStore, type SessionStore } from './store';
 export type { HistoryCursor, HistoryPage, HistoryRepository, HistoryVisit, JumpBackIn } from './history';
 export type { SettingsRepository } from './settings';

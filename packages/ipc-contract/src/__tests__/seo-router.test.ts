@@ -1,5 +1,5 @@
 // Spec: specs/seo-snapshot.spec.ts (SeoTabInputSchema, SeoHighlightInputSchema, SeoLinksCsvInputSchema,
-// SeoCopyUrlInputSchema, SeoCopySchemaInputSchema), specs/seo-sidebar.spec.ts (statuses, HIGHLIGHT_MODES, link filters), specs/ipc-sender.spec.ts
+// SeoCopyUrlInputSchema, SeoCopySchemaInputSchema; SeoHighlightInputSchema phrase, Phase 11 Task 2), specs/seo-sidebar.spec.ts (statuses, HIGHLIGHT_MODES, link filters), specs/ipc-sender.spec.ts
 // Acceptance: specs/seo-sidebar.feature.md (Router), specs/seo-panels.feature.md (Router), specs/seo-schema.feature.md (Controller and router),
 // specs/seo-speed.feature.md (Router), specs/seo-compliance.feature.md (Router)
 import { TRPCError } from '@trpc/server';
@@ -21,7 +21,7 @@ function fakeSeo() {
   return {
     getAudit: vi.fn((_tabId: number): SeoAuditResponse => PENDING),
     rerun: vi.fn((tabId: number) => tabId === 1),
-    setHighlight: vi.fn((tabId: number, _mode: 'off' | 'links' | 'headings') => tabId === 1),
+    setHighlight: vi.fn((tabId: number, _mode: string, _phrase?: string) => tabId === 1),
     copyLinksCsv: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _filter: { type: string; rel: string; query: string }): number | null => (tabId === 1 ? 4 : null)),
     copyUrl: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _url: string) => tabId === 1),
     copySchemaJson: vi.fn((tabId: number, _audit: { url: string; takenAt: number }, _block: number) => tabId === 1),
@@ -98,7 +98,24 @@ describe('seo router', () => {
       getAudit: [{ tabId: 1, extra: true }],
       rerun: [{ tabId: 1, extra: true }],
       measureSpeed: [{ tabId: 1, extra: true }, { tabId: 1, url: 'https://example.com/' }],
-      setHighlight: [{ tabId: 1 }, { tabId: 1, mode: 'images' }, { tabId: 1, mode: 'LINKS' }, { tabId: 1, mode: 'links', extra: 1 }],
+      setHighlight: [
+        { tabId: 1 },
+        { tabId: 1, mode: 'images' },
+        { tabId: 1, mode: 'LINKS' },
+        { tabId: 1, mode: 'links', extra: 1 },
+        // `phrase`: required exactly for keyphrase, 1 to HIGHLIGHT_PHRASE_MAX_CHARS characters, one line.
+        { tabId: 1, mode: 'keyphrase' },
+        { tabId: 1, mode: 'links', phrase: 'shoes' },
+        { tabId: 1, mode: 'keyphrase', phrase: '' },
+        { tabId: 1, mode: 'keyphrase', phrase: 'x'.repeat(101) },
+        { tabId: 1, mode: 'keyphrase', phrase: 'two\nlines' },
+        { tabId: 1, mode: 'keyphrase', phrase: 'line\u2028separator' },
+        { tabId: 1, mode: 'keyphrase', phrase: 'next\u0085line' },
+        { tabId: 1, mode: 'keyphrase', phrase: 'vertical\vtab' },
+        { tabId: 1, mode: 'keyphrase', phrase: 'form\ffeed' },
+        { tabId: 1, mode: 'keyphrase', phrase: 'para\u2029graph' },
+        { tabId: 1, mode: 'keyphrase', phrase: 7 },
+      ],
       copyLinksCsv: [
         { tabId: 1, audit: AUDIT },
         { tabId: 1, filter: FILTER },
@@ -157,7 +174,9 @@ describe('seo router', () => {
     expect(seo.rerun).toHaveBeenLastCalledWith(2);
 
     await expect(procedure(ctxFor(seo), 'setHighlight')({ tabId: 1, mode: 'headings' })).resolves.toBe(true);
-    expect(seo.setHighlight).toHaveBeenLastCalledWith(1, 'headings');
+    expect(seo.setHighlight).toHaveBeenLastCalledWith(1, 'headings', undefined);
+    await expect(procedure(ctxFor(seo), 'setHighlight')({ tabId: 1, mode: 'keyphrase', phrase: 'x'.repeat(100) })).resolves.toBe(true);
+    expect(seo.setHighlight).toHaveBeenLastCalledWith(1, 'keyphrase', 'x'.repeat(100));
     await expect(procedure(ctxFor(seo), 'setHighlight')({ tabId: 2, mode: 'off' })).resolves.toBe(false);
     const filter = { type: 'external', rel: 'nofollow', query: 'shop' };
     await expect(procedure(ctxFor(seo), 'copyLinksCsv')({ tabId: 1, audit: AUDIT, filter })).resolves.toBe(4);

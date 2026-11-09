@@ -1,12 +1,29 @@
 // Spec: specs/seo-content.spec.ts (MAX_SNIPPET_VARIANTS, input caps, SNIPPET_BUDGETS_PX; READABILITY_FORMULAS,
-// SENTENCE_LIMITS, DIFFICULT_SENTENCE_REASONS, Phase 8)
-// Acceptance: specs/seo-content.feature.md (Panel)
+// SENTENCE_LIMITS, DIFFICULT_SENTENCE_REASONS, Phase 8), specs/seo-limits.spec.ts (HIGHLIGHT_PHRASE_MAX_CHARS, Phase 11),
+// specs/browser.spec.ts (TabState.highlightPhrase)
+// Acceptance: specs/seo-content.feature.md (Panel; Keyphrase highlight, Phase 11 Task 2)
 import { describe, expect, test } from 'vitest';
 import { truncateToWidth, type Readability, type SentenceReport } from '@app/seo-core';
 import { MAX_SNIPPET_VARIANTS, READABILITY_FORMULAS, SENTENCE_LIMITS, SNIPPET_BUDGETS_PX, TARGET_QUERY_MAX_CHARS } from '@app/specs/seo-content.spec';
-import { breadcrumb, capInput, capQuery, countLabel, difficultSentenceItems, firstFreeSlot, ngramBar, ratio, readabilityView, sentenceStatsView, snippetIndicator, widthMeter } from '../content-view';
+import { HIGHLIGHT_PHRASE_MAX_CHARS } from '@app/specs/seo-limits.spec';
+import { breadcrumb, capInput, capQuery, countLabel, difficultSentenceItems, firstFreeSlot, keyphraseToggle, ngramBar, ratio, readabilityView, sentenceStatsView, snippetIndicator, widthMeter } from '../content-view';
 
 describe('content view', () => {
+  test('ngram-row-highlight-toggle', () => {
+    // Off, or another mode: not pressed; pressing asks for keyphrase with the row's own text.
+    expect(keyphraseToggle({ highlight: 'off', highlightPhrase: null }, 'running shoes')).toEqual({ pressed: false, available: true, next: { mode: 'keyphrase', phrase: 'running shoes' } });
+    expect(keyphraseToggle({ highlight: 'links', highlightPhrase: null }, 'running shoes').pressed).toBe(false);
+    // Another phrase on: this row is not pressed, pressing switches to it.
+    expect(keyphraseToggle({ highlight: 'keyphrase', highlightPhrase: 'trail' }, 'running shoes')).toMatchObject({ pressed: false, next: { mode: 'keyphrase', phrase: 'running shoes' } });
+    // This phrase on: pressed, pressing turns the overlay off.
+    expect(keyphraseToggle({ highlight: 'keyphrase', highlightPhrase: 'running shoes' }, 'running shoes')).toEqual({ pressed: true, available: true, next: { mode: 'off' } });
+    // A phrase the procedure cannot take (empty, too long, several lines) is not offered.
+    expect(keyphraseToggle({ highlight: 'off', highlightPhrase: null }, '').available).toBe(false);
+    expect(keyphraseToggle({ highlight: 'off', highlightPhrase: null }, 'x'.repeat(HIGHLIGHT_PHRASE_MAX_CHARS)).available).toBe(true);
+    expect(keyphraseToggle({ highlight: 'off', highlightPhrase: null }, 'x'.repeat(HIGHLIGHT_PHRASE_MAX_CHARS + 1)).available).toBe(false);
+    for (const breaking of ['\n', '\r', '\v', '\f', '\u0085', '\u2028', '\u2029']) expect(keyphraseToggle({ highlight: 'off', highlightPhrase: null }, `two${breaking}lines`).available).toBe(false);
+  });
+
   test('ngram-bar-classes', () => {
     expect(ngramBar(10, 10)).toBe(100);
     expect(ngramBar(5, 10)).toBe(50);

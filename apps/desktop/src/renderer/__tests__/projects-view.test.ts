@@ -41,7 +41,7 @@ const P1 = '01920000-0000-7000-8000-0000000000a1';
 const P2 = '01920000-0000-7000-8000-0000000000a2';
 
 function tab(changes: Partial<TabState> = {}): TabState {
-  return { id: 3, url: 'https://www.example.com/a#top', title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null, ...changes };
+  return { id: 3, url: 'https://www.example.com/a#top', title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, ...changes };
 }
 
 const run = (changes: Partial<RunState>): RunState => ({ version: 2, runId: P1, projectId: P1, state: 'running', current: 1, total: 3, omitted: 0, screenshot: false, targets: [], ...changes });

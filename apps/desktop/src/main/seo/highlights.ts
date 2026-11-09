@@ -11,8 +11,11 @@ import { TEXT_HIGHLIGHT_MODES } from './highlight';
 // nothing to remove, the overlay went with the document), when an in-page navigation leaves the
 // URL it was drawn on, when another tab becomes active (then the overlay is removed), and when the
 // page itself removes the overlay's host (the overlay reports it: `ended` settles with `removed`).
-// A text mode (`sentences`) boxes the texts the context hands in for the tab (main's own ready
-// audit, `textTargets`); with none to box it is refused like an inactive tab.
+// A text mode (`sentences`, `keyphrase`) boxes the texts the context hands in for the tab (main's own
+// ready audit, `textTargets`); with none to box it is refused like an inactive tab. `keyphrase`
+// (Phase 11 Task 2) takes the phrase the chrome names, and only it does: the context accepts it only
+// as one of the ready audit's n-grams or the page's stored target query, and the tab keeps main's own
+// copy (`Tab.highlightPhrase`), reset with the mode.
 
 export type TabContents = TabView['webContents'];
 
@@ -20,8 +23,9 @@ export interface TabHighlights {
   /**
    * Sets `tab`'s overlay to `mode`: only for the active tab of an attached window, showing a web
    * page, and for a text mode only with texts to box; `false` (a no-op) otherwise, or without a painter.
+   * `phrase`: the phrase `keyphrase` boxes, given for that mode and no other (else `false`).
    */
-  set(tab: Tab, mode: HighlightMode): boolean;
+  set(tab: Tab, mode: HighlightMode, phrase?: string): boolean;
   /** `tab`'s document went (did-navigate, load error, crash, view released): back to `off`. */
   dropped(tab: Tab): void;
   /** `tab` navigated in place: `off` (and the overlay removed) when its URL, fragment aside, changed. */
@@ -46,8 +50,11 @@ export interface TabHighlightsContext {
   readonly painter: HighlightPainter | undefined;
   /** Whether `tab` is the active tab of an attached window. */
   isActive(tab: Tab): boolean;
-  /** The texts `mode` boxes in `tab`'s page, from main's own data (`sentences`: its ready audit's difficult sentences; `[]` for other modes). */
-  textTargets(tab: Tab, mode: HighlightMode): readonly TextHighlightTarget[];
+  /**
+   * The texts `mode` boxes in `tab`'s page, from main's own data (`sentences`: its ready audit's
+   * difficult sentences; `keyphrase`: `phrase` as main accepts it, one target or none; `[]` for other modes).
+   */
+  textTargets(tab: Tab, mode: HighlightMode, phrase?: string): readonly TextHighlightTarget[];
   /** The browser state changed (bump and wake `watch`). */
   changed(): void;
 }
@@ -65,27 +72,32 @@ export function createTabHighlights(ctx: TabHighlightsContext): TabHighlights {
     if (tab.highlight === 'off') return;
     tab.highlight = 'off';
     tab.highlightKey = '';
+    tab.highlightPhrase = null;
     const contents = remove ? contentsOf(tab) : undefined;
     if (contents && ctx.painter) ctx.painter.paint(contents, 'off', []).catch(ignore);
     ctx.changed();
   };
 
   return {
-    set(tab, mode) {
+    set(tab, mode, phrase) {
       const painter = ctx.painter;
       const contents = contentsOf(tab);
       if (!painter || !contents || !ctx.isActive(tab) || !showsPage(tab)) return false;
+      if ((mode === 'keyphrase') !== (phrase !== undefined)) return false;
       const url = contents.getURL();
       if (!isWebUrl(url)) return false;
-      const textTargets = TEXT_HIGHLIGHT_MODES.includes(mode) ? ctx.textTargets(tab, mode) : [];
+      const textTargets = TEXT_HIGHLIGHT_MODES.includes(mode) ? ctx.textTargets(tab, mode, phrase) : [];
       if (TEXT_HIGHLIGHT_MODES.includes(mode) && textTargets.length === 0) return false;
       const key = withoutFragment(url);
-      const changed = tab.highlight !== mode;
+      // Main's own copy of the phrase it accepted (the n-gram's or the stored query's text).
+      const shownPhrase = mode === 'keyphrase' ? textTargets[0]!.text : null;
+      const changed = tab.highlight !== mode || tab.highlightPhrase !== shownPhrase;
       const run = ++seq;
       latest.set(tab, run);
       tab.highlight = mode;
       tab.highlightKey = mode === 'off' ? '' : key;
-      const isCurrent = (): boolean => latest.get(tab) === run && contentsOf(tab) === contents && tab.highlight === mode && withoutFragment(contents.getURL()) === key;
+      tab.highlightPhrase = shownPhrase;
+      const isCurrent = (): boolean => latest.get(tab) === run && contentsOf(tab) === contents && tab.highlight === mode && tab.highlightPhrase === shownPhrase && withoutFragment(contents.getURL()) === key;
       const settle = (answer: unknown, ok: boolean): void => {
         // A newer request replaces whatever this one drew.
         if (latest.get(tab) !== run || mode === 'off') return;

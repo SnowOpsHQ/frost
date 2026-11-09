@@ -15,10 +15,11 @@ import {
   type QueryPresence,
 } from '@app/specs/seo-content.spec';
 import { contentPaletteSources, onTargetQueryFocus, takeTargetQueryFocus } from '../../content-palette';
-import { capQuery, countLabel, difficultSentenceItems, ngramBar, ratio, readabilityView, sentenceStatsView } from '../../content-view';
+import { capQuery, countLabel, difficultSentenceItems, keyphraseToggle, ngramBar, ratio, readabilityView, sentenceStatsView } from '../../content-view';
 import { clearAllContentNotes, copySnippetHtml, useContentNotes } from '../../hooks/useContentNotes';
 import { registerPaletteActions } from '../../palette/registry';
-import { CloseIcon } from '../../icons';
+import { CloseIcon, HighlightIcon } from '../../icons';
+import { actions } from '../../ipc';
 import { Flash, HighlightToggle, useFlash } from './actions';
 import { AiChecksQuality } from './AiChecksCard';
 import { ContentGscTargets } from './ContentGscTargets';
@@ -29,7 +30,8 @@ import { SnippetEditor } from './SnippetEditor';
 // Content (spec `seo-content.spec.ts`; acceptance `seo-content.feature.md`, Panel): the snippet
 // preview and drafts, the target query checklist, the page's n-grams and its readability (the
 // language's formula, sentence statistics and the difficult sentences, which the page highlight
-// can box: main reads them from its own audit), with Search Console's queries for the page and the
+// can box: main reads them from its own audit; each n-gram, and the saved target query, can box every
+// whole-word occurrence on the page: the chrome names the phrase, main checks it), with Search Console's queries for the page and the
 // target query's pages when connected (`ContentGscTargets`), and the AI checks' "Quality" row
 // (`AiChecksQuality`, labelled AI judgment). All of it is information: nothing here is scored,
 // and counts are never pass or fail. Page-derived text is React text only (`PageText`, `<bdi>`);
@@ -58,7 +60,36 @@ function SectionTitle({ icon: Icon, text }: { readonly icon: typeof BookIcon; re
   );
 }
 
-function TargetQuery({ audit, query, loaded, onChange }: { readonly audit: SeoAudit; readonly query: string; readonly loaded: boolean; readonly onChange: (query: string) => void }) {
+/**
+ * Turns the `keyphrase` overlay on for `phrase` (main boxes it only if it is one of its audit's n-grams
+ * or the page's stored target query), or off when it shows that phrase. `before`: runs first (the
+ * target query's pending save). `compact`: the n-gram rows' icon-only button.
+ */
+function KeyphraseToggle({ tab, phrase, label, testId, compact = false, before }: { readonly tab: TabState; readonly phrase: string; readonly label: string; readonly testId: string; readonly compact?: boolean; readonly before?: () => Promise<void> }) {
+  const toggle = keyphraseToggle(tab, phrase);
+  if (!toggle.available) return null;
+  const run = async () => {
+    await before?.();
+    const next = toggle.next;
+    await (next.mode === 'off' ? actions.setHighlight(tab.id, 'off') : actions.setHighlight(tab.id, 'keyphrase', next.phrase));
+  };
+  return (
+    <button
+      type="button"
+      className={compact ? 'seo-ngram-highlight' : 'seo-toggle'}
+      data-testid={testId}
+      aria-pressed={toggle.pressed}
+      aria-label={compact ? label : undefined}
+      title={toggle.pressed ? 'Remove the outlines from the page' : compact ? label : 'Outline it on the page, every whole-word occurrence'}
+      onClick={() => void run()}
+    >
+      <HighlightIcon />
+      {compact ? null : <span>{label}</span>}
+    </button>
+  );
+}
+
+function TargetQuery({ audit, tab, query, loaded, onChange, flush }: { readonly audit: SeoAudit; readonly tab: TabState; readonly query: string; readonly loaded: boolean; readonly onChange: (query: string) => void; readonly flush: () => Promise<void> }) {
   const checks = queryChecklist(query, audit.content.fields, audit.content.language.code);
   // The palette's "Set target query…": focus the field once it takes input (now, or when it is ready).
   const field = useRef<HTMLInputElement>(null);
@@ -93,6 +124,12 @@ function TargetQuery({ audit, query, loaded, onChange }: { readonly audit: SeoAu
           </button>
         ) : null}
       </label>
+      {loaded && query.trim() !== '' ? (
+        <div className="seo-panel-tools">
+          {/* Saved first: main boxes the query only as it stored it. */}
+          <KeyphraseToggle tab={tab} phrase={query.trim()} label="Highlight on page" testId="seo-query-highlight" before={flush} />
+        </div>
+      ) : null}
       {checks.length === 0 ? (
         <p className="seo-note">Where the query’s words appear on the page. Stored on this computer for this address only.</p>
       ) : (
@@ -125,7 +162,7 @@ function TargetQuery({ audit, query, loaded, onChange }: { readonly audit: SeoAu
   );
 }
 
-function NgramTable({ rows, size }: { readonly rows: readonly NgramRow[]; readonly size: NgramSize }) {
+function NgramTable({ rows, size, tab }: { readonly rows: readonly NgramRow[]; readonly size: NgramSize; readonly tab: TabState }) {
   if (rows.length === 0) return <p className="seo-empty-line">{size === 1 ? 'No words to count on this page.' : `No ${SIZE_LABEL[size]} phrase appears twice.`}</p>;
   const max = rows[0]!.count;
   return (
@@ -147,13 +184,14 @@ function NgramTable({ rows, size }: { readonly rows: readonly NgramRow[]; readon
               </span>
             ))}
           </span>
+          <KeyphraseToggle tab={tab} phrase={row.text} label={`Highlight “${row.text}” on the page`} testId="seo-ngram-highlight" compact />
         </li>
       ))}
     </ol>
   );
 }
 
-function Ngrams({ audit }: { readonly audit: SeoAudit }) {
+function Ngrams({ audit, tab }: { readonly audit: SeoAudit; readonly tab: TabState }) {
   const [size, setSize] = useState<NgramSize>(1);
   const { content } = audit;
   const language = content.language;
@@ -181,7 +219,7 @@ function Ngrams({ audit }: { readonly audit: SeoAudit }) {
           </span>
         ))}
       </div>
-      <NgramTable rows={content.ngrams[size]} size={size} />
+      <NgramTable rows={content.ngrams[size]} size={size} tab={tab} />
       <p className="seo-note" data-testid="seo-ngram-language">
         {languageLine}
       </p>
@@ -307,14 +345,14 @@ export function Content({ audit, tab, notesGeneration }: { readonly audit: SeoAu
         <SnippetEditor key={audit.url} audit={audit} tab={tab} notes={notes} flash={flash} />
       </Section>
       <Section title="Target query" testId="seo-content-query">
-        <TargetQuery audit={audit} query={notes.query} loaded={notes.loaded} onChange={notes.setQuery} />
+        <TargetQuery audit={audit} tab={tab} query={notes.query} loaded={notes.loaded} onChange={notes.setQuery} flush={notes.flush} />
         {/* Search Console's queries and the query→page check: nothing at all unless connected. */}
         <ContentGscTargets url={audit.url} notes={notes} />
       </Section>
       {/* The AI's quality judgment and suggested target (Phase 9 Task 11): one line while AI checks are off. */}
       <AiChecksQuality url={audit.url} tab={tab} notes={notes} />
       <Section title="Frequent words and phrases" badge={<SectionTitle icon={BarsIcon} text="info only" />} testId="seo-content-ngrams">
-        {audit.content.available ? <Ngrams audit={audit} /> : <p className="seo-empty-line">frost could not read this page’s text.</p>}
+        {audit.content.available ? <Ngrams audit={audit} tab={tab} /> : <p className="seo-empty-line">frost could not read this page’s text.</p>}
       </Section>
       <Section title="Readability" badge={<SectionTitle icon={BookIcon} text="info only" />} testId="seo-content-readability">
         <Readability audit={audit} />

@@ -1,4 +1,6 @@
 import type { Readability, SentenceReport, SnippetCut } from '@app/seo-core';
+import type { TabState } from '@app/specs/browser.spec';
+import { HIGHLIGHT_PHRASE_MAX_CHARS } from '@app/specs/seo-limits.spec';
 import {
   MAX_SNIPPET_VARIANTS,
   READABILITY_FORMULAS,
@@ -148,4 +150,17 @@ export function difficultSentenceItems(report: SentenceReport): { readonly headi
     items: items.map((item) => ({ text: item.text, reason: item.reason, chip: REASON_CHIP[item.reason], words: countLabel(item.words, 'word', 'words') })),
     more: rest > 0 ? `and ${rest.toLocaleString('en-US')} more` : null,
   };
+}
+
+/**
+ * A keyphrase highlight toggle (an n-gram row's, the target query's; `seo-content.feature.md`,
+ * Keyphrase highlight): pressed while `phrase` is the tab's `keyphrase` (`TabState.highlightPhrase`);
+ * pressing it asks main for `keyphrase` with `phrase`, or for `off` when pressed. `available`: the
+ * phrase can be named at all (1 to `HIGHLIGHT_PHRASE_MAX_CHARS` characters on one line; main still
+ * checks it against its own audit and notes).
+ */
+export function keyphraseToggle(tab: Pick<TabState, 'highlight' | 'highlightPhrase'>, phrase: string): { readonly pressed: boolean; readonly available: boolean; readonly next: { readonly mode: 'keyphrase'; readonly phrase: string } | { readonly mode: 'off' } } {
+  const pressed = tab.highlight === 'keyphrase' && tab.highlightPhrase === phrase;
+  const available = phrase.length >= 1 && phrase.length <= HIGHLIGHT_PHRASE_MAX_CHARS && !/[\r\n\v\f\u0085\u2028\u2029]/.test(phrase);
+  return { pressed, available, next: pressed ? { mode: 'off' } : { mode: 'keyphrase', phrase } };
 }

@@ -207,8 +207,16 @@ export const SOCIAL_REMOTE_IMAGES = false;
  * `seo-checks.feature.md`) outlines only the links the tab's link check found broken.
  * `sentences` (Phase 8 Task 2, `seo-content.feature.md`, Highlight) boxes the difficult sentences
  * of the tab's ready audit where they are in the page's text (`TextHighlightTarget`).
+ * Phase 11 Task 2 (`seo-panels.feature.md`, `seo-content.feature.md`, Highlight): `internal` and
+ * `external` outline only the links of that kind (a `nofollow` link still draws as `nofollow`, so an
+ * internal nofollow link shows, as `nofollow`, under `internal`); `lazy-images` outlines the images
+ * with `loading="lazy"` (`lazy`, or `lazy-first-viewport` when its box overlaps the first viewport,
+ * as `isLazyInFirstViewport` reads it); `keyphrase` boxes every whole-word occurrence of one phrase
+ * (`seo.setHighlight`'s `phrase`), at most `MAX_KEYPHRASE_MATCHES`; `all` draws `links`, `headings`
+ * and `lazy-images` at once. The chrome names the phrase; main accepts it only when it is one of the
+ * tab's ready audit's n-grams or the page's stored target query, and hands the painter its own copy.
  */
-export const HIGHLIGHT_MODES = ['off', 'links', 'headings', 'broken', 'sentences'] as const;
+export const HIGHLIGHT_MODES = ['off', 'links', 'headings', 'broken', 'sentences', 'internal', 'external', 'lazy-images', 'keyphrase', 'all'] as const;
 export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
 
 /**
@@ -217,7 +225,17 @@ export type HighlightMode = (typeof HIGHLIGHT_MODES)[number];
  * toggle that removes it in view. If the page removes the overlay's host itself, the overlay stops
  * and the tab's mode goes back to `off` too.
  */
-export const HIGHLIGHT_PANELS: Readonly<Record<Exclude<HighlightMode, 'off'>, SeoPanelId>> = { links: 'links', headings: 'on-page', broken: 'links', sentences: 'content' };
+export const HIGHLIGHT_PANELS: Readonly<Record<Exclude<HighlightMode, 'off'>, SeoPanelId>> = {
+  links: 'links',
+  headings: 'on-page',
+  broken: 'links',
+  sentences: 'content',
+  internal: 'links',
+  external: 'links',
+  'lazy-images': 'images',
+  keyphrase: 'content',
+  all: 'overview',
+};
 
 /**
  * What the overlay draws (frost's own palette): a link's box by kind (a link whose `rel` has
@@ -239,6 +257,10 @@ export const HIGHLIGHT_STYLES = {
   broken: { color: '#dc2626', label: 'broken' },
   'long-sentence': { color: '#b45309', label: 'long' },
   'complex-sentence': { color: '#be185d', label: 'complex' },
+  // Phase 11 Task 2: a lazy image (in the first viewport: the one to fix), a keyphrase occurrence.
+  lazy: { color: '#0891b2', label: 'lazy' },
+  'lazy-first-viewport': { color: '#e11d48', label: 'lazy, first screen' },
+  keyphrase: { color: '#16a34a', label: 'phrase' },
 } as const;
 export type HighlightKind = keyof typeof HIGHLIGHT_STYLES;
 
@@ -255,6 +277,17 @@ export type HighlightKind = keyof typeof HIGHLIGHT_STYLES;
 export interface TextHighlightTarget {
   readonly text: string;
   readonly kind: HighlightKind;
+  /**
+   * `keyphrase` (Phase 11 Task 2): the phrase's words as the audit's n-grams read them (`wordRuns`:
+   * `Intl.Segmenter` word segments, normalised by `normaliseTerm`), and the language they were
+   * segmented and folded for (the page's declared one, or `null`). With them the painter boxes
+   * **every whole-word occurrence** instead of the first text match: a run of the page's word
+   * segments whose normalised forms are `terms`, with only white space, one hyphen or one apostrophe
+   * between them (never punctuation), as an n-gram is counted. CJK and other unspaced scripts follow
+   * the same segmentation, so a phrase never matches inside a longer word.
+   */
+  readonly terms?: readonly string[];
+  readonly lang?: string | null;
 }
 
 /**
@@ -263,3 +296,6 @@ export interface TextHighlightTarget {
  * changed its text after the audit.
  */
 export const TEXT_HIGHLIGHT_UNMATCHED_NOTE = { one: '1 sentence is no longer on the page', many: '{n} sentences are no longer on the page' } as const;
+
+/** What the `keyphrase` overlay says, as above, when the phrase is no longer on the page as whole words. */
+export const KEYPHRASE_UNMATCHED_NOTE = 'The phrase is no longer on the page' as const;

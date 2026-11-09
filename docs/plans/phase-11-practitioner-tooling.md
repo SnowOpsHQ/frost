@@ -1005,3 +1005,15 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   audit changed". `audit-ref.ts` also exports `shownAudit` (used by exports and `content-notes.ts`).
   The `seo-core` purity allowlist gains `seo-exports.spec` and `devtools.spec` (Zod-free) so copy
   values reuse `SECRET_HEADERS`/`MASKED_VALUE`.
+- **Task 2:** `all` draws links (by kind), headings (by level) and lazy images (`lazy` /
+  `lazy-first-viewport`), each part with its own cap; no style for eager images. `TextHighlightTarget`
+  gains optional `terms` and `lang`: main sends the n-gram's terms (or `wordsOf(query)` for the target
+  query) and the declared language, and the painter segments with `Intl.Segmenter` and normalises as
+  the audit does. Matching happens while splitting and stops at `MAX_KEYPHRASE_MATCHES` or at an
+  `until` deadline (what is left of `HIGHLIGHT_BUDGET_MS` after the walk). Keyphrase mode also breaks
+  words on leaving a block. Main reads the stored target query synchronously through
+  `MainContentService.targetQueryOf(url)` (keyed by `noteUrl`, ≤ 64 URLs, filled on read and on a
+  successful write); the chrome's "Highlight on page" waits for every pending or in-flight save
+  first, so `setHighlight` stays synchronous. `KEYPHRASE_UNMATCHED_NOTE` shows only when nothing is
+  drawn. Box modes skip non-finite or sub-pixel boxes while measuring (so each cap in `all` holds).
+  The phrase refuses every line separator. No palette commands for the new modes.
