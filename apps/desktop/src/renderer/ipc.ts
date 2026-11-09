@@ -8,8 +8,8 @@ import type { PermissionDecision } from '@app/specs/permissions.spec';
 import type { RenderProfile, TabOverrides } from '@app/specs/render-profile.spec';
 import type { HighlightMode, ImageFilter } from '@app/specs/seo-sidebar.spec';
 import type { SeoExportKind } from '@app/specs/seo-exports.spec';
-import type { HistoryCursorAnswer, HistoryPageAnswer, JumpBackInAnswer } from '@app/ipc-contract';
-import type { SearchEngineId } from '@app/specs/browser-polish.spec';
+import type { HistoryCursorAnswer, HistoryPageAnswer, HistoryRetentionAnswer, JumpBackInAnswer } from '@app/ipc-contract';
+import type { HistoryClearRange, HistoryRetentionResult, SearchEngineId } from '@app/specs/browser-polish.spec';
 
 // The chrome's one IPC client (the sender-guarded `browser.*` and `seo.*` procedures, `ping`) and
 // the user intents it sends. All browser state, and every SEO audit, lives in main. The chrome never
@@ -79,11 +79,20 @@ export const actions = {
   findStep: (tabId: number, forward: boolean) => ipc.find.step.mutate({ tabId, forward }).catch(() => false),
   closeFind: (tabId: number) => ipc.find.close.mutate({ tabId }).catch(() => false),
   /** One page of history; an empty one on an IPC failure. */
-  historyList: (query: string, after: HistoryCursorAnswer | null): Promise<HistoryPageAnswer> => ipc.history.list.query({ query, after }).catch(() => ({ visits: [], next: null })),
+  historyList: (query: string, after: HistoryCursorAnswer | null, projectId?: string): Promise<HistoryPageAnswer> =>
+    ipc.history.list.query({ query, after, ...(projectId === undefined ? {} : { projectId }) }).catch(() => ({ visits: [], next: null })),
   jumpBackIn: (): Promise<JumpBackInAnswer> => ipc.history.jumpBackIn.query().catch(() => ({ mostVisited: [], recent: [] })),
   removeVisit: (url: string) => ipc.history.remove.mutate({ url }).catch(() => false),
   /** "Clear all history" (main asks first); resolves whether it cleared. */
   clearHistory: () => ipc.history.clearAll.mutate().catch(() => false),
+  /** Clear by range (Phase 11 Task 10; main asks first); resolves whether it cleared. */
+  clearHistoryRange: (range: HistoryClearRange) => ipc.history.clearRange.mutate({ range }).catch(() => false),
+  /** The history retention settings; `null` on an IPC failure. */
+  historyRetention: (): Promise<HistoryRetentionAnswer | null> => ipc.history.retention.query().catch(() => null),
+  /** Stores the history retention settings (main asks first when visits would go, then applies them); `failed` on an IPC failure. */
+  setHistoryRetention: (settings: HistoryRetentionAnswer): Promise<HistoryRetentionResult> => ipc.history.setRetention.mutate(settings).catch(() => 'failed' as const),
+  /** The live projects, for the History view's filter; none on an IPC failure. */
+  listProjects: () => ipc.projects.list.query().then((answer) => answer.projects).catch(() => []),
   reopenClosedTab: () => ipc.history.reopenClosedTab.mutate().catch(() => null),
   showHistory: () => ipc.history.show.mutate().catch(ignore),
   setSearchEngine: (engine: SearchEngineId) => ipc.settings.setSearchEngine.mutate({ engine }).catch(() => false),

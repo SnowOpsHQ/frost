@@ -5,7 +5,7 @@ export type { BrowserService, IpcServices, SeoAuditRef, SeoService } from './ser
 export type { ContentNotesAnswer, ContentService, ContentVariant, PreviewJsonLdFields, PreviewJsonLdSource, SnippetHtmlSource } from './content-service';
 export type { JavascriptService } from './javascript-router';
 export type { DevtoolsService } from './devtools-service';
-export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';
+export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryRetentionAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';
 export type { ChecksService } from './checks-service';
 export type { UpdateService } from './update-router';
 export type { SerpProbesService, SerpReadApi, SerpService } from './serp-service';

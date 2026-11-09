@@ -152,6 +152,160 @@ export const CLEAR_HISTORY = {
   confirmIndex: 0,
 } as const;
 
+// ---- History retention, ranges, project filter (Phase 11 Task 10, Decision 13) -------------------
+
+/**
+ * How long visits are kept. `recent_visits` keeps **one row per URL** (its visit count and last visit
+ * time), so a visit row is removed once its `last_visit_at` is older than the retention; earlier
+ * visits to a URL are never kept apart. `forever` (the default: nothing is deleted by surprise) never
+ * prunes. Stored in `app_settings` under `HISTORY_RETENTION_SETTING_KEY` (the id); a missing or
+ * unknown value reads as `DEFAULT_HISTORY_RETENTION`. Main applies it at start and then once every
+ * `HISTORY_RETENTION_INTERVAL_MS` while it runs, and at once when it is changed (a change that would
+ * delete visits only after main's confirmation: `CONFIRM_HISTORY_RETENTION`).
+ */
+export const HISTORY_RETENTIONS = [
+  { id: 'forever', label: 'Forever', days: null },
+  { id: '90d', label: '90 days', days: 90 },
+  { id: '30d', label: '30 days', days: 30 },
+  { id: '7d', label: '7 days', days: 7 },
+] as const satisfies readonly { id: string; label: string; days: number | null }[];
+export type HistoryRetention = (typeof HISTORY_RETENTIONS)[number]['id'];
+export const HISTORY_RETENTION_IDS = HISTORY_RETENTIONS.map((entry) => entry.id) as [HistoryRetention, ...HistoryRetention[]];
+export const DEFAULT_HISTORY_RETENTION: HistoryRetention = 'forever';
+export const HISTORY_RETENTION_SETTING_KEY = 'history_retention' as const;
+export const HISTORY_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+
+/** Whether `value` names a `HISTORY_RETENTIONS` entry. */
+export function isHistoryRetention(value: unknown): value is HistoryRetention {
+  return typeof value === 'string' && (HISTORY_RETENTION_IDS as readonly string[]).includes(value);
+}
+
+/** The retention's cut-off for `now`: visits last seen before it are pruned (`null`: keep all). */
+export function historyRetentionCutoff(retention: HistoryRetention, now: number): number | null {
+  const days = HISTORY_RETENTIONS.find((entry) => entry.id === retention)?.days ?? null;
+  return days === null ? null : now - days * 24 * 60 * 60 * 1_000;
+}
+
+/**
+ * A retention change that would delete visits asks first, in main's own message box
+ * (`CONFIRM_HISTORY_RETENTION`), before anything is stored or pruned: a shorter retention than the
+ * stored one, or "Keep visits to project pages" turned off while the retention is not `forever`
+ * (`historyRetentionDeletes`). A longer retention, or keeping project pages, stores at once.
+ * `history.setRetention` answers one of `HISTORY_RETENTION_RESULTS`: `stored`, `cancelled` (the user
+ * said no: nothing stored, the setting stays as it was) or `failed`.
+ */
+export const HISTORY_RETENTION_RESULTS = ['stored', 'cancelled', 'failed'] as const;
+export type HistoryRetentionResult = (typeof HISTORY_RETENTION_RESULTS)[number];
+
+/** Whether changing the settings from `stored` to `next` can delete visits (so main asks first). */
+export function historyRetentionDeletes(stored: { readonly retention: HistoryRetention; readonly keepProjectPages: boolean }, next: { readonly retention: HistoryRetention; readonly keepProjectPages: boolean }): boolean {
+  const days = (id: HistoryRetention) => HISTORY_RETENTIONS.find((entry) => entry.id === id)?.days ?? Number.POSITIVE_INFINITY;
+  if (days(next.retention) < days(stored.retention)) return true;
+  return stored.keepProjectPages && !next.keepProjectPages && next.retention !== 'forever';
+}
+
+/** The question (`{retention}`: the new retention's label, lower-cased). */
+export const CONFIRM_HISTORY_RETENTION = {
+  dialog: {
+    type: 'warning',
+    message: 'Keep history for {retention} only?',
+    detail:
+      'frost keeps one entry per page, with the time of its last visit. Pages last visited before then are removed now, with their earlier visits, and from now on once a day.',
+    detailProjectPages: 'frost keeps one entry per page, with the time of its last visit. Pages in your projects last visited before then are removed now too, and from now on once a day.',
+    buttons: ['Remove Older History', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  },
+  confirmIndex: 0,
+} as const;
+
+/** `CONFIRM_HISTORY_RETENTION`'s message and detail for a change to `next` from `stored`. */
+export function confirmHistoryRetentionText(stored: { readonly retention: HistoryRetention }, next: { readonly retention: HistoryRetention }): { message: string; detail: string } {
+  const label = (HISTORY_RETENTIONS.find((entry) => entry.id === next.retention)?.label ?? '').toLowerCase();
+  const shorter = historyRetentionDeletes({ retention: stored.retention, keepProjectPages: false }, { retention: next.retention, keepProjectPages: false });
+  return { message: CONFIRM_HISTORY_RETENTION.dialog.message.replace('{retention}', label), detail: shorter ? CONFIRM_HISTORY_RETENTION.dialog.detail : CONFIRM_HISTORY_RETENTION.dialog.detailProjectPages };
+}
+
+/**
+ * "Keep visits to project pages" (on by default): pruning skips a visit whose URL, without its
+ * fragment, is a live page of a live project (`ci_project_pages`, same database file). Stored in
+ * `app_settings` under `HISTORY_KEEP_PROJECT_PAGES_KEY` as `'1'` / `'0'`; anything else reads as the
+ * default. Clearing a range or all history ignores it (the user asked for those visits to go).
+ */
+export const HISTORY_KEEP_PROJECT_PAGES_KEY = 'history_keep_project_pages' as const;
+export const DEFAULT_HISTORY_KEEP_PROJECT_PAGES = true;
+
+/**
+ * Clear by range: every visit row whose `last_visit_at` is within the last `ms` (one row per URL, so
+ * a URL visited in the range loses its earlier visits too), stored and pending, and the closed-tab
+ * stack. Main asks first in its own message box (`CLEAR_HISTORY_RANGE`). "Last day" is the last 24
+ * hours, "last month" the last 30 days.
+ */
+export const HISTORY_CLEAR_RANGES = [
+  { id: 'hour', label: 'Last hour', ms: 60 * 60 * 1_000 },
+  { id: 'day', label: 'Last day', ms: 24 * 60 * 60 * 1_000 },
+  { id: 'week', label: 'Last week', ms: 7 * 24 * 60 * 60 * 1_000 },
+  { id: 'month', label: 'Last month', ms: 30 * 24 * 60 * 60 * 1_000 },
+] as const satisfies readonly { id: string; label: string; ms: number }[];
+export type HistoryClearRange = (typeof HISTORY_CLEAR_RANGES)[number]['id'];
+export const HISTORY_CLEAR_RANGE_IDS = HISTORY_CLEAR_RANGES.map((entry) => entry.id) as [HistoryClearRange, ...HistoryClearRange[]];
+
+/** The earliest `last_visit_at` a range clears at `now`. */
+export function historyClearSince(range: HistoryClearRange, now: number): number {
+  return now - (HISTORY_CLEAR_RANGES.find((entry) => entry.id === range)?.ms ?? 0);
+}
+
+/** The range question (`{range}`: the range's label, lower-cased). It states that history keeps one row per URL. */
+export const CLEAR_HISTORY_RANGE = {
+  dialog: {
+    type: 'warning',
+    message: 'Clear history from the {range}?',
+    detail:
+      'frost keeps one entry per page, with the time of its last visit. This removes every page last visited in this time, with its earlier visits too, and the list of recently closed tabs. Site data, permissions and open tabs are kept.',
+    buttons: ['Clear History', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  },
+  confirmIndex: 0,
+} as const;
+
+/** `CLEAR_HISTORY_RANGE.dialog.message` for `range`. */
+export function clearHistoryRangeMessage(range: HistoryClearRange): string {
+  const label = HISTORY_CLEAR_RANGES.find((entry) => entry.id === range)?.label ?? '';
+  return CLEAR_HISTORY_RANGE.dialog.message.replace('{range}', label.toLowerCase());
+}
+
+/**
+ * The History view's project filter: every visit, or only visits whose URL (without its fragment) is
+ * a live page of that live project (Unfiled included: it can hold pages) (`history.list`'s `projectId`). Each listed visit carries
+ * `changeCount`: how many times frost recorded the page changing, summed over its capture lanes
+ * (`ci_versions` stored at that URL, less one per lane); `0` when never captured or never changed.
+ */
+export const HISTORY_ALL_PAGES_LABEL = 'All pages' as const;
+export const HISTORY_PROJECT_FILTER_LABEL = 'Show pages from' as const;
+export const HISTORY_CLEAR_RANGE_LABEL = 'Clear history from' as const;
+
+/** A visit's change count as the row shows it (`null` for none). */
+export function historyChangeLabel(count: number | undefined): string | null {
+  if (count === undefined || count <= 0) return null;
+  return count === 1 ? '1 change' : `${count.toLocaleString('en-US')} changes`;
+}
+
+/** The Settings view's History section (`SETTINGS_SECTIONS`: `history`). */
+export const HISTORY_SETTINGS_TEXT = {
+  intro: 'History stays on this device. frost keeps one entry per page, with the time of its last visit.',
+  retentionLabel: 'Keep history for',
+  keepProjectPages: 'Keep visits to project pages',
+  keepProjectPagesHint: 'Pages in your projects stay in history whatever the setting above.',
+  loading: 'Loading…',
+  failed: 'Couldn’t save the setting. Try again.',
+  cancelled: 'Nothing changed: your history is kept as before.',
+  readFailed: 'Couldn’t read the history settings.',
+  retry: 'Try again',
+} as const;
+
 // ---- New-tab page --------------------------------------------------------------------------------
 
 /**

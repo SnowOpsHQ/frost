@@ -1040,12 +1040,48 @@ input {
 /* Docked left of the page area: the rail at the window's edge, then the panel. The page area
    shrinks to make room (the tab's view follows it through setPageBounds). */
 .seo {
+  position: relative;
   display: flex;
   flex: 0 1 auto;
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--bg-chrome-edge);
   background: var(--bg-chrome);
+}
+
+/* Phase 11 Task 10: a resizable pane's separator (sidebar-layout.ts), a thin strip inside the pane on
+   its edge next to the page (the tab's view covers the page area, so it never reaches past it). Its
+   line shows on hover, while dragged and with keyboard focus. */
+.pane-separator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 5;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.pane-separator::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.pane-separator:hover::after,
+.pane-separator:active::after,
+.pane-separator:focus-visible::after {
+  background: var(--accent);
+}
+
+.seo-separator,
+.seo-separator::after {
+  right: 0;
 }
 
 .seo-panel {
@@ -1247,6 +1283,76 @@ input {
 
 .seo-rail-dot[data-status='error'] {
   background: var(--danger);
+}
+
+/* "More panels" (Phase 11 Task 10): the unpinned panels, as a menu drawn over the open panel. */
+.seo-rail-more {
+  margin-top: 4px;
+}
+
+.seo-more-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  max-width: 260px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--bg-chrome-edge);
+  border-radius: 8px;
+  background: var(--bg-chrome);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.3);
+}
+
+.seo-more-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: start;
+}
+
+.seo-more-item .icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--icon);
+}
+
+.seo-more-item:hover {
+  background: var(--bg-hover);
+}
+
+.seo-more-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.seo-more-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seo-more-item .seo-more-dot {
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+}
+
+/* The open panel's pin toggle: pressed while the panel is on the rail. */
+.seo-pin[aria-pressed='true'] {
+  color: var(--accent);
 }
 
 /* The toolbar's toggle shows whether the panel is open. */
@@ -7681,6 +7787,61 @@ input {
   .history-row {
     grid-template-columns: 52px minmax(0, 1fr) auto auto;
   }
+}
+
+/* Phase 11 Task 10: the project filter and "Clear history from" a range, under the header. */
+.history-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  flex: none;
+  padding: 0 20px 10px;
+}
+
+.history-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.history-tool-end {
+  margin-inline-start: auto;
+}
+
+.history-tools .history-clear {
+  margin-inline-start: 0;
+}
+
+.history-select {
+  min-width: 0;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: var(--bg-field);
+  color: var(--text);
+}
+
+.history-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* A row's change count (frost's own captures of the page). */
+.history-changes {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* ---- New-tab page: Jump back in ---- */

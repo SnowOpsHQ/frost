@@ -34,6 +34,24 @@ export const AGENT_RAIL_WIDTH = 40;
  */
 export const AGENT_PANEL_STORAGE_KEY = 'frost.agent-panel.open' as const;
 
+/**
+ * Phase 11 Task 10 (Decision 12): the open panel's width is the user's, dragged or stepped from the
+ * keyboard on the separator at its edge next to the page (`role="separator"`, as the SEO sidebar's:
+ * `SIDEBAR_PANEL_WIDTH_RANGE` in `seo-sidebar.spec.ts`). The separator moves with the arrow keys
+ * (`keyboardStep`; Left / Up widen this panel, since it grows towards the page on its left; Right /
+ * Down narrow it; Home / End the smallest / largest width). `AGENT_PANEL_WIDTH` is the default. The
+ * width is clamped to the range and so the page keeps `PAGE_MIN_WIDTH`, and is kept in the chrome's
+ * `localStorage` under `AGENT_PANEL_WIDTH_STORAGE_KEY` (decimal CSS px).
+ *
+ * **Shrink order** in a window too narrow for the chosen widths and the page's minimum: this panel
+ * gives way first, down to its `min`; then the SEO sidebar's panel down to its `min`; then both
+ * narrow as before (their content clipped, the page at `PAGE_MIN_WIDTH`). Stored widths are not changed.
+ */
+export const AGENT_PANEL_WIDTH_RANGE = { min: 320, max: 640, keyboardStep: 24 } as const;
+export const AGENT_PANEL_WIDTH_STORAGE_KEY = 'frost.agent-panel.width' as const;
+/** The separator's accessible name. */
+export const AGENT_PANEL_RESIZE_LABEL = 'Resize the AI agent panel' as const;
+
 /** The palette's actions (`command-palette.spec.ts`, Registration API). */
 export const AGENT_PALETTE_TOGGLE_ID = 'agent.toggle' as const;
 export const AGENT_PALETTE_SETTINGS_ID = 'agent.settings' as const;

@@ -1,9 +1,24 @@
 // Spec: specs/browser-polish.spec.ts (HISTORY_PAGE_SIZE, HISTORY_QUERY_MAX_CHARS, JUMP_BACK_IN_*,
-// SEARCH_ENGINE_SETTING_KEY, DEFAULT_SEARCH_ENGINE)
-// Acceptance: specs/browser-polish.feature.md (History view, New-tab page, Search engines)
+// SEARCH_ENGINE_SETTING_KEY, DEFAULT_SEARCH_ENGINE; Phase 11: HISTORY_RETENTIONS, HISTORY_RETENTION_SETTING_KEY,
+// HISTORY_KEEP_PROJECT_PAGES_KEY, historyRetentionCutoff, historyClearSince)
+// Acceptance: specs/browser-polish.feature.md (History view, New-tab page, Search engines; History retention, ranges and projects)
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { DEFAULT_SEARCH_ENGINE, HISTORY_PAGE_SIZE, JUMP_BACK_IN_MOST_VISITED, JUMP_BACK_IN_RECENT, SEARCH_ENGINE_SETTING_KEY } from '@app/specs/browser-polish.spec';
+import {
+  DEFAULT_HISTORY_KEEP_PROJECT_PAGES,
+  DEFAULT_HISTORY_RETENTION,
+  DEFAULT_SEARCH_ENGINE,
+  HISTORY_CLEAR_RANGES,
+  HISTORY_KEEP_PROJECT_PAGES_KEY,
+  HISTORY_PAGE_SIZE,
+  HISTORY_RETENTION_SETTING_KEY,
+  historyClearSince,
+  historyRetentionCutoff,
+  JUMP_BACK_IN_MOST_VISITED,
+  JUMP_BACK_IN_RECENT,
+  SEARCH_ENGINE_SETTING_KEY,
+} from '@app/specs/browser-polish.spec';
+import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { createDrizzle } from '../client';
 import { createHistoryRepository, likePattern, type HistoryRepository, type HistoryVisit } from '../history';
 import { MIGRATIONS, runMigrations } from '../migrations';
@@ -143,5 +158,144 @@ describe('settings repository', () => {
     await settings.setSearchEngine('bing', 8);
     await repo.clearBrowsingData();
     expect(await settings.searchEngine()).toBe('bing');
+  });
+});
+
+// ---- Phase 11 Task 10: retention, clear by range, project filter, change counts -----------------
+
+const DAY = 24 * 60 * 60 * 1_000;
+let ids = 0;
+/** A UUIDv7-shaped id (the tables check the shape only through the repository, not SQL). */
+const newId = () => `0190${String(++ids).padStart(4, '0')}-0000-7000-8000-000000000000`;
+const project = (deletedAt: number | null = null) => {
+  const id = newId();
+  raw.prepare("INSERT INTO ci_projects (id, name, render_profile, retention_mode, retention_value, created_at, updated_at, deleted_at) VALUES (?, ?, NULL, 'forever', NULL, 1, 1, ?)").run(id, `P${id}`, deletedAt);
+  return id;
+};
+const projectPage = (projectId: string, url: string, deletedAt: number | null = null) =>
+  raw.prepare('INSERT INTO ci_project_pages (id, project_id, url, created_at, updated_at, deleted_at) VALUES (?, ?, ?, 1, 1, ?)').run(newId(), projectId, url, deletedAt);
+const version = (pageUrl: string, laneKey: string, at: number) =>
+  raw
+    .prepare('INSERT INTO ci_versions (id, lane_key, page_url, render_profile, search_params, snapshot, snapshot_hash, snapshot_bytes, schema_version, parent_version_id, created_at) VALUES (?, ?, ?, NULL, NULL, ?, ?, 1, 1, NULL, ?)')
+    .run(newId(), laneKey, pageUrl, '{}', 'a'.repeat(64), at);
+const stored = () => (raw.prepare('SELECT url FROM recent_visits ORDER BY url').all() as { url: string }[]).map((row) => row.url);
+
+describe('history retention and projects', () => {
+  test('prune-keeps-project-pages', async () => {
+    const now = 100 * DAY;
+    const live = project();
+    const gone = project(5);
+    projectPage(live, 'https://site.example/kept');
+    projectPage(live, 'https://site.example/dropped-page', 7);
+    projectPage(gone, 'https://site.example/in-deleted-project');
+    insert('https://site.example/old', 'Old', 1, now - 40 * DAY);
+    insert('https://site.example/kept#section', 'Kept (fragment)', 1, now - 40 * DAY);
+    insert('https://site.example/dropped-page', 'Dropped page', 1, now - 40 * DAY);
+    insert('https://site.example/in-deleted-project', 'Deleted project', 1, now - 40 * DAY);
+    insert('https://site.example/recent', 'Recent', 1, now - DAY);
+    // `forever` has no cut-off; 30 days cuts at now - 30 days.
+    expect(historyRetentionCutoff('forever', now)).toBeNull();
+    const cutoff = historyRetentionCutoff('30d', now)!;
+    expect(cutoff).toBe(now - 30 * DAY);
+    // Keeping project pages: only the live project's live page stays among the old visits.
+    expect(await history.prune(cutoff, true)).toBe(3);
+    expect(stored()).toEqual(['https://site.example/kept#section', 'https://site.example/recent']);
+    // Not keeping them: it goes too; a visit at exactly the cut-off stays.
+    insert('https://site.example/edge', 'Edge', 1, cutoff);
+    expect(await history.prune(cutoff, false)).toBe(1);
+    expect(stored()).toEqual(['https://site.example/edge', 'https://site.example/recent']);
+    // A nonsense cut-off deletes nothing.
+    expect(await history.prune(Number.NaN, false)).toBe(0);
+    expect(stored()).toHaveLength(2);
+  });
+
+  test('clear-range-on-last-visit', async () => {
+    const now = 50 * DAY;
+    // One row per URL: `/both` was visited long ago and again within the hour.
+    insert('https://site.example/both', 'Both', 5, now - 10 * 60 * 1_000);
+    insert('https://site.example/two-hours', 'Two hours', 1, now - 2 * 60 * 60 * 1_000);
+    insert('https://site.example/old', 'Old', 1, now - 20 * DAY);
+    const hour = historyClearSince('hour', now);
+    expect(hour).toBe(now - HISTORY_CLEAR_RANGES.find((r) => r.id === 'hour')!.ms);
+    expect(await history.clearSince(hour)).toBe(1);
+    // Its earlier visits went with it (one row per URL); older rows stay.
+    expect(stored()).toEqual(['https://site.example/old', 'https://site.example/two-hours']);
+    expect(await history.clearSince(historyClearSince('day', now))).toBe(1);
+    expect(stored()).toEqual(['https://site.example/old']);
+    // A visit at exactly the range's start is in it; the month reaches 30 days back, not 31.
+    expect(historyClearSince('month', now)).toBe(now - 30 * DAY);
+    insert('https://site.example/edge', 'Edge', 1, historyClearSince('week', now));
+    expect(await history.clearSince(historyClearSince('week', now))).toBe(1);
+    expect(stored()).toEqual(['https://site.example/old']);
+    expect(await history.clearSince(Number.POSITIVE_INFINITY)).toBe(0);
+  });
+
+  test('project-filter', async () => {
+    const a = project();
+    const b = project();
+    const deleted = project(9);
+    projectPage(a, 'https://site.example/a1');
+    projectPage(a, 'https://site.example/a2');
+    projectPage(a, 'https://site.example/a-gone', 3);
+    projectPage(b, 'https://site.example/b1');
+    projectPage(deleted, 'https://site.example/a1-elsewhere');
+    insert('https://site.example/a1#top', 'A1', 1, 10);
+    insert('https://site.example/a2', 'A2', 1, 30);
+    insert('https://site.example/a2?x=1', 'A2 query', 1, 40);
+    insert('https://site.example/a-gone', 'Gone', 1, 50);
+    insert('https://site.example/b1', 'B1', 1, 20);
+    insert('https://site.example/a1-elsewhere', 'Elsewhere', 1, 60);
+    // Only a's live pages, fragment ignored, newest first; a query string is another page.
+    expect(urls((await history.list({ query: '', after: null, projectId: a })).visits)).toEqual(['https://site.example/a2', 'https://site.example/a1#top']);
+    expect(urls((await history.list({ query: '', after: null, projectId: b })).visits)).toEqual(['https://site.example/b1']);
+    // A deleted project, or an unknown one, lists nothing.
+    expect((await history.list({ query: '', after: null, projectId: deleted })).visits).toEqual([]);
+    expect((await history.list({ query: '', after: null, projectId: newId() })).visits).toEqual([]);
+    // With the search box and the keyset too.
+    expect(urls((await history.list({ query: 'A1', after: null, projectId: a })).visits)).toEqual(['https://site.example/a1#top']);
+    const first = await history.list({ query: '', after: null, projectId: a, limit: 1 });
+    expect(urls(first.visits)).toEqual(['https://site.example/a2']);
+    expect(urls((await history.list({ query: '', after: first.next, projectId: a, limit: 1 })).visits)).toEqual(['https://site.example/a1#top']);
+    // Without a project: every visit.
+    expect((await history.list({ query: '', after: null })).visits).toHaveLength(6);
+    // Unfiled holds pages too.
+    projectPage(UNFILED_PROJECT_ID, 'https://site.example/b1');
+    expect(urls((await history.list({ query: '', after: null, projectId: UNFILED_PROJECT_ID })).visits)).toEqual(['https://site.example/b1']);
+  });
+
+  test('change-count-from-versions', async () => {
+    insert('https://site.example/changed#frag', 'Changed', 1, 30);
+    insert('https://site.example/once', 'Once', 1, 20);
+    insert('https://site.example/never', 'Never', 1, 10);
+    // Three versions in one lane (two changes), two in another (one change): three.
+    for (const at of [1, 2, 3]) version('https://site.example/changed', 'lane-a', at);
+    for (const at of [4, 5]) version('https://site.example/changed', 'lane-b', at);
+    version('https://site.example/once', 'lane-c', 1);
+    const { visits } = await history.list({ query: '', after: null });
+    expect(visits.map((v) => [v.url, v.changeCount])).toEqual([
+      ['https://site.example/changed#frag', 3],
+      ['https://site.example/once', 0],
+      ['https://site.example/never', 0],
+    ]);
+    // The new-tab page's tiles carry none.
+    expect((await history.jumpBackIn()).mostVisited.every((v) => v.changeCount === undefined)).toBe(true);
+
+    // The two settings: defaults, a round trip, refusals, tampered rows as the defaults.
+    const settings = createSettingsRepository(createDrizzle(raw));
+    expect(await settings.historySettings()).toEqual({ retention: DEFAULT_HISTORY_RETENTION, keepProjectPages: DEFAULT_HISTORY_KEEP_PROJECT_PAGES });
+    expect(DEFAULT_HISTORY_RETENTION).toBe('forever');
+    expect(DEFAULT_HISTORY_KEEP_PROJECT_PAGES).toBe(true);
+    expect(await settings.setHistorySettings({ retention: '7d', keepProjectPages: false }, 5)).toBe(true);
+    expect(await settings.historySettings()).toEqual({ retention: '7d', keepProjectPages: false });
+    expect(await settings.setHistorySettings({ retention: '1d' as never, keepProjectPages: true }, 6)).toBe(false);
+    expect(await settings.setHistorySettings({ retention: '30d', keepProjectPages: 'yes' as never }, 6)).toBe(false);
+    expect(await settings.historySettings()).toEqual({ retention: '7d', keepProjectPages: false });
+    raw.prepare('UPDATE app_settings SET value = ? WHERE key = ?').run('365d', HISTORY_RETENTION_SETTING_KEY);
+    raw.prepare('UPDATE app_settings SET value = ? WHERE key = ?').run('true', HISTORY_KEEP_PROJECT_PAGES_KEY);
+    expect(await settings.historySettings()).toEqual({ retention: DEFAULT_HISTORY_RETENTION, keepProjectPages: DEFAULT_HISTORY_KEEP_PROJECT_PAGES });
+    // Clear Browsing Data keeps the preferences.
+    await settings.setHistorySettings({ retention: '90d', keepProjectPages: true }, 7);
+    await repo.clearBrowsingData();
+    expect(await settings.historySettings()).toEqual({ retention: '90d', keepProjectPages: true });
   });
 });

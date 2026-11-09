@@ -132,8 +132,11 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   shrinks and moves right to make room; collapsing hides the panel and keeps the rail. In a narrow
   window the page area keeps `PAGE_MIN_WIDTH` and the panel narrows instead
   (`narrow-window-keeps-page-usable`).
-- The rail lists `SEO_PANELS` in order: available panels as buttons with a status dot, the others
+- The rail lists the **pinned** panels of `SEO_PANELS` in order (Phase 11 Task 10; every panel is
+  pinned until the user unpins it): available panels as buttons with a status dot, the others
   disabled, labelled `COMING_SOON_LABEL`, without a dot. Since Tasks 5 and 6 every panel is available.
+  Unpinned panels are in the rail's "More panels" menu (`MORE_PANELS_LABEL`), whose dot is the worst
+  status it holds; an open unpinned panel also shows on the rail while it is open.
 - A rail item's label shows as a tooltip within `RAIL_TOOLTIP_DELAY_MS` of hovering it while the
   panel is open (drawn over the panel; moving to the next item shows its label at once). With the
   panel collapsed the tab's view sits beside the rail and would cover it, so the item keeps the
@@ -206,3 +209,35 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   lists all eleven panels (`SEO_PANELS`; Content and JavaScript since Phase 2.5), each with a status.
 - **Scenario: narrow-window-keeps-page-usable** — with the chrome 500 px wide the tab's view keeps
   `PAGE_MIN_WIDTH`, the sidebar narrows (the rail stays), and a click in the page still lands.
+
+## Resize and pins (Phase 11 Task 10, Decision 12; `renderer/__tests__/sidebar-layout.test.ts`)
+Spec: `SIDEBAR_PANEL_WIDTH_RANGE`, `SIDEBAR_WIDTH_STORAGE_KEY`, `SIDEBAR_PINS_STORAGE_KEY`,
+`ALWAYS_PINNED_PANELS`, `MORE_PANELS_LABEL`, `PIN_PANEL_LABEL`; the agent pane's
+`AGENT_PANEL_WIDTH_RANGE` (`agent-panel.spec.ts`). Code: `renderer/sidebar-layout.ts`, `SeoSidebar.tsx`.
+- The panel's edge next to the page is a separator (`role="separator"`, `aria-valuenow` / `min` /
+  `max`): dragging it or its arrow keys (`keyboardStep`; Home / End) set the panel's width, kept in
+  `localStorage`. The page area, and so the tab's view (`setPageBounds`), follows.
+- **Scenario: width-clamped-to-page-min** — a width is clamped to the range and so the page keeps
+  `PAGE_MIN_WIDTH` beside the agent pane as it is; a stored width out of range reads clamped, an
+  unreadable one as the default.
+- **Scenario: narrow-window-shrinks-agent-pane-first** — when the window cannot hold both chosen
+  widths and the page's minimum, the agent pane gives way to its minimum first, then the sidebar to
+  its minimum; past that both are left to narrow as before.
+- **Scenario: stuck-drag-ends** — a drag ends (keeping the width it reached) on release, on a move
+  with the main button up, on lost pointer capture, and when the pane closes or unmounts; only the
+  main button starts one.
+- **Scenario: keyboard-resize-steps** — Right / Up widen by `keyboardStep`, Left / Down narrow,
+  Home / End go to the ends, other keys do nothing; never past the allowed range.
+- **Scenario: pins-persist-overview-stays** — the unpinned list round-trips through storage; unknown
+  ids and Overview are ignored; Overview cannot be unpinned.
+- **Scenario: more-shows-worst-status** — the More dot is `error` over `warn` over `pass` among the
+  unpinned panels; none when none of them has a status.
+- **Scenario: jump-to-unpinned-panel-shows-it** — the open unpinned panel is on the rail in its
+  `SEO_PANELS` place; once another panel opens (or the sidebar collapses) it is gone again.
+- **Scenario: drag-resize-moves-page-view** (e2e `seo-sidebar.e2e.ts`) — dragging the separator by
+  100 px moves the tab's view's left edge by 100 px and narrows it by as much (the width is stored);
+  ArrowLeft steps it back; in a narrower chrome End stops where the page keeps its minimum and a drag
+  takes no more; Home goes to the minimum; that width survives a relaunch on the same profile.
+- **Scenario: unpin-into-more** (e2e `seo-sidebar.e2e.ts`) — unpinning the open Links panel keeps it
+  on the rail while open; after opening another it is only in "More panels" (with its dot), and
+  choosing it there opens it again; Overview has no pin toggle.

@@ -457,3 +457,8 @@
     padding: 0 20px 24px;
   }
 }
+
+/* The History section (Phase 11 Task 10): the retention choices are radio rows like AI checks'. */
+.settings-history-retention .settings-toggle {
+  padding: 0;
+}

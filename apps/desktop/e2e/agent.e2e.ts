@@ -15,7 +15,18 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { AGENT_ATTACHMENT_STATE_LABELS, AGENT_MODEL_PROVIDER_LABELS, AGENT_REASONING_HINT, AGENT_REASONING_UNAVAILABLE, AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
+import {
+  AGENT_ATTACHMENT_STATE_LABELS,
+  AGENT_MODEL_PROVIDER_LABELS,
+  AGENT_PANEL_RESIZE_LABEL,
+  AGENT_PANEL_WIDTH,
+  AGENT_PANEL_WIDTH_RANGE,
+  AGENT_REASONING_HINT,
+  AGENT_REASONING_UNAVAILABLE,
+  AGENT_SET_KEY_MESSAGES,
+  AGENT_TOOL_STATUS_LABELS,
+} from '@app/specs/agent-panel.spec';
+import { PAGE_MIN_WIDTH, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 import {
   AGENT_GRANTS_EXPLAINER,
   CHAT_EXPORT_MESSAGES,
@@ -257,6 +268,64 @@ test('agent-panel-keeps-the-page-view-clear', async () => {
     const view = (await viewBounds())!;
     return view.x + view.width <= Math.ceil(await panelLeft());
   }).toBe(true);
+});
+
+// Phase 11 Task 10 (`agent-panel.feature.md`, Resize): the separator on the panel's page side.
+test('agent-pane-resize', async () => {
+  await launchWith([{ text: ['unused'] }]);
+  // Hyprland tiles the window: the chrome is laid out at a set size instead.
+  await page.setViewportSize({ width: 1_280, height: 800 });
+  try {
+    const separator = page.getByTestId('agent-resize');
+    await expect(separator).toHaveAttribute('role', 'separator');
+    await expect(separator).toHaveAttribute('aria-label', AGENT_PANEL_RESIZE_LABEL);
+    await expect(separator).toHaveAttribute('aria-valuenow', String(AGENT_PANEL_WIDTH));
+    await expect.poll(async () => (await viewBounds())!.x + (await viewBounds())!.width).toBeLessThanOrEqual(Math.ceil((await panel().boundingBox())!.x));
+    const before = (await viewBounds())!;
+    // Dragged 100 px towards the page (left): the panel widens, the tab's view narrows by as much.
+    const box = (await separator.boundingBox())!;
+    const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x - 50, y, { steps: 4 });
+    await page.mouse.move(x - 100, y, { steps: 4 });
+    await page.mouse.up();
+    await expect(separator).toHaveAttribute('aria-valuenow', String(AGENT_PANEL_WIDTH + 100));
+    await expect.poll(async () => (await viewBounds())!.width).toBe(before.width - 100);
+    expect((await viewBounds())!.x).toBe(before.x);
+    // ArrowRight moves the separator right: the panel narrows by one step.
+    await separator.focus();
+    await page.keyboard.press('ArrowRight');
+    const chosen = AGENT_PANEL_WIDTH + 100 - AGENT_PANEL_WIDTH_RANGE.keyboardStep;
+    await expect(separator).toHaveAttribute('aria-valuenow', String(chosen));
+    await expect.poll(async () => (await viewBounds())!.width).toBe(before.width - 100 + AGENT_PANEL_WIDTH_RANGE.keyboardStep);
+
+    // Both panels open in a chrome too narrow for both as chosen: the agent gives way first.
+    await page.getByTestId('seo-toggle').click();
+    await expect(page.getByTestId('seo-resize')).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH));
+    const agentRoom = 400;
+    const width = PAGE_MIN_WIDTH + SIDEBAR_RAIL_WIDTH + 2 + SIDEBAR_PANEL_WIDTH + agentRoom;
+    await page.setViewportSize({ width, height: 800 });
+    // (Within a pixel: on a scaled display the chrome's width is a fraction off the one asked for.)
+    const near = (locator: ReturnType<Page['getByTestId']>, value: number) => expect.poll(async () => Math.abs(Number(await locator.getAttribute('aria-valuenow')) - value)).toBeLessThanOrEqual(1);
+    await near(separator, agentRoom);
+    await expect(page.getByTestId('seo-resize')).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH));
+    // The page at its minimum (borders are one device pixel: a fraction of a CSS px on a scaled display).
+    await expect.poll(async () => (await viewBounds())!.width).toBeGreaterThanOrEqual(PAGE_MIN_WIDTH);
+    expect((await viewBounds())!.width).toBeLessThanOrEqual(PAGE_MIN_WIDTH + 2);
+    // Narrower still: the agent at its minimum, then the sidebar gives way.
+    await page.setViewportSize({ width: width - (agentRoom - AGENT_PANEL_WIDTH_RANGE.min) - 30, height: 800 });
+    await expect(separator).toHaveAttribute('aria-valuenow', String(AGENT_PANEL_WIDTH_RANGE.min));
+    await near(page.getByTestId('seo-resize'), SIDEBAR_PANEL_WIDTH - 30);
+    // The page at its minimum (borders are one device pixel: a fraction of a CSS px on a scaled display).
+    await expect.poll(async () => (await viewBounds())!.width).toBeGreaterThanOrEqual(PAGE_MIN_WIDTH);
+    expect((await viewBounds())!.width).toBeLessThanOrEqual(PAGE_MIN_WIDTH + 2);
+    // Wide again: the chosen width comes back.
+    await page.setViewportSize({ width: 1_600, height: 800 });
+    await expect(separator).toHaveAttribute('aria-valuenow', String(chosen));
+  } finally {
+    await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
+  }
 });
 
 test('agent-approval-deny', async () => {

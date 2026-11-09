@@ -1,5 +1,15 @@
 import { TRPCError } from '@trpc/server';
-import { FindCloseInputSchema, FindSearchInputSchema, FindStepInputSchema, HistoryListInputSchema, HistoryRemoveInputSchema, SetSearchEngineInputSchema } from '@app/specs/browser-polish.schema';
+import {
+  FindCloseInputSchema,
+  FindSearchInputSchema,
+  FindStepInputSchema,
+  HistoryClearRangeInputSchema,
+  HistoryListInputSchema,
+  HistoryRemoveInputSchema,
+  HistoryRetentionResultSchema,
+  HistoryRetentionSettingsSchema,
+  SetSearchEngineInputSchema,
+} from '@app/specs/browser-polish.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
@@ -54,14 +64,16 @@ export const findRouter = router({
 /**
  * The History view, the new-tab page and Reopen Closed Tab: `list` a page of visits, `jumpBackIn` the
  * tiles, `remove` / `clearAll` whether they deleted, `reopenClosedTab` the reopened tab's id (`null`:
- * none), `show` `null`.
+ * none), `show` `null`. Phase 11 Task 10: `retention` the retention settings (schema-checked),
+ * `setRetention` `stored` / `cancelled` / `failed` (main asks before a change that deletes visits),
+ * `clearRange` whether it cleared.
  */
 export const historyRouter = router({
   list: publicProcedure
     .use(enforceSender)
     .use(requireHistory)
     .input(HistoryListInputSchema)
-    .query(({ ctx, input }) => ctx.history.list(input.query, input.after, input.limit)),
+    .query(({ ctx, input }) => (input.projectId === undefined ? ctx.history.list(input.query, input.after, input.limit) : ctx.history.list(input.query, input.after, input.limit, input.projectId))),
   jumpBackIn: publicProcedure
     .use(enforceSender)
     .use(requireHistory)
@@ -89,6 +101,22 @@ export const historyRouter = router({
       ctx.history.show();
       return null;
     }),
+  retention: publicProcedure
+    .use(enforceSender)
+    .use(requireHistory)
+    .output(HistoryRetentionSettingsSchema)
+    .query(({ ctx }) => ctx.history.retention()),
+  setRetention: publicProcedure
+    .use(enforceSender)
+    .use(requireHistory)
+    .input(HistoryRetentionSettingsSchema)
+    .output(HistoryRetentionResultSchema)
+    .mutation(({ ctx, input }) => ctx.history.setRetention(input)),
+  clearRange: publicProcedure
+    .use(enforceSender)
+    .use(requireHistory)
+    .input(HistoryClearRangeInputSchema)
+    .mutation(async ({ ctx, input }) => (await ctx.history.clearRange(input.range)) === true),
 });
 
 /** Local preferences: the search engine (`searchEngine` its id, `setSearchEngine` whether it was stored). */

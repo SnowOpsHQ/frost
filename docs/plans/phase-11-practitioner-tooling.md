@@ -1108,3 +1108,15 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `onStateChange` (append-only); `tools/index.ts` is unchanged (the broker passes the attached tab's
   id as `context.tabId`). Known wording gap: an `expired` result reaches the model as the existing
   "approval expired" message.
+- **Task 10:** pane widths go to CSS as `--seo-panel-width` / `--agent-panel-width` through a small
+  layout store in `sidebar-layout.ts` shared by both panes (App.tsx unchanged); `PageArea`'s
+  ResizeObserver carries them to main. The separator is a 6 px strip inside each pane with pointer
+  capture and full keyboard support; a drag ends on pointerup/cancel, lost capture, a move with the
+  button up, or the pane closing. Pins are a JSON list of unpinned ids; each panel header has a
+  "Keep on the rail" toggle (none on Overview); "More panels" opens the sidebar first when collapsed.
+  History: `history.retention` / `history.setRetention` / `history.clearRange`. Lead ruling after
+  review: a retention change that would delete visits (shorter, or keep-project-pages turned off)
+  **asks in main's own dialog first** (`stored | cancelled | failed`), like clear-range. Main prunes
+  at start, daily and after a stored change. Clear-range also forgets the recently-closed-tabs list
+  (stated in the dialog). `changeCount` = the page's `ci_versions` at that URL minus its capture
+  lanes. The project filter lists every live project, Unfiled included.

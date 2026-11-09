@@ -1,8 +1,21 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
-import type { HistoryCursorAnswer, HistoryVisitAnswer } from '@app/ipc-contract';
-import { HISTORY_EMPTY_MESSAGE, HISTORY_NO_MATCHES, HISTORY_QUERY_MAX_CHARS, HISTORY_TITLE } from '@app/specs/browser-polish.spec';
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import type { HistoryVisitAnswer } from '@app/ipc-contract';
+import {
+  HISTORY_ALL_PAGES_LABEL,
+  HISTORY_CLEAR_RANGE_LABEL,
+  HISTORY_CLEAR_RANGES,
+  HISTORY_EMPTY_MESSAGE,
+  HISTORY_NO_MATCHES,
+  HISTORY_PROJECT_FILTER_LABEL,
+  HISTORY_QUERY_MAX_CHARS,
+  HISTORY_TITLE,
+  historyChangeLabel,
+  type HistoryClearRange,
+} from '@app/specs/browser-polish.spec';
+import type { ProjectSummary } from '@app/specs/projects.spec';
 import { browserPolishPaletteSources } from '../browser-polish-palette';
-import { appendPage, groupByDay, monogram, visitHost, visitLabel, visitTime } from '../history-view';
+import { groupByDay, monogram, visitHost, visitLabel, visitTime } from '../history-view';
+import { useHistoryListing } from '../hooks/useHistoryView';
 import { CloseIcon, OpenTabIcon, SearchIcon } from '../icons';
 import { actions } from '../ipc';
 import { registerPaletteActions } from '../palette/registry';
@@ -13,7 +26,8 @@ import { isolatedTooltip } from '../seo-view';
 // nothing is drawn over the tab's view). It lists `recent_visits` newest first, grouped by day, a page
 // at a time, with search, open (here or in a new background tab), delete and "Clear all history"
 // (main asks first). Every title and URL is React text, bidi-isolated: rendered inert, no links, no
-// favicons. Styling is the bundled styles.css only (strict CSP).
+// favicons. Styling is the bundled styles.css only (strict CSP). Phase 11 Task 10: a project filter
+// (only that project's pages), each row's change count, and "Clear history from" a range (main asks).
 
 // Browser polish's palette actions (find, reopen tab, history, search engine), once per module instance.
 const unregisterPolishActions = registerPaletteActions(...browserPolishPaletteSources(actions));
@@ -22,16 +36,13 @@ import.meta.hot?.dispose(unregisterPolishActions);
 /** How long typing settles before the search runs. */
 const SEARCH_DEBOUNCE_MS = 150;
 
-interface Listing {
-  readonly query: string;
-  readonly visits: readonly HistoryVisitAnswer[];
-  readonly next: HistoryCursorAnswer | null;
-  readonly loading: boolean;
-}
+/** Where the view lists from. */
+const SOURCE = { list: actions.historyList };
 
 function VisitRow({ visit, onOpen, onRemove }: { readonly visit: HistoryVisitAnswer; readonly onOpen: (visit: HistoryVisitAnswer, background: boolean) => void; readonly onRemove: (visit: HistoryVisitAnswer) => void }) {
   const label = visitLabel(visit);
   const host = visitHost(visit.url);
+  const changes = historyChangeLabel(visit.changeCount);
   const open = (event: MouseEvent<HTMLButtonElement>) => onOpen(visit, event.metaKey || event.ctrlKey || event.button === 1);
   return (
     <li className="history-row" data-testid="history-row" data-url={visit.url}>
@@ -55,6 +66,11 @@ function VisitRow({ visit, onOpen, onRemove }: { readonly visit: HistoryVisitAns
         <bdi className="history-host" dir="auto">
           {host}
         </bdi>
+        {changes !== null ? (
+          <span className="history-changes" data-testid="history-changes" data-count={visit.changeCount}>
+            {changes}
+          </span>
+        ) : null}
       </button>
       <button type="button" className="history-action" data-testid="history-new-tab" aria-label={`Open ${label} in a new tab`} title="Open in a new tab" onClick={() => onOpen(visit, true)}>
         <OpenTabIcon />
@@ -69,35 +85,28 @@ function VisitRow({ visit, onOpen, onRemove }: { readonly visit: HistoryVisitAns
 export function HistoryView({ onClose }: { readonly onClose: () => void }) {
   const search = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
-  const [listing, setListing] = useState<Listing>({ query: '', visits: [], next: null, loading: true });
-  /** Bumped by each new listing, so a slow answer for an old query never lands. */
-  const generation = useRef(0);
-
-  const load = useCallback((text: string) => {
-    const mine = ++generation.current;
-    setListing((current) => ({ ...current, loading: true }));
-    void actions.historyList(text, null).then((page) => {
-      if (generation.current === mine) setListing({ query: text, visits: page.visits, next: page.next, loading: false });
-    });
-  }, []);
-
-  const more = () => {
-    const { next, query: text } = listing;
-    if (!next) return;
-    const mine = generation.current;
-    setListing((current) => ({ ...current, loading: true }));
-    void actions.historyList(text, next).then((page) => {
-      if (generation.current === mine) setListing((current) => ({ query: text, visits: appendPage(current.visits, page.visits), next: page.next, loading: false }));
-    });
-  };
+  /** The search as listed: the typed text once typing settles. */
+  const [searched, setSearched] = useState('');
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projects, setProjects] = useState<readonly ProjectSummary[]>([]);
+  const [range, setRange] = useState<HistoryClearRange>(HISTORY_CLEAR_RANGES[0].id);
+  const { listing, more, reload, drop } = useHistoryListing(SOURCE, searched, projectId);
 
   useEffect(() => {
     search.current?.focus();
+    let live = true;
+    // The project filter lists every live project, Unfiled first (it can hold pages too).
+    void actions.listProjects().then((list) => {
+      if (live) setProjects(list);
+    });
+    return () => {
+      live = false;
+    };
   }, []);
   useEffect(() => {
-    const timer = setTimeout(() => load(query), query === '' ? 0 : SEARCH_DEBOUNCE_MS);
+    const timer = setTimeout(() => setSearched(query), query === '' ? 0 : SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [query, load]);
+  }, [query]);
 
   const close = () => {
     onClose();
@@ -113,12 +122,17 @@ export function HistoryView({ onClose }: { readonly onClose: () => void }) {
   };
   const removeVisit = (visit: HistoryVisitAnswer) => {
     void actions.removeVisit(visit.url).then((removed) => {
-      if (removed) setListing((current) => ({ ...current, visits: current.visits.filter((v) => v.url !== visit.url) }));
+      if (removed) drop(visit.url);
     });
   };
   const clearAll = () => {
     void actions.clearHistory().then((cleared) => {
-      if (cleared) load(query);
+      if (cleared) reload();
+    });
+  };
+  const clearRange = () => {
+    void actions.clearHistoryRange(range).then((cleared) => {
+      if (cleared) reload();
     });
   };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -128,6 +142,7 @@ export function HistoryView({ onClose }: { readonly onClose: () => void }) {
   };
 
   const days = groupByDay(listing.visits, Date.now());
+  const filtered = listing.query.trim() !== '' || listing.projectId !== null;
   const empty = !listing.loading && listing.visits.length === 0;
   return (
     <section className="history-sheet" data-testid="history-view" aria-labelledby="history-title" onKeyDown={onKeyDown}>
@@ -159,10 +174,36 @@ export function HistoryView({ onClose }: { readonly onClose: () => void }) {
             <CloseIcon />
           </button>
         </header>
+        <div className="history-tools">
+          <label className="history-tool">
+            <span className="history-tool-label">{HISTORY_PROJECT_FILTER_LABEL}</span>
+            <select className="history-select" data-testid="history-project" value={projectId ?? ''} onChange={(event) => setProjectId(event.target.value === '' ? null : event.target.value)}>
+              <option value="">{HISTORY_ALL_PAGES_LABEL}</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="history-tool history-tool-end">
+            <span className="history-tool-label">{HISTORY_CLEAR_RANGE_LABEL}</span>
+            <select className="history-select" data-testid="history-clear-range" value={range} onChange={(event) => setRange(event.target.value as HistoryClearRange)}>
+              {HISTORY_CLEAR_RANGES.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="history-clear" data-testid="history-clear-range-run" onClick={clearRange}>
+            Clear
+          </button>
+        </div>
         <div className="history-list" data-testid="history-list" aria-busy={listing.loading}>
           {empty ? (
             <p className="history-empty" data-testid="history-empty">
-              {listing.query.trim() === '' ? HISTORY_EMPTY_MESSAGE : HISTORY_NO_MATCHES}
+              {filtered ? HISTORY_NO_MATCHES : HISTORY_EMPTY_MESSAGE}
             </p>
           ) : null}
           {days.map((day) => (

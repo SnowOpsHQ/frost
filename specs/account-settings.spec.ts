@@ -20,6 +20,8 @@ export const SETTINGS_SECTIONS = [
   // Phase 9 Task 11 (`ai-checks.feature.md`, UI): the AI checks mode and its cost note.
   { id: 'ai-checks', label: 'AI checks' },
   { id: 'telemetry', label: 'Telemetry' },
+  // Phase 11 Task 10 (`browser-polish.feature.md`, History retention): retention and project pages.
+  { id: 'history', label: 'History' },
 ] as const satisfies readonly { id: string; label: string }[];
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];
 

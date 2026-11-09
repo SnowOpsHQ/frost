@@ -1,4 +1,5 @@
-// Spec: specs/browser-polish.schema.ts (the find.* / history.* / settings.* inputs), specs/browser-polish.spec.ts (caps),
+// Spec: specs/browser-polish.schema.ts (the find.* / history.* / settings.* inputs; Phase 11: HistoryRetentionSettingsSchema,
+// HistoryClearRangeInputSchema, history.list's projectId), specs/browser-polish.spec.ts (caps, HISTORY_CLEAR_RANGES),
 // specs/ipc-sender.spec.ts
 // Acceptance: specs/browser-polish.feature.md (Router)
 import { TRPCError } from '@trpc/server';
@@ -13,6 +14,7 @@ import { appRouter, createSenderPolicy, type FindService, type HistoryService, t
 const WINDOW_ID = 7;
 const PAGE = 'https://example.com/a';
 const VISIT = { url: PAGE, title: 'A', visitCount: 2, lastVisitAt: 5 };
+const PROJECT = '0190ab12-3456-7abc-8def-0123456789ab';
 
 function fakes() {
   const find = {
@@ -28,6 +30,9 @@ function fakes() {
     clearAll: vi.fn(async () => true),
     reopenClosedTab: vi.fn(() => 9 as number | null),
     show: vi.fn(),
+    retention: vi.fn(async () => ({ retention: '30d' as const, keepProjectPages: true })),
+    setRetention: vi.fn(async (_settings: unknown) => 'stored' as 'stored' | 'cancelled' | 'failed'),
+    clearRange: vi.fn(async (_range: string) => true),
   } satisfies HistoryService;
   const settings = {
     searchEngine: vi.fn(() => 'bing' as const),
@@ -73,6 +78,9 @@ const VALID_INPUT: Record<string, unknown> = {
   'history.clearAll': undefined,
   'history.reopenClosedTab': undefined,
   'history.show': undefined,
+  'history.retention': undefined,
+  'history.setRetention': { retention: '7d', keepProjectPages: false },
+  'history.clearRange': { range: 'hour' },
   'settings.searchEngine': undefined,
   'settings.setSearchEngine': { engine: 'duckduckgo' },
 };
@@ -118,7 +126,12 @@ describe('browser polish router', () => {
         { query: '', after: { lastVisitAt: -1, url: PAGE } },
         { query: '', after: { lastVisitAt: 1 } },
         { query: '', after: null, sql: 'DROP TABLE' },
+        { query: '', after: null, projectId: 'not-a-uuid' },
+        { query: '', after: null, projectId: PROJECT.toUpperCase() },
+        { query: '', after: null, projectId: 5 },
       ],
+      'history.setRetention': [{ retention: '1d', keepProjectPages: true }, { retention: '7d' }, { retention: '7d', keepProjectPages: 'yes' }, { retention: '7d', keepProjectPages: true, extra: 1 }, {}],
+      'history.clearRange': [{ range: 'year' }, { range: 'all' }, {}, { range: 'hour', since: 0 }, { range: 3_600_000 }],
       'history.remove': [{ url: 'javascript:alert(1)' }, { url: 'file:///etc/passwd' }, { url: '' }, { url: `https://e.com/${'x'.repeat(MAX_STORED_URL_LENGTH)}` }, {}],
       'settings.setSearchEngine': [{ engine: 'evil' }, { engine: 'https://evil.example/?q={q}' }, {}, { engine: 'bing', template: 'x' }],
     };
@@ -171,5 +184,34 @@ describe('browser polish router', () => {
     await expect(call('settings.searchEngine')).resolves.toBe('bing');
     await expect(call('settings.setSearchEngine', { engine: 'duckduckgo' })).resolves.toBe(true);
     expect(all.settings.setSearchEngine).toHaveBeenCalledWith('duckduckgo');
+  });
+
+  test('history-retention-and-range-procedures', async () => {
+    const all = fakes();
+    const call = (path: string, input?: unknown) => procedure(ctxFor(all), path)(input);
+    // The project filter reaches the service; without one, the call is as before.
+    await expect(call('history.list', { query: '', after: null, projectId: PROJECT })).resolves.toEqual({ visits: [VISIT], next: null });
+    expect(all.history.list).toHaveBeenLastCalledWith('', null, undefined, PROJECT);
+    await call('history.list', { query: '', after: null });
+    expect(all.history.list).toHaveBeenLastCalledWith('', null, undefined);
+    await expect(call('history.retention')).resolves.toEqual({ retention: '30d', keepProjectPages: true });
+    // An answer that is not the schema's never reaches the chrome.
+    all.history.retention.mockResolvedValueOnce({ retention: 'never' as never, keepProjectPages: true });
+    expect((await errorOf(call('history.retention'))).code).toBe('INTERNAL_SERVER_ERROR');
+    await expect(call('history.setRetention', { retention: '90d', keepProjectPages: false })).resolves.toBe('stored');
+    expect(all.history.setRetention).toHaveBeenCalledWith({ retention: '90d', keepProjectPages: false });
+    all.history.setRetention.mockResolvedValueOnce('cancelled');
+    await expect(call('history.setRetention', { retention: '7d', keepProjectPages: true })).resolves.toBe('cancelled');
+    all.history.setRetention.mockResolvedValueOnce('failed');
+    await expect(call('history.setRetention', { retention: 'forever', keepProjectPages: true })).resolves.toBe('failed');
+    // Anything else is not an answer the chrome gets.
+    all.history.setRetention.mockResolvedValueOnce(true as never);
+    expect((await errorOf(call('history.setRetention', { retention: 'forever', keepProjectPages: true }))).code).toBe('INTERNAL_SERVER_ERROR');
+    for (const range of ['hour', 'day', 'week', 'month']) {
+      await expect(call('history.clearRange', { range })).resolves.toBe(true);
+      expect(all.history.clearRange).toHaveBeenLastCalledWith(range);
+    }
+    all.history.clearRange.mockResolvedValueOnce(false);
+    await expect(call('history.clearRange', { range: 'hour' })).resolves.toBe(false);
   });
 });

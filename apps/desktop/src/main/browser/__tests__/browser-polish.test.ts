@@ -1,5 +1,5 @@
 // Spec: specs/browser-polish.spec.ts (SEARCH_ENGINES, FIND_*, CLOSED_TABS_MAX, CLOSED_TAB_HISTORY_MAX, CLEAR_HISTORY,
-// contextMenuSearchLabel), specs/browser-polish.schema.ts (FindStateSchema, BrowserState fields),
+// contextMenuSearchLabel; Phase 11 Task 10: HISTORY_RETENTION_INTERVAL_MS, CLEAR_HISTORY_RANGE, historyClearSince), specs/browser-polish.schema.ts (FindStateSchema, BrowserState fields),
 // specs/tabs.spec.ts (RESERVED_TAB_SHORTCUTS['find-in-page' | 'reopen-closed-tab'])
 // Acceptance: specs/browser-polish.feature.md (Find in page, Reopen closed tab, History view, Search engines)
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -14,6 +14,15 @@ import {
   SEARCH_ENGINE_IDS,
   SEARCH_ENGINES,
   searchEngineUrl,
+  CLEAR_HISTORY_RANGE,
+  clearHistoryRangeMessage,
+  CONFIRM_HISTORY_RETENTION,
+  confirmHistoryRetentionText,
+  historyRetentionDeletes,
+  HISTORY_RETENTION_INTERVAL_MS,
+  historyClearSince,
+  type HistoryClearRange,
+  type HistoryRetention,
 } from '@app/specs/browser-polish.spec';
 import { CONTEXT_MENU_SEARCH_LABEL } from '@app/specs/page-commands.spec';
 import { DEFAULT_RENDER_PROFILE, type RenderProfile } from '@app/specs/render-profile.spec';
@@ -500,5 +509,205 @@ describe('history view', () => {
     expect(await service.list('x', null)).toEqual({ visits: [], next: null });
     // Without a confirmation, nothing is ever cleared.
     expect(await createHistoryService({ history, writer, tabs }).clearAll()).toBe(false);
+  });
+
+  // Phase 11 Task 10 (Decision 13): the retention settings, applied at start and daily (no real time).
+  test('retention-applied-at-start-and-daily', async () => {
+    const DAY = 24 * 60 * 60 * 1_000;
+    let now = 400 * DAY;
+    let stored = { retention: '30d' as HistoryRetention, keepProjectPages: true };
+    const settings = {
+      historySettings: vi.fn(async () => stored),
+      setHistorySettings: vi.fn(async (next: typeof stored) => {
+        stored = next;
+        return true;
+      }),
+    };
+    const order: string[] = [];
+    const writer = { flush: vi.fn(async () => void order.push('flush')), deleteVisit: vi.fn(async () => true), clearHistory: vi.fn(async () => {}) };
+    const tabs = { reopenClosedTab: vi.fn(() => null), showHistory: vi.fn(), forgetClosedTabs: vi.fn() };
+    const history = {
+      list: vi.fn(async () => ({ visits: [], next: null })),
+      jumpBackIn: vi.fn(async () => ({ mostVisited: [], recent: [] })),
+      prune: vi.fn(async (_before: number, _keep: boolean) => (order.push('prune'), 0)),
+      clearSince: vi.fn(async () => 0),
+    };
+    // The scheduler is the test's: it records the run and its period.
+    let daily: (() => void) | null = null;
+    const stop = vi.fn();
+    const every = vi.fn((run: () => void, ms: number) => {
+      daily = run;
+      expect(ms).toBe(HISTORY_RETENTION_INTERVAL_MS);
+      return stop;
+    });
+    const confirmRetention = vi.fn(async () => true);
+    const service = createHistoryService({ history, writer, tabs, settings, every, now: () => now, confirmRetention });
+    // At start: with the stored settings, after pending visits are written.
+    await service.started;
+    expect(history.prune).toHaveBeenCalledExactlyOnceWith(now - 30 * DAY, true);
+    expect(order).toEqual(['flush', 'prune']);
+    expect(every).toHaveBeenCalledOnce();
+    // A day later: again, from the new time.
+    now += DAY;
+    daily!();
+    await vi.waitFor(() => expect(history.prune).toHaveBeenCalledTimes(2));
+    expect(history.prune).toHaveBeenLastCalledWith(now - 30 * DAY, true);
+    // A change is stored and applied at once.
+    expect(await service.setRetention({ retention: '7d', keepProjectPages: false })).toBe('stored');
+    expect(settings.setHistorySettings).toHaveBeenCalledWith({ retention: '7d', keepProjectPages: false }, now);
+    await vi.waitFor(() => expect(history.prune).toHaveBeenCalledTimes(3));
+    expect(history.prune).toHaveBeenLastCalledWith(now - 7 * DAY, false);
+    expect(await service.retention()).toEqual({ retention: '7d', keepProjectPages: false });
+    // `forever` never prunes; nor does an unknown value, which is refused before it is stored.
+    expect(await service.setRetention({ retention: 'forever', keepProjectPages: true })).toBe('stored');
+    await service.applyRetention();
+    daily!();
+    await service.applyRetention();
+    expect(history.prune).toHaveBeenCalledTimes(3);
+    expect(await service.setRetention({ retention: '1d' as never, keepProjectPages: true })).toBe('failed');
+    // A failed read or prune never rejects (the defaults; logged).
+    const log = vi.fn();
+    settings.historySettings.mockRejectedValueOnce(new Error('closed'));
+    stored = { retention: '90d', keepProjectPages: true };
+    const failing = createHistoryService({ history, writer, tabs, settings, every, now: () => now, log });
+    await failing.started;
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('settings read failed'));
+    history.prune.mockRejectedValueOnce(new Error('disk'));
+    await expect(failing.applyRetention()).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('prune failed'));
+    service.stop();
+    expect(stop).toHaveBeenCalledOnce();
+    // Without settings: no schedule, no prune, the defaults answered, nothing stored.
+    const bare = createHistoryService({ history: { list: history.list, jumpBackIn: history.jumpBackIn }, writer, tabs, every });
+    await bare.started;
+    expect(every).toHaveBeenCalledTimes(2);
+    expect(await bare.retention()).toEqual({ retention: 'forever', keepProjectPages: true });
+    expect(await bare.setRetention({ retention: '7d', keepProjectPages: true })).toBe('failed');
+  });
+
+  test('clear-range-confirms-in-main', async () => {
+    const now = 1_000_000_000;
+    const order: string[] = [];
+    const writer = { flush: vi.fn(async () => void order.push('flush')), deleteVisit: vi.fn(async () => true), clearHistory: vi.fn(async () => {}) };
+    const tabs = { reopenClosedTab: vi.fn(() => null), showHistory: vi.fn(), forgetClosedTabs: vi.fn(() => void order.push('forget')) };
+    const history = {
+      list: vi.fn(async () => ({ visits: [], next: null })),
+      jumpBackIn: vi.fn(async () => ({ mostVisited: [], recent: [] })),
+      clearSince: vi.fn(async (_since: number) => (order.push('clear'), 2)),
+    };
+    let answer = false;
+    const confirmClearRange = vi.fn(async (_range: HistoryClearRange) => answer);
+    const service = createHistoryService({ history, writer, tabs, confirmClearRange, now: () => now });
+    // Cancelled: nothing cleared, nothing forgotten.
+    expect(await service.clearRange('hour')).toBe(false);
+    expect(confirmClearRange).toHaveBeenCalledWith('hour');
+    expect(history.clearSince).not.toHaveBeenCalled();
+    expect(tabs.forgetClosedTabs).not.toHaveBeenCalled();
+    // Confirmed: pending visits written, the closed-tab stack forgotten, then the range cleared; two requests ask once.
+    answer = true;
+    const [a, b] = await Promise.all([service.clearRange('day'), service.clearRange('month')]);
+    expect([a, b]).toEqual([true, true]);
+    expect(confirmClearRange).toHaveBeenCalledTimes(2);
+    expect(history.clearSince).toHaveBeenCalledExactlyOnceWith(historyClearSince('day', now));
+    expect(order).toEqual(['flush', 'forget', 'clear']);
+    expect(writer.clearHistory).not.toHaveBeenCalled();
+    // A failure answers false, never rejects; without a confirmation nothing is ever cleared.
+    history.clearSince.mockRejectedValueOnce(new Error('disk'));
+    expect(await service.clearRange('week')).toBe(false);
+    expect(await createHistoryService({ history, writer, tabs }).clearRange('hour')).toBe(false);
+    expect(history.clearSince).toHaveBeenCalledTimes(2);
+    // The question names the range and states that history keeps one entry per page; Cancel is the default.
+    expect(clearHistoryRangeMessage('hour')).toBe('Clear history from the last hour?');
+    expect(clearHistoryRangeMessage('month')).toBe('Clear history from the last month?');
+    expect(CLEAR_HISTORY_RANGE.dialog.detail).toContain('one entry per page');
+    expect(CLEAR_HISTORY_RANGE.dialog.defaultId).toBe(CLEAR_HISTORY_RANGE.dialog.cancelId);
+    expect(CLEAR_HISTORY_RANGE.dialog.buttons[CLEAR_HISTORY_RANGE.confirmIndex]).toBe('Clear History');
+  });
+
+  /** A service on fake settings starting at `stored`, with main's confirmation answering `answer`. */
+  function retentionService(stored: { retention: HistoryRetention; keepProjectPages: boolean }, answer: boolean) {
+    let current = { ...stored };
+    const settings = {
+      historySettings: vi.fn(async () => ({ ...current })),
+      setHistorySettings: vi.fn(async (next: typeof current) => ((current = { ...next }), true)),
+    };
+    const writer = { flush: vi.fn(async () => {}), deleteVisit: vi.fn(async () => true), clearHistory: vi.fn(async () => {}) };
+    const tabs = { reopenClosedTab: vi.fn(() => null), showHistory: vi.fn(), forgetClosedTabs: vi.fn() };
+    const history = {
+      list: vi.fn(async () => ({ visits: [], next: null })),
+      jumpBackIn: vi.fn(async () => ({ mostVisited: [], recent: [] })),
+      prune: vi.fn(async () => 0),
+      clearSince: vi.fn(async () => 0),
+    };
+    const confirmRetention = vi.fn(async (_stored: typeof current, _next: typeof current) => answer);
+    const service = createHistoryService({ history, writer, tabs, settings, confirmRetention, every: () => () => {}, now: () => 400 * 24 * 60 * 60 * 1_000 });
+    return { service, settings, history, confirmRetention, current: () => current };
+  }
+
+  test('set-retention-shorter-confirms-in-main', async () => {
+    // Which changes delete visits.
+    expect(historyRetentionDeletes({ retention: 'forever', keepProjectPages: true }, { retention: '90d', keepProjectPages: true })).toBe(true);
+    expect(historyRetentionDeletes({ retention: '30d', keepProjectPages: true }, { retention: '7d', keepProjectPages: true })).toBe(true);
+    expect(historyRetentionDeletes({ retention: '7d', keepProjectPages: true }, { retention: '30d', keepProjectPages: true })).toBe(false);
+    expect(historyRetentionDeletes({ retention: '30d', keepProjectPages: true }, { retention: '30d', keepProjectPages: false })).toBe(true);
+    expect(historyRetentionDeletes({ retention: 'forever', keepProjectPages: true }, { retention: 'forever', keepProjectPages: false })).toBe(false);
+    expect(historyRetentionDeletes({ retention: '30d', keepProjectPages: false }, { retention: '30d', keepProjectPages: true })).toBe(false);
+    expect(historyRetentionDeletes({ retention: '30d', keepProjectPages: false }, { retention: 'forever', keepProjectPages: false })).toBe(false);
+
+    // Shorter: main asks (with the stored and new settings), then stores and prunes.
+    const shorter = retentionService({ retention: '90d', keepProjectPages: true }, true);
+    await shorter.service.started;
+    expect(shorter.history.prune).toHaveBeenCalledTimes(1);
+    expect(await shorter.service.setRetention({ retention: '7d', keepProjectPages: true })).toBe('stored');
+    expect(shorter.confirmRetention).toHaveBeenCalledExactlyOnceWith({ retention: '90d', keepProjectPages: true }, { retention: '7d', keepProjectPages: true });
+    expect(shorter.current()).toEqual({ retention: '7d', keepProjectPages: true });
+    await vi.waitFor(() => expect(shorter.history.prune).toHaveBeenCalledTimes(2));
+    // Keep-project-pages off with a retention set: asks too.
+    expect(await shorter.service.setRetention({ retention: '7d', keepProjectPages: false })).toBe('stored');
+    expect(shorter.confirmRetention).toHaveBeenCalledTimes(2);
+    // Longer, or keep turned back on: stored without asking.
+    expect(await shorter.service.setRetention({ retention: '30d', keepProjectPages: true })).toBe('stored');
+    expect(await shorter.service.setRetention({ retention: 'forever', keepProjectPages: true })).toBe('stored');
+    expect(shorter.confirmRetention).toHaveBeenCalledTimes(2);
+    // Two shortening requests at once: one dialog at a time, never two open together.
+    let open = 0;
+    let most = 0;
+    shorter.confirmRetention.mockImplementation(async () => {
+      most = Math.max(most, ++open);
+      await Promise.resolve();
+      open -= 1;
+      return true;
+    });
+    await Promise.all([shorter.service.setRetention({ retention: '90d', keepProjectPages: true }), shorter.service.setRetention({ retention: '7d', keepProjectPages: true })]);
+    expect(most).toBe(1);
+    expect(shorter.current()).toEqual({ retention: '7d', keepProjectPages: true });
+    // Without a confirmation, a deleting change is never stored.
+    const unasked = retentionService({ retention: 'forever', keepProjectPages: true }, true);
+    const bare = createHistoryService({ history: unasked.history, writer: { flush: async () => {}, deleteVisit: async () => true, clearHistory: async () => {} }, tabs: { reopenClosedTab: () => null, showHistory: () => {}, forgetClosedTabs: () => {} }, settings: unasked.settings, every: () => () => {} });
+    expect(await bare.setRetention({ retention: '7d', keepProjectPages: true })).toBe('cancelled');
+    expect(unasked.current()).toEqual({ retention: 'forever', keepProjectPages: true });
+    // The question names the new retention; Cancel is the default.
+    expect(confirmHistoryRetentionText({ retention: 'forever' }, { retention: '30d' }).message).toBe('Keep history for 30 days only?');
+    expect(confirmHistoryRetentionText({ retention: 'forever' }, { retention: '30d' }).detail).toBe(CONFIRM_HISTORY_RETENTION.dialog.detail);
+    expect(confirmHistoryRetentionText({ retention: '30d' }, { retention: '30d' }).detail).toBe(CONFIRM_HISTORY_RETENTION.dialog.detailProjectPages);
+    expect(CONFIRM_HISTORY_RETENTION.dialog.defaultId).toBe(CONFIRM_HISTORY_RETENTION.dialog.cancelId);
+  });
+
+  test('set-retention-cancel-keeps-setting', async () => {
+    const said = retentionService({ retention: '90d', keepProjectPages: true }, false);
+    await said.service.started;
+    const prunes = said.history.prune.mock.calls.length;
+    expect(await said.service.setRetention({ retention: '7d', keepProjectPages: true })).toBe('cancelled');
+    expect(await said.service.setRetention({ retention: '90d', keepProjectPages: false })).toBe('cancelled');
+    // Nothing stored, nothing pruned; the settings read back as they were.
+    expect(said.settings.setHistorySettings).not.toHaveBeenCalled();
+    await said.service.applyRetention();
+    expect(said.history.prune).toHaveBeenCalledTimes(prunes + 1);
+    expect(said.history.prune).toHaveBeenLastCalledWith(expect.any(Number), true);
+    expect(await said.service.retention()).toEqual({ retention: '90d', keepProjectPages: true });
+    // A failed read of the stored settings stores nothing either.
+    said.settings.historySettings.mockRejectedValueOnce(new Error('closed'));
+    expect(await said.service.setRetention({ retention: '30d', keepProjectPages: true })).toBe('failed');
+    expect(said.settings.setHistorySettings).not.toHaveBeenCalled();
   });
 });

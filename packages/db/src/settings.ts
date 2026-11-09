@@ -1,6 +1,17 @@
 import { eq, sql } from 'drizzle-orm';
 import { AI_CHECKS_SETTING_KEY, DEFAULT_AI_CHECK_MODE, isAiCheckMode, type AiCheckMode } from '@app/specs/ai-checks.spec';
-import { DEFAULT_SEARCH_ENGINE, isSearchEngineId, SEARCH_ENGINE_SETTING_KEY, type SearchEngineId } from '@app/specs/browser-polish.spec';
+import {
+  DEFAULT_HISTORY_KEEP_PROJECT_PAGES,
+  DEFAULT_HISTORY_RETENTION,
+  DEFAULT_SEARCH_ENGINE,
+  HISTORY_KEEP_PROJECT_PAGES_KEY,
+  HISTORY_RETENTION_SETTING_KEY,
+  isHistoryRetention,
+  isSearchEngineId,
+  SEARCH_ENGINE_SETTING_KEY,
+  type HistoryRetention,
+  type SearchEngineId,
+} from '@app/specs/browser-polish.spec';
 import type { SessionDatabase } from './client';
 import { appSettings } from './settings-schema';
 
@@ -18,6 +29,18 @@ export interface SettingsRepository {
   aiChecksMode(): Promise<AiCheckMode>;
   /** Stores the AI checks mode; `false` (nothing written) for anything but an `AI_CHECK_MODES` value. Main asks for consent first. */
   setAiChecksMode(mode: AiCheckMode, at: number): Promise<boolean>;
+  /**
+   * Phase 11 Task 10 (`browser-polish.spec.ts`, Decision 13): how long visits are kept and whether
+   * visits to project pages are kept anyway; a missing or tampered value reads as its default.
+   */
+  historySettings(): Promise<HistorySettings>;
+  /** Stores both; `false` (nothing written) for an unknown retention or a non-boolean. */
+  setHistorySettings(settings: HistorySettings, at: number): Promise<boolean>;
+}
+
+export interface HistorySettings {
+  readonly retention: HistoryRetention;
+  readonly keepProjectPages: boolean;
 }
 
 /** Longest stored setting value read back (an engine id or a mode is short; anything longer is not one). */
@@ -57,6 +80,20 @@ export function createSettingsRepository(db: SessionDatabase): SettingsRepositor
     async setAiChecksMode(mode, at) {
       if (!isAiCheckMode(mode) || !Number.isFinite(at)) return false;
       await write(AI_CHECKS_SETTING_KEY, mode, at);
+      return true;
+    },
+
+    async historySettings() {
+      const [retention, keep] = [await read(HISTORY_RETENTION_SETTING_KEY), await read(HISTORY_KEEP_PROJECT_PAGES_KEY)];
+      return {
+        retention: isHistoryRetention(retention) ? retention : DEFAULT_HISTORY_RETENTION,
+        keepProjectPages: keep === '1' ? true : keep === '0' ? false : DEFAULT_HISTORY_KEEP_PROJECT_PAGES,
+      };
+    },
+
+    async setHistorySettings({ retention, keepProjectPages }, at) {
+      if (!isHistoryRetention(retention) || typeof keepProjectPages !== 'boolean' || !Number.isFinite(at)) return false;
+      await db.batch([write(HISTORY_RETENTION_SETTING_KEY, retention, at), write(HISTORY_KEEP_PROJECT_PAGES_KEY, keepProjectPages ? '1' : '0', at)]);
       return true;
     },
   };

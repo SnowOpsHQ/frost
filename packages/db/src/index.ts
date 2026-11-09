@@ -7,7 +7,7 @@ export type { ContentNotes, ContentNotesRepository, SnippetVariant } from './con
 export { noteUrl } from './content-notes';
 export { openSessionStore, type SessionStore } from './store';
 export type { HistoryCursor, HistoryPage, HistoryRepository, HistoryVisit, JumpBackIn } from './history';
-export type { SettingsRepository } from './settings';
+export type { HistorySettings, SettingsRepository } from './settings';
 export type { AgentGrantsRepository, StoredAgentGrant } from './agent-grants';
 export type { AgentChatRowsUpdate, AgentChatsRepository, StoredAgentChatHead, StoredAgentChatRows } from './agent-chats';
 export type { AgentSkillsRepository, StoredAgentSkill } from './agent-skills';

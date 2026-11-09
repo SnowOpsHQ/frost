@@ -67,6 +67,46 @@ fields, the `find.*` / `history.*` / `settings.*` inputs). Shortcuts: `RESERVED_
   (`CLEAR_HISTORY`), then clears the history part of Clear Browsing Data: every visit, stored and
   pending, and the closed-tab stack. (`history-delete-drops-pending`, `history-clear-all-confirms`)
 
+## History retention, ranges and projects (Phase 11 Task 10, Decision 13)
+Spec: `HISTORY_RETENTIONS`, `DEFAULT_HISTORY_RETENTION`, `HISTORY_RETENTION_SETTING_KEY`,
+`HISTORY_KEEP_PROJECT_PAGES_KEY`, `HISTORY_CLEAR_RANGES`, `CLEAR_HISTORY_RANGE`,
+`HistoryRetentionSettingsSchema`, `HistoryClearRangeInputSchema`, `history.list`'s `projectId` and each
+visit's `changeCount`. No migration: `app_settings` holds the two settings; project pages and versions
+are read from `ci_project_pages` / `ci_versions` in the same database file.
+- **Scenario: prune-keeps-project-pages** (`packages/db/src/__tests__/history.test.ts`) — pruning
+  before a cut-off removes older visit rows only; with "Keep visits to project pages" a visit to a
+  live page of a live project (fragment ignored) stays, one of a deleted page or project goes.
+- **Scenario: clear-range-on-last-visit** — clearing since a time removes the rows whose
+  `last_visit_at` is at or after it (one row per URL: its earlier visits go with it), nothing older.
+- **Scenario: project-filter** — `projectId` lists only visits to that project's live pages (Unfiled
+  included; fragment ignored), keeping the newest-first keyset; an unknown project lists nothing.
+- **Scenario: change-count-from-versions** — each listed visit's `changeCount` is its page's versions
+  less one per capture lane (`0` when never captured); the settings read back as stored, tampered
+  values as their defaults.
+- **Scenario: retention-applied-at-start-and-daily** (`main/browser/__tests__/browser-polish.test.ts`)
+  — main prunes at start with the stored retention and keep-project-pages choice, then once a day
+  (injected scheduler, no real time), and at once when the retention changes; `forever` never prunes.
+- **Scenario: set-retention-shorter-confirms-in-main** (`main/browser/__tests__/browser-polish.test.ts`)
+  — a change that would delete visits (a shorter retention than stored, or keep-project-pages turned
+  off while the retention is not `forever`) asks in main's own message box (`CONFIRM_HISTORY_RETENTION`)
+  before anything is stored or pruned, so a chrome that skips its own UI cannot delete history; a
+  longer retention or turning keep-project-pages on stores at once without asking. Answers `stored`.
+- **Scenario: set-retention-cancel-keeps-setting** — Cancel stores nothing and prunes nothing; the
+  answer is `cancelled` and the Settings section shows the stored setting again with a note.
+- **Scenario: clear-range-confirms-in-main** — `history.clearRange` asks in main's own message box
+  (`CLEAR_HISTORY_RANGE`, naming the range); Cancel clears nothing; confirmed, pending visits are
+  written first, then the range is cleared and the closed-tab stack forgotten. Two requests at once
+  ask once.
+- **Scenario: history view project filter and change counts** (`renderer/__tests__/use-history-view.test.ts`)
+  — the view lists with the chosen project and shows a row's change count.
+- **Scenario: settings-history** (`renderer/__tests__/settings-history.test.ts`) — the Settings view's
+  History section shows main's retention and keep-project-pages choice and sends a change; the
+  checked choice is main's answer (a cancelled change reverts, with a note); a failed first read
+  shows an error with "Try again", never "Loading…" for ever.
+- **Scenario: history-project-filter-and-clear-hour** (e2e `browser-polish.e2e.ts`) — with a project
+  holding one visited page, the project filter lists only it; "Last hour" asks in main, Cancel keeps
+  the rows, Clear removes them.
+
 ## New-tab page
 - An empty tab's start view shows "Jump back in": up to `JUMP_BACK_IN_MOST_VISITED` most-visited
   pages, then up to `JUMP_BACK_IN_RECENT` other recent ones, from `recent_visits` only. Each tile is
@@ -96,6 +136,6 @@ fields, the `find.*` / `history.*` / `settings.*` inputs). Shortcuts: `RESERVED_
 
 ## Router
 - `find.search` / `step` / `close`, `history.list` / `jumpBackIn` / `remove` / `clearAll` /
-  `reopenClosedTab` / `show` and `settings.setSearchEngine` / `searchEngine` start with
+  `reopenClosedTab` / `show` / `retention` / `setRetention` / `clearRange` (Phase 11) and `settings.setSearchEngine` / `searchEngine` start with
   `enforceSender`, validate their input strictly and fail closed without their service.
   (`polish-router-guards-and-validates`)

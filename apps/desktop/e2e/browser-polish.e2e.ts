@@ -1,6 +1,7 @@
 // Specs: specs/browser-polish.spec.ts (FIND_*, CLEAR_HISTORY, HISTORY_MENU_ID, JUMP_BACK_IN_TITLE, SEARCH_ENGINES),
 // specs/tabs.spec.ts (RESERVED_TAB_SHORTCUTS['find-in-page' | 'reopen-closed-tab']), specs/browser.spec.ts (BROWSE_PARTITION)
-// Acceptance: specs/browser-polish.feature.md (End to end)
+// Acceptance: specs/browser-polish.feature.md (End to end; History retention, ranges and projects:
+// history-project-filter-and-clear-hour)
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -8,7 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
-import { CLEAR_HISTORY, HISTORY_EMPTY_MESSAGE, HISTORY_MENU_ID, JUMP_BACK_IN_TITLE, searchEngineUrl } from '@app/specs/browser-polish.spec';
+import { CLEAR_HISTORY, CLEAR_HISTORY_RANGE, clearHistoryRangeMessage, HISTORY_ALL_PAGES_LABEL, HISTORY_EMPTY_MESSAGE, HISTORY_MENU_ID, HISTORY_NO_MATCHES, JUMP_BACK_IN_TITLE, searchEngineUrl } from '@app/specs/browser-polish.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -307,6 +308,77 @@ test('history-lists-searches-deletes-clears', async () => {
     expect(await dialogsAsked()).toBe(1);
   } finally {
     await restoreDialogs();
+  }
+  await page.keyboard.press('Escape');
+  await expect(history()).toHaveCount(0);
+});
+
+// Phase 11 Task 10 (Decision 13): the project filter and clearing the last hour (main asks first).
+test('history-project-filter-and-clear-hour', async () => {
+  for (const name of ['kiwi', 'mango']) {
+    await go(`${site.origin}/h/${name}`);
+    await contentsIdAt(`${site.origin}/h/${name}`);
+  }
+  // A project listing one of them, made in the Projects sheet (from the Changes panel).
+  const sidebar = page.getByTestId('seo-sidebar');
+  if ((await sidebar.getAttribute('data-open')) !== 'true' || (await page.getByTestId('seo-panel').getAttribute('data-panel')) !== 'changes')
+    await page.locator('[data-testid="seo-rail-item"][data-panel="changes"]').click();
+  await page.getByTestId('changes-open-projects').click();
+  await page.getByTestId('projects-create-name').fill('Fruit stand');
+  await page.getByTestId('projects-create').click();
+  await expect(page.getByTestId('projects-name')).toHaveText('Fruit stand');
+  await page.getByTestId('projects-page-url').fill(`${site.origin}/h/mango`);
+  await page.getByTestId('projects-page-add').click();
+  await expect(page.getByTestId('projects-status')).toHaveText('Page added.');
+  await page.getByTestId('projects-page-url').press('Escape');
+
+  await menu(HISTORY_MENU_ID);
+  await expect(history()).toBeVisible();
+  const row = (name: string) => page.locator(`[data-testid="history-row"][data-url="${site.origin}/h/${name}"]`);
+  await expect(row('kiwi')).toBeVisible();
+  await expect(row('mango')).toBeVisible();
+  // The project's pages only; back to every page.
+  const filter = page.getByTestId('history-project');
+  await expect(filter.locator('option').first()).toHaveText(HISTORY_ALL_PAGES_LABEL);
+  await filter.selectOption({ label: 'Fruit stand' });
+  await expect(rows()).toHaveCount(1);
+  await expect(row('mango')).toContainText('Mango page');
+  // Never captured: no change count.
+  await expect(row('mango').getByTestId('history-changes')).toHaveCount(0);
+  await page.getByTestId('history-search').fill('kiwi');
+  await expect(page.getByTestId('history-empty')).toHaveText(HISTORY_NO_MATCHES);
+  await page.getByTestId('history-search').fill('');
+  await filter.selectOption({ label: HISTORY_ALL_PAGES_LABEL });
+  await expect(row('kiwi')).toBeVisible();
+
+  // "Last hour" asks in main, naming the range: Cancel keeps everything, Clear removes the hour's visits.
+  await app.evaluate(({ dialog }) => {
+    const holder = globalThis as { __rangeBoxes?: string[]; __rangeAnswer?: number; __rangeBox?: typeof dialog.showMessageBox };
+    holder.__rangeBox ??= dialog.showMessageBox;
+    holder.__rangeBoxes = [];
+    dialog.showMessageBox = (async (...args: unknown[]) => {
+      const options = args.find((arg): arg is { message: string } => typeof arg === 'object' && arg !== null && 'message' in arg);
+      holder.__rangeBoxes!.push(options?.message ?? '');
+      return { response: holder.__rangeAnswer ?? 1, checkboxChecked: false };
+    }) as typeof dialog.showMessageBox;
+  });
+  const asked = () => app.evaluate(() => (globalThis as { __rangeBoxes?: string[] }).__rangeBoxes ?? []);
+  const answer = (index: number) => app.evaluate((_electron, index) => void ((globalThis as { __rangeAnswer?: number }).__rangeAnswer = index), index);
+  try {
+    await expect(page.getByTestId('history-clear-range')).toHaveValue('hour');
+    await answer(CLEAR_HISTORY_RANGE.dialog.cancelId);
+    await page.getByTestId('history-clear-range-run').click();
+    await expect.poll(asked).toEqual([clearHistoryRangeMessage('hour')]);
+    await expect(row('kiwi')).toBeVisible();
+    await answer(CLEAR_HISTORY_RANGE.confirmIndex);
+    await page.getByTestId('history-clear-range-run').click();
+    await expect(page.getByTestId('history-empty')).toHaveText(HISTORY_EMPTY_MESSAGE);
+    expect(await asked()).toHaveLength(2);
+  } finally {
+    await app.evaluate(({ dialog }) => {
+      const holder = globalThis as { __rangeBox?: typeof dialog.showMessageBox };
+      if (holder.__rangeBox) dialog.showMessageBox = holder.__rangeBox;
+    });
   }
   await page.keyboard.press('Escape');
   await expect(history()).toHaveCount(0);

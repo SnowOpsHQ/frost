@@ -655,3 +655,25 @@ export function HopIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** The SEO rail's "More panels" (Phase 11 Task 10): three dots in a row. */
+export function MorePanelsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="6" cy="12" r="1.3" />
+      <circle cx="12" cy="12" r="1.3" />
+      <circle cx="18" cy="12" r="1.3" />
+    </Icon>
+  );
+}
+
+/** A panel's "Keep on the rail" toggle (Phase 11 Task 10): a push pin. */
+export function PinIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 4h6" />
+      <path d="M10 4v5l-3 4h10l-3-4V4" />
+      <path d="M12 13v7" />
+    </Icon>
+  );
+}

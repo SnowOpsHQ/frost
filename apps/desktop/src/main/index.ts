@@ -10,7 +10,7 @@ import { createGscMain } from './gsc/main';
 import { contextMenuTemplate, copySeoMenuForContents } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
-import { confirmClearHistory } from './browser/history-dialog';
+import { confirmClearHistory, confirmClearHistoryRange, confirmHistoryRetention } from './browser/history-dialog';
 import { createHistoryService, createSearchEngineSetting } from './browser/history-service';
 import { createBrowsePermissionHandlers, createPermissionBroker, createPersistentDecisionStore } from './browser/permissions';
 import { createProfileDebugger } from './browser/render-profile-debugger';
@@ -489,6 +489,10 @@ function start(): void {
           writer: sessionStore.writer,
           tabs: browser,
           confirmClearAll: () => confirmClearHistory(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
+          // Phase 11 Task 10: clear by range (asks in main) and retention (pruned at start, then daily).
+          confirmClearRange: (range) => confirmClearHistoryRange(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null, range),
+          confirmRetention: (stored, next) => confirmHistoryRetention(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null, stored, next),
+          settings: sessionStore.settings,
           log: logSession,
         }),
         settings: searchEngine,

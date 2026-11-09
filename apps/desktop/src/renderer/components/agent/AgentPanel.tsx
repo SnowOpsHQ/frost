@@ -8,6 +8,7 @@ import { chatHeading, railBadge, runningChatId, skillRunChatId } from '../../age
 import { useAgentState } from '../../hooks/useAgentState';
 import { ChevronIcon, PlusIcon } from '../../icons';
 import { registerPaletteActions } from '../../palette/registry';
+import { usePaneLayout } from '../../sidebar-layout';
 import { AgentApprovalCard } from './AgentApprovalCard';
 import { AgentChat } from './AgentChat';
 import { AgentChatList } from './AgentChatList';
@@ -28,7 +29,9 @@ import './agent.css';
 // Collapsed it is a narrow rail with its toggle; the palette's "Toggle AI agent" works either way.
 // Everything it shows is main's `AgentState` (`agent.watch`); intents go over the sender-guarded
 // `agent.*` procedures (`agent-actions.ts`). Styling is agent.css only (bundled; strict CSP), and
-// model, page and tool text are React text only.
+// model, page and tool text are React text only. Phase 11 Task 10: the open panel's width is the
+// user's (the separator at its edge next to the page; `sidebar-layout.ts`), and in a narrow window
+// it gives way before the SEO sidebar does.
 
 // The palette's agent actions (`agent-palette.ts`), once per module instance.
 const unregisterPaletteActions = registerPaletteActions(...agentPaletteSources());
@@ -58,6 +61,8 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
     [setRemembered],
   );
   const [view, setView] = useState<View>('chat');
+  const aside = useRef<HTMLElement>(null);
+  const { separator } = usePaneLayout('agent', open, aside);
   const toggle = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLTextAreaElement | null>(null);
   const focusAfter = useRef<'input' | 'toggle' | null>(null);
@@ -134,7 +139,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
   const badge = railBadge(state);
   if (!open) {
     return (
-      <aside className="agent" data-testid="agent-panel" data-open="false" aria-label={AGENT_PANEL_TITLE}>
+      <aside ref={aside} className="agent" data-testid="agent-panel" data-open="false" aria-label={AGENT_PANEL_TITLE}>
         <nav className="agent-rail" aria-label={AGENT_PANEL_TITLE}>
           <button ref={toggle} type="button" className="agent-rail-toggle" data-testid="agent-toggle" aria-expanded="false" aria-label="Open the AI agent" title="Open the AI agent" onClick={() => show(true)}>
             <AgentSparkIcon />
@@ -148,7 +153,8 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
   const active = state?.active ?? null;
   const covered = tab?.fullscreen != null;
   return (
-    <aside className="agent" data-testid="agent-panel" data-open="true" data-view={view} aria-label={AGENT_PANEL_TITLE}>
+    <aside ref={aside} className="agent" data-testid="agent-panel" data-open="true" data-view={view} aria-label={AGENT_PANEL_TITLE}>
+      <div className="pane-separator agent-separator" data-testid="agent-resize" {...separator} />
       <div className="agent-main">
         <header className="agent-head">
           <span className="agent-head-mark" aria-hidden="true">

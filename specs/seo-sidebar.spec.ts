@@ -113,7 +113,8 @@ export const OVERVIEW_TOP_ISSUES = 5;
  * stays, with its status dots, and opening a panel from it expands the sidebar again. The page area
  * (and the tab's view laid over it) shrinks and grows to match. In a window too narrow for both,
  * the page area keeps `PAGE_MIN_WIDTH` and the panel gives way (it narrows, its content clipped);
- * the rail always stays. Keep these equal to `styles.css`.
+ * the rail always stays. Keep these equal to `styles.css`. Phase 11 Task 10: the panel's width is
+ * the user's (`SIDEBAR_PANEL_WIDTH_RANGE`); `SIDEBAR_PANEL_WIDTH` is its default.
  */
 export const SIDEBAR_PANEL_WIDTH = 360;
 export const SIDEBAR_RAIL_WIDTH = 48;
@@ -136,6 +137,45 @@ export const SIDEBAR_TOGGLE_MENU_ID = 'toggle-seo-sidebar' as const;
  */
 export const SIDEBAR_STORAGE_KEY = 'frost.seo-sidebar.open' as const;
 export const SIDEBAR_DEFAULT_OPEN = true;
+
+// ---- Resizable panel and rail pins (Phase 11 Task 10, Decision 12; `seo-sidebar.feature.md`, Resize and pins) ----
+
+/**
+ * The panel's width can be dragged or stepped from the keyboard on its separator (`role="separator"`
+ * at the panel's edge next to the page, `aria-valuenow` its width in CSS px, `aria-valuemin` /
+ * `aria-valuemax` the range this window allows). Arrow keys move the separator by `keyboardStep`
+ * (Right / Up widen the panel, Left / Down narrow it), Home / End go to the smallest / largest width.
+ * A width is clamped to `[min, max]` and so that the page area keeps `PAGE_MIN_WIDTH` beside both
+ * panels as they are. `SIDEBAR_PANEL_WIDTH` is the default. The chosen width is a chrome preference
+ * in `localStorage` under `SIDEBAR_WIDTH_STORAGE_KEY` (decimal CSS px; a missing or unreadable value
+ * means the default, a stored one out of range is clamped). In a window too narrow for the chosen
+ * widths, the agent pane gives way first, down to its minimum (`AGENT_PANEL_WIDTH_RANGE`), then this
+ * panel down to `min`, then both narrow as before (`narrow-window-keeps-page-usable`); the stored
+ * widths stay as chosen.
+ */
+export const SIDEBAR_PANEL_WIDTH_RANGE = { min: 300, max: 560, keyboardStep: 24 } as const;
+export const SIDEBAR_WIDTH_STORAGE_KEY = 'frost.seo-sidebar.width' as const;
+/** The separator's accessible name. */
+export const SIDEBAR_RESIZE_LABEL = 'Resize the SEO sidebar' as const;
+
+/**
+ * The rail shows the **pinned** panels, in `SEO_PANELS` order. Every panel starts pinned; the open
+ * panel's header has a pin toggle (`PIN_PANEL_LABEL`, `aria-pressed`). An unpinned panel moves into
+ * the rail's "More panels" menu (`MORE_PANELS_LABEL`), after the pinned items, whose dot is the worst
+ * status it holds (`error` over `warn` over `pass`; none when no panel in it has a status). While an
+ * unpinned panel is open (a palette jump, the menu, a panel's own link) it also shows on the rail, in
+ * its place, until another panel opens or the sidebar collapses. `ALWAYS_PINNED_PANELS` cannot be
+ * unpinned. What is unpinned is a chrome preference in `localStorage` under `SIDEBAR_PINS_STORAGE_KEY`:
+ * a JSON array of the unpinned panel ids (unknown ids and always-pinned ones are ignored on read; a
+ * missing or unreadable value means every panel pinned). Opening "More panels" with the panel
+ * collapsed expands it first (the menu is drawn over the panel; the tab's view would cover it).
+ */
+export const ALWAYS_PINNED_PANELS = ['overview'] as const satisfies readonly SeoPanelId[];
+export const SIDEBAR_PINS_STORAGE_KEY = 'frost.seo-sidebar.unpinned' as const;
+export const MORE_PANELS_LABEL = 'More panels' as const;
+/** The open panel's pin toggle (pressed: on the rail). Its tooltip says what a click does. */
+export const PIN_PANEL_LABEL = 'Keep on the rail' as const;
+export const PIN_PANEL_TITLES = { pinned: 'Unpin: move to More panels', unpinned: 'Pin to the rail' } as const;
 
 // ---- Links, Images and Social panels (Phase 2 Task 2; acceptance `seo-panels.feature.md`) -----
 

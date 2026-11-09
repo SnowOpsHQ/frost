@@ -29,12 +29,20 @@
 }
 
 .agent {
+  position: relative;
   display: flex;
   flex: 0 1 auto;
   min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--bg-chrome-edge);
   background: var(--bg-chrome);
+}
+
+/* Phase 11 Task 10: the open panel's separator, on its left edge next to the page (`.pane-separator`
+   in styles.css draws it). */
+.agent-separator,
+.agent-separator::after {
+  left: 0;
 }
 
 /* Collapsed: the rail and its toggle. */
