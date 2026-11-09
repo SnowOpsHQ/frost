@@ -1096,3 +1096,15 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   archive changes `updatedAt`. Lead ruling: **sending a message to an archived chat unarchives
   it**. `migrations-are-forward-only` checks that Phase 11's block is contiguous and above every
   earlier id, not that it is last (so Phase 12's `0240` can follow).
+- **Task 9:** `AGENT_PROTOCOL_VERSION` is `10`. `read_attached_tab` is offered on every typed turn
+  (a stable tool list); the broker refuses refs the chat has not attached, and only a chat with
+  attachments gets the refs-and-origins prompt. Security-review rulings: `agent.attachTab` carries
+  the origin the menu showed and main refuses `not-attachable` unless the live page still shows it;
+  `changed` / `closed` are sticky until the user attaches the tab again (an approved call runs only
+  for the same, still-ready attachment); draft attachments (`chatId: null`) move only with a typed
+  send from the draft composer, never into a skill run, and are dropped when another chat is
+  selected. The per-turn cap counts every resolved call. With read tools on, an attached public page
+  (signed-in or not) is read without a card; acting still needs approval. The tab controller gained
+  `onStateChange` (append-only); `tools/index.ts` is unchanged (the broker passes the attached tab's
+  id as `context.tabId`). Known wording gap: an `expired` result reaches the model as the existing
+  "approval expired" message.

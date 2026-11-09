@@ -60,6 +60,9 @@ import {
   setupChecklist,
   toolCardModel,
   visibleNotice,
+  atMenuTrigger,
+  attachmentName,
+  withoutAtTrigger,
 } from '../agent-view';
 import { approval, card, jsApproval, setup, state } from './agent-fixtures';
 
@@ -447,5 +450,21 @@ describe('agent panel view model', () => {
     expect(chatsInView(chats, 'archived').map((chat) => chat.id)).toEqual(['b']);
     expect(snippetParts({ snippet: 'The oolong is fresh.', start: 4, length: 6 })).toEqual({ before: 'The ', hit: 'oolong', after: ' is fresh.' });
     expect(snippetParts({ snippet: 'abc', start: 2, length: 9 })).toEqual({ before: 'ab', hit: 'c', after: '' });
+  });
+});
+
+// Phase 11 Task 9 (specs/agent-attach.feature.md): when `@` opens the attach menu.
+describe('attach menu trigger', () => {
+  test('at-menu-trigger', () => {
+    expect(atMenuTrigger('@', 1)).toBe(true);
+    expect(atMenuTrigger('compare @', 9)).toBe(true);
+    expect(atMenuTrigger('line\n@', 6)).toBe(true);
+    expect(atMenuTrigger('me@x', 3)).toBe(false);
+    expect(atMenuTrigger('@x', 2)).toBe(false);
+    expect(atMenuTrigger('', 0)).toBe(false);
+    expect(withoutAtTrigger('compare @ now', 9)).toEqual({ text: 'compare  now', caret: 8 });
+    expect(withoutAtTrigger('me@', 3)).toEqual({ text: 'me@', caret: 3 });
+    expect(attachmentName({ title: '  ', origin: 'https://a.example' })).toBe('https://a.example');
+    expect(attachmentName({ title: 'A', origin: 'https://a.example' })).toBe('A');
   });
 });

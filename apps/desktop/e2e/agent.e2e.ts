@@ -5,7 +5,8 @@
 // SKILL_FILE_FORMAT, SKILL_FILE_VERSION, SKILL_EXPORT_MESSAGES, SKILL_IMPORT_MESSAGES, SKILL_FILE_WORDS, SKILL_IMPORT_CONFLICT_MESSAGES),
 // specs/agent-mcp.spec.ts (MCP_NO_SANDBOX_SENTENCE)
 // Acceptance: specs/agent-panel.feature.md (End to end, agent-model-and-reasoning-settings), specs/skills.feature.md (agent-skill-narrows-tools, agent-skill-pack-listed),
-// specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end), specs/agent-mcp-presets.feature.md (End to end)
+// specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end), specs/agent-mcp-presets.feature.md (End to end),
+// specs/agent-attach.feature.md (attach-second-tab-and-read-it; specs/agent-panel.spec.ts AGENT_ATTACHMENT_STATE_LABELS)
 import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -14,7 +15,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { AGENT_MODEL_PROVIDER_LABELS, AGENT_REASONING_HINT, AGENT_REASONING_UNAVAILABLE, AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
+import { AGENT_ATTACHMENT_STATE_LABELS, AGENT_MODEL_PROVIDER_LABELS, AGENT_REASONING_HINT, AGENT_REASONING_UNAVAILABLE, AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
 import {
   AGENT_GRANTS_EXPLAINER,
   CHAT_EXPORT_MESSAGES,
@@ -103,7 +104,7 @@ let page: Page;
 let site: Awaited<ReturnType<typeof startSite>>;
 let tlsSite: Awaited<ReturnType<typeof startTlsSite>>;
 let scripts: string;
-const { go, contentsIdAt, urlOf } = chromeHelpers(
+const { go, contentsIdAt, urlOf, strip, activeTab } = chromeHelpers(
   () => app!,
   () => page,
 );
@@ -840,6 +841,58 @@ test('chat-rename-archive-search', async () => {
   await expect(page.getByTestId('agent-chats-view-empty')).toHaveText(CHAT_HISTORY_WORDS.noArchived);
   await page.getByTestId('agent-chats-filter-active').click();
   await expect(titles).toHaveText(['What does this page say?', 'Tea tasting']);
+});
+
+// Phase 11 Task 9 (specs/agent-attach.feature.md): the user attaches a second tab from the `@` menu; the
+// scripted model reads it through `read_attached_tab` (the real runtime's utility process: the new
+// tool's schema validates there too), and its chip follows the tab when it moves on.
+test('attach-second-tab-and-read-it', async () => {
+  const next = `${site.origin}/next`;
+  await launchWith([{ toolCalls: [{ toolName: 'read_attached_tab', input: { ref: 'tab-1', part: 'text' } }] }, { text: ['The other tab is about the next page.'] }]);
+  // A second tab on /next, then back to the first (the chat's tab).
+  await page.getByTestId('new-tab').click();
+  await expect(strip()).toHaveCount(2);
+  await go(next);
+  const otherId = await contentsIdAt(next);
+  await strip().nth(0).click();
+  await expect(activeTab()).toHaveAttribute('title', 'Agent start');
+
+  // `@` opens the menu: the other web tab, by title and origin (not the chat's own tab).
+  const input = page.getByTestId('agent-input');
+  await input.click();
+  await input.pressSequentially('@');
+  const options = page.getByTestId('agent-attach-option');
+  await expect(options).toHaveCount(1);
+  await expect(options.first()).toContainText('Agent next');
+  await expect(options.first()).toContainText(site.origin);
+  await options.first().click();
+  await expect(page.getByTestId('agent-attach-menu')).toHaveCount(0);
+  // The `@` gave way to a chip.
+  await expect(input).toHaveValue('');
+  const chip = page.getByTestId('agent-attachment');
+  await expect(chip).toHaveCount(1);
+  await expect(chip).toHaveAttribute('data-ref', 'tab-1');
+  await expect(chip).toHaveAttribute('data-state', 'ready');
+  await expect(chip.getByTestId('agent-attachment-title')).toHaveText('Agent next');
+
+  await send('What does the other tab say?');
+  // A public page: read without asking, from the attached tab (not the chat's tab).
+  await expect(toolCards().first()).toHaveAttribute('data-status', 'done');
+  await expect(toolCards().first().getByTestId('agent-tool-output')).toContainText('The next page');
+  await expect(toolCards().first().getByTestId('agent-tool-output')).not.toContainText('Where the agent begins');
+  await expect(assistantTexts().last()).toHaveText('The other tab is about the next page.');
+  expect(await urlOf(otherId)).toBe(next);
+  await expect(activeTab()).toHaveAttribute('title', 'Agent start');
+  // The chip moved to the chat the message started.
+  await expect(chip).toHaveCount(1);
+
+  // The attached tab moves on in the background: its chip says so.
+  await app!.evaluate(({ webContents }, { id, url }) => void webContents.fromId(id)!.loadURL(url), { id: otherId, url: `${site.origin}/markup` });
+  await expect(chip).toHaveAttribute('data-state', 'changed');
+  await expect(chip.getByTestId('agent-attachment-state')).toHaveText(AGENT_ATTACHMENT_STATE_LABELS.changed);
+  // Detached: gone.
+  await chip.getByTestId('agent-attachment-detach').click();
+  await expect(chip).toHaveCount(0);
 });
 
 // Task 10 (specs/agent-mcp.feature.md, End to end): a command MCP server configured in the

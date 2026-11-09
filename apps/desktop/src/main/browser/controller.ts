@@ -69,6 +69,11 @@ export interface BrowserController extends BrowserService {
   attach(win: HostWindow): void;
   /** How many `watch` calls are waiting (at most `MAX_PENDING_WATCHES`). */
   pendingWatches(): number;
+  /**
+   * Calls `listener` after every state change (Phase 11 Task 9: the agent's attached-tab chips);
+   * answers its unsubscribe. A listener that throws is ignored.
+   */
+  onStateChange(listener: () => void): () => void;
   /** Closes the active tab (Cmd/Ctrl+W). */
   closeActiveTab(): boolean;
   /** Activates the tab at `index` in strip order (Cmd/Ctrl+1…8); `false` past the end. */
@@ -298,11 +303,19 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     win.setTitle(title === '' ? APP_WINDOW_TITLE : `${capTitle(title)}${WINDOW_TITLE_SEPARATOR}${APP_WINDOW_TITLE}`);
   };
 
+  const stateListeners = new Set<() => void>();
   const changed = (): void => {
     stateWatch.bump();
     updateWindowTitle();
     sessionSync.save();
     stateWatch.wake();
+    for (const listener of [...stateListeners]) {
+      try {
+        listener();
+      } catch {
+        // A listener's failure never stops the browser's own work.
+      }
+    }
   };
 
   // A prompt appeared, was answered or timed out (denials the controller causes are reported by
@@ -1251,5 +1264,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     watch: (sinceVersion, signal) => stateWatch.watch(sinceVersion, signal),
 
     pendingWatches: () => stateWatch.pending(),
+
+    onStateChange(listener) {
+      stateListeners.add(listener);
+      return () => void stateListeners.delete(listener);
+    },
   };
 }

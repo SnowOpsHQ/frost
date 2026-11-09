@@ -11,8 +11,8 @@ import { APPROVAL_DECISIONS, MAX_GRANT_ORIGIN_CHARS } from './agent-approvals.sp
 import { AGENT_SKILL_SAVE_MODES, CHAT_EXPORT_FORMATS, CHAT_LIST_FILTERS, CHAT_RETENTIONS, CHAT_SEARCH_MAX_CHARS, chatTitleFromUser, MAX_USER_SKILLS, STORED_CHAT_TITLE_MAX_CHARS } from './agent-data.spec';
 import { CREDENTIAL_LIMITS, CREDENTIAL_SLOTS, isValidModelSettings } from './agent-proxy.spec';
 import { REASONING_EFFORTS } from './agent-reasoning.spec';
-import { CHAT_TEXT_MAX_CHARS } from './agent-session.spec';
-import { isAgentModelId, MODEL_ROUTES, type AgentModelId } from './agent-tools.spec';
+import { ATTACHMENT_ORIGIN_MAX_CHARS, CHAT_TEXT_MAX_CHARS } from './agent-session.spec';
+import { ATTACHED_TAB_REFS, isAgentModelId, MODEL_ROUTES, type AgentModelId } from './agent-tools.spec';
 import { SKILL_ID_PATTERN, SKILL_LIMITS, SKILL_SLOT_MAX_CHARS } from './skills.spec';
 
 /** A chat id: main makes them with `crypto.randomUUID`. */
@@ -209,3 +209,20 @@ export const AgentRenameChatInputSchema = z.strictObject({
 
 /** `agent.archiveChat`: archive (`true`) or bring back to the active list (`false`). */
 export const AgentArchiveChatInputSchema = z.strictObject({ chatId: AgentChatIdSchema, archived: z.boolean() });
+
+// ---- Phase 11 Task 9: @-attached tabs (`agent-attach.feature.md`, Decision 11) ----------------
+// The user attaches and detaches tabs from the chrome only; the model can never attach one. `chatId`
+// `null` is the new chat the next message starts (its attachments move to that chat). Answers are
+// in `agent-session.spec.ts` (`AgentAttachableTab`, `AGENT_ATTACH_RESULTS`).
+
+/** `agent.attachableTabs`: the open web tabs the user may attach to the chat (or the new chat). */
+export const AgentAttachableTabsInputSchema = z.strictObject({ chatId: AgentChatIdSchema.nullable() });
+
+/**
+ * `agent.attachTab`: attach tab `tabId` (main's tab id) as the menu showed it, on `origin`: main
+ * refuses (`not-attachable`) unless it is an open web tab whose page is still on that origin.
+ */
+export const AgentAttachTabInputSchema = z.strictObject({ chatId: AgentChatIdSchema.nullable(), tabId: z.int().positive(), origin: z.string().min(1).max(ATTACHMENT_ORIGIN_MAX_CHARS) });
+
+/** `agent.detachTab`: detach the chat's attachment `ref`. */
+export const AgentDetachTabInputSchema = z.strictObject({ chatId: AgentChatIdSchema.nullable(), ref: z.enum(ATTACHED_TAB_REFS) });

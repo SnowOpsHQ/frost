@@ -22,6 +22,9 @@ import {
   AgentArchiveChatInputSchema,
   AgentListChatsInputSchema,
   AgentRenameChatInputSchema,
+  AgentAttachableTabsInputSchema,
+  AgentAttachTabInputSchema,
+  AgentDetachTabInputSchema,
 } from '@app/specs/agent-ipc.schema';
 import { CHATGPT_SIGN_IN_RESULTS, CHATGPT_SIGN_OUT_RESULTS, type ChatgptSignInResult, type ChatgptSignOutResult } from '@app/specs/agent-chatgpt.spec';
 import {
@@ -51,7 +54,26 @@ import {
 } from '@app/specs/agent-data.spec';
 import { AGENT_TOOL_NAMES, isSafeInputText, type AgentToolName } from '@app/specs/agent-tools.spec';
 import { isSkillId, SKILL_ACTING_TOOLS, SKILL_INPUT_SLOTS, SKILL_LIMITS, type SkillInputSlot } from '@app/specs/skills.spec';
-import { AGENT_ANSWER_RESULTS, AGENT_SEND_RESULTS, AGENT_SET_KEY_RESULTS, AGENT_WATCH_TIMEOUT_MS, MAX_CHATS_KEPT_IN_MEMORY, type AgentChatSummary, type AgentAnswerResult, type AgentSendResult, type AgentSetKeyResult, type AgentSkillRequest, type AgentState } from '@app/specs/agent-session.spec';
+import {
+  AGENT_ANSWER_RESULTS,
+  AGENT_ATTACH_RESULTS,
+  AGENT_SEND_RESULTS,
+  AGENT_SET_KEY_RESULTS,
+  AGENT_WATCH_TIMEOUT_MS,
+  ATTACHABLE_TAB_TITLE_MAX_CHARS,
+  ATTACHMENT_ORIGIN_MAX_CHARS,
+  MAX_ATTACHABLE_TABS,
+  MAX_CHATS_KEPT_IN_MEMORY,
+  type AgentAttachableTab,
+  type AgentAttachResult,
+  type AgentChatSummary,
+  type AgentAnswerResult,
+  type AgentSendResult,
+  type AgentSetKeyResult,
+  type AgentSkillRequest,
+  type AgentState,
+} from '@app/specs/agent-session.spec';
+import { webOrigin } from '@app/specs/web-url.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { isMcpServerId, MCP_SAVE_RESULTS, MCP_START_RESULTS, MCP_TOKEN_RESULTS, type McpSaveResult, type McpStartResult, type McpTokenResult } from '@app/specs/agent-mcp.spec';
 import { AgentMcpServerIdInputSchema, AgentSaveMcpServerInputSchema, AgentSetMcpServerEnabledInputSchema, AgentSetMcpTokenInputSchema } from '@app/specs/agent-mcp.schema';
@@ -207,6 +229,24 @@ function checkedChatSummaries(value: unknown): AgentChatSummary[] {
       }
     }
     out.push(summary);
+  }
+  return out;
+}
+
+/**
+ * `attachableTabs`' answer (Phase 11 Task 9), rebuilt field by field: at most `MAX_ATTACHABLE_TABS`
+ * tabs, each a positive tab id, a title cut to `ATTACHABLE_TAB_TITLE_MAX_CHARS` and an `http(s)`
+ * origin written as the URL parser writes it. A malformed tab is left out.
+ */
+function checkedAttachableTabs(value: unknown): AgentAttachableTab[] {
+  if (!Array.isArray(value)) return [];
+  const out: AgentAttachableTab[] = [];
+  for (const raw of value.slice(0, MAX_ATTACHABLE_TABS) as unknown[]) {
+    const tab = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+    const { tabId, title, origin } = tab;
+    if (!Number.isSafeInteger(tabId) || (tabId as number) <= 0 || typeof title !== 'string' || typeof origin !== 'string') continue;
+    if (origin.length > ATTACHMENT_ORIGIN_MAX_CHARS || webOrigin(origin) !== origin) continue;
+    out.push({ tabId: tabId as number, title: text(title, ATTACHABLE_TAB_TITLE_MAX_CHARS), origin });
   }
   return out;
 }
@@ -506,4 +546,28 @@ export const agentRouter = router({
     .use(requireAgent)
     .input(AgentArchiveChatInputSchema)
     .mutation(({ ctx, input }) => ctx.agent.archiveChat(input.chatId, input.archived) === true),
+
+  // ---- Phase 11 Task 9: @-attached tabs (`agent-attach.feature.md`, Decision 11) ----
+  // Attaching is the user's, from the app window only: no runtime message reaches these.
+  attachableTabs: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentAttachableTabsInputSchema)
+    .query(({ ctx, input }): AgentAttachableTab[] => {
+      try {
+        return checkedAttachableTabs(ctx.agent.attachableTabs(input.chatId));
+      } catch {
+        return [];
+      }
+    }),
+  attachTab: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentAttachTabInputSchema)
+    .mutation(({ ctx, input }): AgentAttachResult => oneOf(AGENT_ATTACH_RESULTS, ctx.agent.attachTab(input.chatId, input.tabId, input.origin), 'not-attachable')),
+  detachTab: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentDetachTabInputSchema)
+    .mutation(({ ctx, input }) => ctx.agent.detachTab(input.chatId, input.ref) === true),
 });

@@ -3,7 +3,7 @@ import type { SeoAuditResponse } from '@app/seo-core';
 import { pageUrlOf } from '@app/specs/agent-approvals.spec';
 import { EXECUTE_JS_LIMITS, modelPageUrl, PAGE_SCRIPT_TIMEOUT_MS, PAGE_TEXT_DEFAULT_CHARS, pageKeyOf, pageSource } from '@app/specs/agent-page-tools.spec';
 import type { JsonValue } from '@app/specs/agent-protocol.schema';
-import { EXECUTE_JS_TIMEOUT_MS, TOOL_RESULT_MAX_CHARS, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { ATTACHED_TAB_NOT_READY_NOTE, EXECUTE_JS_TIMEOUT_MS, TOOL_RESULT_MAX_CHARS, type AttachedTabPart, type AttachedTabRef, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import { parseWebUrl, webOrigin } from '@app/specs/web-url.spec';
 import type { ToolRunContext, ToolRunner, ToolRunOutcome } from '../approvals';
 import { auditNotReady, clip, summariseAudit, summarisePageData } from './audit-summary';
@@ -36,6 +36,10 @@ import { createProbeTools } from './probe-tools';
 //   (Task 8, `search-tools.ts`): a missing port answers `unavailable`;
 // - `visibility_probes` and `run_visibility_probes` run over `deps.ports.probes` (`probe-tools.ts`),
 //   page tools like the others: the tab must still show the expected page (approved: exactly it).
+// - `read_attached_tab` (Phase 11 Task 9, Decision 11) reads the tab the broker resolved the ref to
+//   (`context.tabId` is that tab) and always checks the exact attach URL (`expectedUrl`), whatever
+//   `via` says: `audit` serves main's ready audit only if it is of that URL (else `not-ready` data),
+//   `text` runs `page_text`'s reader in that tab's own page (`AGENT_PAGE_WORLD_ID`).
 
 /** The part of a tab's WebContents the page scripts need (Electron's `WebContents`; tests use fakes). */
 export interface PageContents {
@@ -166,8 +170,9 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
     return ok(data, expected.origin);
   };
 
-  const pageText = async (input: { maxChars?: number | undefined }, context: ToolRunContext): Promise<ToolRunOutcome> => {
-    const expected = expectationOf(context);
+  /** Reads `page_text`'s data from the page `expected` names (the chat tab's, or an attached tab's). */
+  const pageText = async (input: { maxChars?: number | undefined }, context: ToolRunContext, exact: PageExpectation | null = null): Promise<ToolRunOutcome> => {
+    const expected = exact ?? expectationOf(context);
     if (expected === null) return fail('expired');
     const contents = livePage(context, expected);
     if (typeof contents === 'string') return fail(contents);
@@ -190,6 +195,24 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
       'text',
     );
     return ok({ ...data, chars: data.text.length }, expected.origin);
+  };
+
+  /** `read_attached_tab`: the attached tab (`context.tabId`), always at exactly its attach URL. */
+  const readAttached = async (input: { ref: AttachedTabRef; part: AttachedTabPart }, context: ToolRunContext): Promise<ToolRunOutcome> => {
+    const pageKey = pageKeyOf(context.expectedUrl);
+    if (context.expectedOrigin === null || pageKey === null || webOrigin(context.expectedUrl) !== context.expectedOrigin) return fail('expired');
+    const expected: PageExpectation = { origin: context.expectedOrigin, pageKey };
+    if (input.part === 'text') {
+      const outcome = await pageText({}, context, expected);
+      return outcome.ok ? ok({ ref: input.ref, ...(outcome.data as Record<string, unknown>) }, expected.origin) : outcome;
+    }
+    const contents = deps.contentsOf(context.tabId);
+    if (contents === null || contents.isDestroyed()) return fail('expired');
+    if (!isExpectedPage(contents.getURL(), expected)) return fail('expired');
+    const response = deps.audit(context.tabId);
+    // Only a ready audit of exactly the attach URL (frost audits the tab on screen only).
+    if (response.status !== 'ready' || !isExpectedPage(response.audit.url, expected)) return ok({ status: 'not-ready', ref: input.ref, note: ATTACHED_TAB_NOT_READY_NOTE }, expected.origin);
+    return ok({ ref: input.ref, ...summariseAudit(response.audit, response.renderProfile) }, expected.origin);
   };
 
   const click = async (input: { selector?: string | undefined; text?: string | undefined }, context: ToolRunContext): Promise<ToolRunOutcome> => {
@@ -336,6 +359,8 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
         case 'visibility_probes':
         case 'run_visibility_probes':
           return probeTools.run(definition.name, context);
+        case 'read_attached_tab':
+          return readAttached(value as { ref: AttachedTabRef; part: AttachedTabPart }, context);
       }
     },
   };

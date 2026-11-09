@@ -218,7 +218,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
             <footer className="agent-foot">
               <AgentContextMeter active={active} />
               <ChatgptComposerBar setup={state.setup} />
-              <AgentComposer chatId={active?.id ?? null} running={state.running} stopChatId={runningChatId(state)} inputRef={input} skills={state.skills} />
+              <AgentComposer chatId={active?.id ?? null} running={state.running} stopChatId={runningChatId(state)} inputRef={input} skills={state.skills} attachments={active?.attachments ?? state.draftAttachments ?? []} />
             </footer>
           </>
         )}

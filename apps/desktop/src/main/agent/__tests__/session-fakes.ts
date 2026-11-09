@@ -11,6 +11,7 @@ import { createDefaultAgentEntitlements, type AgentEntitlements } from '../entit
 import { createAgent } from '../index';
 import type { McpManager } from '../mcp';
 import { createAgentSession, type AgentSessionDeps } from '../session';
+import { createAttachedTabs } from '../tools/attached-tabs';
 import { createFakeRunner } from './approval-fakes';
 import { createFakeChannel, createFakeFork, createFakeSafeStorage, createMemoryFs, type FakePort } from './fakes';
 
@@ -37,6 +38,8 @@ export async function setupSession(
     chatgpt?: AgentSessionDeps['chatgpt'];
     /** Spends a window's live user gesture (the ChatGPT sign-in); default: none. */
     consumeGesture?: AgentSessionDeps['consumeGesture'];
+    /** Phase 11 Task 9: other open tabs (mutable), attachable to chats; default: no attached-tabs port. */
+    otherTabs?: { id: number; url: string; title: string }[];
   } = {},
 ) {
   const memory = createMemoryFs();
@@ -55,6 +58,10 @@ export async function setupSession(
     };
   });
   const entitlements = options.entitlements ?? createDefaultAgentEntitlements();
+  const others = options.otherTabs;
+  const tabUrlOf = (tabId: number): string | null => (tabId === TAB ? tab.url : (others?.find((other) => other.id === tabId)?.url ?? null));
+  const attachedTabs =
+    others === undefined ? undefined : createAttachedTabs({ tabs: () => [{ id: TAB, url: tab.url ?? '', title: tab.title ?? '' }, ...others], tabUrl: tabUrlOf });
   const agent = createAgent({
     electron: {
       utilityProcess: { fork: forks.fork },
@@ -84,7 +91,8 @@ export async function setupSession(
     entitlements,
     toolRunner: runner.runner,
     ...(options.mcp ? { mcp: options.mcp } : {}),
-    tabUrl: (tabId) => (tabId === TAB ? tab.url : null),
+    tabUrl: tabUrlOf,
+    ...(attachedTabs ? { attachedTabs } : {}),
     log: (line) => logs.push(line),
   });
   if (options.key !== false) await agent.credentials.setKey('gateway', KEY);
@@ -112,6 +120,7 @@ export async function setupSession(
     ...(options.mcp ? { mcp: options.mcp } : {}),
     ...(options.chatgpt ? { chatgpt: options.chatgpt } : {}),
     ...(options.consumeGesture ? { consumeGesture: options.consumeGesture } : {}),
+    ...(attachedTabs ? { attachedTabs } : {}),
     randomId: () => `00000000-0000-4000-8000-${String((ids += 1)).padStart(12, '0')}`,
     log: (line) => logs.push(line),
   });

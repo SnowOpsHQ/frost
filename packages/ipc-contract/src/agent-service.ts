@@ -18,7 +18,7 @@ import type {
 } from '@app/specs/agent-data.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { ReasoningEffort } from '@app/specs/agent-reasoning.spec';
-import type { AgentAnswerResult, AgentChatSummary, AgentSendResult, AgentSetKeyResult, AgentSkillRequest, AgentState } from '@app/specs/agent-session.spec';
+import type { AgentAnswerResult, AgentAttachableTab, AgentAttachResult, AgentChatSummary, AgentSendResult, AgentSetKeyResult, AgentSkillRequest, AgentState } from '@app/specs/agent-session.spec';
 import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import type { McpSaveResult, McpStartResult, McpTokenResult } from '@app/specs/agent-mcp.spec';
 import type { AgentSaveMcpServerInput } from '@app/specs/agent-mcp.schema';
@@ -146,4 +146,15 @@ export interface AgentService {
   renameChat(chatId: string, title: string): boolean;
   /** Archives a chat (`false`: back to the active list; a message sent to it does that too); `false` for an unknown id. */
   archiveChat(chatId: string, archived: boolean): boolean;
+
+  // ---- Phase 11 Task 9: @-attached tabs (`agent-attach.feature.md`, Decision 11) ----
+  /**
+   * The open web tabs the user may attach to chat `chatId` (`null`: the new chat): main's tab id, a
+   * cut title and the origin; never the chat's own tab or one already attached. `[]` for an unknown chat.
+   */
+  attachableTabs(chatId: string | null): readonly AgentAttachableTab[];
+  /** Attaches tab `tabId` to chat `chatId` (`null`: the new chat) at the page it shows now, if that page is on `origin` (what the menu showed). */
+  attachTab(chatId: string | null, tabId: number, origin: string): AgentAttachResult;
+  /** Detaches the chat's attachment `ref`; `false` if there was none. */
+  detachTab(chatId: string | null, ref: string): boolean;
 }

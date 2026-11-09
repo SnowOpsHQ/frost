@@ -639,6 +639,26 @@ export function composerKey(event: { readonly key: string; readonly shiftKey: bo
   return event.key === 'Enter' && !event.shiftKey && event.isComposing !== true ? 'send' : null;
 }
 
+/**
+ * Whether typing just made an `@` that opens the attach menu (Phase 11 Task 9): the character before
+ * the caret is `@`, at the start or after whitespace (an e-mail address's `@` does not).
+ */
+export function atMenuTrigger(text: string, caret: number): boolean {
+  if (caret < 1 || caret > text.length || text[caret - 1] !== '@') return false;
+  return caret === 1 || /\s/.test(text[caret - 2]!);
+}
+
+/** `text` with the `@` just before `caret` removed (the menu replaces it), and where the caret goes. */
+export function withoutAtTrigger(text: string, caret: number): { readonly text: string; readonly caret: number } {
+  if (!atMenuTrigger(text, caret)) return { text, caret };
+  return { text: text.slice(0, caret - 1) + text.slice(caret), caret: caret - 1 };
+}
+
+/** A chip's or menu item's name: the tab's (untrusted) title, else its origin. */
+export function attachmentName(item: { readonly title: string; readonly origin: string }): string {
+  return item.title.trim() === '' ? item.origin : item.title;
+}
+
 /** Whether the composer's text can be sent now. */
 export function canSend(text: string, running: boolean, sending: boolean): boolean {
   return !running && !sending && text.trim() !== '';

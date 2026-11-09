@@ -19,6 +19,7 @@ import { createAgentSession } from './session';
 import { createAgentCheckPort, type AgentSessionWithChecks } from './check-port';
 import { createSkillFiles, type SkillFileDialogs, type SkillFilesFs } from './skill-files';
 import { createBrowserPageToolRunner, type PageToolsBrowser, type PageToolsWebContents } from './tools';
+import { createAttachedTabs } from './tools/attached-tabs';
 import { createMemorySkillsStore, createUserSkills, type AgentSkillPrefsStore, type AgentSkillsStore } from './user-skills';
 
 // The agent's main-side composition for the IPC (Phase 5 Task 6a; acceptance
@@ -60,6 +61,11 @@ export interface AgentServiceApp {
 /** The tab controller as the agent sees it: the page tools' calls, and each tab's URL. */
 export interface AgentServiceBrowser extends PageToolsBrowser {
   getState(): { readonly activeTabId: number | null; readonly tabs: readonly { readonly id: number; readonly url: string; readonly title: string }[] };
+  /**
+   * Called after each tab state change (`BrowserController.onStateChange`), so the attached tabs'
+   * chips (Phase 11 Task 9) show a tab that closed or moved on. Optional (tests).
+   */
+  onStateChange?(listener: () => void): () => void;
 }
 
 export interface AgentServiceDeps {
@@ -164,6 +170,23 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSessionWith
     const url = liveContents(tabId)?.getURL() ?? '';
     return url === '' ? null : url;
   };
+  // The chats' attached tabs (Phase 11 Task 9): the strip's tabs, their live pages and audits.
+  const attachedTabs = createAttachedTabs({
+    tabs: () => deps.browser.getState().tabs,
+    tabUrl,
+    // Every tab's live URL in one pass over the WebContents (the chips are re-read on each tab change).
+    liveUrls: () => {
+      const urls = new Map<number, string>();
+      for (const contents of deps.webContents.getAllWebContents()) {
+        if (contents.isDestroyed()) continue;
+        const tabId = deps.browser.tabIdOf(contents);
+        const url = contents.getURL();
+        if (tabId !== null && url !== '' && !urls.has(tabId)) urls.set(tabId, url);
+      }
+      return urls;
+    },
+    audit: (tabId) => deps.browser.seo.getAudit(tabId),
+  });
   const entitlements = deps.entitlements ?? createDefaultAgentEntitlements();
   const mcpSession = (): McpSessionLike => {
     const session = deps.electron.session.fromPartition(AGENT_MCP_PARTITION);
@@ -193,6 +216,7 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSessionWith
     entitlements,
     mcp,
     tabUrl,
+    attachedTabs,
     e2eAgentScript,
     ...(openExternal ? { openExternal } : {}),
     ...(deps.focusWindow ? { focusWindow: deps.focusWindow } : {}),
@@ -246,9 +270,12 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSessionWith
     mcp,
     chatgpt: agent.chatgpt,
     ...(deps.consumeGesture ? { consumeGesture: deps.consumeGesture } : {}),
+    attachedTabs,
     now,
     log,
   });
+  // The tabs' changes, followed while frost runs: an attached tab that closed or moved on shows so.
+  const stopFollowingTabs = deps.browser.onStateChange?.(() => session.tabsChanged()) ?? (() => undefined);
   // The stored route, model, grants, skills and chats (pruned first), and which keys are set, for
   // the panel's first state; the runtime itself waits for the first message.
   void Promise.all([agent.settings.load(), agent.grants.load(), userSkills.load(), mcp.load(), history.load().then((chats) => session.restore(chats))]).then(() => session.refreshSetup());
@@ -259,6 +286,7 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSessionWith
   const clearTimer = deps.clearInterval ?? ((handle: unknown) => clearInterval(handle as ReturnType<typeof setInterval>));
   const pruning = setTimer(() => void session.prune(), CHAT_PRUNE_INTERVAL_MS);
   deps.app.once('will-quit', () => {
+    stopFollowingTabs();
     clearTimer(pruning);
     session.dispose();
     // Command servers' process groups get SIGKILL now, before the app goes (no timer may outlive it).

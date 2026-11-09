@@ -167,6 +167,7 @@ describe('approval policy', () => {
       gsc_performance: { url: url(L.maxUrlChars), days: L.maxGscDays },
       visibility_probes: {},
       run_visibility_probes: {},
+      read_attached_tab: { ref: 'tab-3', part: 'audit' },
     };
     for (const name of AGENT_TOOL_NAMES) {
       const parsed = getToolDefinition(name).inputSchema.safeParse(worst[name]);

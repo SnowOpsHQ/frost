@@ -41,8 +41,9 @@ describe('approval broker', () => {
     expect(ToolResultSchema.safeParse(result).success).toBe(true);
     expect(broker.pending()).toEqual([]);
     expect(broker.activity('chat-1')).toEqual([expect.objectContaining({ callId: 'call-1', toolName: 'page_text', status: 'done', code: null, approvalId: null })]);
-    // Every read tool of the catalogue runs without asking.
-    const reads = Object.values(AGENT_TOOLS).filter((tool) => tool.risk === 'read');
+    // Every read tool of the catalogue runs without asking (the attached-tab reader needs an
+    // attachment: `attached-tabs.test.ts`).
+    const reads = Object.values(AGENT_TOOLS).filter((tool) => tool.risk === 'read' && tool.name !== 'read_attached_tab');
     const inputs: Record<string, unknown> = { serp_results: { query: 'tea' }, search_intent: { query: 'tea' }, run_ai_search: { query: 'tea' } };
     reads.forEach((tool, i) => fake.invoke(`read-${i}`, tool.name, inputs[tool.name] ?? {}));
     await flush();

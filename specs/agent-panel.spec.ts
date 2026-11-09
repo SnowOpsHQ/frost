@@ -10,7 +10,7 @@
 import { CHATGPT_UI } from './agent-chatgpt.spec';
 import type { CredentialSlot, KeyProtection } from './agent-proxy.spec';
 import type { ReasoningEffort } from './agent-reasoning.spec';
-import type { AgentAnswerResult, AgentSetKeyResult, AgentToolCardView } from './agent-session.spec';
+import type { AgentAnswerResult, AgentAttachmentState, AgentAttachResult, AgentSetKeyResult, AgentToolCardView } from './agent-session.spec';
 import type { ModelId, ModelProvider, ModelRoute } from './agent-tools.spec';
 
 // ---- Layout ----------------------------------------------------------------------------------
@@ -149,3 +149,34 @@ export const AGENT_ANSWER_MESSAGES: Readonly<Record<Exclude<AgentAnswerResult, '
 /** Said on every tool card's output and every MCP approval: tool output is untrusted data. */
 export const AGENT_UNTRUSTED_OUTPUT_LABEL = 'Output (untrusted data, shown as text)';
 export const AGENT_MCP_APPROVAL_NOTE = 'This tool comes from an MCP server frost does not vouch for. Its input and output are untrusted.';
+
+// ---- Phase 11 Task 9: @-attached tabs (`agent-attach.feature.md`) -------------------------------
+
+/** The composer's `@` menu and chips, in frost's own words. */
+export const AGENT_ATTACH_WORDS = {
+  /** The composer's button that opens the menu (typing `@` opens it too). */
+  button: 'Attach a tab',
+  menuLabel: 'Attach a tab to this chat',
+  /** No other open web tab to offer. */
+  none: 'No other web pages are open to attach.',
+  /** All `MAX_CHAT_ATTACHMENTS` are used. */
+  full: 'This chat already has three tabs attached. Detach one first.',
+  detach: 'Detach',
+  /** The empty chat's hint. */
+  hint: 'Type @ to let the agent read another open tab too.',
+} as const;
+
+/** A chip's state, said beside it (`ready` says nothing). */
+export const AGENT_ATTACHMENT_STATE_LABELS: Readonly<Record<AgentAttachmentState, string>> = {
+  ready: '',
+  changed: 'Moved on',
+  closed: 'Closed',
+};
+
+/** What a refused attach says (in the menu). */
+export const AGENT_ATTACH_MESSAGES: Readonly<Record<Exclude<AgentAttachResult, 'attached'>, string>> = {
+  'not-attachable': 'That tab can no longer be attached.',
+  'already-attached': 'That tab is already attached.',
+  full: AGENT_ATTACH_WORDS.full,
+  'unknown-chat': 'That chat is no longer available.',
+};

@@ -46,7 +46,7 @@ export function card(changes: Partial<AgentToolCardView> = {}): AgentToolCardVie
 }
 
 export function state(changes: Partial<AgentState> = {}): AgentState {
-  return { version: 2, setup: setup(), skills: [], chats: [], active: null, running: false, approval: null, notice: null, readToolsAllowed: true, grantsCount: 0, grantsVersion: 1, chatRetention: '30d', mcp: { available: true, servers: [] }, ...changes };
+  return { version: 2, setup: setup(), skills: [], chats: [], active: null, running: false, approval: null, notice: null, readToolsAllowed: true, grantsCount: 0, grantsVersion: 1, chatRetention: '30d', mcp: { available: true, servers: [] }, draftAttachments: [], ...changes };
 }
 
 /** Skills as main lists them (`AgentState.skills`). */

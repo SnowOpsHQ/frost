@@ -6,6 +6,8 @@
 import { z } from 'zod';
 import {
   AGENT_TOOL_INPUT_LIMITS as L,
+  ATTACHED_TAB_PARTS,
+  ATTACHED_TAB_REFS,
   EXECUTE_JS_MAX_SOURCE_CHARS,
   EXECUTE_JS_TIMEOUT_MS,
   isAgentToolName,
@@ -151,6 +153,15 @@ export const runVisibilityProbesTool = defineTool(
   z.strictObject({}),
 );
 
+export const readAttachedTabTool = defineTool(
+  'read_attached_tab',
+  `Reads a tab the user attached to this chat, named by its ref (the system prompt lists the attached tabs; there are none unless it does): part "audit" returns the SEO audit frost last ran on that page, as page_audit does (often not ready for a tab in the background: then ask the user to switch to it), part "text" its visible text, as page_text does. Never reads any other tab. ${UNTRUSTED_OUTPUT_NOTE}`,
+  z.strictObject({
+    ref: z.enum(ATTACHED_TAB_REFS).describe('The attached tab, as the system prompt names it.'),
+    part: z.enum(ATTACHED_TAB_PARTS).describe('"audit" for its SEO audit, "text" for its visible text.'),
+  }),
+);
+
 /** Every catalogue tool's definition, in catalogue order. */
 export const AGENT_TOOL_DEFINITIONS = [
   pageAuditTool,
@@ -165,6 +176,7 @@ export const AGENT_TOOL_DEFINITIONS = [
   gscPerformanceTool,
   visibilityProbesTool,
   runVisibilityProbesTool,
+  readAttachedTabTool,
 ] as const;
 
 export type AnyAgentToolDefinition = (typeof AGENT_TOOL_DEFINITIONS)[number];
