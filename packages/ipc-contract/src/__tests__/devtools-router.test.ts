@@ -1,8 +1,9 @@
-// Spec: specs/devtools.schema.ts (the devtools.* inputs), specs/devtools.spec.ts (COOKIE_LIMITS, DEVTOOLS_WATCH_TIMEOUT_MS), specs/ipc-sender.spec.ts
+// Spec: specs/devtools.schema.ts (the devtools.* inputs; Phase 11 Task 4: ExportNetworkInputSchema, RevealStorageItemInputSchema,
+// DevtoolsStorageInputSchema), specs/devtools.spec.ts (COOKIE_LIMITS, DEVTOOLS_WATCH_TIMEOUT_MS, WEB_STORAGE_LIMITS), specs/ipc-sender.spec.ts
 // Acceptance: specs/devtools.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { COOKIE_LIMITS, DEVTOOLS_WATCH_TIMEOUT_MS, type NetworkLogAnswer } from '@app/specs/devtools.spec';
+import { COOKIE_LIMITS, DEVTOOLS_WATCH_TIMEOUT_MS, WEB_STORAGE_LIMITS, type NetworkExportFormat, type NetworkLogAnswer, type WebStorageArea } from '@app/specs/devtools.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
@@ -19,11 +20,13 @@ function fakeDevtools() {
     requestHeaders: vi.fn((_tabId: number, _key: number) => ({ status: 'gone' as const })),
     redirects: vi.fn((_tabId: number) => ({ status: 'none' as const })),
     console: vi.fn((_tabId: number) => ({ status: 'ready' as const, entries: [], total: 0, dropped: 0 })),
-    storage: vi.fn(async (_tabId: number) => ({ status: 'no-page' as const })),
+    storage: vi.fn(async (_tabId: number, _options?: { readWebStorage?: boolean }) => ({ status: 'no-page' as const })),
     revealCookie: vi.fn(async (tabId: number, _cookie: { name: string; domain: string; path: string }) => tabId === 1),
     clearSiteData: vi.fn(async (_tabId: number) => 'cancelled' as const),
     setOpen: vi.fn((_windowId: number | null, _open: boolean) => undefined),
     setPreserveLog: vi.fn((tabId: number, _preserve: boolean) => tabId === 1),
+    exportNetwork: vi.fn(async (_tabId: number, _format: NetworkExportFormat) => 'cancelled' as const),
+    revealStorageItem: vi.fn(async (tabId: number, _item: { area: WebStorageArea; key: string }) => tabId === 1),
   } satisfies DevtoolsService;
 }
 
@@ -63,6 +66,8 @@ const VALID_INPUT: Record<string, unknown> = {
   clearSiteData: { tabId: 1 },
   setOpen: { open: true },
   setPreserveLog: { tabId: 1, preserve: true },
+  exportNetwork: { tabId: 1, format: 'har' },
+  revealStorageItem: { tabId: 1, area: 'local', key: 'token' },
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 const untouched = (devtools: ReturnType<typeof fakeDevtools>) => {
@@ -90,6 +95,19 @@ describe('devtools router', () => {
     for (const name of PROCEDURES) expect((await errorOf(procedure(ctxFor(undefined), name)(VALID_INPUT[name]))).code, name).toBe(IPC_INTERNAL_ERROR_CODE);
   });
 
+  test('export-network-and-reveal-storage-item-enforce-sender', async () => {
+    // Phase 11 Task 4: the two new procedures, from a foreign or dead sender, never reach the service.
+    for (const name of ['exportNetwork', 'revealStorageItem']) {
+      const devtools = fakeDevtools();
+      for (const origin of ['https://evil.com', 'file://', 'null']) {
+        expect((await errorOf(procedure(ctxFor(devtools, origin), name)(VALID_INPUT[name]))).code, `${name} ${origin}`).toBe(IPC_SENDER_ERROR_CODE);
+      }
+      const dead: IpcContext = { ...ctxFor(devtools), sender: { origin: APP_ORIGIN, live: false, windowId: WINDOW_ID, isWindowContents: true, isMainFrame: true } };
+      expect((await errorOf(procedure(dead, name)(VALID_INPUT[name]))).code, `${name} dead`).toBe(IPC_SENDER_ERROR_CODE);
+      untouched(devtools);
+    }
+  });
+
   test('devtools-inputs-validated', async () => {
     const badTab = [{ tabId: 0 }, { tabId: -1 }, { tabId: 1.5 }, { tabId: '1' }, {}, undefined, { tabId: 1, extra: true }];
     const bad: Record<string, unknown[]> = {
@@ -98,7 +116,7 @@ describe('devtools router', () => {
       requestHeaders: [{ tabId: 1 }, { tabId: 1, requestKey: 0 }, { tabId: 1, requestKey: 1.5 }, { tabId: 0, requestKey: 1 }, { tabId: 1, requestKey: 1, headers: true }],
       redirects: badTab,
       console: badTab,
-      storage: badTab,
+      storage: [...badTab, { tabId: 1, readWebStorage: 'yes' }, { tabId: 1, readWebStorage: true, area: 'local' }],
       clearSiteData: [...badTab, { tabId: 1, origin: 'https://evil.com' }],
       revealCookie: [
         { tabId: 1 },
@@ -111,6 +129,23 @@ describe('devtools router', () => {
       ],
       setOpen: [{}, { open: 'yes' }, { open: true, windowId: 3 }, undefined],
       setPreserveLog: [{ tabId: 1 }, { tabId: 1, preserve: 1 }, { tabId: 0, preserve: true }, { tabId: 1, preserve: true, all: true }],
+      // The chrome names a tab and a format, never a path, a file name or the file's content.
+      exportNetwork: [
+        ...badTab.map((t) => ({ format: 'har', ...(t as object) })),
+        { tabId: 1 },
+        { tabId: 1, format: 'json' },
+        { tabId: 1, format: 'har', path: '/tmp/x.har' },
+        { tabId: 1, format: 'csv', content: 'a,b' },
+      ],
+      revealStorageItem: [
+        { tabId: 1, area: 'local' },
+        { tabId: 1, key: 'token' },
+        { tabId: 1, area: 'indexedDB', key: 'token' },
+        { tabId: 1, area: 'local', key: 'k'.repeat(WEB_STORAGE_LIMITS.maxKeyChars + 1) },
+        { tabId: 1, area: 'local', key: 7 },
+        { tabId: 1, area: 'local', key: 'token', value: 'x' },
+        { tabId: 0, area: 'local', key: 'token' },
+      ],
     };
     for (const name of PROCEDURES) {
       for (const input of bad[name]!) {
@@ -139,6 +174,14 @@ describe('devtools router', () => {
     await expect(call('redirects')).resolves.toEqual({ status: 'none' });
     await expect(call('console')).resolves.toEqual({ status: 'ready', entries: [], total: 0, dropped: 0 });
     await expect(call('storage')).resolves.toEqual({ status: 'no-page' });
+    expect(devtools.storage).toHaveBeenLastCalledWith(1, { readWebStorage: false });
+    await procedure(ctxFor(devtools), 'storage')({ tabId: 1, readWebStorage: true });
+    expect(devtools.storage).toHaveBeenLastCalledWith(1, { readWebStorage: true });
+    await expect(call('exportNetwork')).resolves.toBe('cancelled');
+    expect(devtools.exportNetwork).toHaveBeenCalledExactlyOnceWith(1, 'har');
+    await expect(call('revealStorageItem')).resolves.toBe(true);
+    expect(devtools.revealStorageItem).toHaveBeenCalledExactlyOnceWith(1, { area: 'local', key: 'token' });
+    await expect(procedure(ctxFor(devtools), 'revealStorageItem')({ tabId: 2, area: 'session', key: '' })).resolves.toBe(false);
     await expect(call('revealCookie')).resolves.toBe(true);
     expect(devtools.revealCookie).toHaveBeenCalledExactlyOnceWith(1, COOKIE);
     await expect(procedure(ctxFor(devtools), 'revealCookie')({ tabId: 2, ...COOKIE })).resolves.toBe(false);

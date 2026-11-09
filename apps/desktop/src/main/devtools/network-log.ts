@@ -186,6 +186,25 @@ export type NetworkRows = Omit<Extract<NetworkLogAnswer, { status: 'ready' }>, '
   readonly removed: number[];
 };
 
+/** A row with its headers (masked as stored), for the network export (Phase 11 Task 4). */
+export interface NetworkExportEntry extends NetworkEntry {
+  readonly requestHeaders: readonly NetworkHeader[];
+  readonly responseHeaders: readonly NetworkHeader[];
+}
+
+/**
+ * The tab's whole log as kept, for the network export: every row in key order with its headers, the
+ * page URL of each document that has rows, and what the log left out. Never a body (none is kept).
+ */
+export interface NetworkExportSnapshot {
+  readonly pageUrl: string;
+  readonly pages: readonly { readonly document: number; readonly url: string }[];
+  readonly entries: readonly NetworkExportEntry[];
+  readonly dropped: number;
+  readonly notKept: number;
+  readonly overBudget: { readonly entries: number; readonly bytes: number };
+}
+
 export interface NetworkLog extends Required<Pick<RequestObserver, 'sent' | 'redirected' | 'responded' | 'completed' | 'failed'>> {
   /**
    * The tab committed a cross-document main-frame navigation to `url` (`did-navigate`): a new
@@ -203,6 +222,8 @@ export interface NetworkLog extends Required<Pick<RequestObserver, 'sent' | 'red
   rows(contentsId: number, since?: number): NetworkRows | null;
   /** One row's headers (`NetworkHeadersAnswer`). */
   headers(contentsId: number, key: number): NetworkHeadersAnswer;
+  /** The tab's whole log with headers, for the network export; `null` for a tab never recorded. */
+  exportSnapshot(contentsId: number): NetworkExportSnapshot | null;
   /** The current document's requests still waiting for a robots.txt verdict (crawlable, the page's origin). */
   robotsPending(contentsId: number): { readonly key: number; readonly url: string }[];
   /** Records robots.txt verdicts by entry key. */
@@ -638,6 +659,25 @@ export function createNetworkLog(options: NetworkLogOptions = {}): NetworkLog {
         responseHeaders: entry.responseHeaders.map((h) => ({ ...h })),
         omittedResponseHeaders: entry.omittedResponseHeaders,
         headersDropped: entry.headersDropped,
+      };
+    },
+
+    exportSnapshot(contentsId) {
+      const tab = tabs.get(contentsId);
+      if (!tab) return null;
+      const documents = [...new Set(tab.entries.map((e) => e.document))].sort((a, b) => a - b);
+      return {
+        pageUrl: tab.pageUrls.get(tab.document) ?? '',
+        pages: documents.flatMap((document) => {
+          const url = tab.pageUrls.get(document);
+          return url ? [{ document, url }] : [];
+        }),
+        entries: [...tab.entries]
+          .sort((a, b) => a.key - b.key)
+          .map((e) => ({ ...row(tab, e), requestHeaders: e.requestHeaders.map((h) => ({ ...h })), responseHeaders: e.responseHeaders.map((h) => ({ ...h })) })),
+        dropped: tab.dropped,
+        notKept: tab.notKept,
+        overBudget: { entries: tab.overEntries, bytes: tab.overBytes },
       };
     },
 

@@ -40,7 +40,7 @@ import type { ContextSource } from './seo/auditor';
 import { contextSource, knownInput, laterInput } from './seo/context-source';
 import { observeMainFrames, observeRequests } from './browser/web-request';
 import { createDevtoolsService } from './devtools/service';
-import { browseCookies, clearBrowseOrigin, confirmClearSiteData } from './devtools/site-data';
+import { browseCookies, clearBrowseOrigin, confirmClearSiteData, networkExportIo } from './devtools/site-data';
 import { nativeWayland, runVitals, withTimeout, type CollectOptions } from './seo/vitals';
 import { createShownTimes } from './seo/vitals-shown';
 import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
@@ -249,6 +249,7 @@ function start(): void {
     confirmClearSiteData: (origin) => confirmClearSiteData(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null, origin),
     clearOrigin: clearBrowseOrigin,
     liveWindow: (id) => BrowserWindow.fromId(id)?.isDestroyed() === false,
+    networkExport: { ...networkExportIo, appVersion: app.getVersion() },
     log: logSession,
   });
 

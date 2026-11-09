@@ -7254,6 +7254,29 @@ input {
   color: var(--caution);
 }
 
+.devtools-export-menu {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.devtools-storage-sections {
+  overflow: auto;
+}
+
+.devtools-web-storage {
+  padding: 4px 10px 8px;
+  border-top: 1px solid var(--bg-chrome-edge);
+}
+
+.devtools-web-storage .devtools-subhead {
+  margin: 6px 0;
+}
+
 /* End of Devtools drawer */
 
 /* Browser polish (Phase 2.5 Task 6, specs/browser-polish.feature.md): the find bar, the History

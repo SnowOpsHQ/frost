@@ -1,13 +1,25 @@
 import { TRPCError } from '@trpc/server';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { DEVTOOLS_WATCH_TIMEOUT_MS } from '@app/specs/devtools.spec';
-import { DevtoolsNetworkInputSchema, DevtoolsPreserveInputSchema, RequestHeadersInputSchema, DevtoolsSetOpenInputSchema, DevtoolsTabInputSchema, DevtoolsWatchInputSchema, RevealCookieInputSchema } from '@app/specs/devtools.schema';
+import {
+  DevtoolsNetworkInputSchema,
+  DevtoolsPreserveInputSchema,
+  DevtoolsSetOpenInputSchema,
+  DevtoolsStorageInputSchema,
+  DevtoolsTabInputSchema,
+  DevtoolsWatchInputSchema,
+  ExportNetworkInputSchema,
+  RequestHeadersInputSchema,
+  RevealCookieInputSchema,
+  RevealStorageItemInputSchema,
+} from '@app/specs/devtools.schema';
 import type { DevtoolsService } from './devtools-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
 // The SEO devtools drawer ↔ main (Phase 2.5 Task 5; spec `devtools.schema.ts`; acceptance
 // `devtools.feature.md`, Router). Every procedure starts `publicProcedure.use(enforceSender)`; the
-// drawer is read-only but for `clearSiteData`, which main confirms in its own dialog.
+// drawer never edits a page: its writes are `clearSiteData`, which main confirms in its own dialog,
+// and `exportNetwork`'s file, which main writes where the user chose in its own save dialog.
 
 /** Hands the procedure main's `DevtoolsService` (after `enforceSender`; fails closed without it). */
 const requireDevtools = middleware(({ ctx, next }) => {
@@ -66,11 +78,12 @@ export const devtoolsRouter = router({
     .use(requireDevtools)
     .input(DevtoolsTabInputSchema)
     .query(({ ctx, input }) => ctx.devtools.console(input.tabId)),
+  // Phase 11 Task 4: `readWebStorage` runs the web storage reader (the Storage tab opened, or Refresh).
   storage: publicProcedure
     .use(enforceSender)
     .use(requireDevtools)
-    .input(DevtoolsTabInputSchema)
-    .query(({ ctx, input }) => ctx.devtools.storage(input.tabId)),
+    .input(DevtoolsStorageInputSchema)
+    .query(({ ctx, input }) => ctx.devtools.storage(input.tabId, { readWebStorage: input.readWebStorage === true })),
   revealCookie: publicProcedure
     .use(enforceSender)
     .use(requireDevtools)
@@ -94,4 +107,16 @@ export const devtoolsRouter = router({
     .use(requireDevtools)
     .input(DevtoolsPreserveInputSchema)
     .mutation(({ ctx, input }) => ctx.devtools.setPreserveLog(input.tabId, input.preserve) === true),
+  // Phase 11 Task 4 (Decision 5): the chrome names the tab and the format only; main builds and saves the file.
+  exportNetwork: publicProcedure
+    .use(enforceSender)
+    .use(requireDevtools)
+    .input(ExportNetworkInputSchema)
+    .mutation(({ ctx, input }) => ctx.devtools.exportNetwork(input.tabId, input.format)),
+  // Phase 11 Task 4 (Decision 6): one web storage key shown until the tab's next navigation.
+  revealStorageItem: publicProcedure
+    .use(enforceSender)
+    .use(requireDevtools)
+    .input(RevealStorageItemInputSchema)
+    .mutation(async ({ ctx, input }) => (await ctx.devtools.revealStorageItem(input.tabId, { area: input.area, key: input.key })) === true),
 });

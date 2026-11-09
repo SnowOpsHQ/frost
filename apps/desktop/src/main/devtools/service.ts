@@ -1,11 +1,13 @@
 import type { DevtoolsService } from '@app/ipc-contract';
-import { DEVTOOLS_WATCH_EVICTED, MAX_PENDING_DEVTOOLS_WATCHES, REDIRECT_KEY_HEADERS, ROBOTS_VERDICT_BATCH, type NetworkHeader, type RedirectTraceAnswer } from '@app/specs/devtools.spec';
+import { DEVTOOLS_WATCH_EVICTED, MAX_PENDING_DEVTOOLS_WATCHES, REDIRECT_KEY_HEADERS, ROBOTS_VERDICT_BATCH, type NetworkHeader, type RedirectTraceAnswer, type StorageAnswer } from '@app/specs/devtools.spec';
 import type { ResponseMeta, RobotsFetch } from '@app/specs/seo-snapshot.spec';
 import type { RequestObserver } from '../browser/web-request';
 import { createConsoleLog, type ConsoleLog, type ConsoleMessage } from './console-log';
+import { exportNetworkLog, type NetworkExportIo } from './network-export';
 import { createNetworkLog, type NetworkLog } from './network-log';
 import type { RobotsVerdictsResult } from './robots-verdicts';
 import { createSiteStorage, type CookieLike, type SiteStorage } from './storage';
+import { createWebStorageReader, type WebStorageReader } from './web-storage';
 
 // The SEO devtools drawer's main side (spec `devtools.spec.ts`; acceptance `devtools.feature.md`):
 // the network recorder (a `webRequest` subscriber), each tab's console and Storage reveals, the
@@ -18,6 +20,8 @@ export interface DevtoolsContents {
   readonly id: number;
   getURL(): string;
   isDestroyed(): boolean;
+  /** The Storage tab's web storage reader (Phase 11 Task 4): `DEVTOOLS_STORAGE_WORLD_ID` only, top frame. */
+  executeJavaScriptInIsolatedWorld(worldId: number, scripts: { code: string }[]): Promise<unknown>;
   on(event: 'did-navigate', listener: (event: unknown, url: string, ...rest: unknown[]) => void): unknown;
   on(event: 'console-message', listener: (details: ConsoleMessage, ...rest: unknown[]) => void): unknown;
   once(event: 'destroyed', listener: () => void): unknown;
@@ -44,6 +48,8 @@ export interface DevtoolsServiceOptions {
   readonly clearOrigin: (origin: string) => Promise<void>;
   /** Whether app window `windowId` is still open. */
   readonly liveWindow: (windowId: number) => boolean;
+  /** The network export's save dialog and file write (Phase 11 Task 4); without it every export is `failed`. */
+  readonly networkExport?: Omit<NetworkExportIo, 'log'>;
   readonly log?: (message: string) => void;
 }
 
@@ -55,7 +61,7 @@ export interface DevtoolsMain extends DevtoolsService {
   /** Forgets every log and reveal (Clear Browsing Data), waking the watches of the tabs that had any. */
   clear(): void;
   /** For tests. */
-  readonly parts: { readonly network: NetworkLog; readonly console: ConsoleLog; readonly storage: SiteStorage };
+  readonly parts: { readonly network: NetworkLog; readonly console: ConsoleLog; readonly storage: SiteStorage; readonly webStorage: WebStorageReader };
 }
 
 interface Waiter {
@@ -95,6 +101,8 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
   const network = createNetworkLog({ changed });
   const consoleLog = createConsoleLog({ changed });
   const storage = createSiteStorage({ cookies: options.cookies, confirmClear: options.confirmClearSiteData, clearOrigin: options.clearOrigin, changed, log: options.log });
+  const webStorage = createWebStorageReader({ changed, log: options.log });
+  let exporting = false;
 
   const updateCapture = (): void => {
     for (const id of [...openWindows]) if (!options.liveWindow(id)) openWindows.delete(id);
@@ -134,7 +142,7 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
 
   const service: DevtoolsMain = {
     observer: network,
-    parts: { network, console: consoleLog, storage },
+    parts: { network, console: consoleLog, storage, webStorage },
 
     watchContents(tab) {
       const id = tab.id;
@@ -144,12 +152,14 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
         network.committed(id, typeof url === 'string' ? url : '');
         consoleLog.reset(id);
         storage.committed(id);
+        webStorage.committed(id);
       });
       tab.on('console-message', (details) => consoleLog.add(id, details ?? {}));
       tab.once('destroyed', () => {
         network.forget(id);
         consoleLog.forget(id);
         storage.forget(id);
+        webStorage.forget(id);
         versions.delete(id);
       });
     },
@@ -212,10 +222,31 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
       return { status: 'ready', ...(consoleLog.snapshot(tab.id) ?? { entries: [], total: 0, dropped: 0 }) };
     },
 
-    async storage(tabId) {
+    async storage(tabId, read): Promise<StorageAnswer> {
       const tab = contents(tabId);
       if (!tab) return { status: 'no-tab' };
-      return storage.storage(tab.id, tab.getURL());
+      const [cookies, web] = await Promise.all([storage.storage(tab.id, tab.getURL()), webStorage.answer(tab, read?.readWebStorage === true)]);
+      return cookies.status === 'ready' ? { ...cookies, ...web } : cookies;
+    },
+
+    async revealStorageItem(tabId, item) {
+      const tab = contents(tabId);
+      return tab ? webStorage.reveal(tab, item.area, item.key) : false;
+    },
+
+    async exportNetwork(tabId, format) {
+      const tab = contents(tabId);
+      // Only the active tab (`DEVTOOLS_TAB_SCOPE`): any other has nothing to export, and no dialog is shown.
+      if (!tab) return 'empty';
+      if (!options.networkExport) return 'failed';
+      // One export (one save dialog) at a time: another asked meanwhile writes nothing and opens no dialog.
+      if (exporting) return 'cancelled';
+      exporting = true;
+      try {
+        return await exportNetworkLog(network.exportSnapshot(tab.id), format, { ...options.networkExport, log: options.log });
+      } finally {
+        exporting = false;
+      }
     },
 
     async revealCookie(tabId, cookie) {
@@ -225,7 +256,11 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
 
     async clearSiteData(tabId) {
       const tab = contents(tabId);
-      return tab ? storage.clearSiteData(tab.id, tab.getURL()) : 'refused';
+      if (!tab) return 'refused';
+      const result = await storage.clearSiteData(tab.id, tab.getURL());
+      // The keys listed and a reveal are of data that is gone.
+      if (result === 'cleared') webStorage.clear();
+      return result;
     },
 
     setOpen(windowId, open) {
@@ -247,6 +282,7 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
       network.clear();
       consoleLog.clear();
       storage.clear();
+      webStorage.clear();
       // Every tab that had data moves on, so an open drawer asks again and drops what it shows.
       for (const id of [...versions.keys()]) changed(id);
     },

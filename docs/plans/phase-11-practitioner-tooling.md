@@ -1027,3 +1027,20 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   the page; `copyPreviewJsonLd` never rejects. The favicon placeholder is a site-name monogram;
   `SiteGlyph` and the URL `breadcrumb()` helper are removed. Article times are not in `og-tags`. The
   agent's audit summary carries 14 social fields (was 12), since `maxSocialFields = SOCIAL_TAGS.length`.
+- **Task 4:** the storage reader is triggered by an optional `readWebStorage` flag on
+  `devtools.storage` (no new procedure); without it main answers the last read's keys and sizes
+  (per tab per document, never values). The chrome sends it once per tab and Refresh; main runs one
+  script at a time per tab, shares reads in flight, and discards a read that a clear or commit
+  overtook. `revealStorageItem` only marks one uncut, listed key per tab; each Storage answer then
+  reads that key alone (the reworded invariant says so). Unavailable reasons: `opaque-origin`,
+  `denied`, `timeout`, `invalid`, `failed`; sizes in UTF-16 units. Redaction beyond Decision 5 (lead
+  rulings after the security review): nested `name=value` pieces inside a value (≤ 4 levels),
+  bracketed names (`code[]`, `data[sid]`), `sess` as a name fragment and `pwd`, `pw`, `sessid`,
+  `phpsessid`, `jsessionid` on the denylist, ≤ 5 decode rounds, `;` parameters, unparsable or
+  non-http(s)/ws(s) URLs written as `REDACTED`, relative `location`/`link`/`referer` written
+  absolute, and `link` tails after a stray `>` or an unclosed `<` redacted. HAR: empty
+  `httpVersion`/`statusText`, status 0 for failed/pending, `_resourceType`, per-entry comments;
+  `bodySize`/`content.size` `-1` (HAR 1.2 "unknown"; Open question 5 not tried in a viewer). CSV has
+  request rows only. A second export while the dialog is open answers `cancelled`. Electron's
+  `onSendHeaders` does not report `Referer` here, so the log never holds one; the reader with
+  JavaScript off is covered by a fake-tab unit test only.

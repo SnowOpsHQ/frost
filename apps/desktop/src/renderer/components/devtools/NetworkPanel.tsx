@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  EXPORT_REDACTION_HINT,
+  EXPORT_URLS_REDACTED_NOTE,
+  NETWORK_EXPORT_FORMATS,
+  NETWORK_EXPORT_LABELS,
   NETWORK_LIMITS,
   NETWORK_SEARCH_MAX_CHARS,
   NETWORK_TYPE_FILTERS,
   NETWORK_TYPE_LABELS,
   type NetworkEntry,
+  type NetworkExportResult,
   type NetworkHeader,
   type NetworkHeadersAnswer,
   type NetworkLogAnswer,
@@ -18,7 +23,39 @@ import type { DevtoolsPanelProps } from './DevtoolsDrawer';
 // them (masked: secret headers are `•••`, bodies never captured), filters, and a waterfall drawn
 // with SVG `<rect>` attributes (never `style=`). Every URL and header is inert text. The list is
 // fetched incrementally (rows changed since the last cursor, no headers, `mergeRows`); a row's
-// headers are fetched only when the user opens it (`devtools.requestHeaders`).
+// headers are fetched only when the user opens it (`devtools.requestHeaders`). Export (Phase 11 Task
+// 4): the chrome names the tab and the format only; main builds the file from its own log, redacts
+// its URLs (best effort, as the menu says) and saves it where the user chose in its own dialog.
+
+const EXPORT_MESSAGES: Readonly<Record<NetworkExportResult, string>> = {
+  saved: 'Saved.',
+  cancelled: 'Nothing was saved.',
+  empty: 'There are no requests to export.',
+  failed: 'Couldn’t save the file.',
+};
+
+/** The Export menu: a row under the toolbar with one button per format, the redaction note and its hint. */
+function ExportMenu({ tabId, onDone }: { readonly tabId: number; readonly onDone: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const run = async (format: (typeof NETWORK_EXPORT_FORMATS)[number]) => {
+    setBusy(true);
+    const result = await devtoolsApi.exportNetwork(tabId, format);
+    setBusy(false);
+    onDone(result === null ? EXPORT_MESSAGES.failed : EXPORT_MESSAGES[result]);
+  };
+  return (
+    <div className="devtools-export-menu" role="group" aria-label="Export the network log" data-testid="devtools-network-export-menu">
+      {NETWORK_EXPORT_FORMATS.map((format) => (
+        <button key={format} type="button" className="devtools-button" data-testid="devtools-network-export-format" data-format={format} disabled={busy} onClick={() => void run(format)}>
+          {NETWORK_EXPORT_LABELS[format]}
+        </button>
+      ))}
+      <span className="devtools-muted" data-testid="devtools-network-export-note">
+        {EXPORT_URLS_REDACTED_NOTE} {EXPORT_REDACTION_HINT} Bodies are never recorded.
+      </span>
+    </div>
+  );
+}
 
 type ReadyLog = Extract<NetworkLogAnswer, { status: 'ready' }>;
 
@@ -122,6 +159,8 @@ export function NetworkPanel({ tab, version }: DevtoolsPanelProps) {
   const chosen = selected === null ? undefined : entries.find((e) => e.key === selected);
   const set = (change: Partial<NetworkFilter>) => setFilter((was) => ({ ...was, ...change }));
   const preserve = log?.preserve === true;
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportStatus, setExportStatus] = useState('');
 
   return (
     <div className="devtools-network" data-testid="devtools-network">
@@ -158,10 +197,34 @@ export function NetworkPanel({ tab, version }: DevtoolsPanelProps) {
           <input type="checkbox" data-testid="devtools-network-preserve" checked={preserve} onChange={(e) => void devtoolsApi.setPreserveLog(tab.id, e.currentTarget.checked)} />
           Preserve log
         </label>
+        <button
+          type="button"
+          className="devtools-button"
+          data-testid="devtools-network-export"
+          aria-expanded={exportOpen}
+          onClick={() => {
+            setExportOpen((was) => !was);
+            setExportStatus('');
+          }}
+        >
+          Export…
+        </button>
+        <span className="devtools-muted" data-testid="devtools-network-export-status" aria-live="polite">
+          {exportStatus}
+        </span>
         <span className="devtools-count" data-testid="devtools-network-count" aria-live="polite">
           {shown.length === entries.length ? `${entries.length} requests` : `${shown.length} of ${entries.length} requests`}
         </span>
       </div>
+      {exportOpen ? (
+        <ExportMenu
+          tabId={tab.id}
+          onDone={(message) => {
+            setExportStatus(message);
+            setExportOpen(false);
+          }}
+        />
+      ) : null}
       {log && (log.notKept > 0 || log.dropped > 0 || log.overBudget.entries > 0 || log.overBudget.bytes > 0) ? (
         <p className="devtools-notice" data-testid="devtools-network-notice">
           {log.notKept > 0 ? `${log.notKept} earlier requests weren’t kept while the drawer was closed. Reload to record them all. ` : ''}
