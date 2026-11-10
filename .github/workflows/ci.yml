@@ -1,11 +1,14 @@
 # CI security gates (acceptance: specs/ci-gates.feature.md). Every gate must pass.
 name: CI
 
-# Branch pushes are covered by their pull request; `main` runs on push (merges).
+# Branch pushes are covered by their pull request; `main` runs on push (merges). A branch without a
+# pull request runs on demand (`gh workflow run ci.yml --ref <branch>`), e.g. to fetch its
+# screenshot baselines (specs/visual-baseline.feature.md).
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
