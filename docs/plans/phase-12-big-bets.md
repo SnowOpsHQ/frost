@@ -1288,3 +1288,42 @@ Decision 7).
   | # | Question | Task | How to resolve |
   |---|---|---|---|
   | Q9 | `uule` encoding (canonical location names, the length prefix) — undocumented. | D2 | Public write-ups only as data; owner spot checks (K-E); keep behind the experiment flag. |
+
+---
+
+## As built (lead notes, 2026-11-10)
+Where the build differs from the plan above, or settles what it left open. **Lead rulings first**
+(they bind every task):
+- **Legal gates (Decision 2).** The owner's L4–L7 notes do not exist yet ("unclear counts as no"),
+  so, following Phase 10's `RANK_CHECK_AVAILABLE`, every gated feature is built and tested in full
+  but ships **off** behind a named availability constant:
+  - `SERP_API_VENDOR_AVAILABLE` (`specs/data-sources.spec.ts`; per vendor, L4): `serpapi`,
+    `dataforseo`, `serper`, all `false`.
+  - `AI_SEARCH_PROVIDER_AVAILABLE` (`specs/data-sources.spec.ts`; per provider, L5): `perplexity`,
+    `openai-search`, both `false`. While both are off, `run_ai_search` stays unavailable (answered as
+    data, no approval card).
+  - `CRAWL_AVAILABLE` (`specs/site-crawl.spec.ts`; L6): `false`. Gates **starting** a crawl (and
+    resuming one); viewing, exporting and deleting existing runs are not gated.
+  - L7 needs no gate: engine and vendor names are text labels only, no logos or icons.
+- **Main is the authority for a gate.** Each gated main entry (setting a key for a gated provider,
+  any data API request, "Check via API", `run_ai_search`, the AI answers view's run, crawl start and
+  resume) refuses with the outcome `unavailable` and `LEGAL_GATE_NOTE` ("Not available in this build
+  yet: its terms are still under review.") while its gate is closed. Clearing a key is never gated.
+  The renderer never imports the constants to decide: it reads `available` from main's views
+  (`DataSourcesView`, the crawl view, the AI answers view) and hides or disables the control with
+  that note. Renderer unit tests inject views.
+- **Test seam.** Main reads every gate through one object, `legalGates.isOpen(id)`
+  (`apps/desktop/src/main/data-sources/gates.ts`), built from the constants; services take it (or an
+  `isOpen` function) as a dependency, so unit tests open a gate by injection. Each gate keeps one test
+  that pins the shipped constant to `false` and shows main refusing. Gate ids: `LEGAL_GATE_IDS`
+  (`serpapi`, `dataforseo`, `serper`, `perplexity`, `openai-search`, `crawl`). The e2e suite and the
+  lead's UI pass open gates with the unpackaged-only switch `--frost-e2e-open-gates=<id,id,…>`
+  (`LEGAL_GATES_E2E_SWITCH`, in `PACKAGED_FORBIDDEN_SWITCHES`; refused in packaged builds).
+  Flipping a constant to `true` is the change that adds the owner's note under `docs/research/`.
+- **K-A2:** Phase 10 is merged (`ci_serp_readings`, `appendReading`), so Task 4 runs.
+- **Vendor documentation (Q1, Q4, Q5).** Implementers may read the vendors' and providers' public
+  API references to pin endpoints and field names, recording the URL and date in the spec. Fixtures
+  are synthetic (frost's own values). No test or build step contacts a vendor.
+- **Execution.** Two lanes in one worktree: lane A = Tasks 1 → 2 → 3 → 4 → 8 → 9; lane B = Tasks
+  5 → 6a → 6b → 7 → 10a → 10b; then Task 11 and the whole-branch review. One commit per task by the
+  lead.
