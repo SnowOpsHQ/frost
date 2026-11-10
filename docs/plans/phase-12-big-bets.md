@@ -1506,3 +1506,23 @@ Where the build differs from the plan above, or settles what it left open. **Lea
     organic result refuses the answer, K-A1).
   - 10: a `dataforseo-login` containing `:` is refused (RFC 7617 Basic user-id).
   - 11: a new proxy sign-in whose password fails to store clears both slots, the old password too.
+- **Council round 2 (crawl fixes, one commit each).**
+  - A: `Politeness.schedule(host, fn, signal, before?)` awaits `before` (the project check, the
+    pacing write) inside the host's slot and stamps the start only after it settles, nothing awaited
+    before the request: the interval is measured between network starts.
+  - B: inside the slot, the crawler stores `snapshot(host)` (this start counted as now) before the
+    request whenever the start raises the interval or `changes()` moved; a failed write sends nothing
+    and fails the run (`error`). A crash with a request in flight resumes no sooner than the stored
+    time.
+  - C: the crawl has its own robots lists: `CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES` (`unavailable`,
+    `forbidden`, `too-many-redirects`) and `CRAWL_ROBOTS_UNREADABLE_OUTCOMES`
+    (`ROBOTS_UNKNOWN_OUTCOMES` plus `private-redirect`); a refused robots.txt redirect refuses as
+    `robots-unreachable`. The sidebar's `ROBOTS_ALLOW_ALL_OUTCOMES` is unchanged.
+  - D: `robots-unreachable` for any queued page or same-host hop (start URL, other hosts, redirect
+    targets) writes no row, leaves the entry `queued` and pauses the run with the new reason
+    `robots-unreachable` ("Paused: frost could not read the site's robots.txt. Resume to try
+    again."); sitemaps are still skipped. A Resume within the robots fetcher's 60 s failure cache
+    pauses again at once (documented).
+  - E: a page already recorded and still queued is replayed and completed before `maxPages` applies;
+    the cap holds back only pages with no row.
+  - F: a replayed entry whose new answer has no analysis clears its old links (`putLinks(…, [])`).
