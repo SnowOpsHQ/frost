@@ -171,7 +171,8 @@ test('rankings-two-captures-show-change', async () => {
   await expect(rows()).toHaveCount(1, { timeout: READ_WAIT });
   const row = rowOf(QUERY);
   await expect(row).toHaveAttribute('data-outcome', 'ranked');
-  await expect(row.getByTestId('rankings-position')).toHaveText('2');
+  await expect(row.getByTestId('rankings-position-value')).toHaveText('2');
+  await expect(row.getByTestId('rankings-source')).toHaveText('Tab capture');
   await expect(row.locator('.rankings-change')).toHaveText('+1');
   await expect(row.locator('.rankings-change')).toHaveAttribute('data-direction', 'up');
   const trend = row.getByTestId('rankings-trend');

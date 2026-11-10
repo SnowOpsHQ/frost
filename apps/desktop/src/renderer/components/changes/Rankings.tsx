@@ -254,7 +254,7 @@ function RankRowItem({
         ))}
       </td>
       <td className="rankings-number rankings-position" data-testid="rankings-position">
-        {view.position}
+        <span data-testid="rankings-position-value">{view.position}</span>
         {view.source !== '' ? (
           <span className="rankings-also-in" data-testid="rankings-source">
             {view.source}
