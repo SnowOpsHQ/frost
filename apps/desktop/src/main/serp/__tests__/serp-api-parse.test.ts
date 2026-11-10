@@ -210,6 +210,38 @@ describe('serp api parse', () => {
     expect(runSerpApiJob(job('dataforseo', JSON.stringify(dfs))).snapshot).toMatchObject({ status: 'unreadable', reason: 'invalid-answer' });
   });
 
+  test('serp-api-links-with-credentials-refused', () => {
+    // Council review (item 9): a link carrying a user name or password is never kept, as in
+    // `ai-search/parse.ts`. An ad with one is skipped and counted (like a non-web link); an organic
+    // result with one refuses the answer (K-A1); any other item keeps its title without the link.
+    const serpapi = fixture('serpapi');
+    (serpapi.ads as Record<string, unknown>[]).push(
+      { position: 3, block_position: 'top', title: 'With a password', link: 'http://user:pass@ads.example.net/frost' },
+      { position: 4, block_position: 'top', title: 'With a user name', link: 'https://user@ads.example.net/frost' },
+    );
+    (serpapi.related_questions as Record<string, unknown>[])[0]!.link = 'https://me:pw@answers.example.org/frost';
+    const out = runSerpApiJob(job('serpapi', JSON.stringify(serpapi)));
+    expect(out.skipped).toBe(3);
+    const snapshot = ready(out.snapshot);
+    expect(snapshot.results.filter((r) => r.type === 'ad').map((r) => r.title)).toEqual(['Frost Gear Winter Sale', 'Frost Kit for Windows']);
+    expect(JSON.stringify(snapshot)).not.toMatch(/user|pass|me:pw/);
+    const dfs = fixture('dataforseo') as { tasks: { result: { items: Record<string, unknown>[] }[] }[] };
+    dfs.tasks[0]!.result[0]!.items[0]!.url = 'https://user:pass@ads.example.net/frost';
+    const fromDfs = runSerpApiJob(job('dataforseo', JSON.stringify(dfs)));
+    expect(fromDfs.skipped).toBe(2);
+    expect(ready(fromDfs.snapshot).composition.counts.ad).toBe(0);
+    // An organic result with credentials refuses the answer, for every vendor.
+    const organicDfs = fixture('dataforseo') as { tasks: { result: { items: Record<string, unknown>[] }[] }[] };
+    organicDfs.tasks[0]!.result[0]!.items.find((i) => i.type === 'organic')!.url = 'http://user:pass@www.example.com/frost';
+    expect(runSerpApiJob(job('dataforseo', JSON.stringify(organicDfs))).snapshot).toMatchObject({ status: 'unreadable', reason: 'invalid-answer' });
+    const organicSerpApi = fixture('serpapi');
+    (organicSerpApi.organic_results as Record<string, unknown>[])[0]!.link = 'https://user@www.example.com/';
+    expect(runSerpApiJob(job('serpapi', JSON.stringify(organicSerpApi))).snapshot).toMatchObject({ status: 'unreadable', reason: 'invalid-answer' });
+    const organicSerper = fixture('serper');
+    (organicSerper.organic as Record<string, unknown>[])[1]!.link = 'https://:secret@www.example.com/';
+    expect(runSerpApiJob(job('serper', JSON.stringify(organicSerper))).snapshot).toMatchObject({ status: 'unreadable', reason: 'invalid-answer' });
+  });
+
   test('serp-api-dataforseo-local-pack-is-one-block', () => {
     const text = readFileSync(path.join(HERE, 'fixtures', 'serp-api', 'dataforseo-local-pack.json'), 'utf8');
     const read = serpApiRead('dataforseo', text);

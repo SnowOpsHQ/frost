@@ -40,6 +40,9 @@
  *   container is `invalid-answer`.
  * - **Ads without a web link** (no absolute `http(s)` URL) are dropped and counted in `skipped`
  *   (an ad is never a ranking); an organic result without one still refuses the answer (K-A1).
+ *   A link with a user name or password is not a web link (council review, as AI answer citations):
+ *   such an ad is skipped and counted, such an organic result refuses the answer, and any other
+ *   item keeps its title without the link (`serp-api-links-with-credentials-refused`).
  * - `packVersion` is the version of the selector pack whose engine definition built the search's
  *   canonical URL and parameters (the bundled pack, as saved searches are built today), never
  *   nullable (plan Decision 7).

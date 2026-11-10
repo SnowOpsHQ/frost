@@ -38,7 +38,7 @@ const list = <T extends z.ZodType>(item: T) => z.array(item).max(L.maxItems);
 const serpApiLink = z.object({ title: text.nullish(), link: text.nullish() });
 
 export const SerpApiOrganicSchema = z.object({ position: rank, title: text.nullish(), link: text });
-/** An ad: one without a web link is dropped and counted as skipped, never a failure. */
+/** An ad: one without a web link (or with a user name or password in it) is dropped and counted as skipped, never a failure. */
 export const SerpApiAdSchema = z.object({ position: rank.nullish(), block_position: text.nullish(), title: text.nullish(), link: text.nullish() });
 const serpApiPlace = z.object({ position: rank.nullish(), title: text.nullish(), links: z.object({ website: text.nullish() }).nullish() });
 

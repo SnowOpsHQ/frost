@@ -31,13 +31,14 @@ import { analyseSerp } from './serp-analyse';
 //    vendor result type goes through `SERP_API_TYPE_MAP` (an unmapped one is skipped and counted).
 // 3. The blocks, in the vendor's page order (DataForSEO's `rank_absolute`; SerpApi's and Serper's
 //    sections in the map's key order, SerpApi's bottom ads last), form a `SerpRead`: titles collapsed
-//    and cut as the reader cuts them, links kept only as absolute `http(s)` URLs within the reader's
-//    cap, past `maxResults` results or `maxBlocks` blocks cut from the bottom (`truncated`).
+//    and cut as the reader cuts them, links kept only as absolute `http(s)` URLs without a user name
+//    or password within the reader's cap, past `maxResults` results or `maxBlocks` blocks cut from the bottom (`truncated`).
 // 4. K-A1: the organic results' own vendor ranks, in page order, must be 1 … n, so the positions
 //    `analyseSerp` derives equal them; otherwise the answer is refused. An answer without the
 //    vendor's organic container (`SERP_API_ORGANIC_CONTAINER`) is refused too, so an error or empty
 //    body never becomes a false "not ranking" point; the vendor's own error answers are
-//    `vendorError`. An ad without a web link is dropped and counted as skipped.
+//    `vendorError`. An ad without a web link (or with credentials in it) is dropped and counted as
+//    skipped; an organic result with one refuses the answer.
 // 5. `analyseSerp` derives ranks, positions, composition and ownership exactly as for a tab.
 // Any problem is `invalid-answer` (DataForSEO's task failing is `vendorError` as well).
 
@@ -96,12 +97,16 @@ const title = (value: string | null | undefined): string => (typeof value === 's
 
 const URL_SHAPE = /^https?:\/\/[^\u0000- \u007f]+$/;
 
-/** An absolute `http:` / `https:` URL in its serialised form within the reader's cap, or `null`. */
+/**
+ * An absolute `http:` / `https:` URL in its serialised form within the reader's cap, or `null`. A URL
+ * carrying a user name or password is refused (council review, as `ai-search/parse.ts` does).
+ */
 function link(value: string | null | undefined): string | null {
   if (typeof value !== 'string') return null;
   try {
     const url = new URL(value);
     if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.hostname === '' || url.href.length > R.maxUrlChars || !URL_SHAPE.test(url.href)) return null;
+    if (url.username !== '' || url.password !== '') return null;
     return url.href;
   } catch {
     return null;
