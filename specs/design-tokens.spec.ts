@@ -1,0 +1,317 @@
+/**
+ * Design tokens (the "Signal" design system; acceptance: `design-tokens.feature.md`). Plain data with
+ * no imports, like the other `*.spec.ts` specs. Source of truth: the Signal token sheet
+ * (`Tokens.dc.html`, its values and Migration table) and the round-2 council decisions.
+ *
+ * One stylesheet, `apps/desktop/src/renderer/tokens.css` (`TOKENS_STYLESHEET`), declares every
+ * custom property that lives on `:root`, light and dark; `main.tsx` imports it before any other
+ * stylesheet. It holds the legacy tokens (`LEGACY_TOKEN_MIGRATION`) at their current values and the
+ * Signal tokens (`SIGNAL_TOKENS`). The rollout:
+ * 1. foundation (this spec): one token source and the full Signal vocabulary, no pixel changed;
+ * 2. values: the legacy aliases point at their Signal tokens, the names in
+ *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values, and Geist is bundled;
+ * 3. one PR per surface moves its rules onto Signal tokens and drops the retired names it used.
+ */
+
+/** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
+export const TOKENS_STYLESHEET = 'tokens.css';
+
+export type TokenName = `--${string}`;
+
+/**
+ * One Signal token. `light` is its value in light mode, and in dark mode too unless `dark` is
+ * given (only colours, states and elevations change with the theme).
+ */
+export interface SignalToken {
+  readonly name: TokenName;
+  readonly light: string;
+  readonly dark?: string;
+  /** What it is for, from the token sheet. */
+  readonly use?: string;
+}
+
+/** A type-scale token: `light` is a `font` shorthand; letter-spacing can't ride in it. */
+export interface SignalTypeToken extends SignalToken {
+  /** The letter-spacing to set beside the `font` shorthand. */
+  readonly tracking: string;
+}
+
+/** The token groups; every group but type, radius, space, size and motion has a dark value. */
+export type SignalTokenGroup = 'colour' | 'state' | 'type' | 'radius' | 'space' | 'elevation' | 'size' | 'motion';
+
+/** Every group's tokens; the type scale's carry their letter-spacing. */
+export type SignalTokenSet = { readonly [G in SignalTokenGroup]: readonly (G extends 'type' ? SignalTypeToken : SignalToken)[] };
+
+const SANS = 'Geist, system-ui, sans-serif';
+const MONO = "'Geist Mono', ui-monospace, monospace";
+
+/**
+ * Every Signal token. Values follow `tokens.css` notation (`0.55`, not `.55`). A token named in
+ * `SIGNAL_NAMES_WITH_LEGACY_VALUES` already exists with today's meaning: until the values PR,
+ * `tokens.css` keeps its current value and the `light` / `dark` here are the values it will take.
+ */
+export const SIGNAL_TOKENS = {
+  colour: [
+    // Surfaces
+    { name: '--bg-window', light: '#ececee', dark: '#0f0f11', use: 'the window behind the sheets and the page card' },
+    { name: '--bg-sheet', light: '#fafafa', dark: '#161618', use: 'rail, sidebar, agent panel' },
+    { name: '--bg-subtle', light: '#f4f4f5', dark: '#232326', use: 'quiet fills, skeletons, disabled controls' },
+    { name: '--bg-surface', light: '#ffffff', dark: '#1c1c1f', use: 'cards, fields, the page card' },
+    { name: '--bg-tab-idle', light: 'rgb(255 255 255 / 0.55)', dark: 'rgb(255 255 255 / 0.06)', use: 'an inactive tab' },
+    { name: '--inverse', light: '#18181b', dark: '#f4f4f5', use: 'inverse buttons (Ask frost)' },
+    { name: '--track', light: '#d4d4d8', dark: '#3f3f46', use: 'the empty part of score rings and meters' },
+    { name: '--switch-off', light: '#8b8b94', dark: '#71717a', use: "a switch's off track (≥ 3:1 on its card)" },
+    { name: '--knob', light: '#ffffff', dark: '#f4f4f5', use: 'the switch knob, both states' },
+    // Text, on-colour, rules
+    { name: '--text', light: '#18181b', dark: '#f4f4f5' },
+    { name: '--text-muted', light: '#52525b', dark: '#a1a1aa' },
+    { name: '--text-faint', light: '#68686f', dark: '#8b8b94', use: 'secondary text, 12px and up' },
+    { name: '--on-accent', light: '#ffffff', dark: '#0f0f11' },
+    { name: '--on-inverse', light: '#ffffff', dark: '#18181b' },
+    { name: '--divider', light: 'rgb(24 24 27 / 0.08)', dark: 'rgb(255 255 255 / 0.08)', use: 'every 1px rule' },
+    // Accent (fixed: no accent picker)
+    { name: '--accent', light: '#4f46e5', dark: '#8b8cf8' },
+    { name: '--accent-hover', light: '#4338ca', dark: '#a5a6fa' },
+    { name: '--accent-soft', light: 'rgb(79 70 229 / 0.1)', dark: 'rgb(139 140 248 / 0.16)' },
+    // Status: text on a -soft fill uses its -ink (≥ 4.5:1)
+    { name: '--ok', light: '#16a34a', dark: '#4ade80' },
+    { name: '--ok-soft', light: '#dcfce7', dark: 'rgb(74 222 128 / 0.12)' },
+    { name: '--ok-ink', light: '#166534', dark: '#86efac' },
+    { name: '--warn', light: '#b45309', dark: '#fbbf24', use: 'dots and graphics (≥ 3:1 on white and sheet)' },
+    { name: '--warn-soft', light: '#fef3c7', dark: 'rgb(251 191 36 / 0.12)' },
+    { name: '--warn-ink', light: '#92400e', dark: '#fcd34d' },
+    { name: '--danger', light: '#dc2626', dark: '#f87171' },
+    { name: '--danger-soft', light: '#fee2e2', dark: 'rgb(248 113 113 / 0.12)' },
+    { name: '--danger-ink', light: '#b91c1c', dark: '#fca5a5' },
+  ],
+  state: [
+    { name: '--bg-hover', light: 'rgb(24 24 27 / 0.05)', dark: 'rgb(255 255 255 / 0.06)', use: 'laid on a hovered control' },
+    { name: '--bg-active', light: 'rgb(24 24 27 / 0.09)', dark: 'rgb(255 255 255 / 0.1)', use: 'laid on a pressed control' },
+    { name: '--bg-active-inverse', light: 'rgb(255 255 255 / 0.1)', dark: 'rgb(24 24 27 / 0.09)', use: 'an inverse button pressed or open' },
+    {
+      name: '--focus-ring',
+      light: '0 0 0 2px #ececee, 0 0 0 4px #4f46e5',
+      dark: '0 0 0 2px #0f0f11, 0 0 0 4px #8b8cf8',
+      use: ':focus-visible (fields :focus-within): a 2px gap in the window colour, then 2px of accent',
+    },
+  ],
+  type: [
+    { name: '--text-display', light: `600 24px/1.15 ${SANS}`, tracking: '-0.02em' },
+    { name: '--text-title', light: `600 18px/1.3 ${SANS}`, tracking: '-0.01em' },
+    { name: '--text-heading', light: `600 15px/1.35 ${SANS}`, tracking: '0' },
+    { name: '--text-body', light: `400 13px/1.45 ${SANS}`, tracking: '0', use: '500 for emphasis' },
+    { name: '--text-small', light: `400 12px/1.4 ${SANS}`, tracking: '0' },
+    { name: '--text-micro', light: `600 11px/1.3 ${SANS}`, tracking: '0.01em' },
+    { name: '--text-caps', light: `600 11px/1.45 ${SANS}`, tracking: '0.06em', use: 'uppercase labels' },
+    { name: '--text-mono', light: `400 12px/1.4 ${MONO}`, tracking: '0' },
+  ],
+  radius: [
+    { name: '--r-xs', light: '4px', use: 'tab glyphs, key hints, match highlight' },
+    { name: '--r-sm', light: '8px', use: 'rows, inputs inside cards, swatches' },
+    { name: '--r-md', light: '12px', use: 'cards, rail items, notices, bands' },
+    { name: '--r-lg', light: '16px', use: 'sheets, rail, page card, palette' },
+    { name: '--r-pill', light: '999px', use: 'tabs, address, buttons, chips' },
+  ],
+  space: [
+    { name: '--space-1', light: '4px' },
+    { name: '--space-2', light: '6px' },
+    { name: '--space-3', light: '8px' },
+    { name: '--space-4', light: '12px' },
+    { name: '--space-5', light: '16px' },
+    { name: '--space-6', light: '24px' },
+    { name: '--space-7', light: '32px' },
+    { name: '--space-8', light: '48px' },
+  ],
+  elevation: [
+    {
+      name: '--e-ring',
+      light: '0 0 0 1px rgb(24 24 27 / 0.06)',
+      dark: '0 0 0 1px rgb(255 255 255 / 0.1)',
+      use: 'cards on a sheet, palette band',
+    },
+    {
+      name: '--e-raised',
+      light: '0 1px 2px rgb(24 24 27 / 0.08), 0 0 0 1px rgb(24 24 27 / 0.05)',
+      dark: '0 0 0 1px rgb(255 255 255 / 0.1)',
+      use: 'active tab, selected control, field outline',
+    },
+    {
+      name: '--e-sheet',
+      light: '0 0 0 1px rgb(24 24 27 / 0.05), 0 8px 24px -12px rgb(24 24 27 / 0.18)',
+      dark: '0 0 0 1px rgb(255 255 255 / 0.1), 0 16px 32px -16px rgb(0 0 0 / 0.7)',
+      use: 'rail, sidebar, agent panel',
+    },
+    {
+      name: '--e-overlay',
+      light: '0 0 0 1px rgb(24 24 27 / 0.06), 0 16px 40px -12px rgb(24 24 27 / 0.28)',
+      dark: '0 0 0 1px rgb(255 255 255 / 0.1), 0 16px 40px -12px rgb(0 0 0 / 0.6)',
+      use: 'menus and dialogs in the chrome (never over the page)',
+    },
+  ],
+  size: [
+    { name: '--h-badge', light: '22px', use: 'badges, key hints, switch' },
+    { name: '--h-chip', light: '28px', use: 'chips, band buttons' },
+    { name: '--h-status', light: '28px', use: 'status bar' },
+    { name: '--h-control', light: '34px', use: 'buttons, tabs' },
+    { name: '--h-field', light: '38px', use: 'fields, address, rail items' },
+    { name: '--h-chrome', light: '56px', use: 'the tab row, fixed' },
+    { name: '--w-rail', light: '48px', use: 'SEO rail (SIDEBAR_RAIL_WIDTH)' },
+    { name: '--w-panel', light: '360px', use: 'SEO panel (SIDEBAR_PANEL_WIDTH)' },
+    { name: '--icon-size', light: '18px', use: 'every icon' },
+    { name: '--icon-stroke', light: '1.9', use: 'icon stroke width' },
+    { name: '--icon-sm', light: '16px', use: 'icons in fields, chips, palette rows' },
+  ],
+  motion: [
+    { name: '--dur-fast', light: '120ms', use: 'hover' },
+    { name: '--dur-base', light: '200ms', use: 'open, close' },
+    { name: '--dur-slow', light: '320ms', use: 'sheets' },
+    { name: '--ease-out', light: 'cubic-bezier(0.2, 0.8, 0.2, 1)', use: 'all motion' },
+  ],
+} as const satisfies SignalTokenSet;
+
+/** The groups whose every token has a dark value (`tokens.css` redefines them in dark mode). */
+export const THEMED_SIGNAL_GROUPS = ['colour', 'state', 'elevation'] as const satisfies readonly SignalTokenGroup[];
+
+/**
+ * Signal names that already exist in `tokens.css` with today's meaning. Until the values PR they
+ * keep their current values (no visual change); then they take the `SIGNAL_TOKENS` values.
+ * (`--icon` is not one: it is a colour today, and the Signal icon size is `--icon-size`.)
+ */
+export const SIGNAL_NAMES_WITH_LEGACY_VALUES = [
+  '--text',
+  '--text-muted',
+  '--text-faint',
+  '--accent',
+  '--accent-soft',
+  '--accent-hover',
+  '--on-accent',
+  '--ok',
+  '--warn',
+  '--danger',
+  '--bg-hover',
+  '--bg-active',
+] as const satisfies readonly TokenName[];
+
+/**
+ * A legacy custom property and its Signal replacement, from the token sheet's Migration table.
+ * `alias`: same meaning; the old name stays and (from the values PR on) points at `signal`.
+ * `retire`: replaced by `signal`; the old name goes once no rule uses it. `signal` is null when
+ * nothing replaces it (a layout constant that keeps its own name, or a style Signal drops), and
+ * `--text-*` means the type scale. `was` is the sheet's description of the old light value.
+ */
+export interface LegacyTokenMigration {
+  readonly legacy: TokenName;
+  readonly kind: 'alias' | 'retire';
+  readonly signal: TokenName | null;
+  readonly was: string;
+  readonly note: string;
+}
+
+/** Every custom property that was declared on `:root` before Signal: 89 names, each mapped. */
+export const LEGACY_TOKEN_MIGRATION = [
+  // Chrome sizes
+  { legacy: '--tabstrip-height', kind: 'retire', signal: '--h-chrome', was: '40px', note: 'with --toolbar-height: one 56px row' },
+  { legacy: '--toolbar-height', kind: 'retire', signal: '--h-chrome', was: '50px', note: 'buttons join the tab row' },
+  { legacy: '--status-height', kind: 'retire', signal: '--h-status', was: '26px', note: '28px' },
+  { legacy: '--find-height', kind: 'retire', signal: null, was: '40px', note: 'band slot: find is a band (≥ 44px)' },
+  { legacy: '--radius-control', kind: 'retire', signal: '--r-pill', was: '9px', note: '' },
+  { legacy: '--radius-field', kind: 'retire', signal: '--r-pill', was: '11px', note: '--r-sm inside cards' },
+  { legacy: '--seo-panel-width', kind: 'alias', signal: '--w-panel', was: '360px', note: '' },
+  { legacy: '--seo-rail-width', kind: 'alias', signal: '--w-rail', was: '48px', note: '' },
+  // Layout constants: kept, no visual token
+  { legacy: '--page-min-width', kind: 'alias', signal: null, was: '320px', note: 'layout constant: the name stays, no visual token' },
+  { legacy: '--agent-panel-width', kind: 'alias', signal: null, was: '380px', note: 'layout constant: the name stays, no visual token' },
+  { legacy: '--agent-rail-width', kind: 'alias', signal: null, was: '40px', note: 'layout constant: the name stays, no visual token' },
+  { legacy: '--settings-width', kind: 'alias', signal: null, was: '820px', note: 'layout constant: the name stays, no visual token' },
+  { legacy: '--settings-nav-width', kind: 'alias', signal: null, was: '168px', note: 'layout constant: the name stays, no visual token' },
+  { legacy: '--history-width', kind: 'alias', signal: null, was: '760px', note: 'layout constant: the name stays, no visual token' },
+  { legacy: '--projects-width', kind: 'alias', signal: null, was: '980px', note: 'layout constant: the name stays, no visual token' },
+  { legacy: '--projects-run-band', kind: 'alias', signal: null, was: 'min(300px, 50%)', note: 'layout constant: the name stays, no visual token' },
+  { legacy: '--palette-width', kind: 'alias', signal: null, was: '640px', note: 'layout constant: the name stays, no visual token' },
+  { legacy: '--palette-sheet-height', kind: 'alias', signal: null, was: '404px', note: 'layout constant: the name stays, no visual token; the palette band' },
+  { legacy: '--palette-sheet-min-height', kind: 'alias', signal: null, was: '180px', note: 'layout constant: the name stays, no visual token' },
+  { legacy: '--palette-page-min-visible', kind: 'alias', signal: null, was: '96px', note: 'layout constant: the name stays, no visual token' },
+  // Type and icons
+  { legacy: '--font-ui', kind: 'retire', signal: '--text-*', was: 'system stack', note: 'Geist, system-ui; Geist Mono' },
+  { legacy: '--icon', kind: 'retire', signal: '--text-muted', was: 'icon colour', note: 'name now means size: --icon-size' },
+  { legacy: '--panel-art', kind: 'retire', signal: '--text-faint', was: '#6b7a90', note: '' },
+  // Surfaces and edges
+  { legacy: '--bg-chrome', kind: 'alias', signal: '--bg-window', was: '#f3f5f8', note: '' },
+  { legacy: '--bg-strip', kind: 'retire', signal: '--bg-window', was: '#e4e8ee', note: 'no separate strip' },
+  { legacy: '--bg-chrome-edge', kind: 'retire', signal: '--divider', was: '#e2e6ec', note: '' },
+  { legacy: '--bg-page', kind: 'alias', signal: '--bg-surface', was: '#fbfcfd', note: 'the page card' },
+  { legacy: '--bg-field', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  { legacy: '--bg-field-hover', kind: 'retire', signal: '--bg-hover', was: '#ffffff', note: 'over --bg-surface' },
+  { legacy: '--border-field', kind: 'retire', signal: '--e-raised', was: '#d7dce4', note: 'field outlines (ring shadow, no border); --track for scrollbar thumbs; --divider or --e-ring for other borders' },
+  { legacy: '--shadow-field', kind: 'retire', signal: '--e-raised', was: 'shadow', note: '' },
+  { legacy: '--shadow-card', kind: 'retire', signal: '--e-ring', was: 'shadow', note: '' },
+  { legacy: '--bg-hover', kind: 'alias', signal: '--bg-hover', was: 'overlay', note: 'Signal value' },
+  { legacy: '--bg-active', kind: 'alias', signal: '--bg-active', was: 'overlay', note: 'Signal value' },
+  { legacy: '--bg-tab-hover', kind: 'retire', signal: '--bg-hover', was: 'overlay', note: '' },
+  { legacy: '--bg-prompt', kind: 'retire', signal: '--accent-soft', was: '#ffffff', note: 'band slot fill' },
+  { legacy: '--prompt-edge', kind: 'retire', signal: null, was: '#dfe4eb', note: 'none: bands have no edge' },
+  { legacy: '--shadow-prompt', kind: 'retire', signal: null, was: 'shadow', note: 'none' },
+  // Text, accent, status
+  { legacy: '--text', kind: 'alias', signal: '--text', was: '#1b2230', note: '' },
+  { legacy: '--text-muted', kind: 'alias', signal: '--text-muted', was: '#5f6b7d', note: '' },
+  { legacy: '--text-faint', kind: 'alias', signal: '--text-faint', was: '#8d97a6', note: '#68686f, 12px and up' },
+  { legacy: '--accent', kind: 'alias', signal: '--accent', was: '#2f6fe4', note: '#4f46e5 / #8b8cf8, fixed' },
+  { legacy: '--accent-soft', kind: 'alias', signal: '--accent-soft', was: '.22 alpha', note: '' },
+  { legacy: '--accent-hover', kind: 'alias', signal: '--accent-hover', was: '#2560cc', note: '' },
+  { legacy: '--on-accent', kind: 'alias', signal: '--on-accent', was: '#ffffff', note: '' },
+  { legacy: '--ok', kind: 'alias', signal: '--ok', was: '#1f9d63', note: '' },
+  { legacy: '--warn', kind: 'alias', signal: '--warn', was: '#c2410c', note: 'ring shape' },
+  { legacy: '--danger', kind: 'alias', signal: '--danger', was: '#d23f3f', note: '' },
+  { legacy: '--caution', kind: 'retire', signal: '--warn', was: '#b7791f', note: 'fair band ring' },
+  { legacy: '--info-tone', kind: 'retire', signal: '--accent', was: '#4b72b8', note: 'info = accent ring' },
+  { legacy: '--start-mark', kind: 'retire', signal: '--accent', was: '#5b8def', note: 'FrostMark' },
+  { legacy: '--start-glow', kind: 'retire', signal: null, was: 'glow', note: 'none: no gradient washes' },
+  // SEO sidebar (--seo-*)
+  { legacy: '--seo-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '' },
+  { legacy: '--seo-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  { legacy: '--seo-card-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: 'card outlines; --divider for separator borders and guide lines' },
+  { legacy: '--seo-track', kind: 'alias', signal: '--track', was: '#e7ebf1', note: '' },
+  { legacy: '--seo-skeleton', kind: 'retire', signal: '--bg-subtle', was: '#e9edf3', note: '' },
+  { legacy: '--seo-skeleton-shine', kind: 'retire', signal: '--bg-sheet', was: '#f4f6f9', note: 'sweep over --bg-subtle' },
+  // Command palette (--palette-*)
+  { legacy: '--palette-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  { legacy: '--palette-edge', kind: 'retire', signal: '--e-ring', was: '#dfe4eb', note: 'outlines; --divider for separator borders' },
+  { legacy: '--palette-shadow', kind: 'retire', signal: '--e-ring', was: 'shadow', note: 'a band, not a floating sheet' },
+  { legacy: '--palette-sheet', kind: 'retire', signal: '--bg-window', was: 'gradient', note: 'no gradients' },
+  { legacy: '--palette-row-active', kind: 'retire', signal: '--accent-soft', was: '.10 accent', note: '' },
+  { legacy: '--palette-hit', kind: 'retire', signal: '--accent-soft', was: '.16 accent', note: 'match highlight, --r-xs; --bg-surface on the selected row' },
+  { legacy: '--palette-kbd-bg', kind: 'retire', signal: '--bg-surface', was: '#f1f3f7', note: 'key hint, --h-badge' },
+  { legacy: '--palette-kbd-edge', kind: 'retire', signal: '--e-ring', was: '#d7dce4', note: '' },
+  // Feature colours
+  { legacy: '--render-accent', kind: 'retire', signal: '--accent', was: '#7a4fe0', note: 'one accent: no second hue' },
+  { legacy: '--render-soft', kind: 'retire', signal: '--accent-soft', was: '.13 violet', note: '' },
+  { legacy: '--render-edge', kind: 'retire', signal: '--accent', was: '.55 violet', note: '' },
+  { legacy: '--serp-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  { legacy: '--serp-title', kind: 'retire', signal: '--accent', was: '#2450c8', note: 'Search preview title' },
+  { legacy: '--serp-text', kind: 'alias', signal: '--text-muted', was: '#474e5c', note: '' },
+  { legacy: '--serp-path', kind: 'retire', signal: '--text-muted', was: '#5d6573', note: 'URL crumbs' },
+  { legacy: '--serp-glyph', kind: 'retire', signal: '--bg-subtle', was: '#e3e8f1', note: '' },
+  { legacy: '--serp-glyph-mark', kind: 'retire', signal: '--text-muted', was: '#6b7a90', note: '' },
+  { legacy: '--jump-tile-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  { legacy: '--jump-tile-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '' },
+  { legacy: '--jump-monogram-bg', kind: 'retire', signal: '--accent-soft', was: '.12 accent', note: '' },
+  { legacy: '--gsc-line', kind: 'alias', signal: '--accent', was: 'accent', note: '' },
+  { legacy: '--gsc-grid', kind: 'retire', signal: '--divider', was: '#e7ebf1', note: '' },
+  { legacy: '--gsc-axis', kind: 'alias', signal: '--text-faint', was: 'faint', note: '' },
+  { legacy: '--settings-switch-off', kind: 'retire', signal: '--switch-off', was: '#c9cfd9', note: '' },
+  // Agent panel (--agent-*)
+  { legacy: '--agent-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '' },
+  { legacy: '--agent-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  { legacy: '--agent-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '--divider for rules' },
+  { legacy: '--agent-user', kind: 'retire', signal: '--accent-soft', was: '#e6eefc', note: 'your messages' },
+  { legacy: '--agent-code-bg', kind: 'retire', signal: '--bg-subtle', was: '#f1f3f7', note: '' },
+  { legacy: '--agent-approval-edge', kind: 'retire', signal: '--warn', was: '#c98b16', note: '' },
+  { legacy: '--agent-approval-bg', kind: 'retire', signal: '--warn-soft', was: '#fffaf0', note: '' },
+] as const satisfies readonly LegacyTokenMigration[];
+
+/**
+ * The most literal hex colours (`#rgb`, `#rrggbb`, …, outside comments) the renderer's stylesheets
+ * other than `TOKENS_STYLESHEET` may hold. A ratchet: lower it as surfaces move onto tokens, never
+ * raise it. Counted when every `:root` token moved into `tokens.css`.
+ */
+export const HEX_COLOUR_RATCHET = 53;

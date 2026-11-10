@@ -113,7 +113,7 @@ export const OVERVIEW_TOP_ISSUES = 5;
  * stays, with its status dots, and opening a panel from it expands the sidebar again. The page area
  * (and the tab's view laid over it) shrinks and grows to match. In a window too narrow for both,
  * the page area keeps `PAGE_MIN_WIDTH` and the panel gives way (it narrows, its content clipped);
- * the rail always stays. Keep these equal to `styles.css`.
+ * the rail always stays. Keep these equal to `tokens.css`.
  */
 export const SIDEBAR_PANEL_WIDTH = 360;
 export const SIDEBAR_RAIL_WIDTH = 48;

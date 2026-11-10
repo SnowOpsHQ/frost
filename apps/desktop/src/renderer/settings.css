@@ -2,18 +2,6 @@
    (CSP style-src 'self'): no inline styles. Tab views are drawn above the chrome's DOM, so while the
    sheet is open it fills the page column and the page area shrinks to nothing (as the History sheet). */
 
-:root {
-  --settings-width: 820px;
-  --settings-nav-width: 168px;
-  --settings-switch-off: #c9cfd9;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --settings-switch-off: #454b56;
-  }
-}
-
 .page-column:has(> .settings-sheet) > .page-area {
   flex: 0 0 0;
   height: 0;
