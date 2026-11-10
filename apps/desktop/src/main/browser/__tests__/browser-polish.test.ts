@@ -603,9 +603,9 @@ describe('history view', () => {
     expect(confirmClearRange).toHaveBeenCalledWith('hour');
     expect(history.clearSince).not.toHaveBeenCalled();
     expect(tabs.forgetClosedTabs).not.toHaveBeenCalled();
-    // Confirmed: pending visits written, the range cleared, then the closed-tab stack forgotten; two requests ask once.
+    // Confirmed: pending visits written, the range cleared, then the closed-tab stack forgotten; two requests (same range) ask once.
     answer = true;
-    const [a, b] = await Promise.all([service.clearRange('day'), service.clearRange('month')]);
+    const [a, b] = await Promise.all([service.clearRange('day'), service.clearRange('day')]);
     expect([a, b]).toEqual([true, true]);
     expect(confirmClearRange).toHaveBeenCalledTimes(2);
     expect(history.clearSince).toHaveBeenCalledExactlyOnceWith(historyClearSince('day', now));
@@ -622,6 +622,34 @@ describe('history view', () => {
     expect(CLEAR_HISTORY_RANGE.dialog.detail).toContain('one entry per page');
     expect(CLEAR_HISTORY_RANGE.dialog.defaultId).toBe(CLEAR_HISTORY_RANGE.dialog.cancelId);
     expect(CLEAR_HISTORY_RANGE.dialog.buttons[CLEAR_HISTORY_RANGE.confirmIndex]).toBe('Clear History');
+  });
+
+  test('clear-range-other-range-while-clearing-refused', async () => {
+    // Council round 1: a request for the same range while one runs shares its answer; a request for
+    // another range answers `false` at once (it was never asked or cleared), never the first's answer.
+    const writer = { flush: vi.fn(async () => {}), deleteVisit: vi.fn(async () => true), clearHistory: vi.fn(async () => {}) };
+    const tabs = { reopenClosedTab: vi.fn(() => null), showHistory: vi.fn(), forgetClosedTabs: vi.fn() };
+    const history = {
+      list: vi.fn(async () => ({ visits: [], next: null })),
+      jumpBackIn: vi.fn(async () => ({ mostVisited: [], recent: [] })),
+      clearSince: vi.fn(async (_since: number) => 1),
+    };
+    let release: (answer: boolean) => void = () => {};
+    const confirmClearRange = vi.fn((_range: HistoryClearRange) => new Promise<boolean>((resolve) => (release = resolve)));
+    const service = createHistoryService({ history, writer, tabs, confirmClearRange, now: () => 1_000_000_000 });
+    const first = service.clearRange('day');
+    const same = service.clearRange('day');
+    const other = service.clearRange('month');
+    release(true);
+    expect(await other).toBe(false);
+    expect(await Promise.all([first, same])).toEqual([true, true]);
+    expect(confirmClearRange).toHaveBeenCalledExactlyOnceWith('day');
+    expect(history.clearSince).toHaveBeenCalledExactlyOnceWith(historyClearSince('day', 1_000_000_000));
+    // Once it is done, another range asks on its own.
+    const later = service.clearRange('month');
+    release(true);
+    expect(await later).toBe(true);
+    expect(confirmClearRange).toHaveBeenLastCalledWith('month');
   });
 
   test('clear-range-failure-keeps-closed-tabs', async () => {

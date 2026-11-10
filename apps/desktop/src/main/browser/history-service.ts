@@ -102,7 +102,7 @@ export function createHistoryService(options: HistoryServiceOptions): MainHistor
     return read();
   };
   let clearing: Promise<boolean> | null = null;
-  let clearingRange: Promise<boolean> | null = null;
+  let clearingRange: { readonly range: HistoryClearRange; readonly answer: Promise<boolean> } | null = null;
   let retentionChange: Promise<void> = Promise.resolve();
   const now = options.now ?? Date.now;
   const settings = options.settings;
@@ -183,8 +183,10 @@ export function createHistoryService(options: HistoryServiceOptions): MainHistor
       return run;
     },
     clearRange(range) {
-      // While one runs, asking again answers that same run (never two dialogs).
-      clearingRange ??= (async () => {
+      // While one runs, asking again for the same range answers that same run (never two dialogs);
+      // another range answers `false` (it was neither asked nor cleared).
+      if (clearingRange !== null) return clearingRange.range === range ? clearingRange.answer : Promise.resolve(false);
+      const answer = (async () => {
         if (!clearSince) return false;
         const confirmed = await guarded('confirmation', () => options.confirmClearRange?.(range) ?? Promise.resolve(false), false);
         if (!confirmed) return false;
@@ -203,7 +205,8 @@ export function createHistoryService(options: HistoryServiceOptions): MainHistor
       })().finally(() => {
         clearingRange = null;
       });
-      return clearingRange;
+      clearingRange = { range, answer };
+      return answer;
     },
   };
 }

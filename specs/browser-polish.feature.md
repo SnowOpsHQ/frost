@@ -97,7 +97,9 @@ are read from `ci_project_pages` / `ci_versions` in the same database file.
   (`CLEAR_HISTORY_RANGE`, naming the range); Cancel clears nothing; confirmed, pending visits are
   written first, then the range is cleared and, only once that succeeds, the closed-tab stack
   forgotten (a failed clear answers `false` and keeps the stack; council round 1,
-  `clear-range-failure-keeps-closed-tabs`). Two requests at once ask once.
+  `clear-range-failure-keeps-closed-tabs`). Two requests for the same range at once ask once; a
+  request for another range while one runs answers `false` (council round 1,
+  `clear-range-other-range-while-clearing-refused`).
 - **Scenario: history view project filter and change counts** (`renderer/__tests__/use-history-view.test.ts`)
   — the view lists with the chosen project and shows a row's change count.
 - **Scenario: settings-history** (`renderer/__tests__/settings-history.test.ts`) — the Settings view's

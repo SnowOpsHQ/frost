@@ -1190,3 +1190,8 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `forgetClosedTabs` only after `clearSince` resolves (order: flush, clear, forget); before, a
   throwing `clearSince` answered `false` with Reopen Closed Tab already emptied. Regression:
   `clear-range-failure-keeps-closed-tabs` (`apps/desktop/src/main/browser/__tests__/browser-polish.test.ts`).
+- **Council round 1: another range during a clear is refused.** `clearRange` keeps the in-flight
+  range beside its answer: a request for the same range still shares the run (one dialog), and a
+  request for a different range answers `false` at once instead of the first range's answer.
+  Regression: `clear-range-other-range-while-clearing-refused`
+  (`apps/desktop/src/main/browser/__tests__/browser-polish.test.ts`).
