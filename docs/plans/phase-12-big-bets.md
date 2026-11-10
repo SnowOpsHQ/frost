@@ -1476,3 +1476,33 @@ Where the build differs from the plan above, or settles what it left open. **Lea
 - Follow-ups (not in this phase): the three new workers (crawl, SERP `api`, AI parse) are never
   ended when idle; crawl robots/sitemap fetches during a location tab's crawl go from the user's own
   connection (disclosed); the Rankings empty state still names "Capture now" (Phase 10 wording).
+- **Council round 1 (fixes, one commit each).**
+  - 1: the crawl's robots lookup and its worker parse have separate waits (parse:
+    `CRAWL_ROBOTS_PARSE_WAIT_MS`); a robots.txt fetched `ok` whose parse fails or runs out of time
+    refuses the page, hop or sitemap as `blocked-by-robots` (`unparsed`), never as unknown.
+  - 2 (RFC 9309 §2.3.1.4): robots.txt the crawl cannot read (every `ROBOTS_UNKNOWN_OUTCOMES`
+    answer, `bad-redirect` and `no-location` included, or no answer in time) refuses as the new
+    outcome `robots-unreachable`, start origin included, for pages, redirect hops and sitemaps; 4xx and
+    a missing file still allow. The hook's `robots-timeout` is folded into it. Decision 6's
+    start-origin rule ("crawled at the default interval, flagged") is superseded; the sidebar's rule
+    is unchanged and `robots-txt-unreachable` no longer fires in a crawl.
+  - 3: a page stopped after its row but before its completion stays `queued` and is replayed whole on
+    Resume (row and links replaced, counts corrected); a page's discoveries and its frontier `done`
+    are one transaction, so no inlink is counted twice.
+  - 4: a sitemap slow-down (the `backoffAfter`-th 429/503, or `deferred`) ends the run `paused`
+    (`slow-down`) before any page is fetched.
+  - 5: the run's pacing is stored as it starts, as it pauses and after every fetch call that moved
+    `Politeness.changes()` (back-off, `Retry-After`, a learned or changed `Crawl-delay`, a call under a
+    raised interval), so a crash or kill loses none of it (supersedes "Not covered: a crash").
+  - 6: `normaliseCrawlUrl` percent-normalises path and query (RFC 3986 §6.2.2: unreserved escapes
+    decoded, others upper-case hex, `%2F` kept); scope prefixes are normalised the same way and
+    compared case-sensitively; scope check, request URL and frontier key share that form.
+  - 7: `dataApiRequest` re-checks the caller's signal with nothing awaited before the fetch, its
+    transport controller starts aborted if the signal already fired, and a request is counted as it is
+    handed to the fetch (only what is sent is counted).
+  - 8: `AiSearchService.send` claims the engine's slot before any await and holds it until the call
+    ends; a second call to that engine meanwhile answers `cooldown` ("…or is still answering").
+  - 9: the SERP API parser refuses links with a user name or password (ads skipped and counted; an
+    organic result refuses the answer, K-A1).
+  - 10: a `dataforseo-login` containing `:` is refused (RFC 7617 Basic user-id).
+  - 11: a new proxy sign-in whose password fails to store clears both slots, the old password too.
