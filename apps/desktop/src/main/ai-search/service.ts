@@ -43,6 +43,11 @@ import { aiSearchBuild } from './api';
 //   same path as `ask` (the via checked again, the fixed body, the client, the worker parse), given
 //   the engine and via the view resolved; it answers the `AiAnswer` itself and tells no listener
 //   (the view stores it).
+// - **One per-engine clock** (Task 9 lead ruling): both paths go through `send`, which allows one call
+//   per engine every `AI_SEARCH_LIMITS.perEngineCooldownMs` (`cooldown`, nothing sent), counted just
+//   before the request is handed to the client and given back when the client sent nothing (gate,
+//   queue, key or allowlist refusals, or the setting changed while it waited). The agent's per-turn
+//   cap stays in the broker and the search tool.
 
 export interface AiSearchSettingsReader {
   /** `SettingsRepository.aiSearchSettings`. */
@@ -132,6 +137,11 @@ export function createAiSearchService(deps: AiSearchServiceDeps): AiSearchServic
     }
   };
 
+  /** When each engine was last handed to the client (both paths: the agent's and the view's). */
+  const lastSent = new Map<AiSearchEngine, number>();
+  /** Refusals that mean the client sent nothing: the engine's turn is given back. */
+  const NOT_SENT: ReadonlySet<string> = new Set(['unavailable', 'busy', 'no-key', 'no-keychain', 'key-failed', 'not-allowed', 'cancelled']);
+
   /** One approved call, sent and parsed; told to no listener. */
   const send = async (query: AiSearchQuery, signal: AbortSignal | undefined): Promise<AiSearchViewResult> => {
     signal?.throwIfAborted();
@@ -148,6 +158,19 @@ export function createAiSearchService(deps: AiSearchServiceDeps): AiSearchServic
     if (provider === null) return { ok: false, reason: 'no-api' };
     const build = aiSearchBuild(provider, query.query);
     if (build === null) return { ok: false, reason: 'request-failed' };
+    // The per-engine clock: checked and set with nothing awaited in between.
+    const at = now();
+    const last = lastSent.get(engine);
+    if (last !== undefined && at - last < AI_SEARCH_LIMITS.perEngineCooldownMs) {
+      log(`ai search: ${engine} refused (cooldown)`);
+      return { ok: false, reason: 'cooldown' };
+    }
+    lastSent.set(engine, at);
+    const giveBack = (): void => {
+      if (lastSent.get(engine) !== at) return;
+      if (last === undefined) lastSent.delete(engine);
+      else lastSent.set(engine, last);
+    };
     // The signal reaches the request (Stop or the tool's deadline: a waiting request is never sent,
     // one in flight is aborted), and the setting is asked again once its turn comes, before any key
     // is read: switched off while it waited, nothing is sent (`setting-changed`).
@@ -155,6 +178,7 @@ export function createAiSearchService(deps: AiSearchServiceDeps): AiSearchServic
       ...(signal ? { signal } : {}),
       beforeSend: async () => aiSearchVia(engine, await context()) === via,
     });
+    if (!answer.ok && NOT_SENT.has(answer.refusal)) giveBack();
     signal?.throwIfAborted();
     if (!answer.ok) {
       log(`ai search: ${engine} request ${answer.refusal}`);

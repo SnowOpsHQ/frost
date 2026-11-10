@@ -144,7 +144,7 @@ function fitString<T extends Record<string, unknown>>(data: T, key: keyof T & st
 export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
   const now = deps.now ?? Date.now;
   // `gsc_performance`'s page is in its input: the broker fills in the tab's as the call arrives.
-  const search = createSearchTools({ ...(deps.ports ? { ports: deps.ports } : {}), ...(deps.now ? { now: deps.now } : {}) });
+  const search = createSearchTools({ ...(deps.ports ? { ports: deps.ports } : {}) });
   const probeTools = createProbeTools({
     port: deps.ports?.probes ?? null,
     // The page check every page tool makes: the tab's live page must be the expected one.

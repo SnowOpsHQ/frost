@@ -10,6 +10,7 @@ import { AI_CHECKS_MIGRATIONS } from './ai-checks-migrations';
 import { WORKSPACE_MIGRATIONS } from './change-intel/workspace-migrations';
 import { PHASE11_MIGRATIONS } from './phase11-migrations';
 import { SITE_CRAWL_MIGRATIONS } from './site-crawl/migrations';
+import { AI_ANSWERS_MIGRATIONS } from './ai-answers-migrations';
 import { DATA_USAGE_MIGRATIONS } from './data-usage-migrations';
 import { SERP_API_READINGS_MIGRATIONS } from './change-intel/serp-api-migrations';
 
@@ -110,6 +111,7 @@ export const MIGRATIONS: readonly Migration[] = [
   ...WORKSPACE_MIGRATIONS,
   ...PHASE11_MIGRATIONS,
   ...SITE_CRAWL_MIGRATIONS,
+  ...AI_ANSWERS_MIGRATIONS,
   ...DATA_USAGE_MIGRATIONS,
   ...SERP_API_READINGS_MIGRATIONS,
 ];

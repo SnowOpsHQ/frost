@@ -26,6 +26,7 @@ export type { TabOverridesService } from './tab-overrides-router';
 export type { HelpService } from './help-service';
 export type { DataSourcesService } from './data-sources-service';
 export type { CrawlIpcService } from './crawl-service';
+export type { AiAnswersService } from './ai-answers-service';
 export {
   createContext,
   createSenderPolicy,

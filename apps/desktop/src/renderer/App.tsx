@@ -28,6 +28,7 @@ import { ShortcutsSheet } from './components/ShortcutsView';
 import { WhatsNewSheet } from './components/WhatsNewView';
 import { DiagnosticsSheet } from './components/DiagnosticsView';
 import { CrawlSheet } from './components/crawl/CrawlSheet';
+import { AiAnswersSheet } from './components/ai-answers/AiAnswers';
 
 // The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`). Its rows: the
 // tab strip, the toolbar, the permission prompt bar, the render-profile editor bar while open
@@ -87,6 +88,7 @@ export function App() {
             <WhatsNewSheet tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <DiagnosticsSheet tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <CrawlSheet tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
+            <AiAnswersSheet tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <SettingsSlot tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
           </div>

@@ -23,6 +23,7 @@ import { aiChecksPaletteSources } from '../ai-checks-palette';
 import { exportPaletteSources } from '../export-palette';
 import { helpPaletteSources } from '../help-palette';
 import { crawlPaletteSources } from '../crawl-palette';
+import { aiAnswersPaletteSources } from '../ai-answers-palette';
 import { dataSourcesPaletteSources } from '../data-sources-palette';
 
 const URL_A = 'https://www.example.com/a';
@@ -58,6 +59,8 @@ function everySource(): PaletteSource[] {
     ...helpPaletteSources({ openSheet: vi.fn(), openLink: vi.fn(async () => 'opened' as const) }),
     // Phase 12 Task 7 (site-crawl.feature.md, Entry points): "Crawl this site…" and "Show site crawl".
     ...crawlPaletteSources({ open: vi.fn() }),
+    // Phase 12 Task 9 (ai-answers.feature.md): "Ask AI engines…" and "Show AI answers".
+    ...aiAnswersPaletteSources({ open: vi.fn() }),
     // Phase 12 Task 4: "Check searches via <provider>", offered (a vendor named, a project opened) so its id is checked too.
     ...dataSourcesPaletteSources({ provider: () => 'serpapi', refresh: vi.fn(), lastProject: () => 'x', openCheck: vi.fn() }),
   ];
@@ -88,5 +91,7 @@ describe('palette actions of every feature', () => {
     // Phase 12 Task 7: the site crawl's commands (the tab is an http(s) page).
     expect(labels).toContain('Crawl this site…');
     expect(labels).toContain('Show site crawl');
+    // Phase 12 Task 9: the AI answers view's commands.
+    expect(labels).toEqual(expect.arrayContaining(['Ask AI engines…', 'Show AI answers']));
   });
 });

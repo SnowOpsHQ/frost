@@ -6,6 +6,7 @@ import { createAgentSkillsRepository, type AgentSkillsRepository } from './agent
 import { createAgentSkillPrefsRepository, type AgentSkillPrefsRepository } from './agent-skill-prefs';
 import { createAgentMcpRepository, type AgentMcpRepository } from './agent-mcp';
 import { createAiChecksRepository, type AiChecksRepository } from './ai-checks';
+import { createAiAnswersRepository, type AiAnswersRepository } from './ai-answers';
 import { createChangeIntelRepository, type ChangeIntelRepository } from './change-intel/repository';
 import { createDataUsageRepository, type DataUsageRepository } from './data-usage';
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
@@ -48,6 +49,8 @@ export interface SessionStore {
   readonly siteCrawl: SiteCrawlRepository;
   /** The data API usage counter (Phase 12 Task 2): requests per provider per UTC month; never by Clear Browsing Data. */
   readonly dataUsage: DataUsageRepository;
+  /** The AI answers (Phase 12 Task 9), written at once, kept by their own retention; device-local, never by Clear Browsing Data. */
+  readonly aiAnswers: AiAnswersRepository;
   /** Whether the database is still open (`close()` closes it). */
   readonly isOpen: boolean;
   /**
@@ -83,6 +86,7 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     aiChecks: createAiChecksRepository(drizzle),
     siteCrawl: createSiteCrawlRepository(drizzle),
     dataUsage: createDataUsageRepository(drizzle),
+    aiAnswers: createAiAnswersRepository(drizzle),
     get isOpen() {
       return db.isOpen;
     },

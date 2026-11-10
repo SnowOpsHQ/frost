@@ -248,12 +248,42 @@ describe('run_ai_search through the broker', () => {
     s.fake.invoke('x', 'run_ai_search', { query: 'tea', engine: 'chatgpt' });
     await flush();
     await s.broker.answer(s.broker.pending()[0]!.id, 'deny');
-    // A new turn: the per-turn count starts again, but the engine's cooldown holds across turns.
-    const recent = clock;
+    // A new turn: the per-turn count starts again.
     expect(await approveNext('d', { query: 'tea', engine: 'perplexity' })).toMatchObject({ ok: true, output: { data: { engine: 'perplexity' } } });
-    clock = recent + AI_SEARCH_LIMITS.perEngineCooldownMs - 1;
-    expect(await approveNext('e', { query: 'tea', engine: 'perplexity' })).toMatchObject({ ok: true, output: { data: { state: 'cooldown' } } });
     expect(s.port.calls).toHaveLength(3);
+    // The engine's cooldown is main's AI search service's one clock (Task 9 lead ruling: shared with the AI answers
+    // view), not the tool's: through the real service, a second approved call to the engine within the cooldown, in
+    // a new turn, answers `cooldown` as data and sends nothing; past it, it is sent.
+    const sent: string[] = [];
+    const service = createAiSearchService({
+      client: {
+        dataApiRequest: async (provider) => {
+          sent.push(provider);
+          return { ok: true as const, status: 200, body: PERPLEXITY_BODY, url: 'https://api.perplexity.ai/v1/sonar' };
+        },
+      },
+      isOpen: () => true,
+      keys: async () => ({ perplexity: true, 'openai-search': true }),
+      settings: { aiSearchSettings: async () => DEFAULT_AI_SEARCH_SETTINGS },
+      parse: async (job) => runAiAnswerJob(job),
+      now: () => clock,
+    });
+    const real = await setup({ context: () => OPEN_AI_SEARCH_CONTEXT, now: () => clock, serp: { ...createFakeSerpPort(), aiSearch: aiSearchAdapter(service)! } });
+    const approveReal = async (callId: string, input: Record<string, unknown>) => {
+      real.broker.register('chat-1', { tabId: 7, allowedTools: ['run_ai_search'] });
+      real.fake.invoke(callId, 'run_ai_search', input);
+      await flush();
+      await real.broker.answer(real.broker.pending().at(-1)!.id, 'allow-once');
+      return real.settle(callId);
+    };
+    const recent = clock;
+    expect(await approveReal('r1', { query: 'tea', engine: 'perplexity' })).toMatchObject({ ok: true, output: { data: { engine: 'perplexity' } } });
+    clock = recent + AI_SEARCH_LIMITS.perEngineCooldownMs - 1;
+    expect(await approveReal('r2', { query: 'tea', engine: 'perplexity' })).toMatchObject({ ok: true, output: { data: { state: 'cooldown' } } });
+    expect(sent).toEqual(['perplexity']);
+    clock = recent + AI_SEARCH_LIMITS.perEngineCooldownMs;
+    expect(await approveReal('r3', { query: 'tea', engine: 'perplexity' })).toMatchObject({ ok: true, output: { data: { engine: 'perplexity' } } });
+    expect(sent).toEqual(['perplexity', 'perplexity']);
     // The search tool's own count stays the last word: its cap holds even when the broker's is bypassed.
     const direct = createPageToolRunner({
       contentsOf: () => null,

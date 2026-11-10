@@ -23,10 +23,12 @@ import type { ToolRunContext, ToolRunOutcome } from '../approvals';
 // user's approval of this call, with the approved input (`runAiSearchApprovedInputSchema`, re-parsed
 // by the runner): its `engine` and `via` go to `port.aiSearch` as they are. Bounded here, before the
 // port is asked (`AI_SEARCH_LIMITS`): at most `maxCallsPerTurn` calls per turn (the broker's turn
-// token) and one per engine every `perEngineCooldownMs` across turns; a call past either answers
-// `{ unavailable, state: 'capped' | 'cooldown' }` and sends nothing. A call counts once it is handed
-// to the port (given back if the port answers `setting-changed`: nothing was sent). The port's `setting-changed` (the engine's via is no longer the approved one; nothing
-// sent) answers `expired`. Citations reach the model as `http(s)` URLs only, deduplicated.
+// token); a call past it answers `{ unavailable, state: 'capped' }` and sends nothing. A call counts
+// once it is handed to the port (given back if the port answers `setting-changed`: nothing was
+// sent). The per-engine bound (one call every `perEngineCooldownMs`, across turns) is main's AI
+// search service's own (Task 9 lead ruling: one clock for the agent and the AI answers view); its
+// `cooldown` reaches the model as data like any other reason. The port's `setting-changed` (the
+// engine's via is no longer the approved one; nothing sent) answers `expired`. Citations reach the model as `http(s)` URLs only, deduplicated.
 
 export interface SearchToolPorts {
   readonly serp?: SerpPort | null;
@@ -40,8 +42,6 @@ export interface SearchToolDeps {
   readonly ports?: SearchToolPorts;
   readonly setTimeout?: (callback: () => void, ms: number) => unknown;
   readonly clearTimeout?: (handle: unknown) => void;
-  /** Milliseconds clock for `run_ai_search`'s per-engine cooldown (default `Date.now`). */
-  readonly now?: () => number;
 }
 
 /** The parsed inputs (the tools' schemas in `@app/ai-skills`). */
@@ -220,11 +220,8 @@ export function createSearchTools(deps: SearchToolDeps) {
   const setTimer = deps.setTimeout ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
   const clearTimer = deps.clearTimeout ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const ports = deps.ports ?? {};
-  const now = deps.now ?? Date.now;
   /** `run_ai_search` calls handed to the port, per turn (the broker's token). */
   const aiCallsByTurn = new WeakMap<object, number>();
-  /** When each engine was last handed a call. */
-  const aiLastCall = new Map<AiSearchEngine, number>();
   const aiRefused = (reason: AiSearchUnavailableReason): ToolRunOutcome => ({ ok: true, data: { unavailable: AI_SEARCH_UNAVAILABLE_MESSAGES[reason], state: reason }, source: SEARCH_TOOL_SOURCES.run_ai_search });
 
   /**
@@ -305,19 +302,11 @@ export function createSearchTools(deps: SearchToolDeps) {
         if (!isAiSearchEngine(engine) || !isAiSearchVia(via)) return Promise.resolve(fail('invalid-input'));
         const turnCalls = context.turn !== undefined ? (aiCallsByTurn.get(context.turn) ?? 0) : 0;
         if (turnCalls >= AI_SEARCH_LIMITS.maxCallsPerTurn) return Promise.resolve(aiRefused('capped'));
-        const at = now();
-        const last = aiLastCall.get(engine);
-        if (last !== undefined && at - last < AI_SEARCH_LIMITS.perEngineCooldownMs) return Promise.resolve(aiRefused('cooldown'));
         // Counted now, as it is handed to the port (before anything is awaited).
         if (context.turn !== undefined) aiCallsByTurn.set(context.turn, turnCalls + 1);
-        aiLastCall.set(engine, at);
         // Given back when the port sent nothing because the setting changed (the call answers `expired`).
         const giveBack = (): void => {
           if (context.turn !== undefined && aiCallsByTurn.get(context.turn) === turnCalls + 1) aiCallsByTurn.set(context.turn, turnCalls);
-          if (aiLastCall.get(engine) === at) {
-            if (last === undefined) aiLastCall.delete(engine);
-            else aiLastCall.set(engine, last);
-          }
         };
         return ask('run_ai_search', (signal) => port.aiSearch({ query, engine, via }, { signal, tabId: context.tabId }), mapAiSearch, context, giveBack);
       }

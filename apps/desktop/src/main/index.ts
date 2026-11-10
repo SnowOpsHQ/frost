@@ -61,6 +61,7 @@ import { createMainWindow, createTabView, loadRenderer } from './window';
 import { createAgentService } from './agent/wire';
 import { aiSearchAdapter, gscAdapter, intentAdapter, probesAdapter, serpAdapter } from './agent/ports';
 import { setupAiSearch } from './ai-search';
+import { setupAiAnswers } from './ai-answers';
 import { createMainChanges } from './changes/changes-main';
 import { createMainScreenshots } from './screenshots/electron';
 import { createMainProjects } from './changes/projects-main';
@@ -479,6 +480,8 @@ function start(): void {
     const dataSources = setupDataSources({ app, session, safeStorage, log: logSession, usage: sessionStore.dataUsage, settings: sessionStore.settings, checks: { store: sessionStore.changeIntel, parse: (job) => serp.analyseApi(job), afterWrite: (projectId) => projects.afterApiCheck(projectId) } });
     // AI search (specs/ai-search.feature.md): run_ai_search through the providers' APIs on the user's key; gated off as shipped.
     const aiSearch = setupAiSearch({ app, dataSources, settings: sessionStore.settings, log: logSession });
+    // AI answers (specs/ai-answers.feature.md): every AI answer kept by its own retention, and the view's own run (gated off as shipped).
+    const aiAnswers = setupAiAnswers({ app, store: sessionStore.aiAnswers, aiSearch, log: logSession });
     // The AI agent (specs/agent-host.feature.md): its SERP, intent, probe and Search Console tools. Not gated: no
     // entitlements port is passed (it must not be wired to the account; specs/entitlements-client.feature.md).
     const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, consumeGesture: (windowId) => account.gestures.consume(windowId), aiSearch, ports: { serp: serpAdapter(serp.readApi, aiSearchAdapter(aiSearch)), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) } });
@@ -544,6 +547,7 @@ function start(): void {
         help: help.service,
         dataSources: dataSources.service,
         crawl: createMainCrawlIpc(crawl, logSession), // specs/site-crawl.feature.md (Task 7): runs, pages, structure, CSV via main's save dialog.
+        aiAnswers, // specs/ai-answers.feature.md (Phase 12 Task 9): kept AI answers, the view's run, retention and AI search settings.
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
