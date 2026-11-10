@@ -300,7 +300,8 @@ export type CrawlRunState = (typeof CRAWL_RUN_STATES)[number];
  *   and still queued is replayed and completed first: the cap holds back new pages only; council
  *   review round 2, item E);
  * - `project-deleted`: cancelled because its project was deleted or tombstoned;
- * - `error`: failed;
+ * - `error`: failed: the database failed (a page or pacing write, the frontier; sitemap seeding's
+ *   store included, council review round 3, item I);
  * - `robots-unreachable` (council review round 2, item D): a queued page or a same-host redirect hop met
  *   robots.txt the crawl cannot read (`CRAWL_ROBOTS_UNREADABLE_OUTCOMES`, or no answer in time) **on the
  *   start URL's origin** (scheme, host and port). Nothing is recorded for that page and its frontier

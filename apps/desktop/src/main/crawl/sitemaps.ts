@@ -27,7 +27,10 @@ import type { CrawlScopeRule } from './scope';
 // `maxFiles` and `maxDepth`. URLs go straight to the frontier at depth 1, source `sitemap` (in scope
 // only; never an inlink); at most the run's `maxPages` are seeded. A window that does not answer in time
 // stops seeding with a log line and the run's note (`CRAWL_RUN_NOTES.sitemapTimeout`); any other failure
-// seeds nothing more from that file. A sitemap request answered as a slow-down (`backoffAfter` 429 / 503
+// to read a file (its fetch refused or failed, its parse failed) seeds nothing more from it. A store that
+// fails (the run's fetch storing its pacing before a sitemap request or a hop, or the frontier taking
+// the seeds) is never skipped: seeding rejects with it and the run fails (`error`; council review
+// round 3, item I). A sitemap request answered as a slow-down (`backoffAfter` 429 / 503
 // in a row, or `deferred`) stops seeding and says so (`slowDown`): the crawler pauses the run
 // (`slow-down`) before any page is fetched (council review, item 4).
 
@@ -64,7 +67,11 @@ export interface SitemapSeedReport {
 }
 
 export interface SitemapSeeder {
-  /** Seeds the run's frontier from the site's sitemaps. Never rejects. */
+  /**
+   * Seeds the run's frontier from the site's sitemaps. A sitemap it cannot read is skipped; it rejects
+   * only when the run's store fails (the run's fetch storing its pacing, or `seed` writing the
+   * frontier: round 3, item I), with that error, and the crawler fails the run (`error`).
+   */
   seed(run: SitemapSeedRun): Promise<SitemapSeedReport>;
 }
 
@@ -77,6 +84,23 @@ function sitemapUrl(raw: string, base: string): string | null {
     return url.href.length <= SITEMAP_LIMITS.maxLocChars ? url.href : null;
   } catch {
     return null;
+  }
+}
+
+/** A store failure inside seeding (the run's fetch storing its pacing, or the frontier): passed up so the run fails (round 3, item I). */
+class SeedStoreError extends Error {
+  constructor(readonly error: unknown) {
+    super('a sitemap seed could not be stored');
+    this.name = 'SeedStoreError';
+  }
+}
+
+/** `work`'s answer; whatever it throws is a store failure (`SeedStoreError`), never a sitemap the seeding may skip. */
+async function stored<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    throw new SeedStoreError(error);
   }
 }
 
@@ -114,7 +138,8 @@ export function createSitemapSeeder(deps: SitemapSeederDeps): SitemapSeeder {
     let target = url;
     for (let hops = 0; hops <= LINK_CHECK_LIMITS.maxRedirects; hops++) {
       if (run.scope.check(target) !== 'in') return null;
-      const fetched = await run.fetch(target, { maxBytes, timeoutMs: SITEMAP_LIMITS.timeoutMs, accept: CRAWL_SITEMAP_ACCEPT, maxRedirects: LINK_CHECK_LIMITS.maxRedirects });
+      // The run's fetch answers every fetch failure and refusal as an outcome: what it throws is its store failing.
+      const fetched = await stored(() => run.fetch(target, { maxBytes, timeoutMs: SITEMAP_LIMITS.timeoutMs, accept: CRAWL_SITEMAP_ACCEPT, maxRedirects: LINK_CHECK_LIMITS.maxRedirects }));
       if (fetched.outcome === 'deferred' || fetched.slowDown) return 'slow-down';
       if (fetched.outcome === 'redirected' && fetched.redirectTarget !== null) {
         target = fetched.redirectTarget;
@@ -173,8 +198,9 @@ export function createSitemapSeeder(deps: SitemapSeederDeps): SitemapSeeder {
                 break;
               }
               if (read.urls.length === 0 || run.signal.aborted) break;
-              counted += read.urls.length;
-              seeded += await run.seed(read.urls);
+              const urls = read.urls;
+              counted += urls.length;
+              seeded += await stored(() => run.seed(urls));
               skip += read.urls.length;
               if (skip >= read.total || counted >= budget) break;
               read = await deps.analyse({ key, skip, take: Math.min(CRAWL_LIMITS.sitemapUrlsPerJob, budget - counted) });
@@ -183,8 +209,10 @@ export function createSitemapSeeder(deps: SitemapSeederDeps): SitemapSeeder {
             await deps.analyse({ key, release: true }).catch(() => undefined);
           }
         }
-      } catch {
-        // A sitemap that cannot be read seeds nothing more.
+      } catch (error) {
+        // The run's store failed (a pacing write, the frontier): the run fails (round 3, item I).
+        if (error instanceof SeedStoreError) throw error.error;
+        // A sitemap that cannot be read (its fetch refused or failed, its parse failed) seeds nothing more.
       }
       if (stop === 'timeout') {
         log(`a sitemap window did not answer in time; seeding stopped (run ${run.runId})`);

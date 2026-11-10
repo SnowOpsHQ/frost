@@ -468,6 +468,11 @@ the crawl worker and its URLs handed out `sitemapUrlsPerJob` at a time, then rel
   so (`SitemapSeedReport.slowDown`): five robots.txt `Sitemap:` files each answering 429 leave the run
   `paused` (`slow-down`, `CRAWL_SLOW_DOWN_MESSAGE`) with no page fetched (the start URL still queued)
   and the host's back-off stored with the run's pacing.
+- `crawl-sitemap-storage-failure-fails-the-run` — (council review round 3, item I) seeding skips a
+  sitemap it cannot read (its fetch refused or failed, its parse failed), never a store that fails: a
+  sitemap request under a learned `Crawl-delay: 10` whose pacing write fails (once) sends nothing, and
+  the run ends `failed` (`error`) with no sitemap and no page requested; a frontier write that fails
+  while a sitemap's URLs are seeded fails the run the same way.
 - `crawl-sitemap-falls-back-to-sitemap-xml` — robots.txt without a `Sitemap:` line: `/sitemap.xml` of
   the start's origin. Seeding runs on a fresh start only (a resume continues from the frontier).
 - `crawl-sitemap-private-start-stays-on-its-origin` — a start on `127.0.0.1:3000` whose robots.txt lists

@@ -981,6 +981,59 @@ describe('sitemap seeding', () => {
     expect(await repo.runPacing(runId)).toEqual([expect.objectContaining({ host: 'example.com', inARow: CRAWL_LIMITS.backoffAfter })]);
   });
 
+  test('crawl-sitemap-storage-failure-fails-the-run', async () => {
+    // Council review round 3, item I: seeding skips a sitemap it cannot read, but not a store that fails. The sitemap
+    // request learns `Crawl-delay: 10` first, so its pacing is stored before it goes out; that write fails once. The run
+    // fails (`error`) with nothing requested after it: no sitemap, no page (a later write that works would otherwise have
+    // let the crawl go on and end `done`).
+    const kit = timerClock();
+    const db = tempStore();
+    cleanups.push(db.close);
+    const store = db.store.siteCrawl;
+    const requests: string[] = [];
+    const lane: BoundedFetcher = {
+      async fetch(request) {
+        requests.push(request.url);
+        const xml = request.url.endsWith('.xml');
+        const body = encoder.encode(xml ? urlset([`${HOME}a`]) : '<!doctype html><title>Page</title>') as Uint8Array<ArrayBuffer>;
+        return { url: request.url, outcome: 'response', status: 200, finalUrl: request.url, redirects: 0, chain: [], headers: { 'content-type': xml ? 'application/xml' : 'text/html' }, body, truncated: false, durationMs: 5 };
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    const robotsText = encoder.encode(`User-agent: *\nCrawl-delay: 10\nAllow: /\nSitemap: ${HOME}s.xml\n`);
+    const robots: CrawlRobotsSource = { get: async (pageUrl) => ({ url: `${new URL(pageUrl).origin}/robots.txt`, outcome: 'ok', status: 200, finalUrl: `${new URL(pageUrl).origin}/robots.txt`, redirects: 0, body: robotsText, truncated: false }) };
+    const parseRobots = async (text: string) => {
+      const parsed = parseCrawlRobots({ text });
+      if (!parsed.ok) throw new Error('robots');
+      return parsed.robots;
+    };
+    let failures = 1;
+    const repo: typeof store = {
+      ...store,
+      updateRun: (id, patch, now) => (patch.pacing !== undefined && patch.state === undefined && failures-- > 0 ? Promise.reject(new Error('disk I/O error')) : store.updateRun(id, patch, now)),
+    };
+    const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent: () => 'Mozilla/5.0', clock: kit.clock });
+    const sitemaps = createSitemapSeeder({ robots, parseRobots, analyse: async (input) => parseCrawlSitemap(input), now: kit.now });
+    const crawler = createCrawler({ repo, fetcher, analyse: inProcessAnalyse, sitemaps, projectLive: async () => true, now: kit.now });
+    const service = createCrawlService({ repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, now: kit.now, log: () => undefined });
+
+    const runId = await started(service, settingsFor(HOME, { sitemaps: true }));
+    await kit.settle(service.idle());
+    expect(requests).toEqual([]);
+    expect(await store.getRun(runId)).toMatchObject({ state: 'failed', reason: 'error' });
+    expect(await store.pagesOf(runId, { limit: 10, offset: 0 })).toEqual([]);
+
+    // A frontier write that fails while a sitemap's URLs are seeded fails the run too.
+    const { sitemaps: seeding, serve } = seeder({ 'https://example.com/sitemap.xml': urlset([`${HOME}a`]) }, null);
+    const t = setup(serve((url) => ({ [HOME]: htmlPage('Home'), [`${HOME}a`]: htmlPage('A') })[url]), { sitemaps: seeding });
+    const enqueue = t.repo.enqueue;
+    t.repo.enqueue = (id, entries, options) => (entries.some((entry) => entry.source === 'sitemap') ? Promise.reject(new Error('disk I/O error')) : enqueue(id, entries, options));
+    const seeded = await started(t.service, settingsFor(HOME, { sitemaps: true }));
+    await t.service.idle();
+    expect(t.fetcher.fetched).toEqual(['https://example.com/sitemap.xml']);
+    expect(await t.repo.getRun(seeded)).toMatchObject({ state: 'failed', reason: 'error' });
+  });
+
   test('crawl-sitemap-falls-back-to-sitemap-xml', async () => {
     const { sitemaps, serve, requested } = seeder({ 'https://example.com/sitemap.xml': urlset([`${HOME}a`]) }, null);
     const u = setup(serve((url) => ({ [HOME]: htmlPage('Home'), [`${HOME}a`]: htmlPage('A') })[url]), { sitemaps });
