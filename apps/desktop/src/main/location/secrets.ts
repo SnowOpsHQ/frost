@@ -70,7 +70,11 @@ export function createLocationSecrets(deps: LocationSecretsDeps): LocationSecret
       const first = await store.setKey(found.username, username);
       if (first !== 'stored') return first;
       const second = await store.setKey(found.password, password);
-      if (second !== 'stored') await store.clearKey(found.username);
+      if (second !== 'stored') {
+        // No half of a sign-in is left: not the new username, nor the old password beside it.
+        await store.clearKey(found.username);
+        await store.clearKey(found.password);
+      }
       return second;
     },
     async forget(profileId) {

@@ -17,7 +17,8 @@ decides whether proxy locations ship.
   Changing a profile's scheme, host or port (or to `socks5`) removes the stored ones **first**,
   before the row, its tabs or its partition change; if they cannot be removed the edit answers
   `failed` and nothing changes (a sign-in is never sent to a proxy it was not saved for). A new
-  sign-in that fails to store leaves no half behind (removed again; a failure to remove it is logged).
+  sign-in that fails to store leaves no half behind: both slots are cleared, the new username and any
+  older password alike (removed again; a failure to remove it is logged).
   `weak` / `unavailable` protection refuses to store one (`no-keychain`) and the stored ones are
   treated as absent. On a plain `http` proxy the sign-in travels unencrypted: Settings and the README
   recommend an `https` proxy when one is needed (`LOCATION_HTTP_SIGN_IN_NOTE`).
