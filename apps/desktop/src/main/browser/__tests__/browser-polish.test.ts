@@ -603,13 +603,13 @@ describe('history view', () => {
     expect(confirmClearRange).toHaveBeenCalledWith('hour');
     expect(history.clearSince).not.toHaveBeenCalled();
     expect(tabs.forgetClosedTabs).not.toHaveBeenCalled();
-    // Confirmed: pending visits written, the closed-tab stack forgotten, then the range cleared; two requests ask once.
+    // Confirmed: pending visits written, the range cleared, then the closed-tab stack forgotten; two requests ask once.
     answer = true;
     const [a, b] = await Promise.all([service.clearRange('day'), service.clearRange('month')]);
     expect([a, b]).toEqual([true, true]);
     expect(confirmClearRange).toHaveBeenCalledTimes(2);
     expect(history.clearSince).toHaveBeenCalledExactlyOnceWith(historyClearSince('day', now));
-    expect(order).toEqual(['flush', 'forget', 'clear']);
+    expect(order).toEqual(['flush', 'clear', 'forget']);
     expect(writer.clearHistory).not.toHaveBeenCalled();
     // A failure answers false, never rejects; without a confirmation nothing is ever cleared.
     history.clearSince.mockRejectedValueOnce(new Error('disk'));
@@ -622,6 +622,28 @@ describe('history view', () => {
     expect(CLEAR_HISTORY_RANGE.dialog.detail).toContain('one entry per page');
     expect(CLEAR_HISTORY_RANGE.dialog.defaultId).toBe(CLEAR_HISTORY_RANGE.dialog.cancelId);
     expect(CLEAR_HISTORY_RANGE.dialog.buttons[CLEAR_HISTORY_RANGE.confirmIndex]).toBe('Clear History');
+  });
+
+  test('clear-range-failure-keeps-closed-tabs', async () => {
+    // Council round 1: the closed-tab stack is forgotten only once the visits are deleted, so a
+    // failed clear (answered `false`) leaves Reopen Closed Tab as it was.
+    const writer = { flush: vi.fn(async () => {}), deleteVisit: vi.fn(async () => true), clearHistory: vi.fn(async () => {}) };
+    const tabs = { reopenClosedTab: vi.fn(() => null), showHistory: vi.fn(), forgetClosedTabs: vi.fn() };
+    const history = {
+      list: vi.fn(async () => ({ visits: [], next: null })),
+      jumpBackIn: vi.fn(async () => ({ mostVisited: [], recent: [] })),
+      clearSince: vi.fn(async (_since: number): Promise<number> => {
+        throw new Error('disk');
+      }),
+    };
+    const service = createHistoryService({ history, writer, tabs, confirmClearRange: async () => true, now: () => 1_000_000_000, log: () => {} });
+    expect(await service.clearRange('day')).toBe(false);
+    expect(history.clearSince).toHaveBeenCalledOnce();
+    expect(tabs.forgetClosedTabs).not.toHaveBeenCalled();
+    // A clear that succeeds afterwards forgets them.
+    history.clearSince.mockResolvedValueOnce(1);
+    expect(await service.clearRange('day')).toBe(true);
+    expect(tabs.forgetClosedTabs).toHaveBeenCalledOnce();
   });
 
   /** A service on fake settings starting at `stored`, with main's confirmation answering `answer`. */

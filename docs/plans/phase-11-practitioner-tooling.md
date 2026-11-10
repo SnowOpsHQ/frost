@@ -1186,3 +1186,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   cap holds, and matches past the listed rows (`cut`) mark nothing. Before, `'x'.repeat(495) +
   'canonical'` found nothing. Regression: `find-across-row-boundary`
   (`apps/desktop/src/renderer/__tests__/inspector-view.test.ts`).
+- **Council round 1: a failed clear-range keeps the recently closed tabs.** `clearRange` now calls
+  `forgetClosedTabs` only after `clearSince` resolves (order: flush, clear, forget); before, a
+  throwing `clearSince` answered `false` with Reopen Closed Tab already emptied. Regression:
+  `clear-range-failure-keeps-closed-tabs` (`apps/desktop/src/main/browser/__tests__/browser-polish.test.ts`).

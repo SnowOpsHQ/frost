@@ -191,10 +191,11 @@ export function createHistoryService(options: HistoryServiceOptions): MainHistor
         return guarded(
           'clear range',
           async () => {
-            // Pending visits are written first, so one in the range is cleared with the rest.
+            // Pending visits are written first, so one in the range is cleared with the rest. The
+            // closed tabs are forgotten only once the visits are gone: a failed clear keeps both.
             await options.writer.flush();
-            options.tabs.forgetClosedTabs();
             await clearSince(historyClearSince(range, now()));
+            options.tabs.forgetClosedTabs();
             return true;
           },
           false,
