@@ -332,6 +332,20 @@ Code: `packages/seo-core/src/crawl/{served-to-page,crawl-context,crawl-rules}.ts
 fetches (no network, no timer), the real session database, the crawl worker's code in-process.
 
 ### The run
+- (Council review round 3, item J) A run is created with its normalised start URL already queued
+  (depth 0, source `start`): the run and that frontier entry are one transaction
+  (`CreateCrawlRunInput.start`), so a Pause, a quit or a kill before the crawler has done anything
+  still leaves the start URL to Resume. A Resume whose start URL has never completed (its entry still
+  `queued` and no row for it: stopped before it, or its robots.txt unreadable) queues it again and
+  seeds sitemaps again (when the settings ask) before continuing; both are idempotent (the frontier
+  dedupes, a seed adds no inlink, a known URL keeps its state and its done flag).
+- `crawl-start-url-queued-with-its-run` — (round 3, item J) a Pause while a new run reads its counts
+  leaves the run `paused` with nothing fetched and the start URL `queued` (depth 0, no inlink); Resume
+  crawls it and its link, and the run ends `done` with two pages. A kill there (the run left `queued`):
+  start-up pauses it (`interrupted`), and Resume crawls the start the same way.
+- `crawl-run-created-with-its-start-entry` — (round 3, item J; `site-crawl-runs.test.ts`) `createRun`
+  with `start` writes the run (`queued` 1) and its start entry together; a `start` that is no crawl URL
+  writes nothing, the run included.
 - One crawl at a time, app-wide. A run takes the oldest queued URL of its frontier (read from SQLite
   `CRAWL_LIMITS.frontierWindow` at a time), checks its project is live, fetches it (Task 6a) and writes
   its row as the page ends; then its links, then its completion — its discoveries and its frontier entry
@@ -474,7 +488,13 @@ the crawl worker and its URLs handed out `sitemapUrlsPerJob` at a time, then rel
   the run ends `failed` (`error`) with no sitemap and no page requested; a frontier write that fails
   while a sitemap's URLs are seeded fails the run the same way.
 - `crawl-sitemap-falls-back-to-sitemap-xml` — robots.txt without a `Sitemap:` line: `/sitemap.xml` of
-  the start's origin. Seeding runs on a fresh start only (a resume continues from the frontier).
+  the start's origin. Seeding runs on a fresh start, and on a Resume while the start URL has never
+  completed (round 3, item J); otherwise a resume continues from the frontier.
+- `crawl-resume-seeds-sitemaps-when-the-start-never-completed` — (council review round 3, item J) with
+  robots.txt unreadable, the fallback sitemap is refused and the start URL pauses the run
+  (`robots-unreachable`), nothing requested; robots.txt readable again, Resume reads the `Sitemap:` file
+  first, then crawls the start and both seeded URLs (`done`, three pages; the linked one has one inlink,
+  the other is an orphan). A Resume once the start has completed reads no sitemap.
 - `crawl-sitemap-private-start-stays-on-its-origin` — a start on `127.0.0.1:3000` whose robots.txt lists
   `http://127.0.0.1:9229/x` and whose `/sitemap.xml` answers 302 to `:9229`: no request reaches `:9229`
   (nor its robots.txt), nothing is seeded.

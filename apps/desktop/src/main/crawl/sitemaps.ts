@@ -9,8 +9,8 @@ import type { CrawlScopeRule } from './scope';
 
 // Sitemap seeding (spec `site-crawl.schema.ts`, `CrawlSettingsSchema.sitemaps`; `seo-checks.spec.ts`,
 // `SITEMAP_LIMITS`; acceptance `site-crawl.feature.md`, Sitemap seeding; plan Decision 6 and Task 6b,
-// with its review). When a run's settings ask for it, a fresh run reads the site's sitemaps before its
-// first page: robots.txt's `Sitemap:` lines (main's robots fetcher, parsed in the crawl worker), else
+// with its review). When a run's settings ask for it, a fresh run (or a resumed one whose start URL never
+// completed: council review round 3, item J) reads the site's sitemaps before its first page: robots.txt's `Sitemap:` lines (main's robots fetcher, parsed in the crawl worker), else
 // `/sitemap.xml` of the start's origin.
 //
 // Every sitemap request is a crawl request: it goes through the run's own page fetch (`fetchPage`), so

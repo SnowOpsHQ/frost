@@ -3,6 +3,7 @@ import { LEGAL_GATE_NOTE, type LegalGateId } from '@app/specs/data-sources.spec'
 import { CrawlStartInputSchema, type CrawlSettings, type CrawlStatusView } from '@app/specs/site-crawl.schema';
 import { CRAWL_LIMITS, type CrawlRefusal, type CrawlServiceAnswer } from '@app/specs/site-crawl.spec';
 import type { Crawler, CrawlRunHandle, CrawlStopReason } from './crawler';
+import { normaliseCrawlUrl } from './scope';
 
 // Main's crawl service (spec `site-crawl.spec.ts`, `CRAWL_AVAILABLE`, `CRAWL_REFUSALS`,
 // `CrawlServiceAnswer`; `site-crawl.schema.ts`, `CrawlStartInputSchema`, `CrawlStatusViewSchema`;
@@ -157,7 +158,11 @@ export function createCrawlService(deps: CrawlServiceDeps): CrawlService {
           if (!parsed.success) return refused('invalid-settings');
           const { settings, projectId } = parsed.data;
           if (projectId !== null && !(await deps.projectLive(projectId))) return refused('not-found');
-          const run = await repo.createRun({ projectId, settings, now: now() });
+          const start = normaliseCrawlUrl(settings.startUrl);
+          if (start === null) return refused('invalid-settings');
+          // The start URL is queued with the run, in one write (council review round 3, item J): a Pause or a crash before the
+          // crawler has done anything still leaves it to Resume.
+          const run = await repo.createRun({ projectId, settings, now: now(), start });
           launch(crawler, { ...run, settings }, true);
           return { status: 'started', runId: run.id };
         }),

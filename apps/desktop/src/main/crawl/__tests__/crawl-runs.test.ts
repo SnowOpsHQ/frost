@@ -135,6 +135,56 @@ describe('crawl runs', () => {
     expect(await t.repo.getRun(runId)).toMatchObject({ state: 'done', counts: { pages: 6, queued: 0 } });
   });
 
+  test('crawl-start-url-queued-with-its-run', async () => {
+    // Council review round 3, item J: a Pause (or a crash) while a new run reads its counts, before anything else of it
+    // ran, used to leave an empty frontier, so Resume ended `done` with no page. The start URL is queued with the run
+    // itself (one write), so Resume crawls it.
+    const t = setup(chain(2));
+    const start = `${HOME}p0`;
+    const pageCounts = t.repo.pageCounts;
+    /** Holds the next run's first read of its counts until `release()`; `reached` settles once it is waiting. */
+    const holdCounts = () => {
+      let reached!: () => void;
+      let release!: () => void;
+      const waiting = new Promise<void>((resolve) => (reached = resolve));
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      t.repo.pageCounts = async (id) => {
+        t.repo.pageCounts = pageCounts;
+        reached();
+        await gate;
+        return pageCounts(id);
+      };
+      return { waiting, release };
+    };
+
+    const held = holdCounts();
+    const runId = await started(t.service, settingsFor(start));
+    await held.waiting;
+    const pausing = t.service.pause(runId);
+    held.release();
+    expect(await pausing).toEqual({ status: 'ok' });
+    expect(await t.repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'user' });
+    expect(t.fetcher.fetched).toEqual([]);
+    expect(await t.repo.frontierEntry(runId, start)).toMatchObject({ state: 'queued', depth: 0, inlinks: 0, fromSitemap: false });
+    expect(await t.service.resume(runId)).toEqual({ status: 'resumed', runId });
+    await t.service.idle();
+    expect(t.fetcher.fetched).toEqual([start, `${HOME}p1`]);
+    expect(await t.repo.getRun(runId)).toMatchObject({ state: 'done', reason: null, counts: { pages: 2, queued: 0 } });
+
+    // A crash there (the read never answers): start-up pauses the run left `queued`, and Resume crawls the start.
+    t.fetcher.fetched.length = 0;
+    const stuck = holdCounts();
+    const crashed = await started(t.service, settingsFor(start));
+    await stuck.waiting;
+    expect(await t.repo.getRun(crashed)).toMatchObject({ state: 'queued' });
+    const again = t.makeService();
+    expect(await again.startup()).toBe(1);
+    expect(await again.resume(crashed)).toEqual({ status: 'resumed', runId: crashed });
+    await again.idle();
+    expect(t.fetcher.fetched).toEqual([start, `${HOME}p1`]);
+    expect(await t.repo.getRun(crashed)).toMatchObject({ state: 'done', reason: null, counts: { pages: 2, queued: 0 } });
+  });
+
   test('crawl-pause-mid-page-replays-its-completion', async () => {
     // Council review, item 3: a Pause that lands while a page's row is written (`putPage`) leaves the page queued (its
     // links not yet discovered), so Resume fetches it again and discovers `/child`. The replay is idempotent: one row, its
@@ -1032,6 +1082,68 @@ describe('sitemap seeding', () => {
     await t.service.idle();
     expect(t.fetcher.fetched).toEqual(['https://example.com/sitemap.xml']);
     expect(await t.repo.getRun(seeded)).toMatchObject({ state: 'failed', reason: 'error' });
+  });
+
+  test('crawl-resume-seeds-sitemaps-when-the-start-never-completed', async () => {
+    // Council review round 3, item J: seeding ran on a fresh start only. A start URL whose robots.txt could not be read
+    // paused the run before it completed (its sitemap refused too), and Resume, robots.txt readable again, never read the
+    // sitemaps. Resume now seeds again while the start URL has never completed (still queued, no row); the frontier dedupes,
+    // so nothing is reset or counted twice.
+    const kit = timerClock();
+    const db = tempStore();
+    cleanups.push(db.close);
+    const repo = db.store.siteCrawl;
+    const requests: string[] = [];
+    const lane: BoundedFetcher = {
+      async fetch(request) {
+        requests.push(request.url);
+        const xml = request.url.endsWith('.xml');
+        const body = encoder.encode(xml ? urlset([`${HOME}a`, `${HOME}b`]) : request.url === HOME ? '<!doctype html><title>Home</title><a href="/a">a</a>' : '<!doctype html><title>Page</title>') as Uint8Array<ArrayBuffer>;
+        return { url: request.url, outcome: 'response', status: 200, finalUrl: request.url, redirects: 0, chain: [], headers: { 'content-type': xml ? 'application/xml' : 'text/html' }, body, truncated: false, durationMs: 5 };
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    let readable = false;
+    const robotsText = encoder.encode(`User-agent: *\nAllow: /\nSitemap: ${HOME}sitemap.xml\n`);
+    const robots: CrawlRobotsSource = {
+      get: async (pageUrl) => {
+        const url = `${new URL(pageUrl).origin}/robots.txt`;
+        return readable ? { url, outcome: 'ok', status: 200, finalUrl: url, redirects: 0, body: robotsText, truncated: false } : { url, outcome: 'server-error', status: 503, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false };
+      },
+    };
+    const parseRobots = async (text: string) => {
+      const parsed = parseCrawlRobots({ text });
+      if (!parsed.ok) throw new Error('robots');
+      return parsed.robots;
+    };
+    const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent: () => 'Mozilla/5.0', clock: kit.clock });
+    const sitemaps = createSitemapSeeder({ robots, parseRobots, analyse: async (input) => parseCrawlSitemap(input), now: kit.now });
+    const crawler = createCrawler({ repo, fetcher, analyse: inProcessAnalyse, sitemaps, projectLive: async () => true, now: kit.now });
+    const service = createCrawlService({ repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, now: kit.now, log: () => undefined });
+
+    // robots.txt unreadable: the fallback sitemap is refused, then the start URL pauses the run, nothing requested.
+    const runId = await started(service, settingsFor(HOME, { sitemaps: true }));
+    await kit.settle(service.idle());
+    expect(requests).toEqual([]);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 0, queued: 1 } });
+
+    // robots.txt readable again: Resume reads the sitemap, then crawls the start and the seeded URLs.
+    readable = true;
+    expect(await service.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(service.idle());
+    expect(requests).toEqual([`${HOME}sitemap.xml`, HOME, `${HOME}a`, `${HOME}b`]);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'done', reason: null, counts: { pages: 3, queued: 0 } });
+    expect(await repo.frontierEntry(runId, HOME)).toMatchObject({ state: 'done', depth: 0, inlinks: 0, fromSitemap: false });
+    expect(await repo.frontierEntry(runId, `${HOME}a`)).toMatchObject({ depth: 1, fromSitemap: true, inlinks: 1 });
+    expect(await repo.orphansOf(runId, { limit: 10, offset: 0 })).toEqual([`${HOME}b`]);
+
+    // A Resume once the start has completed does not seed again: a paused run whose start is done reads no sitemap.
+    await repo.updateRun(runId, { state: 'paused', reason: 'user' }, kit.now());
+    requests.length = 0;
+    expect(await service.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(service.idle());
+    expect(requests).toEqual([]);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'done' });
   });
 
   test('crawl-sitemap-falls-back-to-sitemap-xml', async () => {

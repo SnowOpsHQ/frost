@@ -68,7 +68,7 @@ export interface CrawlerDeps {
   readonly fetcher: { forRun(settings: CrawlSettings): CrawlerRunFetcher };
   /** One page's parse and audit in the crawl worker (`Analyzer.analyseCrawlPage`). */
   readonly analyse: (job: CrawlPageJob) => Promise<CrawlPageResult>;
-  /** Sitemap seeding for a fresh run whose settings ask for it (`createSitemapSeeder`). */
+  /** Sitemap seeding for a run whose settings ask for it, fresh or resumed before its start URL completed (`createSitemapSeeder`). */
   readonly sitemaps?: SitemapSeeder;
   /** Whether a project is live (not tombstoned, not deleted): checked before every fetch call of a project's run. */
   readonly projectLive: (projectId: string) => Promise<boolean>;
@@ -113,7 +113,10 @@ export interface CrawlRunHandle {
 }
 
 export interface Crawler {
-  /** Runs `run` (its settings readable): `fresh` queues its start URL and seeds sitemaps first; otherwise it continues from its frontier. */
+  /**
+   * Runs `run` (its settings readable): `fresh` queues its start URL and seeds sitemaps first; otherwise it continues
+   * from its frontier, seeding sitemaps first again while its start URL has never completed (round 3, item J).
+   */
   run(run: CrawlRunView & { readonly settings: CrawlSettings }, fresh: boolean): CrawlRunHandle;
 }
 
@@ -293,6 +296,8 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
           await storePacing();
           return fetched;
         };
+        /** Whether the run's start URL is still queued with no row (never completed); a run without the entry has nothing to redo. */
+        const startNeverCompleted = async (start: string): Promise<boolean> => (await repo.frontierEntry(runId, start))?.state === 'queued' && (await repo.getPage(runId, start)) === null;
         try {
           runFetcher = deps.fetcher.forRun(settings);
           const scope = runFetcher.scope;
@@ -308,7 +313,11 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
           pacingStored = runFetcher.politeness?.changes() ?? 0;
           const pacing = runFetcher.politeness?.snapshot();
           await repo.updateRun(runId, { state: 'running', reason: null, finishedAt: null, ...(pacing === undefined ? {} : { pacing }) }, now());
-          if (fresh) {
+          // A fresh run, or a resumed one whose start URL never completed (still queued with no row: a stop or a crash
+          // before it, or its robots.txt unreadable; council review round 3, item J), queues its start URL (the run's
+          // creation already did: this is idempotent) and seeds sitemaps. Seeding again is idempotent too: the frontier
+          // dedupes, a seed never adds an inlink, and a known URL keeps its state.
+          if (fresh || (await startNeverCompleted(scope.start))) {
             await frontier.discover([scope.start], 0, 'start');
             if (settings.sitemaps && deps.sitemaps && !signal.aborted) {
               const seeding = frontier;

@@ -88,6 +88,19 @@ describe('the crawl run storage (Task 6b)', () => {
     expect(await repo.pageCounts(other.id)).toEqual({ pages: 0, refused: 0, failed: 0, bytes: 0 });
   });
 
+  test('crawl-run-created-with-its-start-entry', async () => {
+    // Council review round 3, item J: the run and its start URL's frontier entry are one write.
+    const { siteCrawl: repo } = store();
+    const run = await repo.createRun({ projectId: null, settings: defaultCrawlSettings('https://example.com/'), now: 1, start: 'https://example.com/' });
+    expect(run.counts.queued).toBe(1);
+    expect(await repo.getRun(run.id)).toMatchObject({ state: 'queued', counts: { queued: 1 } });
+    expect(await repo.frontierEntry(run.id, 'https://example.com/')).toEqual({ url: 'https://example.com/', depth: 0, state: 'queued', inlinks: 0, fromSitemap: false });
+    expect(await repo.nextQueued(run.id, 10)).toEqual([{ url: 'https://example.com/', depth: 0 }]);
+    // A start that is no crawl URL: nothing written, the run included.
+    await expect(repo.createRun({ projectId: null, settings: defaultCrawlSettings('https://example.com/'), now: 2, start: 'javascript:alert(1)' })).rejects.toThrow();
+    expect(await repo.listRuns()).toHaveLength(1);
+  });
+
   test('deleted-projects-with-rows-lists-crawl-only-projects', async () => {
     const opened = store();
     const project = (await opened.changeIntel.createProject('Crawled only', 1_000))!;

@@ -77,6 +77,13 @@ export interface CreateCrawlRunInput {
   readonly projectId: string | null;
   readonly settings: CrawlSettings;
   readonly now: number;
+  /**
+   * The run's normalised start URL (`normaliseCrawlUrl(settings.startUrl)`; main's crawl service always
+   * passes it): queued in the run's frontier at depth 0 (source `start`) in the same transaction as the
+   * run (council review round 3, item J), so a run stopped or killed before its crawler queued anything
+   * still holds its start URL. Absent: the frontier starts empty.
+   */
+  readonly start?: string;
 }
 
 export interface CrawlRunPatch {
@@ -110,7 +117,10 @@ export interface CrawlTreeLevel {
 }
 
 export interface SiteCrawlRepository {
-  /** Creates a `queued` run (a fresh UUIDv7 id). Throws on settings `CrawlSettingsSchema` refuses (nothing written). */
+  /**
+   * Creates a `queued` run (a fresh UUIDv7 id) and, with `start`, its frontier's start entry, in one
+   * transaction. Throws on settings `CrawlSettingsSchema` refuses or a `start` that is no crawl URL (nothing written).
+   */
   createRun(input: CreateCrawlRunInput): Promise<CrawlRunView>;
   /** Changes a run's state, reason, counts and finish time; `false` when there is no such run. */
   updateRun(id: string, patch: CrawlRunPatch, now: number): Promise<boolean>;
@@ -369,10 +379,12 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
   const orphan = (runId: string) => and(eq(crawlFrontier.runId, runId), eq(crawlFrontier.fromSitemap, true), eq(crawlFrontier.inlinks, 0));
 
   return {
-    async createRun({ projectId, settings, now }) {
+    async createRun({ projectId, settings, now, start }) {
       const valid = CrawlSettingsSchema.parse(settings);
+      const startEntry = start === undefined ? null : CrawlUrlSchema.parse(start);
       const id = uuidv7(now);
-      await db.insert(crawlRuns).values({
+      const queued = startEntry === null ? 0 : 1;
+      const run = db.insert(crawlRuns).values({
         id,
         projectId,
         startUrl: valid.startUrl,
@@ -380,7 +392,7 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
         state: 'queued',
         reason: null,
         pages: 0,
-        queued: 0,
+        queued,
         refused: 0,
         failed: 0,
         bytes: 0,
@@ -388,7 +400,10 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
         updatedAt: now,
         finishedAt: null,
       });
-      return { id, projectId, startUrl: valid.startUrl, settings: valid, state: 'queued', reason: null, counts: { pages: 0, queued: 0, refused: 0, failed: 0, bytes: 0 }, createdAt: now, updatedAt: now, finishedAt: null };
+      // The run and its start entry in one transaction (council review round 3, item J): no run without its start URL.
+      if (startEntry === null) await run;
+      else await runBatch(db, [run, db.insert(crawlFrontier).values({ runId: id, url: startEntry, depth: 0, state: 'queued', inlinks: 0, fromSitemap: false })]);
+      return { id, projectId, startUrl: valid.startUrl, settings: valid, state: 'queued', reason: null, counts: { pages: 0, queued, refused: 0, failed: 0, bytes: 0 }, createdAt: now, updatedAt: now, finishedAt: null };
     },
 
     async updateRun(id, { state, reason, counts, finishedAt, pacing }, now) {
