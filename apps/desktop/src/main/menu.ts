@@ -8,6 +8,7 @@ import { DEVTOOLS_MENU_ACCELERATOR, DEVTOOLS_MENU_ID, DEVTOOLS_MENU_LABEL } from
 import { HISTORY_MENU_LABEL, POLISH_MENU_IDS } from '@app/specs/browser-polish.spec';
 import { SETTINGS_MENU } from '@app/specs/account-settings.spec';
 import type { BrowserController } from './browser/controller';
+import { helpMenu, type HelpMenuCommands } from './help/menu';
 
 // The application menu (spec `tabs.feature.md`, Menu). Tab shortcuts are menu accelerators handled
 // here in main (a focused page view would swallow key handlers in the chrome renderer); the
@@ -23,8 +24,8 @@ export type TabCommands = Pick<
   'newTab' | 'closeActiveTab' | 'focusAddressBar' | 'activateTabAt' | 'activateLastTab' | 'activateNextTab' | 'activatePreviousTab' | 'runPageCommand' | 'toggleSidebar' | 'openCommandPalette' | 'toggleDevtools'
 >;
 
-/** Everything the menu runs: the tab commands and Clear Browsing Data… (`clear-browsing-data.ts`). */
-export interface AppMenuCommands extends TabCommands {
+/** Everything the menu runs: the tab commands, Clear Browsing Data… (`clear-browsing-data.ts`) and Help (`help/menu.ts`). */
+export interface AppMenuCommands extends TabCommands, HelpMenuCommands {
   clearBrowsingData(): void;
   // Browser polish (`browser-polish.feature.md`); optional so other fakes need not grow.
   readonly find?: Pick<BrowserController['find'], 'open'>;
@@ -186,7 +187,9 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
     ],
   };
 
-  if (!mac) return [file, edit, view, history, tab];
+  // Help (`help.feature.md`): last in the menu bar on every platform.
+  const help = helpMenu(commands);
+  if (!mac) return [file, edit, view, history, tab, help];
   // The app menu written out (the role's own submenu has no place for Clear Browsing Data…).
   const appMenu: MenuItemConstructorOptions = {
     role: 'appMenu',
@@ -214,6 +217,7 @@ export function appMenuTemplate(commands: AppMenuCommands, platform: NodeJS.Plat
     history,
     tab,
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }] },
+    help,
   ];
 }
 

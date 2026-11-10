@@ -19,7 +19,7 @@ export type HostWindow = Pick<
  * auditor, its `highlight` from `Tab.highlight` and its `renderProfile` from the render profiles
  * (`render-profile.ts`) when the state is read.
  */
-export type PageState = Omit<TabState, 'permissionPrompt' | 'auditVersion' | 'highlight' | 'renderProfile'>;
+export type PageState = Omit<TabState, 'permissionPrompt' | 'auditVersion' | 'highlight' | 'highlightPhrase' | 'renderProfile' | 'tabOverrides' | 'loadedUnderOverrides' | 'overridesRevision' | 'overridesStatus'>;
 export type FullscreenMode = NonNullable<TabState['fullscreen']>;
 
 export interface Tab {
@@ -66,6 +66,8 @@ export interface Tab {
    */
   highlight: HighlightMode;
   highlightKey: string;
+  /** The phrase the `keyphrase` overlay boxes (main's own copy); `null` in every other mode (`TabState.highlightPhrase`). */
+  highlightPhrase: string | null;
   /** Main-frame documents committed in this tab (`did-navigate`, reloads too): its `documentSeq`. */
   documentSeq: number;
   state: PageState;
@@ -103,6 +105,7 @@ export function createTab(id: number, openerId: number | null = null): Tab {
     restored: null,
     highlight: 'off',
     highlightKey: '',
+    highlightPhrase: null,
     documentSeq: 0,
     state: emptyTabState(id),
   };

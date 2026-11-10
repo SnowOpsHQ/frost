@@ -1,11 +1,12 @@
 // Spec: specs/inspector.spec.ts (INSPECTOR_LIMITS, INSPECTOR_REFUSALS), specs/inspector.schema.ts (the answers)
 // Acceptance: specs/inspector.feature.md (The service; Scenarios inspector-service-refusals, inspector-service-deadlines,
-// inspector-service-validates-answers, inspector-one-pick-per-tab, inspector-pick-cancel-paths)
+// inspector-service-validates-answers, inspector-one-pick-per-tab, inspector-pick-cancel-paths; Phase 11 Task 5:
+// search-stale-doc-refused, served-source-unavailable-reason, copy-source-from-main)
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { INSPECTOR_LIMITS } from '@app/specs/inspector.spec';
+import { INSPECTOR_LIMITS, INSPECTOR_SEARCH_LIMITS, INSPECTOR_SOURCE_MAX_CHARS } from '@app/specs/inspector.spec';
 import { INSPECTOR_SCRIPT_LIMITS, type InspectorRequest, type InspectorScriptLimits } from '../page-script';
-import { createInspectorService, inspectorTabs, type InspectorContents } from '../service';
+import { createInspectorService, inspectorTabs, type InspectorContents, type InspectorServed, type InspectorServiceDeps } from '../service';
 
 const TOKEN = 'a'.repeat(32);
 const OTHER = 'b'.repeat(32);
@@ -44,7 +45,7 @@ class FakeContents extends EventEmitter {
   focus = () => void (this.focused += 1);
 }
 
-function setup(answer: Answer = () => CHILDREN, limits: Partial<InspectorScriptLimits> = {}) {
+function setup(answer: Answer = () => CHILDREN, limits: Partial<InspectorScriptLimits> = {}, extra: Partial<InspectorServiceDeps> = {}) {
   const contents = new FakeContents(answer);
   let active: number | null = 1;
   const logs: string[] = [];
@@ -57,6 +58,7 @@ function setup(answer: Answer = () => CHILDREN, limits: Partial<InspectorScriptL
       contents.requests.push(request);
       return contents.answer(request);
     },
+    ...extra,
   });
   return { contents, service, logs, setActive: (id: number | null) => void (active = id) };
 }
@@ -236,5 +238,203 @@ describe('inspector service', () => {
     expect(tabs.activeTabId()).toBe(4);
     expect(tabs.contentsOf(4)).toBe(contents);
     expect(tabs.contentsOf(5)).toBeNull();
+  });
+});
+
+describe('search and sources', () => {
+  const MATCH = { path: [1, 0], node: { ...ROW, index: 0, tag: 'h1' } };
+  const SEARCH = { status: 'ok', docToken: TOKEN, matches: [MATCH], more: false };
+  const SOURCE = { status: 'ok', docToken: TOKEN, text: '<!DOCTYPE html>\n<html></html>', truncated: false };
+  /** The page's answers: its token, a search, a source. */
+  const pageAnswers =
+    (search: unknown = SEARCH, source: unknown = SOURCE, token: unknown = { docToken: TOKEN }): Answer =>
+    (request) =>
+      request.op === 'token' ? token : request.op === 'search' ? search : request.op === 'source' ? source : CHILDREN;
+  type Served = ReturnType<InspectorServed['source']>;
+  /** A served cache the test drives: its answer, and the tab document's generation and URL. */
+  function fakeServed(initial: Served) {
+    const state = { served: initial, generation: 0, url: 'https://example.com/page', asked: 0 };
+    const served: InspectorServed = {
+      document: () => ({ generation: state.generation, url: state.url }),
+      source: () => (state.asked++, state.served),
+    };
+    return { state, served };
+  }
+
+  test('search-stale-doc-refused', async () => {
+    const { service, contents, logs } = setup(pageAnswers());
+    expect(await service.search(1, TOKEN, 'selector', 'h1')).toEqual(SEARCH);
+    expect(contents.requests.at(-1)).toEqual({ op: 'search', token: TOKEN, mode: 'selector', query: 'h1' });
+    const rendered = await service.source(1, TOKEN, 'rendered');
+    expect(rendered).toEqual({ ...SOURCE, kind: 'rendered', ref: expect.any(Number) });
+    expect(contents.requests.at(-1)).toEqual({ op: 'source', token: TOKEN });
+    // Each read has its own ref.
+    const again = await service.source(1, TOKEN, 'rendered');
+    expect(again.status === 'ok' && rendered.status === 'ok' && again.ref !== rendered.ref).toBe(true);
+    // Another document: stale, from the page or from an answer for another token.
+    for (const raw of [{ status: 'stale' }, { ...SEARCH, docToken: OTHER }]) {
+      contents.answer = pageAnswers(raw);
+      expect(await service.search(1, TOKEN, 'text', 'x')).toEqual({ status: 'refused', reason: 'stale' });
+    }
+    for (const raw of [{ status: 'stale' }, { ...SOURCE, docToken: OTHER }]) {
+      contents.answer = pageAnswers(SEARCH, raw);
+      expect(await service.source(1, TOKEN, 'rendered')).toEqual({ status: 'refused', reason: 'stale' });
+    }
+    // `invalid-selector` passes through for a selector search only.
+    contents.answer = pageAnswers({ status: 'invalid-selector' }, { status: 'invalid-selector' });
+    expect(await service.search(1, TOKEN, 'selector', 'h1[')).toEqual({ status: 'refused', reason: 'invalid-selector' });
+    expect(await service.search(1, TOKEN, 'text', 'h1[')).toEqual({ status: 'refused', reason: 'failed' });
+    expect(await service.source(1, TOKEN, 'rendered')).toEqual({ status: 'refused', reason: 'failed' });
+    // Answers are checked: over-long, extra keys, a refusal of the page's own.
+    const badSearches = [
+      { ...SEARCH, matches: new Array(INSPECTOR_SEARCH_LIMITS.maxResults + 1).fill(MATCH) },
+      { ...SEARCH, extra: 'SECRET' },
+      { ...SEARCH, matches: [{ ...MATCH, node: { ...MATCH.node, textPreview: 'SECRET'.repeat(100) } }] },
+      { status: 'refused', reason: 'busy' },
+      'SECRET',
+    ];
+    for (const raw of badSearches) {
+      contents.answer = pageAnswers(raw);
+      expect(await service.search(1, TOKEN, 'text', 'x')).toEqual({ status: 'refused', reason: 'failed' });
+    }
+    // The page cannot name the ref, nor answer more than the cap.
+    for (const raw of [{ ...SOURCE, text: 'x'.repeat(INSPECTOR_SOURCE_MAX_CHARS + 1) }, { ...SOURCE, kind: 'served' }, { ...SOURCE, ref: 1 }, { ...SOURCE, truncated: 'no' }, { status: 'pending', kind: 'served' }]) {
+      contents.answer = pageAnswers(SEARCH, raw);
+      expect(await service.source(1, TOKEN, 'rendered')).toEqual({ status: 'refused', reason: 'failed' });
+    }
+    // The usual refusals, and the deadline.
+    expect(await service.search(9, TOKEN, 'text', 'x')).toEqual({ status: 'refused', reason: 'no-tab' });
+    contents.answer = () => never();
+    expect(await service.search(1, TOKEN, 'text', 'x')).toEqual({ status: 'refused', reason: 'failed' });
+    expect(await service.source(1, TOKEN, 'rendered')).toEqual({ status: 'refused', reason: 'failed' });
+    expect(logs.join('\n')).not.toContain('SECRET');
+  });
+
+  test('served-source-unavailable-reason', async () => {
+    const { state, served } = fakeServed(undefined);
+    const { service, contents } = setup(pageAnswers(), {}, { served });
+    // Nothing fetched for this document.
+    expect(await service.source(1, TOKEN, 'served')).toEqual({ status: 'unavailable', kind: 'served', reason: 'not-fetched', httpStatus: null });
+    expect(ops(contents)).toEqual(['token']);
+    state.served = { status: 'pending' };
+    expect(await service.source(1, TOKEN, 'served')).toEqual({ status: 'pending', kind: 'served' });
+    state.served = { status: 'unavailable', reason: 'http-status', httpStatus: 503 };
+    expect(await service.source(1, TOKEN, 'served')).toEqual({ status: 'unavailable', kind: 'served', reason: 'http-status', httpStatus: 503 });
+    state.served = { status: 'ready', ref: 7, text: '<p>served</p>', truncated: true };
+    expect(await service.source(1, TOKEN, 'served')).toEqual({ status: 'ok', kind: 'served', docToken: TOKEN, ref: 7, text: '<p>served</p>', truncated: true });
+    // Another document shown: stale, and the served cache is not read.
+    state.asked = 0;
+    contents.answer = pageAnswers(SEARCH, SOURCE, { docToken: OTHER });
+    expect(await service.source(1, TOKEN, 'served')).toEqual({ status: 'refused', reason: 'stale' });
+    contents.answer = pageAnswers(SEARCH, SOURCE, { docToken: 'not a token' });
+    expect(await service.source(1, TOKEN, 'served')).toEqual({ status: 'refused', reason: 'failed' });
+    // A new document (its generation) or another URL (an in-page move) while the page was asked: stale.
+    for (const drift of [() => void (state.generation += 1), () => void (state.url = 'https://example.com/other')]) {
+      contents.answer = (request) => (request.op === 'token' ? (drift(), { docToken: TOKEN }) : CHILDREN);
+      expect(await service.source(1, TOKEN, 'served')).toEqual({ status: 'refused', reason: 'stale' });
+    }
+    expect(state.asked).toBe(0);
+    // A served source past the cap is never answered; a lookup that throws is a failure.
+    contents.answer = pageAnswers();
+    state.served = { status: 'ready', ref: 8, text: 'x'.repeat(INSPECTOR_SOURCE_MAX_CHARS + 1), truncated: false };
+    expect(await service.source(1, TOKEN, 'served')).toEqual({ status: 'refused', reason: 'failed' });
+    const throwing = setup(pageAnswers(), {}, {
+      served: {
+        document: served.document,
+        source: () => {
+          throw new Error('boom');
+        },
+      },
+    });
+    expect(await throwing.service.source(1, TOKEN, 'served')).toEqual({ status: 'refused', reason: 'failed' });
+    // Without the served cache: nothing fetched. Another tab: not active.
+    expect(await setup(pageAnswers()).service.source(1, TOKEN, 'served')).toEqual({ status: 'unavailable', kind: 'served', reason: 'not-fetched', httpStatus: null });
+    expect(await service.source(2, TOKEN, 'served')).toEqual({ status: 'refused', reason: 'not-active' });
+  });
+
+  test('copy-source-from-main', async () => {
+    const written: string[] = [];
+    const { state, served } = fakeServed({ status: 'ready', ref: 7, text: '<p>as served</p>', truncated: false });
+    const { service, contents } = setup(pageAnswers(), {}, { clipboard: { writeText: (text) => void written.push(text) }, served });
+    // Rendered: main writes the text it answered under that ref, not a fresh reading of a page that changed since.
+    const shown = await service.source(1, TOKEN, 'rendered');
+    if (shown.status !== 'ok') throw new Error('not ok');
+    contents.answer = pageAnswers(SEARCH, { ...SOURCE, text: '<p>changed since</p>' });
+    expect(await service.copySource(1, TOKEN, 'rendered', shown.ref)).toEqual({ status: 'copied', kind: 'rendered', truncated: false });
+    expect(written).toEqual([SOURCE.text]);
+    expect(ops(contents).at(-1)).toBe('token');
+    // Another ref (an older or a made-up one), another document or tab: stale, nothing written.
+    expect(await service.copySource(1, TOKEN, 'rendered', shown.ref + 1)).toEqual({ status: 'refused', reason: 'stale' });
+    expect(await service.copySource(1, OTHER, 'rendered', shown.ref)).toEqual({ status: 'refused', reason: 'stale' });
+    contents.answer = pageAnswers(SEARCH, SOURCE, { docToken: OTHER });
+    expect(await service.copySource(1, TOKEN, 'rendered', shown.ref)).toEqual({ status: 'refused', reason: 'stale' });
+    expect(await service.copySource(2, TOKEN, 'rendered', shown.ref)).toEqual({ status: 'refused', reason: 'not-active' });
+    // A newer read replaces what is kept: the older ref is stale.
+    contents.answer = pageAnswers();
+    const newer = await service.source(1, TOKEN, 'rendered');
+    expect(await service.copySource(1, TOKEN, 'rendered', shown.ref)).toEqual({ status: 'refused', reason: 'stale' });
+    expect(newer.status === 'ok' && (await service.copySource(1, TOKEN, 'rendered', newer.ref)).status).toBe('copied');
+    expect(written).toHaveLength(2);
+
+    // Served: only the entry the ref names, still the tab's for its document and URL.
+    expect(await service.copySource(1, TOKEN, 'served', 7)).toEqual({ status: 'copied', kind: 'served', truncated: false });
+    expect(written.at(-1)).toBe('<p>as served</p>');
+    expect(await service.copySource(1, TOKEN, 'served', 6)).toEqual({ status: 'refused', reason: 'stale' });
+    state.served = { status: 'ready', ref: 9, text: '<p>another page</p>', truncated: false };
+    expect(await service.copySource(1, TOKEN, 'served', 7)).toEqual({ status: 'refused', reason: 'stale' });
+    for (const other of [{ status: 'pending' }, { status: 'unavailable', reason: 'not-html', httpStatus: 200 }] as const) {
+      state.served = other;
+      expect(await service.copySource(1, TOKEN, 'served', 7)).toEqual({ status: 'refused', reason: 'stale' });
+    }
+    state.served = { status: 'ready', ref: 7, text: '<p>as served</p>', truncated: false };
+    for (const drift of [() => void (state.generation += 1), () => void (state.url = 'https://example.com/pushed')]) {
+      contents.answer = (request) => (request.op === 'token' ? (drift(), { docToken: TOKEN }) : CHILDREN);
+      expect(await service.copySource(1, TOKEN, 'served', 7)).toEqual({ status: 'refused', reason: 'stale' });
+    }
+    expect(written).toHaveLength(3);
+    // A clipboard that throws, or none: failed.
+    contents.answer = pageAnswers();
+    const broken = setup(pageAnswers(), {}, {
+      clipboard: {
+        writeText: () => {
+          throw new Error('no clipboard');
+        },
+      },
+    });
+    const brokenShown = await broken.service.source(1, TOKEN, 'rendered');
+    expect(brokenShown.status === 'ok' && (await broken.service.copySource(1, TOKEN, 'rendered', brokenShown.ref))).toEqual({ status: 'refused', reason: 'failed' });
+    const none = setup(pageAnswers());
+    const noneShown = await none.service.source(1, TOKEN, 'rendered');
+    expect(noneShown.status === 'ok' && (await none.service.copySource(1, TOKEN, 'rendered', noneShown.ref))).toEqual({ status: 'refused', reason: 'failed' });
+  });
+  test('rendered-source-dropped-on-clear-close-and-clear-browsing-data', async () => {
+    const written: string[] = [];
+    const { service, contents } = setup(pageAnswers(), {}, { clipboard: { writeText: (text) => void written.push(text) } });
+    const read = async () => {
+      const shown = await service.source(1, TOKEN, 'rendered');
+      if (shown.status !== 'ok') throw new Error('not ok');
+      return shown.ref;
+    };
+    // clear(tabId) of the tab drops it; clear of another tab does not.
+    let ref = await read();
+    await service.clear(2);
+    expect((await service.copySource(1, TOKEN, 'rendered', ref)).status).toBe('copied');
+    await service.clear(1);
+    expect(await service.copySource(1, TOKEN, 'rendered', ref)).toEqual({ status: 'refused', reason: 'stale' });
+    // The tab's WebContents destroyed: dropped, and the listener goes with it.
+    ref = await read();
+    expect(contents.listenerCount('destroyed')).toBe(1);
+    contents.emit('destroyed');
+    expect(contents.listenerCount('destroyed')).toBe(0);
+    // (The fake is still live, so a copy reaches the kept text if there is any: there is none.)
+    expect(await service.copySource(1, TOKEN, 'rendered', ref)).toEqual({ status: 'refused', reason: 'stale' });
+    // Clear Browsing Data (`forget`) drops it too.
+    ref = await read();
+    await read();
+    expect(contents.listenerCount('destroyed')).toBe(1);
+    service.forget();
+    expect(contents.listenerCount('destroyed')).toBe(0);
+    expect(await service.copySource(1, TOKEN, 'rendered', ref + 1)).toEqual({ status: 'refused', reason: 'stale' });
+    expect(written).toHaveLength(1);
   });
 });

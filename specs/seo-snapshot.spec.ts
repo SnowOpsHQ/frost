@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { ChecksContextSchema } from './seo-checks.schema';
 import { AccessibilityContextSchema, PageSecuritySchema } from './seo-compliance.schema';
 import { headerValueCap, RESPONSE_HEADER_ALLOWLIST, RESPONSE_LIMITS, RESPONSE_SOURCES, ROBOTS_FETCH_LIMITS, ROBOTS_FETCH_OUTCOMES } from './seo-indexability.spec';
-import { ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SocialTag } from './seo-limits.spec';
+import { HIGHLIGHT_PHRASE_MAX_CHARS, ROBOTS_META_NAMES, SNAPSHOT_LIMITS as L, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SocialTag } from './seo-limits.spec';
 import { HIGHLIGHT_MODES, LINK_FILTER_QUERY_MAX_CHARS, LINK_REL_FILTERS, LINK_TYPE_FILTERS } from './seo-sidebar.spec';
 import { BlockingScriptsSchema, type PerformanceContext } from './seo-speed.schema.spec';
 import { VISIBLE_TEXT_LIMITS } from './seo-content.spec';
@@ -458,6 +458,22 @@ export type SeoCopyUrlInput = z.infer<typeof SeoCopyUrlInputSchema>;
 export const SeoCopySchemaInputSchema = z.strictObject({ tabId: z.int().positive(), audit: SeoAuditRefSchema, block: z.int().nonnegative().max(L.maxJsonLdBlocks - 1) });
 export type SeoCopySchemaInput = z.infer<typeof SeoCopySchemaInputSchema>;
 
-/** `seo.setHighlight` input: the tab and the mode (`HIGHLIGHT_MODES`). */
-export const SeoHighlightInputSchema = z.strictObject({ tabId: z.int().positive(), mode: z.enum(HIGHLIGHT_MODES) });
+/**
+ * `seo.setHighlight` input: the tab and the mode (`HIGHLIGHT_MODES`); for `keyphrase` (Phase 11
+ * Task 2), and only for it, the `phrase` to box: 1 to `HIGHLIGHT_PHRASE_MAX_CHARS` characters on one
+ * line. Main boxes it only when it is one of the tab's ready audit's n-grams or the page's stored
+ * target query (else `false`); the chrome's string is compared, never painted.
+ */
+export const SeoHighlightInputSchema = z
+  .strictObject({
+    tabId: z.int().positive(),
+    mode: z.enum(HIGHLIGHT_MODES),
+    phrase: z
+      .string()
+      .min(1)
+      .max(HIGHLIGHT_PHRASE_MAX_CHARS)
+      .regex(/^[^\r\n\v\f\u0085\u2028\u2029]*$/)
+      .optional(),
+  })
+  .refine((input) => (input.mode === 'keyphrase') === (input.phrase !== undefined), { message: 'phrase is required for keyphrase, and only for it', path: ['phrase'] });
 export type SeoHighlightInput = z.infer<typeof SeoHighlightInputSchema>;

@@ -12,12 +12,13 @@ import type {
   AgentSkillSaveMode,
   ChatExportFormat,
   ChatExportResult,
+  ChatListFilter,
   ChatRetention,
   SkillExportResult,
 } from '@app/specs/agent-data.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { ReasoningEffort } from '@app/specs/agent-reasoning.spec';
-import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest, AgentState } from '@app/specs/agent-session.spec';
+import type { AgentAnswerResult, AgentAttachableTab, AgentAttachResult, AgentChatSummary, AgentSendResult, AgentSetKeyResult, AgentSkillRequest, AgentState } from '@app/specs/agent-session.spec';
 import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import type { McpSaveResult, McpStartResult, McpTokenResult } from '@app/specs/agent-mcp.spec';
 import type { AgentSaveMcpServerInput } from '@app/specs/agent-mcp.schema';
@@ -133,4 +134,27 @@ export interface AgentService {
   chatgptSignOut(): Promise<ChatgptSignOutResult>;
   /** Dismisses the one-time "You're using your ChatGPT plan" notice (persisted); `false` if not stored. */
   chatgptAcknowledge(): Promise<boolean>;
+
+  // ---- Phase 11 Task 8: chat history (`agent-data.spec.ts`, Chat history; acceptance `agent-data.feature.md`) ----
+  /**
+   * The `active` or `archived` chats, most recently updated first; with a non-blank `query`, only the
+   * ones whose title or text (the user's and the assistant's, never tool output) holds it, a text hit
+   * with its `match`. Never rejects.
+   */
+  listChats(filter: ChatListFilter, query?: string): Promise<readonly AgentChatSummary[]>;
+  /** Gives a chat the user's title (one line, trimmed, `chatTitleFromUser`); `false` for an unknown id or a refused title. */
+  renameChat(chatId: string, title: string): boolean;
+  /** Archives a chat (`false`: back to the active list; a message sent to it does that too); `false` for an unknown id. */
+  archiveChat(chatId: string, archived: boolean): boolean;
+
+  // ---- Phase 11 Task 9: @-attached tabs (`agent-attach.feature.md`, Decision 11) ----
+  /**
+   * The open web tabs the user may attach to chat `chatId` (`null`: the new chat): main's tab id, a
+   * cut title and the origin; never the chat's own tab or one already attached. `[]` for an unknown chat.
+   */
+  attachableTabs(chatId: string | null): readonly AgentAttachableTab[];
+  /** Attaches tab `tabId` to chat `chatId` (`null`: the new chat) at the page it shows now, if that page is on `origin` (what the menu showed). */
+  attachTab(chatId: string | null, tabId: number, origin: string): AgentAttachResult;
+  /** Detaches the chat's attachment `ref`; `false` if there was none. */
+  detachTab(chatId: string | null, ref: string): boolean;
 }

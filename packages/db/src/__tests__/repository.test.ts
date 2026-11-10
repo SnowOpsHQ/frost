@@ -1,12 +1,19 @@
 // Spec: specs/browser-session-db.spec.ts (MAX_RESTORED_TABS, MAX_RECENT_VISITS, MAX_STORED_URL_LENGTH,
-// MAX_STORED_TITLE_LENGTH), specs/permissions.spec.ts (SITE_PERMISSIONS, PERSISTED_DECISIONS)
-// Acceptance: specs/browser-session-db.feature.md (Repository)
+// MAX_STORED_TITLE_LENGTH), specs/permissions.spec.ts (SITE_PERMISSIONS, PERSISTED_DECISIONS),
+// specs/capture-db.spec.ts (SCREENSHOT_EDIT_TABLES, MAX_SCREENSHOT_EDIT_OPS_JSON_BYTES), specs/sync.spec.ts (SYNC_TABLES)
+// Acceptance: specs/browser-session-db.feature.md (Repository), specs/screenshot.feature.md (Editing)
 import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { MAX_RECENT_VISITS, MAX_RESTORED_TABS, MAX_STORED_TITLE_LENGTH, MAX_STORED_URL_LENGTH } from '@app/specs/browser-session-db.spec';
 import { createDrizzle } from '../client';
 import { runMigrations } from '../migrations';
 import { createSessionRepository, type SessionRepository, type StoredDecision } from '../repository';
+import { MAX_SCREENSHOT_EDIT_OPS_JSON_BYTES, SCREENSHOT_EDIT_TABLES, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import { SYNC_TABLES } from '@app/specs/sync.spec';
+import { MIGRATIONS } from '../migrations';
+import { PHASE11_MIGRATIONS } from '../phase11-migrations';
+import { uuidv7 } from '../change-intel/ids';
+import { openTestDb, screenshotInput, sha256 } from '../change-intel/__tests__/fixtures';
 
 let raw: DatabaseSync;
 let repo: SessionRepository;
@@ -270,3 +277,142 @@ function watchReads(db: DatabaseSync, seen: { rows: number; longest: number }): 
     },
   });
 }
+
+describe('screenshot edits (Phase 11 Task 7)', () => {
+  const PAGE = 'https://example.com/a';
+  /** A source screenshot and an edited copy of it, appended through the repository. */
+  async function sourceAndCopy(t: ReturnType<typeof openTestDb>, projectId: string = UNFILED_PROJECT_ID, at = 1_000) {
+    const source = screenshotInput({ pageUrl: PAGE, createdAt: at, projectId });
+    expect(await t.repo.appendScreenshot(source)).toBe(true);
+    const copy = { ...screenshotInput({ pageUrl: PAGE, createdAt: at + 500, projectId, sha256: sha256(`copy:${at}`), width: 300, height: 200 }), sourceId: source.id, cropJson: '{"height":200,"width":300,"x":10,"y":20}', opsJson: '[]' };
+    expect(await t.repo.appendScreenshotEdit(copy)).toBe(true);
+    return { source, copy };
+  }
+  const editRows = (t: ReturnType<typeof openTestDb>) => t.raw.prepare('SELECT screenshot_id, source_id, crop, ops, created_at FROM screenshot_edits ORDER BY screenshot_id').all().map((row) => ({ ...row }));
+
+  test('migration-0231', async () => {
+    // The table, its index and its trigger; local-only (not synced), last in MIGRATIONS.
+    // Phase 11's ids are in MIGRATIONS in order, after every id below 0230 (a later block may follow them).
+    const ids = MIGRATIONS.map((m) => m.id);
+    const phase11 = PHASE11_MIGRATIONS.map((m) => m.id);
+    expect(phase11).toContain('0231_screenshot_edits');
+    const positions = phase11.map((id) => ids.indexOf(id));
+    expect(positions.every((at, i) => at >= 0 && (i === 0 || at > positions[i - 1]!))).toBe(true);
+    expect(ids.filter((id) => id < '0230').every((id) => ids.indexOf(id) < positions[0]!)).toBe(true);
+    expect(SYNC_TABLES.map((table) => table.name)).not.toContain(SCREENSHOT_EDIT_TABLES[0]);
+    const names = (type: string) => raw.prepare("SELECT name FROM sqlite_master WHERE type = ? AND tbl_name IN ('screenshot_edits', 'ci_screenshots') ORDER BY name").all(type).map((row) => String(row['name']));
+    expect(names('table')).toEqual(['ci_screenshots', 'screenshot_edits']);
+    expect(names('index')).toContain('screenshot_edits_source_id');
+    expect(names('trigger')).toContain('screenshot_edits_follow_screenshots');
+    // Its checks: ids are 36 characters and differ, ops are bounded, times are whole and not negative.
+    const insert = raw.prepare('INSERT INTO screenshot_edits (screenshot_id, source_id, crop, ops, created_at) VALUES (?, ?, ?, ?, ?)');
+    const a = uuidv7(1);
+    const b = uuidv7(2);
+    expect(() => insert.run('short', b, null, '[]', 1)).toThrow();
+    expect(() => insert.run(a, a, null, '[]', 1)).toThrow();
+    expect(() => insert.run(a, b, null, 'x'.repeat(MAX_SCREENSHOT_EDIT_OPS_JSON_BYTES + 1), 1)).toThrow();
+    expect(() => insert.run(a, b, null, '[]', -1)).toThrow();
+    insert.run(a, b, null, '[]', 1);
+    expect(raw.prepare('SELECT count(*) AS n FROM screenshot_edits').get()!['n']).toBe(1);
+
+    // Through the repository: the copy and its link in one go, read back with `editedFrom`.
+    const t = openTestDb();
+    const { source, copy } = await sourceAndCopy(t);
+    expect(editRows(t)).toEqual([{ screenshot_id: copy.id, source_id: source.id, crop: copy.cropJson, ops: '[]', created_at: copy.createdAt }]);
+    expect(await t.repo.screenshot(copy.id)).toMatchObject({ id: copy.id, editedFrom: source.id, width: 300, height: 200 });
+    expect(await t.repo.screenshot(source.id)).toMatchObject({ id: source.id, editedFrom: null });
+    expect((await t.repo.screenshots({ pageUrl: PAGE })).screenshots.map((shot) => [shot.id, shot.editedFrom])).toEqual([
+      [copy.id, source.id],
+      [source.id, null],
+    ]);
+    // Refused: no such source, a source in a deleted project, its own id, empty or oversized JSON (the
+    // repository never parses it), an id taken.
+    const orphan = { ...screenshotInput({ pageUrl: PAGE, createdAt: 9_000 }), sourceId: uuidv7(8_000), cropJson: null, opsJson: '[]' };
+    expect(await t.repo.appendScreenshotEdit(orphan)).toBe(false);
+    expect(await t.repo.appendScreenshotEdit({ ...orphan, sourceId: orphan.id })).toBe(false);
+    expect(await t.repo.appendScreenshotEdit({ ...orphan, sourceId: source.id, opsJson: '' })).toBe(false);
+    expect(await t.repo.appendScreenshotEdit({ ...orphan, sourceId: source.id, opsJson: 'x'.repeat(MAX_SCREENSHOT_EDIT_OPS_JSON_BYTES + 1) })).toBe(false);
+    expect(await t.repo.appendScreenshotEdit({ ...orphan, sourceId: source.id, cropJson: 'x'.repeat(300) })).toBe(false);
+    expect(await t.repo.appendScreenshotEdit({ ...copy })).toBe(false);
+    const project = (await t.repo.createProject('Gone', 1))!;
+    const elsewhere = screenshotInput({ pageUrl: PAGE, createdAt: 10_000, projectId: project.id });
+    expect(await t.repo.appendScreenshot(elsewhere)).toBe(true);
+    expect(await t.repo.tombstoneProject(project.id, 11_000)).toBe(true);
+    expect(await t.repo.appendScreenshotEdit({ ...screenshotInput({ pageUrl: PAGE, createdAt: 12_000, projectId: project.id }), sourceId: elsewhere.id, cropJson: null, opsJson: '[]' })).toBe(false);
+    expect(t.raw.prepare('SELECT count(*) AS n FROM ci_screenshots').get()!['n']).toBe(3);
+    expect(editRows(t)).toHaveLength(1);
+  });
+
+  test('purge-removes-edit-rows', async () => {
+    const t = openTestDb();
+    const p = (await t.repo.createProject('P', 1))!.id;
+    // Two sources, each with a copy; the second source also has a second copy.
+    const first = await sourceAndCopy(t, p, 1_000);
+    const second = await sourceAndCopy(t, p, 5_000);
+    const another = { ...screenshotInput({ pageUrl: PAGE, createdAt: 7_000, projectId: p, sha256: sha256('copy:again') }), sourceId: second.source.id, cropJson: null, opsJson: '[]' };
+    expect(await t.repo.appendScreenshotEdit(another)).toBe(true);
+    expect(editRows(t)).toHaveLength(3);
+
+    // Keep the newest of each lane (copies are a lane of their own): the older source and the older
+    // copies go, with their links; the newest copy keeps its link to the newest source.
+    const plan = await t.repo.planPurge({ projectId: p, policy: { mode: 'versions', value: 1 }, now: 10_000 });
+    expect(plan?.screenshotIds).toEqual([first.source.id, first.copy.id, second.copy.id].sort());
+    expect((await t.repo.executePurge(plan!, 'retention', 10_000))?.status).toBe('purged');
+    expect(editRows(t)).toEqual([{ screenshot_id: another.id, source_id: second.source.id, crop: null, ops: '[]', created_at: another.createdAt }]);
+    expect(await t.repo.screenshot(another.id)).toMatchObject({ id: another.id, editedFrom: second.source.id });
+
+    // A deleted project's purge takes the rest; a copy whose source stays loses only its own link.
+    const third = await sourceAndCopy(t, UNFILED_PROJECT_ID, 20_000);
+    expect(editRows(t)).toHaveLength(2);
+    expect(await t.repo.tombstoneProject(p, 30_000)).toBe(true);
+    const all = await t.repo.planPurge({ projectId: p, policy: { mode: 'all' }, now: 30_000 });
+    expect((await t.repo.executePurge(all!, 'project-deleted', 30_000))?.status).toBe('purged');
+    expect(editRows(t)).toEqual([{ screenshot_id: third.copy.id, source_id: third.source.id, crop: third.copy.cropJson, ops: '[]', created_at: third.copy.createdAt }]);
+    // Only a copy purged: its link goes, its source stays.
+    t.raw.exec(`INSERT INTO ci_purges (id, reason, project_id, policy, captures, versions, diffs, screenshots, bytes, created_at) VALUES ('${uuidv7(40_000)}', 'purge-now', NULL, NULL, 0, 0, 0, 1, 0, 40000)`);
+    const purgeId = String(t.raw.prepare('SELECT id FROM ci_purges ORDER BY created_at DESC LIMIT 1').get()!['id']);
+    t.raw.prepare("INSERT INTO ci_tombstones (id, purge_id, table_name, row_id, created_at) VALUES (?, ?, 'ci_screenshots', ?, 40000)").run(uuidv7(40_001), purgeId, third.copy.id);
+    t.raw.prepare('DELETE FROM ci_screenshots WHERE id = ?').run(third.copy.id);
+    expect(editRows(t)).toEqual([]);
+    expect(await t.repo.screenshot(third.source.id)).not.toBeNull();
+  });
+
+  test('purged-source-keeps-copy-lane', async () => {
+    // Council round 1: the link outlives its source, so a copy whose source a purge took stays in the
+    // copy lane, still `editedFrom` its (now missing) source, and never pushes out a taken screenshot.
+    const t = openTestDb();
+    const p = (await t.repo.createProject('P', 1))!.id;
+    const keepOne = { mode: 'versions', value: 1 } as const;
+    const s1 = screenshotInput({ pageUrl: PAGE, createdAt: 1_000, projectId: p });
+    const s2 = screenshotInput({ pageUrl: PAGE, createdAt: 2_000, projectId: p });
+    expect(await t.repo.appendScreenshot(s1)).toBe(true);
+    expect(await t.repo.appendScreenshot(s2)).toBe(true);
+    const e1 = { ...screenshotInput({ pageUrl: PAGE, createdAt: 3_000, projectId: p, sha256: sha256('copy:e1') }), sourceId: s1.id, cropJson: null, opsJson: '[]' };
+    expect(await t.repo.appendScreenshotEdit(e1)).toBe(true);
+
+    // Purge 1: the older taken screenshot (E1's source) goes; E1 keeps its link.
+    const first = await t.repo.planPurge({ projectId: p, policy: keepOne, now: 10_000 });
+    expect(first?.screenshotIds).toEqual([s1.id]);
+    expect((await t.repo.executePurge(first!, 'retention', 10_000))?.status).toBe('purged');
+    expect(editRows(t)).toEqual([{ screenshot_id: e1.id, source_id: s1.id, crop: null, ops: '[]', created_at: e1.createdAt }]);
+    expect(await t.repo.screenshot(s1.id)).toBeNull();
+    expect(await t.repo.screenshot(e1.id)).toMatchObject({ id: e1.id, editedFrom: s1.id });
+    expect((await t.repo.screenshots({ pageUrl: PAGE })).screenshots.map((shot) => [shot.id, shot.editedFrom])).toEqual([
+      [e1.id, s1.id],
+      [s2.id, null],
+    ]);
+
+    // Purge 2 deletes nothing more: S2 (a real capture) and E1 are each the newest of their lane.
+    const second = await t.repo.planPurge({ projectId: p, policy: keepOne, now: 20_000 });
+    expect(second?.screenshotIds).toEqual([]);
+    expect(t.raw.prepare('SELECT id FROM ci_screenshots ORDER BY id').all().map((row) => row['id'])).toEqual([s2.id, e1.id]);
+
+    // The copy's own row going still removes its link: a newer copy pushes E1 out of the copy lane.
+    const e2 = { ...screenshotInput({ pageUrl: PAGE, createdAt: 4_000, projectId: p, sha256: sha256('copy:e2') }), sourceId: s2.id, cropJson: null, opsJson: '[]' };
+    expect(await t.repo.appendScreenshotEdit(e2)).toBe(true);
+    const third = await t.repo.planPurge({ projectId: p, policy: keepOne, now: 30_000 });
+    expect(third?.screenshotIds).toEqual([e1.id]);
+    expect((await t.repo.executePurge(third!, 'retention', 30_000))?.status).toBe('purged');
+    expect(editRows(t).map((row) => [row['screenshot_id'], row['source_id']])).toEqual([[e2.id, s2.id]]);
+  });
+});

@@ -128,3 +128,14 @@ describe('tool definitions', () => {
     }
   });
 });
+
+// Phase 11 Task 9 (specs/agent-attach.feature.md): the attached-tab reader's input is a ref and a part, nothing else.
+describe('read_attached_tab', () => {
+  test('read-attached-tab-input', () => {
+    for (const ref of ['tab-1', 'tab-2', 'tab-3']) for (const part of ['audit', 'text']) expect(accepts('read_attached_tab', { ref, part })).toBe(true);
+    for (const input of [{}, { ref: 'tab-1' }, { part: 'text' }, { ref: 'tab-4', part: 'text' }, { ref: 'tab-0', part: 'audit' }, { ref: 7, part: 'text' }, { ref: 'tab-1', part: 'html' }, { ref: 'tab-1', part: 'text', maxChars: 10 }, { ref: 'tab-1', part: 'text', tabId: 3 }, { tabId: 3, part: 'text' }]) {
+      expect(accepts('read_attached_tab', input), JSON.stringify(input)).toBe(false);
+    }
+    expect(getToolDefinition('read_attached_tab').description).toContain(UNTRUSTED_OUTPUT_NOTE);
+  });
+});

@@ -11,13 +11,15 @@ import type {
   AgentSkillSaveMode,
   ChatExportFormat,
   ChatExportResult,
+  ChatListFilter,
   ChatRetention,
   SkillExportResult,
 } from '@app/specs/agent-data.spec';
 import type { ChatgptSignInResult, ChatgptSignOutResult } from '@app/specs/agent-chatgpt.spec';
 import type { CredentialSlot } from '@app/specs/agent-proxy.spec';
 import type { ReasoningEffort } from '@app/specs/agent-reasoning.spec';
-import type { AgentAnswerResult, AgentSendResult, AgentSetKeyResult, AgentSkillRequest } from '@app/specs/agent-session.spec';
+import type { AgentAnswerResult, AgentAttachableTab, AgentAttachResult, AgentChatSummary, AgentSendResult, AgentSetKeyResult, AgentSkillRequest } from '@app/specs/agent-session.spec';
+import type { AttachedTabRef } from '@app/specs/agent-tools.spec';
 import type { AgentModelId, ModelRoute } from '@app/specs/agent-tools.spec';
 import type { McpSaveResult, McpStartResult, McpTokenResult } from '@app/specs/agent-mcp.spec';
 import type { AgentSaveMcpServerRequest } from './agent-view';
@@ -32,6 +34,8 @@ import { ipc } from './ipc';
 // Task 9 (`agent-data.spec.ts`): the grants page, the chat retention, "Delete all chats" and export
 // (main asks in its own dialogs: the renderer never names a file), and the skills editor. Phase 8
 // Task 6: skills files, exported and imported through main's own dialogs (an import is reviewed first).
+// Phase 11 Task 8: chat history (search and the two lists answered by main, rename, archive).
+// Phase 11 Task 9: @-attached tabs (the menu's list, attach and detach; the chips come with `AgentState`).
 
 export const agentActions = {
   send: (chatId: string | null, message: string | AgentSkillRequest): Promise<AgentSendResult> =>
@@ -40,6 +44,15 @@ export const agentActions = {
   newChat: (): Promise<null> => ipc.agent.newChat.mutate().catch(() => null),
   selectChat: (chatId: string): Promise<boolean> => ipc.agent.selectChat.mutate({ chatId }).catch(() => false),
   deleteChat: (chatId: string): Promise<boolean> => ipc.agent.deleteChat.mutate({ chatId }).catch(() => false),
+  /** `null` on an IPC failure (the list then keeps what it showed). */
+  listChats: (filter: ChatListFilter, query: string): Promise<readonly AgentChatSummary[] | null> => ipc.agent.listChats.query({ filter, query }).catch(() => null),
+  renameChat: (chatId: string, title: string): Promise<boolean> => ipc.agent.renameChat.mutate({ chatId, title }).catch(() => false),
+  archiveChat: (chatId: string, archived: boolean): Promise<boolean> => ipc.agent.archiveChat.mutate({ chatId, archived }).catch(() => false),
+  // Phase 11 Task 9: @-attached tabs (the user's only; `null` is the new chat).
+  attachableTabs: (chatId: string | null): Promise<readonly AgentAttachableTab[]> => ipc.agent.attachableTabs.query({ chatId }).catch(() => []),
+  /** `origin`: the one the menu showed (main refuses the tab if its page has left it). */
+  attachTab: (chatId: string | null, tabId: number, origin: string): Promise<AgentAttachResult> => ipc.agent.attachTab.mutate({ chatId, tabId, origin }).catch((): AgentAttachResult => 'not-attachable'),
+  detachTab: (chatId: string | null, ref: AttachedTabRef): Promise<boolean> => ipc.agent.detachTab.mutate({ chatId, ref }).catch(() => false),
   answerApproval: (approvalId: string, decision: ApprovalDecision): Promise<AgentAnswerResult> =>
     ipc.agent.answerApproval.mutate({ approvalId, decision }).catch((): AgentAnswerResult => 'unknown'),
   setModel: (route: ModelRoute, modelId: AgentModelId): Promise<boolean> => ipc.agent.setModel.mutate({ route, modelId }).catch(() => false),

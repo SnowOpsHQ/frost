@@ -1,10 +1,15 @@
-// Specs: specs/devtools.spec.ts (DEVTOOLS_MENU_ID, DEVTOOLS_STORAGE_KEYS, MASKED_VALUE, CLEAR_SITE_DATA),
+// Specs: specs/devtools.spec.ts (DEVTOOLS_MENU_ID, DEVTOOLS_STORAGE_KEYS, MASKED_VALUE, CLEAR_SITE_DATA; Phase 11 Task 4:
+// EXPORT_URLS_REDACTED_NOTE, EXPORT_REDACTION_HINT, HAR_NO_BODY_COMMENT, REDACTED_VALUE), specs/devtools.schema.ts (HarLogSchema),
 // specs/browser.spec.ts (BrowserState.devtoolsToggleSeq)
 // Acceptance: specs/devtools.feature.md (End to end)
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { CLEAR_SITE_DATA, DEVTOOLS_MENU_ID, DEVTOOLS_STORAGE_KEYS, MASKED_VALUE } from '@app/specs/devtools.spec';
+import { CLEAR_SITE_DATA, DEVTOOLS_MENU_ID, DEVTOOLS_STORAGE_KEYS, EXPORT_REDACTION_HINT, EXPORT_URLS_REDACTED_NOTE, HAR_NO_BODY_COMMENT, MASKED_VALUE, REDACTED_VALUE } from '@app/specs/devtools.spec';
+import { HarLogSchema } from '@app/specs/devtools.schema';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { closeApp, launchApp } from './harness';
@@ -15,6 +20,10 @@ const SITE_HOST = 'devtools.frost-e2e.net';
 const THIRD_HOST = 'cdn.thirdparty-e2e.org';
 const SECRET = 'e2e-secret-token-4711';
 const COOKIE_SECRET = 'cookie-secret-value-0815';
+/** Values the export page sends in URLs (Phase 11 Task 4): none may reach the exported file. */
+const URL_SECRETS = ['pagesecret-e2e', 'fragsecret-e2e', 'tokensecret-e2e', 'jane%40mail.example', 'jane@mail.example', 'statesecret-e2e', 'codesecret-e2e', 'sigsecret-e2e'];
+const LOCAL_SECRET = 'local-storage-secret-2718';
+const SESSION_SECRET = 'session-storage-secret-3141';
 /** A 1×1 PNG. */
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
@@ -39,6 +48,22 @@ async function startSiteServer() {
     if (path === '/r302') return response.writeHead(302, { Location: '/final', 'X-Robots-Tag': 'noarchive' }).end();
     if (path === '/no-content') return response.writeHead(204).end();
     if (path === '/final') return html('<html lang="en"><title>Final</title><h1>Final</h1></html>');
+    // Phase 11 Task 4: a page whose URLs, Referer, Location and Link carry secrets, and one with web storage.
+    if (path === '/r-token') return response.writeHead(302, { Location: '/final?code=codesecret-e2e&lang=en' }).end();
+    if (path === '/export')
+      return html(
+        `<html lang="en"><title>Export</title><h1>Export</h1><script>
+          fetch('/api?access_token=tokensecret-e2e&q=ok&to=jane%40mail.example');
+          fetch('/r-token?state=statesecret-e2e');
+        </script></html>`,
+        { Link: '</site.css?sig=sigsecret-e2e>; rel=preload; as=style' },
+      );
+    if (path === '/storage')
+      return html(`<html lang="en"><title>Storage</title><h1>Storage</h1><script>
+        localStorage.setItem('auth_token', '${LOCAL_SECRET}');
+        localStorage.setItem('theme', 'dark');
+        sessionStorage.setItem('cart', '${SESSION_SECRET}');
+      </script></html>`);
     if (path === '/cookies')
       return html('<html lang="en"><title>Cookies</title><h1>Cookies</h1></html>', { 'Set-Cookie': [`session_id=${COOKIE_SECRET}; Path=/; HttpOnly`, 'theme=dark; Path=/; SameSite=Lax; Max-Age=3600'] });
     if (path === '/greedy')
@@ -112,6 +137,24 @@ const answerDialogs = (index: number) =>
       return { response: index, checkboxChecked: false };
     }) as typeof dialog.showMessageBox;
   }, index);
+/** Main's save dialog answers `filePath` from now on (`restoreSaveDialog` puts Electron's back); the offered names are kept. */
+const answerSaveDialog = (filePath: string) =>
+  app.evaluate(({ dialog }, filePath) => {
+    const holder = globalThis as { __devtoolsSave?: typeof dialog.showSaveDialog; __devtoolsSaveNames?: string[] };
+    holder.__devtoolsSave ??= dialog.showSaveDialog;
+    holder.__devtoolsSaveNames = [];
+    dialog.showSaveDialog = (async (...args: unknown[]) => {
+      const options = args.find((a): a is { defaultPath?: string } => typeof a === 'object' && a !== null && 'defaultPath' in a);
+      holder.__devtoolsSaveNames!.push(options?.defaultPath ?? '');
+      return { canceled: false, filePath };
+    }) as typeof dialog.showSaveDialog;
+  }, filePath);
+const saveNames = () => app.evaluate(() => (globalThis as { __devtoolsSaveNames?: string[] }).__devtoolsSaveNames ?? []);
+const restoreSaveDialog = () =>
+  app.evaluate(({ dialog }) => {
+    const holder = globalThis as { __devtoolsSave?: typeof dialog.showSaveDialog };
+    if (holder.__devtoolsSave) dialog.showSaveDialog = holder.__devtoolsSave;
+  });
 const dialogsAsked = () => app.evaluate(() => (globalThis as { __devtoolsBoxes?: number }).__devtoolsBoxes ?? 0);
 const restoreDialogs = () =>
   app.evaluate(({ dialog }) => {
@@ -360,4 +403,91 @@ test('devtools-shortcut-not-swallowed', async () => {
   await expect(drawer()).toHaveCount(0);
   // The page never saw the shortcut.
   expect(await run(greedy, 'window.seen.map((k) => k.toLowerCase())')).toEqual(['a']);
+});
+
+test('network-export-har-without-bodies-and-redacted', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'frost-har-'));
+  const file = join(dir, 'export.har');
+  try {
+    await setDrawer(true);
+    await showTab('network');
+    const url = `${site.origin}/export?session=pagesecret-e2e#fragsecret-e2e`;
+    await go(url);
+    await contentsIdAt(url);
+    await expect(rowFor('/api?access_token=tokensecret-e2e&q=ok&to=jane%40mail.example')).toHaveCount(1);
+    await expect(rowFor('/final?code=codesecret-e2e&lang=en')).toHaveCount(1);
+    await answerSaveDialog(file);
+    await page.getByTestId('devtools-network-export').click();
+    // The menu says what the file is: best-effort redaction, with the hint.
+    const note = page.getByTestId('devtools-network-export-note');
+    await expect(note).toContainText(EXPORT_URLS_REDACTED_NOTE);
+    await expect(note).toContainText(EXPORT_REDACTION_HINT);
+    await page.locator('[data-testid="devtools-network-export-format"][data-format="har"]').click();
+    await expect(page.getByTestId('devtools-network-export-status')).toHaveText('Saved.');
+    expect((await saveNames()).at(-1)).toMatch(/frost-network-devtools\.frost-e2e\.net-\d{8}-\d{6}\.har$/);
+
+    const text = await readFile(file, 'utf8');
+    const parsed = HarLogSchema.safeParse(JSON.parse(text));
+    expect(parsed.success, JSON.stringify(parsed.error?.issues?.slice(0, 3))).toBe(true);
+    const har = parsed.data!;
+    expect(har.log.comment.startsWith(EXPORT_URLS_REDACTED_NOTE)).toBe(true);
+    for (const secret of URL_SECRETS) expect(text, secret).not.toContain(secret);
+    expect(har.log.pages.map((p) => p.title)).toContain(`${site.origin}/export?session=${REDACTED_VALUE}`);
+    for (const entry of har.log.entries) {
+      expect(entry.request.bodySize).toBe(-1);
+      expect(entry.response.bodySize).toBe(-1);
+      expect(entry.response.content.size).toBe(-1);
+      expect(entry.response.content).not.toHaveProperty('text');
+      expect(entry.response.content.comment).toBe(HAR_NO_BODY_COMMENT);
+    }
+    const api = har.log.entries.find((e) => e.request.url.includes('/api?'))!;
+    expect(api.request.url).toBe(`${site.origin}/api?access_token=${REDACTED_VALUE}&q=ok&to=${REDACTED_VALUE}`);
+    // Chromium may keep the referrer out of `onSendHeaders`; when the log has it, it is redacted (the unit tests cover it).
+    const referer = api.request.headers.find((h) => h.name === 'referer');
+    if (referer) expect(referer.value).toBe(`${site.origin}/export?session=${REDACTED_VALUE}`);
+    const hop = har.log.entries.find((e) => e.request.url.includes('/r-token'))!;
+    expect(hop.response.redirectURL).toBe(`${site.origin}/final?code=${REDACTED_VALUE}&lang=en`);
+    expect(hop.response.headers).toContainEqual({ name: 'location', value: `${site.origin}/final?code=${REDACTED_VALUE}&lang=en` });
+    const doc = har.log.entries.find((e) => e._resourceType === 'document')!;
+    expect(doc.response.headers).toContainEqual({ name: 'link', value: `<${site.origin}/site.css?sig=${REDACTED_VALUE}>; rel=preload; as=style` });
+  } finally {
+    await restoreSaveDialog();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+});
+
+test('storage-shows-local-and-session-keys-masked', async () => {
+  await setDrawer(true);
+  await showTab('network');
+  await go(`${site.origin}/storage`);
+  await contentsIdAt(`${site.origin}/storage`);
+  // Opening the Storage tab runs main's reader once: keys and sizes, values masked.
+  await showTab('storage');
+  const local = page.locator('[data-testid="devtools-web-storage"][data-area="local"]');
+  const session = page.locator('[data-testid="devtools-web-storage"][data-area="session"]');
+  const token = local.locator('[data-testid="devtools-web-storage-item"][data-key="auth_token"]');
+  await expect(token).toHaveAttribute('data-masked', 'true');
+  await expect(token).toContainText(`${LOCAL_SECRET.length} characters`);
+  await expect(local.locator('[data-testid="devtools-web-storage-item"][data-key="theme"]')).toHaveAttribute('data-masked', 'true');
+  const cart = session.locator('[data-testid="devtools-web-storage-item"][data-key="cart"]');
+  await expect(cart).toHaveAttribute('data-masked', 'true');
+  await expect(token.getByTestId('devtools-web-storage-value')).toHaveText(MASKED_VALUE);
+  let content = await page.content();
+  expect(content).not.toContain(LOCAL_SECRET);
+  expect(content).not.toContain(SESSION_SECRET);
+  // Reveal: that one value only.
+  await token.getByTestId('devtools-web-storage-reveal').click();
+  await expect(token.getByTestId('devtools-web-storage-value')).toHaveText(LOCAL_SECRET);
+  await expect(cart).toHaveAttribute('data-masked', 'true');
+  expect(await page.content()).not.toContain(SESSION_SECRET);
+  // Another document: nothing of the old one stays (Refresh reads the new one).
+  await go(`${site.origin}/final`);
+  await contentsIdAt(`${site.origin}/final`);
+  await expect(page.getByTestId('devtools-web-storage-unread')).toBeVisible();
+  content = await page.content();
+  expect(content).not.toContain(LOCAL_SECRET);
+  await page.getByTestId('devtools-storage-refresh').click();
+  // Same origin: the keys are still there, masked.
+  await expect(page.locator('[data-testid="devtools-web-storage"][data-area="local"] [data-key="auth_token"]')).toHaveAttribute('data-masked', 'true');
+  expect(await page.content()).not.toContain(LOCAL_SECRET);
 });

@@ -1,12 +1,12 @@
 import type { SavedSession } from '@app/db';
-import type { BrowserService, SeoService } from '@app/ipc-contract';
+import type { BrowserService, SeoService, TabOverridesService } from '@app/ipc-contract';
 import { copyValueOf, filterLinks, formatJson, linksCsv, pageUrls } from '@app/seo-core';
 import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
 import { OPEN_IN_TEMPLATES, type OpenInTemplateId, type OpenToolResult, type PaletteReturnFocus } from '@app/specs/command-palette.spec';
 import { isPublicAddress, openInUrl } from '@app/specs/open-in.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
-import type { RenderProfile } from '@app/specs/render-profile.spec';
+import { DEFAULT_TAB_OVERRIDES, type RenderProfile, type TabOverrides } from '@app/specs/render-profile.spec';
 import { isWebUrl, parseWebUrl } from '@app/specs/web-url.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { createFullscreen } from './fullscreen';
@@ -14,12 +14,16 @@ import { createPageCommands } from './page-commands';
 import { pageTitle } from './page-title';
 import { createTabRenderProfiles, type RenderProfileOptions } from './render-profile';
 import { withAuditProfiles } from './render-profile-audits';
+import { createCookieBlock, type CookieBlock } from './cookie-block';
+import type { CssOffTarget } from './css-off';
+import { createTabOverrides } from './tab-overrides';
 import { createSessionSync, restoredStrip, type SessionSink } from './session-sync';
 import { createTabA11y, type A11yRunner } from '../seo/a11y-runs';
+import { sameAudit } from '../seo/audit-ref';
 import { createTabAudits, type TabAuditsOptions } from '../seo/auditor';
 import { withKnown } from '../seo/context-source';
 import { createTabHighlights, type HighlightPainter } from '../seo/highlights';
-import { sentenceHighlightTargets } from '../seo/highlight-targets';
+import { keyphraseHighlightTarget, sentenceHighlightTargets } from '../seo/highlight-targets';
 import { createTabSpeed, type TabSpeedOptions } from '../seo/vitals-tabs';
 import { matchDevtoolsShortcut, matchFindStepShortcut, matchPageShortcut, matchSidebarShortcut, matchTabShortcut, type KeyInput, type TabShortcut } from './shortcuts';
 import { createStateWatch } from './state-watch';
@@ -65,6 +69,11 @@ export interface BrowserController extends BrowserService {
   attach(win: HostWindow): void;
   /** How many `watch` calls are waiting (at most `MAX_PENDING_WATCHES`). */
   pendingWatches(): number;
+  /**
+   * Calls `listener` after every state change (Phase 11 Task 9: the agent's attached-tab chips);
+   * answers its unsubscribe. A listener that throws is ignored.
+   */
+  onStateChange(listener: () => void): () => void;
   /** Closes the active tab (Cmd/Ctrl+W). */
   closeActiveTab(): boolean;
   /** Activates the tab at `index` in strip order (Cmd/Ctrl+1…8); `false` past the end. */
@@ -94,6 +103,8 @@ export interface BrowserController extends BrowserService {
   notify(kind: NoticeKind): void;
   /** Forgets every render-profile pin in memory (Clear Browsing Data; `render-profile.feature.md`). */
   forgetRenderProfilePins(): void;
+  /** Tab overrides (Phase 11 Task 6, `render-profile.feature.md`): any open tab, from the chrome only. */
+  readonly tabOverrides: TabOverridesService;
   /**
    * The id of the open tab whose (live) page view's WebContents is `contents`, else `null`: the
    * permission handlers attribute a request to its tab with it (`permissions.feature.md`).
@@ -197,6 +208,11 @@ export interface BrowserControllerOptions {
    */
   readonly highlight?: HighlightPainter;
   /**
+   * The page's stored target query (the Content panel's notes, as main last read or wrote them for
+   * that URL), or `null`: the `keyphrase` highlight accepts it as a phrase (Phase 11 Task 2).
+   */
+  readonly targetQuery?: (url: string) => string | null;
+  /**
    * The page-speed collector and its analysis (`runVitals` in `../seo/vitals.ts`, the worker's
    * `analyseSpeed`): `seo.measureSpeed` measures the active tab (`seo-speed.feature.md`). Without it
    * every measurement stays `pending`.
@@ -228,15 +244,15 @@ export interface BrowserControllerOptions {
    * the app's Chromium version. Without it `browser.setRenderProfile` is a no-op answering `false`.
    */
   readonly renderProfiles?: RenderProfileOptions;
+  /**
+   * Tab overrides (Phase 11 Task 6): the HTTP cookie block (default: one of its own, logging to the
+   * console) and CSS off's runner (default `runCssOff`). Tests replace them.
+   */
+  readonly tabOverrides?: { readonly cookieBlock?: CookieBlock; readonly cssOff?: (target: CssOffTarget, off: boolean) => Promise<boolean> };
   /** The engine address-bar searches use (`browser-polish.spec.ts`); without it, `DEFAULT_SEARCH_ENGINE`. */
   readonly searchEngine?: () => SearchEngineId;
   /** The content notes' generation (`seo-content.feature.md`; main's content service); without it, `0`. */
   readonly contentNotesGeneration?: () => number;
-}
-
-/** Whether `audit` is the one the panel rendered (`SeoAuditRef`: its URL and when it was taken). */
-function sameAudit(audit: { readonly url: string; readonly takenAt: number }, shown: { readonly url: string; readonly takenAt: number }): boolean {
-  return audit.url === shown.url && audit.takenAt === shown.takenAt;
 }
 
 export function createBrowserController(options: BrowserControllerOptions): BrowserController {
@@ -260,7 +276,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const snapshot = (): BrowserState => ({
     version: stateWatch.version(),
-    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight, renderProfile: renderProfiles.state(tab) })),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight, highlightPhrase: tab.highlightPhrase, renderProfile: renderProfiles.state(tab), ...tabOverrides.state(tab), overridesStatus: renderProfiles.overridesStatus(tab) })),
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     toggleSidebarSeq,
@@ -287,11 +303,19 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     win.setTitle(title === '' ? APP_WINDOW_TITLE : `${capTitle(title)}${WINDOW_TITLE_SEPARATOR}${APP_WINDOW_TITLE}`);
   };
 
+  const stateListeners = new Set<() => void>();
   const changed = (): void => {
     stateWatch.bump();
     updateWindowTitle();
     sessionSync.save();
     stateWatch.wake();
+    for (const listener of [...stateListeners]) {
+      try {
+        listener();
+      } catch {
+        // A listener's failure never stops the browser's own work.
+      }
+    }
   };
 
   // A prompt appeared, was answered or timed out (denials the controller causes are reported by
@@ -305,10 +329,18 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // (`render-profile.feature.md`, Recorded with audits).
   const auditProfiles =
     options.seo &&
-    withAuditProfiles(options.seo, (contents) => {
-      const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
-      return tab ? renderProfiles.auditProfile(tab) : null;
-    });
+    withAuditProfiles(
+      options.seo,
+      (contents) => {
+        const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
+        return tab ? renderProfiles.auditProfile(tab) : null;
+      },
+      // The tab overrides each audit ran under (the stamp, Phase 11 Task 6), with or without a profile.
+      (contents) => {
+        const tab = strip.tabs.find((t) => t.view !== null && aliveContents(t.view) === contents);
+        return tab ? tabOverrides.get(tab) : DEFAULT_TAB_OVERRIDES;
+      },
+    );
   const seoOptions: TabAuditsOptions | undefined = auditProfiles && {
     ...auditProfiles.options,
     context: (contents) => {
@@ -345,14 +377,19 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   });
 
   // The SEO highlight overlay, on the active tab only (it goes when the page changes or the tab is left).
-  // `sentences` boxes the difficult sentences of the tab's own ready audit (never text from the chrome).
+  // `sentences` boxes the difficult sentences of the tab's own ready audit (never text from the chrome);
+  // `keyphrase` the phrase the chrome names, only if it is one of that audit's n-grams or the page's
+  // stored target query (`targetQuery`), as main's own copy.
   const highlights = createTabHighlights({
     painter: options.highlight,
     isActive: (tab) => hasWindow() && tab.id === strip.activeTabId,
-    textTargets: (tab, mode) => {
-      if (mode !== 'sentences') return [];
+    textTargets: (tab, mode, phrase) => {
+      if (mode !== 'sentences' && mode !== 'keyphrase') return [];
       const response = audits.response(tab);
-      return response.status === 'ready' ? sentenceHighlightTargets(response.audit) : [];
+      if (response.status !== 'ready') return [];
+      if (mode === 'sentences') return sentenceHighlightTargets(response.audit);
+      const target = phrase === undefined ? null : keyphraseHighlightTarget(response.audit, phrase, options.targetQuery?.(response.audit.url) ?? null);
+      return target ? [target] : [];
     },
     changed,
   });
@@ -375,6 +412,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       changed();
     },
     pageArea: () => (strip.pageBounds !== null && hasWindow() ? clampPageBounds(strip.pageBounds, strip.win!.getContentSize() as [number, number]) : null),
+  });
+
+  // Tab overrides (Phase 11 Task 6, `render-profile.feature.md`, Tab overrides): each tab's own; the
+  // CDP part goes into the tab's merged render-profile list.
+  const tabOverrides = createTabOverrides({
+    applyCdp: (tab, overrides) => renderProfiles.setTabOverrides(tab, overrides),
+    cookieBlock: options.tabOverrides?.cookieBlock ?? createCookieBlock(),
+    ...(options.tabOverrides?.cssOff ? { cssOff: options.tabOverrides.cssOff } : {}),
+    changed,
   });
 
   /**
@@ -454,6 +500,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     a11y.forget(tab);
     highlights.dropped(tab);
     renderProfiles.released(tab);
+    tabOverrides.released(tab);
     finds.released(tab);
     if (view) detach(view);
     return view;
@@ -601,10 +648,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const unlistenEvents = tab.unlisten;
     const unlistenProfile = renderProfiles.wire(tab, view);
     const unlistenFind = finds.wire(tab, view);
+    const unlistenOverrides = tabOverrides.wire(tab, view);
     tab.unlisten = () => {
       unlistenEvents();
       unlistenProfile();
       unlistenFind();
+      unlistenOverrides();
     };
     // Sized now, so a background tab (a popup) lays its page out at the page area's size.
     applyBounds(tab);
@@ -1096,12 +1145,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         const tab = strip.tabs.find((t) => t.id === tabId);
         const response = audits.response(tab);
         // A ready audit carries the tab's accessibility run (Task 6) and the render profile it ran under.
-        return tab && response.status === 'ready' ? { ...response, accessibilityRun: a11y.state(tab), renderProfile: auditProfiles?.profileOf(response.audit) ?? null } : response;
+        return tab && response.status === 'ready'
+          ? { ...response, accessibilityRun: a11y.state(tab), renderProfile: auditProfiles?.profileOf(response.audit) ?? null, ...(auditProfiles ? { tabOverrides: auditProfiles.overridesOf(response.audit) } : {}) }
+          : response;
       },
       measureSpeed: (tabId) => speeds.measure(strip.tabs.find((tab) => tab.id === tabId)),
-      setHighlight: (tabId, mode) => {
+      setHighlight: (tabId, mode, phrase) => {
         const tab = strip.tabs.find((t) => t.id === tabId);
-        return tab !== undefined && highlights.set(tab, mode);
+        return tab !== undefined && highlights.set(tab, mode, phrase);
       },
       // All three copy only what the tab's ready audit holds, through main's clipboard, and only from
       // the audit the panel shows (`SeoAuditRefSchema`).
@@ -1168,6 +1219,16 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     },
     forgetRenderProfilePins: () => renderProfiles.forgetPins(),
 
+    // Tab overrides (Phase 11 Task 6): any open tab, from the chrome only.
+    tabOverrides: {
+      set: (tabId: number, overrides: TabOverrides) => {
+        const tab = strip.tabs.find((t) => t.id === tabId);
+        if (tab === undefined || !hasWindow()) return false;
+        tabOverrides.set(tab, overrides);
+        return true;
+      },
+    },
+
     notify: raiseNotice,
 
     tabIdOf,
@@ -1203,5 +1264,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     watch: (sinceVersion, signal) => stateWatch.watch(sinceVersion, signal),
 
     pendingWatches: () => stateWatch.pending(),
+
+    onStateChange(listener) {
+      stateListeners.add(listener);
+      return () => void stateListeners.delete(listener);
+    },
   };
 }

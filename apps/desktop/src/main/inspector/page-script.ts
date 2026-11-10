@@ -1,5 +1,5 @@
 import { REGION_EXTRACT_LIMITS } from '@app/specs/changes.spec';
-import { INSPECTOR_LIMITS, INSPECTOR_WORLD_ID, type InspectorLimits, type NodePath } from '@app/specs/inspector.spec';
+import { INSPECTOR_LIMITS, INSPECTOR_SEARCH_LIMITS, INSPECTOR_SOURCE_MAX_CHARS, INSPECTOR_WORLD_ID, type InspectorLimits, type InspectorSearchMode, type NodePath } from '@app/specs/inspector.spec';
 
 // The inspector's page scripts (Phase 6 Task 8; spec `inspector.spec.ts`; acceptance
 // `inspector.feature.md`, Page scripts). `inspectPage` is one self-contained function: it is
@@ -21,6 +21,14 @@ import { INSPECTOR_LIMITS, INSPECTOR_WORLD_ID, type InspectorLimits, type NodePa
 // - `children` / `node` / `highlight` name a node by path and expected tag: within one document a path
 //   can come to name another element, and then it is `not-found`.
 // - `highlight` / `clear` / `cancelPick`: a tree row's outline, everything off, the pick ended.
+// - `search` (Phase 11 Task 5): elements by their own text (case-insensitive, whitespace collapsed) or
+//   a CSS selector (`querySelectorAll`; one it throws on is `invalid-selector`), in document order, at
+//   most `maxResults`, looking at no more than `maxNodesVisited` nodes; the query is request data.
+// - `source` (Phase 11 Task 5): the doctype, a line break and `<html>`'s `outerHTML`, cut at
+//   `maxSourceChars`. While the overlay's host is in the page, `<html>` is serialised child by child
+//   with the host left out, its start tag written from its attributes (HTML attribute escaping): the
+//   host is never moved or hidden, and nothing is cloned (cloning a customised built-in would run the
+//   page's constructor).
 //
 // Read-only: no page element's attributes, styles or text are ever written. The outlines are drawn
 // with the Phase 2 highlight's technique (`seo/highlight.ts`): one host element of the inspector's own
@@ -42,6 +50,8 @@ interface PageList<T> {
 interface PageNode {
   readonly nodeType: number;
   readonly nextSibling: PageNode | null;
+  /** A text or comment node's data (`null` for an element). */
+  readonly nodeValue?: string | null;
 }
 interface PageText extends PageNode {
   readonly length: number;
@@ -78,6 +88,8 @@ interface PageElement extends PageNode {
   readonly classList?: { readonly length: number; item(index: number): string | null };
   readonly shadowRoot?: unknown;
   readonly isConnected?: boolean;
+  readonly outerHTML?: string;
+  readonly childNodes?: PageList<PageNode>;
   readonly style: PageStyle;
   textContent: string | null;
   getAttribute(name: string): string | null;
@@ -103,6 +115,7 @@ interface PageView {
 /** The parts of `document` the script uses. */
 export interface InspectorDocument {
   readonly baseURI: string;
+  readonly doctype?: { readonly name: string; readonly publicId: string; readonly systemId: string } | null;
   readonly documentElement: PageElement | null;
   readonly defaultView: PageView | null;
   createElement(name: string): PageElement;
@@ -122,12 +135,23 @@ export type InspectorRequest =
   | { readonly op: 'pick'; readonly token: string | null }
   | { readonly op: 'highlight'; readonly node: { readonly path: NodePath; readonly tag: string } | null; readonly token: string }
   | { readonly op: 'clear' }
-  | { readonly op: 'cancelPick' };
+  | { readonly op: 'cancelPick' }
+  | { readonly op: 'search'; readonly token: string | null; readonly mode: InspectorSearchMode; readonly query: string }
+  | { readonly op: 'source'; readonly token: string | null };
 
-/** The limits the script takes: the spec's, plus the landmark scan's cap (`REGION_EXTRACT_LIMITS.maxMainScan`). */
-export type InspectorScriptLimits = InspectorLimits & { readonly maxMainScan: number };
+/**
+ * The limits the script takes: the spec's, the search's (`INSPECTOR_SEARCH_LIMITS`), the source's cap
+ * (`INSPECTOR_SOURCE_MAX_CHARS`), plus the landmark scan's cap (`REGION_EXTRACT_LIMITS.maxMainScan`).
+ */
+export type InspectorScriptLimits = InspectorLimits & { readonly maxMainScan: number; readonly maxResults: number; readonly maxNodesVisited: number; readonly maxSourceChars: number };
 
-export const INSPECTOR_SCRIPT_LIMITS: InspectorScriptLimits = { ...INSPECTOR_LIMITS, maxMainScan: REGION_EXTRACT_LIMITS.maxMainScan };
+export const INSPECTOR_SCRIPT_LIMITS: InspectorScriptLimits = {
+  ...INSPECTOR_LIMITS,
+  maxMainScan: REGION_EXTRACT_LIMITS.maxMainScan,
+  maxResults: INSPECTOR_SEARCH_LIMITS.maxResults,
+  maxNodesVisited: INSPECTOR_SEARCH_LIMITS.maxNodesVisited,
+  maxSourceChars: INSPECTOR_SOURCE_MAX_CHARS,
+};
 
 /** The isolated world's global property holding the inspector's state. */
 export const INSPECTOR_STATE_KEY = '__frostInspector';
@@ -534,6 +558,118 @@ export function inspectPage(document: InspectorDocument, store: Record<string, u
     S.hover = el;
     refresh();
     return { status: 'ok' };
+  }
+
+  if (request.op === 'search') {
+    const matches: { path: NodePath; node: ReturnType<typeof row> }[] = [];
+    let more = false;
+    /** Adds `el` if a path names it (deeper than `maxPathDepth`, or outside `<html>`, it is left out); `false` once the list is full. */
+    const add = (el: PageElement): boolean => {
+      const path = pathOf(el);
+      if (path === null || resolve(path) !== el) return true;
+      if (matches.length >= L.maxResults) {
+        more = true;
+        return false;
+      }
+      matches.push({ path, node: row(el, path.length === 0 ? 0 : path[path.length - 1]!) });
+      return true;
+    };
+    const host = ownHost();
+    if (request.mode === 'selector') {
+      let found: PageList<PageElement>;
+      try {
+        found = document.querySelectorAll(String(request.query));
+      } catch {
+        return { status: 'invalid-selector' };
+      }
+      const n = Math.min(found.length, L.maxNodesVisited);
+      /** Whether `el`'s ancestor chain is longer than a path may be (checked before its path is made). */
+      const tooDeep = (el: PageElement): boolean => {
+        let depth = 0;
+        for (let at = el.parentElement; at !== null; at = at.parentElement) if (++depth > L.maxPathDepth) return true;
+        return false;
+      };
+      for (let i = 0; i < n; i++) {
+        const el = found[i];
+        if (!el || el === host || tooDeep(el)) continue;
+        if (!add(el)) break;
+      }
+      if (found.length > n) more = true;
+      return { status: 'ok', docToken: S.token, matches, more };
+    }
+    const fold = (text: string): string => text.replace(/\s+/g, ' ').toLowerCase();
+    const needle = fold(String(request.query)).trim();
+    const root = document.documentElement;
+    if (needle === '' || !root) return { status: 'ok', docToken: S.token, matches, more };
+    // Document order, iteratively, in one pass over each element's child nodes: every node looked at
+    // (`<html>`, then each child node of any kind: element, text, comment) counts once.
+    const stack: PageElement[] = [root];
+    let visited = 1;
+    /** The most of one element's own text read (characters): enough to hold any query. */
+    const textBudget = Math.max(L.maxTextPreviewChars * 4, needle.length * 8, 4_096);
+    walk: while (stack.length > 0) {
+      const el = stack.pop()!;
+      let own = '';
+      const kids: PageElement[] = [];
+      for (let node = el.firstChild; node !== null; node = node.nextSibling) {
+        if (++visited > L.maxNodesVisited) {
+          more = true;
+          if (own !== '' && fold(own).includes(needle)) add(el);
+          break walk;
+        }
+        if (node.nodeType === ELEMENT_NODE) {
+          if (node !== host) kids.push(node as PageElement);
+        } else if (node.nodeType === TEXT_NODE && own.length < textBudget) {
+          const data = node as PageText;
+          own += data.substringData(0, Math.min(data.length, textBudget - own.length));
+        }
+      }
+      if (own !== '' && fold(own).includes(needle) && !add(el)) break;
+      for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]!);
+    }
+    return { status: 'ok', docToken: S.token, matches, more };
+  }
+  if (request.op === 'source') {
+    const root = document.documentElement;
+    const doctype = document.doctype;
+    let head = '';
+    if (doctype) {
+      const name = String(doctype.name);
+      const publicId = String(doctype.publicId ?? '');
+      const systemId = String(doctype.systemId ?? '');
+      head = `<!DOCTYPE ${name}${publicId !== '' ? ` PUBLIC "${publicId}"` : ''}${systemId !== '' ? `${publicId !== '' ? '' : ' SYSTEM'} "${systemId}"` : ''}>`;
+    }
+    let html = '';
+    if (root) {
+      const host = ownHost();
+      if (!host || host.parentElement !== root || !root.childNodes) html = String(root.outerHTML ?? '');
+      else {
+        // `<html>`'s start tag from its attributes (never a clone), its children one by one, our host left out.
+        const name = String(root.localName);
+        const escapeAttribute = (value: string): string => value.replace(/&/g, '&amp;').replace(/\u00a0/g, '&nbsp;').replace(/"/g, '&quot;');
+        let start = `<${name}`;
+        const attributes = root.attributes;
+        for (let i = 0; i < attributes.length; i++) {
+          const a = attributes[i]!;
+          start += ` ${String(a.name)}="${escapeAttribute(String(a.value))}"`;
+        }
+        const parts: string[] = [`${start}>`];
+        const nodes = root.childNodes;
+        const escapeText = (text: string): string => text.replace(/&/g, '&amp;').replace(/\u00a0/g, '&nbsp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        for (let i = 0; i < nodes.length; i++) {
+          const node = nodes[i]!;
+          if (node === host) continue;
+          if (node.nodeType === ELEMENT_NODE) parts.push(String((node as PageElement).outerHTML ?? ''));
+          else if (node.nodeType === TEXT_NODE) parts.push(escapeText(String(node.nodeValue ?? '')));
+          else if (node.nodeType === 8) parts.push(`<!--${String(node.nodeValue ?? '')}-->`);
+        }
+        parts.push(`</${name}>`);
+        html = parts.join('');
+      }
+    }
+    const text = head === '' ? html : html === '' ? head : `${head}\n${html}`;
+    const truncated = text.length > L.maxSourceChars;
+    return { status: 'ok', docToken: S.token, text: truncated ? cut(text, L.maxSourceChars) : text, truncated };
   }
 
   // ---- Pick ----

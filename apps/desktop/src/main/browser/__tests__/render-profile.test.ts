@@ -29,13 +29,20 @@ import {
   RENDER_PROFILE_CDP_METHODS,
   renderProfileSummary,
   USER_AGENT_IDS,
+  DEFAULT_TAB_OVERRIDES,
+  GEOLOCATION_LIMITS,
+  GEOLOCATION_PRESETS,
+  isDefaultRenderProfile,
+  isDefaultTabOverrides,
+  sameRenderProfile,
   type RenderProfile,
+  type TabOverrides,
 } from '@app/specs/render-profile.spec';
-import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
+import { RenderProfileSchema, SetRenderProfileInputSchema, TabOverridesSchema } from '@app/specs/render-profile.schema.spec';
 import { commit, FakeHostWindow, FakeTabContents, FakeTabView } from '../../../test/controller-fakes';
 import { fakeEvent, fromPartition } from '../../../test/electron-fake';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../controller';
-import { renderProfileCommands, userAgentMetadata, type CdpCommand } from '../render-profile-cdp';
+import { childFrameCommands, renderProfileCommands, userAgentMetadata, workerCommands, type CdpCommand } from '../render-profile-cdp';
 import { CdpMethodRefused, createProfileDebugger, type DebuggerHost, type ProfileDebugger } from '../render-profile-debugger';
 import { createRenderProfilePins, type RenderProfilePins } from '../render-profile-pins';
 import { createTabRenderProfiles } from '../render-profile';
@@ -46,6 +53,11 @@ vi.mock('electron', async () => (await import('../../../test/electron-fake')).el
 const VERSION = '140.0.7339.80';
 const PHONE_BOT: RenderProfile = { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'googlebot-smartphone' };
 const NO_JS: RenderProfile = { ...DEFAULT_RENDER_PROFILE, javascriptDisabled: true };
+const PARIS: TabOverrides = { ...DEFAULT_TAB_OVERRIDES, geolocation: { latitude: 48.8566, longitude: 2.3522, accuracy: 100 } };
+const COOKIES_OFF: TabOverrides = { ...DEFAULT_TAB_OVERRIDES, cookiesDisabled: true };
+/** The tab overrides' commands at the end of a merged list. */
+const OVERRIDE_METHODS = ['Emulation.setDocumentCookieDisabled', 'Emulation.setGeolocationOverride', 'Emulation.clearGeolocationOverride'];
+const overrideCommands = (commands: readonly CdpCommand[]) => commands.filter((c) => OVERRIDE_METHODS.includes(c.method));
 
 /** Lets every queued promise job run. */
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -62,6 +74,32 @@ describe('render-profile spec', () => {
     }
     expect(renderProfileSummary(DEFAULT_RENDER_PROFILE)).toBe('No overrides');
     expect(renderProfileSummary({ ...PHONE_BOT, network: 'slow-3g', javascriptDisabled: true, cacheDisabled: true })).toBe('Phone 412×915 · Googlebot smartphone · Slow 3G · JavaScript off · Cache off');
+  });
+
+  test('render-profile-schema-rejects-emulation-fields', () => {
+    // A profile never carries an override (strict, unchanged), and the overrides never carry a profile field.
+    for (const extra of [{ cssDisabled: true }, { cookiesDisabled: true }, { geolocation: null }, { tabOverrides: DEFAULT_TAB_OVERRIDES }]) {
+      expect(RenderProfileSchema.safeParse({ ...DEFAULT_RENDER_PROFILE, ...extra }).success, JSON.stringify(extra)).toBe(false);
+      expect(SetRenderProfileInputSchema.safeParse({ tabId: 1, profile: { ...DEFAULT_RENDER_PROFILE, ...extra } }).success).toBe(false);
+    }
+    expect(Object.keys(DEFAULT_RENDER_PROFILE).sort()).toEqual(['cacheDisabled', 'customUserAgent', 'device', 'javascriptDisabled', 'network', 'userAgent']);
+    expect(TabOverridesSchema.safeParse({ ...DEFAULT_TAB_OVERRIDES, javascriptDisabled: true }).success).toBe(false);
+    expect(TabOverridesSchema.safeParse({ ...DEFAULT_TAB_OVERRIDES, device: 'phone' }).success).toBe(false);
+    // `sameRenderProfile` / `isDefaultRenderProfile` read the profile's own fields only.
+    expect(isDefaultRenderProfile({ ...DEFAULT_RENDER_PROFILE, cssDisabled: true } as RenderProfile)).toBe(true);
+    expect(sameRenderProfile(PHONE_BOT, { ...PHONE_BOT, geolocation: PARIS.geolocation } as RenderProfile)).toBe(true);
+    // The overrides' own bounds: refused, never rounded or clamped.
+    const geo = (latitude: number, longitude: number, accuracy = 100) => TabOverridesSchema.safeParse({ ...DEFAULT_TAB_OVERRIDES, geolocation: { latitude, longitude, accuracy } }).success;
+    expect(geo(90, 180)).toBe(true);
+    expect(geo(-90, -180, GEOLOCATION_LIMITS.maxAccuracy)).toBe(true);
+    expect(geo(48.85661, 2.35221, 1)).toBe(true);
+    for (const [lat, lon, acc] of [[90.1, 0, 100], [0, -180.5, 100], [48.856613, 2.3522, 100], [Number.NaN, 0, 100], [0, Number.POSITIVE_INFINITY, 100], [0, 0, 0], [0, 0, 100_001], [0, 0, 1.5]] as const) {
+      expect(geo(lat, lon, acc), `${lat} ${lon} ${acc}`).toBe(false);
+    }
+    expect(TabOverridesSchema.safeParse({ ...DEFAULT_TAB_OVERRIDES, geolocation: { latitude: 1, longitude: 1, accuracy: 10, altitude: 3 } }).success).toBe(false);
+    for (const preset of GEOLOCATION_PRESETS) expect(TabOverridesSchema.parse({ ...DEFAULT_TAB_OVERRIDES, geolocation: preset.geolocation })).toBeTruthy();
+    expect(isDefaultTabOverrides(DEFAULT_TAB_OVERRIDES)).toBe(true);
+    expect(isDefaultTabOverrides(PARIS)).toBe(false);
   });
 
   test('custom-user-agent-is-capped', () => {
@@ -164,9 +202,11 @@ describe('cdp commands', () => {
           for (const javascriptDisabled of [false, true]) {
             for (const cacheDisabled of [false, true]) {
               const profile: RenderProfile = { device, userAgent, customUserAgent: userAgent === 'custom' ? 'x' : '', network, javascriptDisabled, cacheDisabled };
-              for (const command of renderProfileCommands(profile, { chromeVersion: VERSION })) {
-                expect(isAllowedCdpMethod(command.method), command.method).toBe(true);
-                seen.add(command.method);
+              for (const tabOverrides of [undefined, DEFAULT_TAB_OVERRIDES, PARIS, COOKIES_OFF]) {
+                for (const command of renderProfileCommands(profile, { chromeVersion: VERSION, ...(tabOverrides ? { tabOverrides } : {}) })) {
+                  expect(isAllowedCdpMethod(command.method), command.method).toBe(true);
+                  seen.add(command.method);
+                }
               }
             }
           }
@@ -179,6 +219,48 @@ describe('cdp commands', () => {
     for (const refused of ['Runtime.evaluate', 'Runtime.enable', 'Debugger.enable', 'Page.navigate', 'Network.getResponseBody', 'Network.getCookies', 'Emulation', 'network.enable', 'Network.enable ', undefined, 42]) {
       expect(isAllowedCdpMethod(refused), String(refused)).toBe(false);
     }
+  });
+});
+
+describe('tab overrides in the command list', () => {
+  test('geolocation-to-tab-and-frames', async () => {
+    // Last in the merged list, after the profile's commands.
+    const commands = renderProfileCommands(PHONE_BOT, { chromeVersion: VERSION, tabOverrides: PARIS });
+    expect(commands.slice(0, -2).map((c) => c.method)).toEqual(PROFILE_METHODS(PHONE_BOT));
+    expect(overrideCommands(commands)).toEqual([
+      { method: 'Emulation.setDocumentCookieDisabled', params: { disabled: false } },
+      { method: 'Emulation.setGeolocationOverride', params: { latitude: 48.8566, longitude: 2.3522, accuracy: 100 } },
+    ]);
+    // Without a location the override is cleared.
+    expect(overrideCommands(renderProfileCommands(PHONE_BOT, { chromeVersion: VERSION, tabOverrides: DEFAULT_TAB_OVERRIDES })).at(-1)).toEqual({ method: 'Emulation.clearGeolocationOverride', params: {} });
+    // No overrides given: the profile's list as before.
+    expect(overrideCommands(renderProfileCommands(PHONE_BOT, { chromeVersion: VERSION }))).toEqual([]);
+    // Child frames get it (it is not top-level only); workers do not.
+    expect(overrideCommands(childFrameCommands(commands)).map((c) => c.method)).toEqual(['Emulation.setDocumentCookieDisabled', 'Emulation.setGeolocationOverride']);
+    expect(overrideCommands(workerCommands(commands))).toEqual([]);
+    // Through the debugger: the tab and a cross-site frame announced later.
+    const { host, dbg } = debuggerHost();
+    const profileDebugger = createProfileDebugger(host, vi.fn());
+    await profileDebugger.send(commands);
+    expect(dbg.sentTo('')).toContain('Emulation.setGeolocationOverride');
+    dbg.announce('frame-1', 'iframe');
+    dbg.announce('worker-1', 'worker');
+    await settle();
+    expect(dbg.sentTo('frame-1')).toContain('Emulation.setGeolocationOverride');
+    expect(dbg.sentTo('worker-1')).not.toContain('Emulation.setGeolocationOverride');
+    expect(dbg.sendCommand).toHaveBeenCalledWith('Emulation.setGeolocationOverride', { latitude: 48.8566, longitude: 2.3522, accuracy: 100 }, 'frame-1');
+  });
+
+  test('unlisted-method-still-refused', () => {
+    // The tab overrides add exactly three methods; nothing that reads or changes cookies or other state.
+    for (const method of ['Emulation.setGeolocationOverride', 'Emulation.clearGeolocationOverride', 'Emulation.setDocumentCookieDisabled']) expect(isAllowedCdpMethod(method)).toBe(true);
+    const { host, dbg } = debuggerHost();
+    const profileDebugger = createProfileDebugger(host, vi.fn());
+    for (const method of ['Emulation.setGeolocationOverride ', 'emulation.setGeolocationOverride', 'Emulation.setTimezoneOverride', 'Emulation.setLocaleOverride', 'Network.setCookie', 'Network.deleteCookies', 'Network.getCookies', 'Network.setCookieControls', 'Storage.clearCookies', 'Fetch.enable', 'CSS.enable', 'DOM.enable', 'Page.setBypassCSP', 'Browser.grantPermissions']) {
+      expect(isAllowedCdpMethod(method), method).toBe(false);
+      expect(() => profileDebugger.send([{ method, params: {} } as unknown as CdpCommand]), method).toThrow(CdpMethodRefused);
+    }
+    expect(dbg.sendCommand).not.toHaveBeenCalled();
   });
 });
 
@@ -787,6 +869,229 @@ describe('render profiles in the controller', () => {
     controller.clearRenderProfile(id);
     await settle();
     expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 300, height: 500 });
+  });
+});
+
+describe('tab overrides share the profile command list', () => {
+  let views: FakeTabView[];
+  let controller: BrowserController;
+  let debuggers: Map<FakeTabContents, FakeProfileDebugger>;
+
+  beforeEach(() => {
+    views = [];
+    debuggers = new Map();
+    controller = createBrowserController({
+      createView: () => {
+        const created = new FakeTabView();
+        views.push(created);
+        return created as unknown as TabView;
+      },
+      platform: 'linux',
+      renderProfiles: {
+        pins: createRenderProfilePins(),
+        chromeVersion: VERSION,
+        debuggerFor: (contents, detached) => {
+          const dbg = new FakeProfileDebugger(detached);
+          debuggers.set(contents as unknown as FakeTabContents, dbg);
+          return dbg;
+        },
+      },
+    });
+    controller.attach(new FakeHostWindow() as unknown as HostWindow);
+    controller.setPageBounds({ x: 0, y: 90, width: 1000, height: 700 });
+  });
+
+  const tabState = (id: number) => controller.getState().tabs.find((t) => t.id === id)!;
+  async function openAt(url: string): Promise<{ id: number; contents: FakeTabContents; dbg: () => FakeProfileDebugger }> {
+    controller.navigate(url);
+    await settle();
+    const contents = views.at(-1)!.contents;
+    contents.emit('did-start-navigation', fakeEvent({ url, isMainFrame: true, isSameDocument: false }));
+    commit(contents, url, 'Page');
+    return { id: controller.getState().activeTabId!, contents, dbg: () => debuggers.get(contents)! };
+  }
+  const lastList = (dbg: FakeProfileDebugger) => dbg.send.mock.calls.at(-1)![0] as CdpCommand[];
+
+  test('cookies-off-sends-document-cookie-disabled', async () => {
+    const { id, dbg } = await openAt('https://a.example/');
+    expect(controller.tabOverrides.set(id, COOKIES_OFF)).toBe(true);
+    await settle();
+    expect(overrideCommands(lastList(dbg()))).toEqual([
+      { method: 'Emulation.setDocumentCookieDisabled', params: { disabled: true } },
+      { method: 'Emulation.clearGeolocationOverride', params: {} },
+    ]);
+    // Back on: the whole list once more, then (nothing left) the debugger goes.
+    controller.tabOverrides.set(id, DEFAULT_TAB_OVERRIDES);
+    expect(dbg().detach).toHaveBeenCalled();
+    expect(tabState(id).renderProfile).toBeNull();
+  });
+
+  test('emulation-applies-with-default-profile', async () => {
+    const { id, contents } = await openAt('https://a.example/');
+    expect(debuggers.get(contents)).toBeUndefined();
+    controller.tabOverrides.set(id, PARIS);
+    await settle();
+    // Attached although there is no profile: frost's defaults for the profile part, then the overrides.
+    const dbg = debuggers.get(contents)!;
+    expect(dbg.send).toHaveBeenCalledTimes(1);
+    expect(lastList(dbg)).toEqual(renderProfileCommands(DEFAULT_RENDER_PROFILE, { chromeVersion: VERSION, emulation: null, tabOverrides: PARIS }));
+    expect(tabState(id).renderProfile).toBeNull();
+    expect(dbg.detach).not.toHaveBeenCalled();
+    // A CSS-only change needs no debugger: the list is not sent again for it.
+    controller.tabOverrides.set(id, { ...PARIS, cssDisabled: true });
+    expect(dbg.send).toHaveBeenCalledTimes(1);
+  });
+
+  test('emulation-survives-profile-reset', async () => {
+    const { id, contents, dbg } = await openAt('https://a.example/');
+    controller.setRenderProfile(id, PHONE_BOT, false);
+    controller.tabOverrides.set(id, PARIS);
+    await settle();
+    contents.emit('did-start-navigation', fakeEvent({ url: 'https://a.example/', isMainFrame: true, isSameDocument: false }));
+    commit(contents, 'https://a.example/', 'Page');
+    expect(controller.clearRenderProfile(id)).toBe(true);
+    await settle();
+    // Reset: the profile goes (frost's defaults sent), the location stays, the debugger stays attached.
+    expect(dbg().detach).not.toHaveBeenCalled();
+    expect(lastList(dbg())).toEqual(renderProfileCommands(DEFAULT_RENDER_PROFILE, { chromeVersion: VERSION, emulation: null, tabOverrides: PARIS }));
+    expect(tabState(id).renderProfile).toBeNull();
+    expect(tabState(id).tabOverrides).toEqual(PARIS);
+    // The page loaded under the profile loads again.
+    expect(contents.reload).toHaveBeenCalledTimes(1);
+  });
+
+  test('emulation-change-keeps-profile', async () => {
+    const { id, contents, dbg } = await openAt('https://a.example/');
+    controller.setRenderProfile(id, PHONE_BOT, false);
+    await settle();
+    contents.emit('did-start-navigation', fakeEvent({ url: 'https://a.example/', isMainFrame: true, isSameDocument: false }));
+    commit(contents, 'https://a.example/', 'Page');
+    expect(tabState(id).renderProfile).toMatchObject({ profile: PHONE_BOT, needsReload: false, status: 'active' });
+    controller.tabOverrides.set(id, PARIS);
+    await settle();
+    // The whole profile is in the list again, the location after it; the profile's state is untouched.
+    const fit = fitRenderViewport({ width: 1000, height: 700 }, 'phone').emulation;
+    expect(lastList(dbg())).toEqual(renderProfileCommands(PHONE_BOT, { chromeVersion: VERSION, emulation: fit, tabOverrides: PARIS }));
+    expect(tabState(id).renderProfile).toMatchObject({ profile: PHONE_BOT, needsReload: false, status: 'active' });
+    // Overrides off: the profile's list with the overrides cleared; the debugger stays (a profile is set).
+    controller.tabOverrides.set(id, DEFAULT_TAB_OVERRIDES);
+    await settle();
+    expect(lastList(dbg())).toEqual(renderProfileCommands(PHONE_BOT, { chromeVersion: VERSION, emulation: fit, tabOverrides: DEFAULT_TAB_OVERRIDES }));
+    expect(dbg().detach).not.toHaveBeenCalled();
+    // Later profile lists no longer carry the (cleared) overrides.
+    controller.setRenderProfile(id, NO_JS, false);
+    await settle();
+    expect(overrideCommands(lastList(dbg()))).toEqual([]);
+  });
+
+  test('reattach-restores-emulation', async () => {
+    // No profile at all: the overrides alone keep the debugger, and a detach Chromium made restores them.
+    const { id, dbg } = await openAt('https://a.example/');
+    controller.tabOverrides.set(id, { ...PARIS, cookiesDisabled: true });
+    await settle();
+    expect(dbg().send).toHaveBeenCalledTimes(1);
+    dbg().detached('target closed');
+    await settle();
+    expect(dbg().send).toHaveBeenCalledTimes(2);
+    expect(overrideCommands(lastList(dbg()))).toEqual([
+      { method: 'Emulation.setDocumentCookieDisabled', params: { disabled: true } },
+      { method: 'Emulation.setGeolocationOverride', params: PARIS.geolocation },
+    ]);
+    expect(tabState(id).renderProfile).toBeNull();
+  });
+
+  test('detaches-only-when-both-default', async () => {
+    const { id, dbg } = await openAt('https://a.example/');
+    controller.setRenderProfile(id, PHONE_BOT, false);
+    controller.tabOverrides.set(id, PARIS);
+    await settle();
+    // Overrides off, profile still set: attached.
+    controller.tabOverrides.set(id, DEFAULT_TAB_OVERRIDES);
+    expect(dbg().detach).not.toHaveBeenCalled();
+    // Both default now: detached.
+    controller.clearRenderProfile(id);
+    expect(dbg().detach).toHaveBeenCalledTimes(1);
+    // The other order: the profile goes first, the overrides keep it; then they go too.
+    controller.setRenderProfile(id, PHONE_BOT, false);
+    controller.tabOverrides.set(id, PARIS);
+    controller.clearRenderProfile(id);
+    expect(dbg().detach).toHaveBeenCalledTimes(1);
+    controller.tabOverrides.set(id, DEFAULT_TAB_OVERRIDES);
+    expect(dbg().detach).toHaveBeenCalledTimes(2);
+    // CSS off alone is not CDP: it never attaches a debugger.
+    controller.newTab();
+    const other = await openAt('https://b.example/');
+    controller.tabOverrides.set(other.id, { ...DEFAULT_TAB_OVERRIDES, cssDisabled: true });
+    expect(debuggers.get(other.contents)).toBeUndefined();
+  });
+
+  test('entry-field-is-tabOverrides-not-emulation', async () => {
+    // `emulation` stays the viewport fit: an overrides change neither resets nor resends the refit.
+    const { id, dbg } = await openAt('https://a.example/');
+    controller.setRenderProfile(id, PHONE_BOT, false);
+    await settle();
+    controller.tabOverrides.set(id, PARIS);
+    await settle();
+    const fit = fitRenderViewport({ width: 1000, height: 700 }, 'phone').emulation!;
+    expect(lastList(dbg()).find((c) => c.method === 'Emulation.setDeviceMetricsOverride')!.params).toMatchObject({ width: fit.width, height: fit.height, scale: fit.scale });
+    // The same page area again: no refit (the viewport last sent is still known).
+    controller.setPageBounds({ x: 0, y: 90, width: 1000, height: 700 });
+    expect(dbg().sendTopLevel).not.toHaveBeenCalled();
+    // Another page area: one refit, with the overrides untouched.
+    controller.setPageBounds({ x: 0, y: 90, width: 300, height: 500 });
+    expect(dbg().sendTopLevel).toHaveBeenCalledTimes(1);
+    expect(tabState(id).tabOverrides).toEqual(PARIS);
+    // The module names the per-tab value `tabOverrides`, never `emulation`.
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../render-profile.ts', import.meta.url), 'utf8');
+    expect(source).toContain('entry.tabOverrides');
+    expect(source).not.toMatch(/emulation\s*:\s*TabOverrides|entry\.emulation\s*=\s*overrides/);
+  });
+});
+
+describe('tab overrides with the real debugger', () => {
+  test('profile-change-keeps-emulation-and-child-share', async () => {
+    const views: FakeTabView[] = [];
+    const hosts = new Map<FakeTabContents, FakeDebugger>();
+    const controller = createBrowserController({
+      createView: () => {
+        const created = new FakeTabView();
+        views.push(created);
+        return created as unknown as TabView;
+      },
+      platform: 'linux',
+      renderProfiles: {
+        pins: createRenderProfilePins(),
+        chromeVersion: VERSION,
+        debuggerFor: (contents, detached) => {
+          const { host, dbg } = debuggerHost();
+          hosts.set(contents as unknown as FakeTabContents, dbg);
+          return createProfileDebugger(host, detached);
+        },
+      },
+    });
+    controller.attach(new FakeHostWindow() as unknown as HostWindow);
+    controller.navigate('https://a.example/');
+    await settle();
+    const contents = views[0]!.contents;
+    contents.emit('did-start-navigation', fakeEvent({ url: 'https://a.example/', isMainFrame: true, isSameDocument: false }));
+    commit(contents, 'https://a.example/', 'Page');
+    const id = controller.getState().activeTabId!;
+    controller.tabOverrides.set(id, PARIS);
+    controller.setRenderProfile(id, PHONE_BOT, false);
+    await settle();
+    const dbg = hosts.get(contents)!;
+    // The tab got the profile and kept the location.
+    const tabMethods = dbg.sentTo('');
+    expect(tabMethods.lastIndexOf('Emulation.setGeolocationOverride')).toBeGreaterThan(tabMethods.lastIndexOf('Network.setUserAgentOverride'));
+    // A cross-site frame announced after the change gets both: the profile's frame share and the location.
+    dbg.announce('frame-1', 'iframe');
+    await settle();
+    const frameMethods = dbg.sentTo('frame-1');
+    expect(frameMethods).toContain('Network.setUserAgentOverride');
+    expect(frameMethods).toContain('Emulation.setGeolocationOverride');
+    expect(frameMethods).not.toContain('Emulation.setDeviceMetricsOverride');
+    expect(dbg.sendCommand.mock.calls.find(([method, , sid]) => sid === 'frame-1' && method === 'Network.setUserAgentOverride')![1]).toMatchObject({ userAgent: expect.stringContaining('Googlebot') });
   });
 });
 

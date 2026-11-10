@@ -1,6 +1,6 @@
 import type { BoundedFetcher, BoundedFetchResult } from '@app/specs/fetcher.spec';
-import { SERVED_ACCEPT, SERVED_FETCH_LIMITS, SERVED_HTML_TYPES, type ServedUnavailableReason } from '@app/specs/seo-javascript.spec';
-import type { ServedParseInput, ServedParseResult, ServedState } from '@app/specs/seo-javascript.schema';
+import { SERVED_ACCEPT, SERVED_FETCH_LIMITS, SERVED_HTML_TYPES, SERVED_SOURCE_KEEP, type ServedUnavailableReason } from '@app/specs/seo-javascript.spec';
+import { ServedSourceTextSchema, type ServedParseInput, type ServedParseResult, type ServedState } from '@app/specs/seo-javascript.schema';
 import { parseWebUrl } from '@app/specs/web-url.spec';
 import { cutUrl } from './fetcher';
 
@@ -11,6 +11,13 @@ import { cutUrl } from './fetcher';
 // to parse (`parse`, `served-parse.ts`); main never decodes or parses them. The state is kept per
 // tab document, URL and user agent, so an audit and its re-analyses fetch once; a new document
 // (`forget`) or Clear Browsing Data (`clear`) drops it.
+//
+// The served source (Phase 11 Task 5, `SERVED_SOURCE_KEEP`): the text the worker decoded, answered
+// with its parse, is checked (`ServedSourceTextSchema`) and kept beside the state, never in it (the
+// state goes to the audit's worker and the agent; the source only to the Inspector), for the
+// `SERVED_SOURCE_KEEP` most recently parsed documents over all tabs; it goes with its answer. Each
+// answer has a serial (`ref`), unique for the life of the cache, and each tab document a generation
+// that `forget` bumps: the Inspector copies only the entry it showed, for the document it showed.
 
 export interface ServedHtmlOptions {
   readonly fetcher: BoundedFetcher;
@@ -24,11 +31,25 @@ export interface ServedHow {
   readonly scripting?: boolean;
 }
 
+/** The served source of one page as the Inspector reads it (`ServedHtml.source`). */
+export type ServedSourceState =
+  | { readonly status: 'ready'; readonly ref: number; readonly text: string; readonly truncated: boolean }
+  | { readonly status: 'pending' }
+  | { readonly status: 'unavailable'; readonly reason: ServedUnavailableReason; readonly httpStatus: number | null };
+
 export interface ServedHtml {
   /** The served state of `pageUrl` (its fragment dropped) for tab document `contentsId`, fetched with `userAgent` (`null`: frost's own). Cached; never rejects. */
   get(contentsId: number, pageUrl: string, userAgent: string | null, how?: ServedHow): Promise<ServedState>;
   /** What `get` would answer at once: the settled answer, else `undefined`. */
   peek(contentsId: number, pageUrl: string, userAgent: string | null, how?: ServedHow): ServedState | undefined;
+  /**
+   * The served source of `pageUrl` for tab document `contentsId` (as `peek`'s key): `pending` while
+   * fetched or parsed, its unavailable reason, the text kept, or `not-fetched` when nothing was
+   * fetched for that key or its source is no longer kept. Never fetches.
+   */
+  source(contentsId: number, pageUrl: string, userAgent: string | null, how?: ServedHow): ServedSourceState;
+  /** The tab document's navigation generation: bumped by each `forget` (a new document), so a reader can tell its document went meanwhile. */
+  generation(contentsId: number): number;
   /** Drops the tab's answers for `pageUrl` (every user agent): "Fetch again". */
   drop(contentsId: number, pageUrl: string): void;
   /** The tab's document changed, or the tab is gone: its answers go, and a fetch still in flight is aborted. */
@@ -43,6 +64,13 @@ export interface ServedHtml {
 export const PENDING_SERVED: ServedState = { status: 'pending' };
 
 const unavailable = (reason: ServedUnavailableReason, httpStatus: number | null = null, finalUrl: string | null = null): ServedState => ({ status: 'unavailable', reason, httpStatus, finalUrl });
+const NOT_FETCHED: ServedSourceState = { status: 'unavailable', reason: 'not-fetched', httpStatus: null };
+
+/** A loaded answer: the state, and the source text the worker decoded (`null`: none to keep). */
+interface Loaded {
+  readonly state: ServedState;
+  readonly source: { readonly text: string; readonly truncated: boolean } | null;
+}
 
 /** `url` without its `#fragment`, if it is an `http(s)` URL. */
 function pageKey(url: string): string | null {
@@ -81,13 +109,26 @@ export function servedFailure(fetched: BoundedFetchResult): ServedState | null {
 export function createServedHtml(options: ServedHtmlOptions): ServedHtml {
   const limits = { ...SERVED_FETCH_LIMITS, ...options.limits };
   interface Entry {
+    readonly serial: number;
     readonly value: Promise<ServedState>;
     readonly controller: AbortController;
     settled?: ServedState;
   }
   const tabs = new Map<number, Map<string, Entry>>();
+  let serials = 0;
+  const generations = new Map<number, number>();
 
-  async function load(url: string, userAgent: string | null, scripting: boolean, signal: AbortSignal): Promise<ServedState> {
+  /** The kept sources, oldest first (`SERVED_SOURCE_KEEP` at most), by the entry they belong to. */
+  const sources = new Map<Entry, { readonly text: string; readonly truncated: boolean }>();
+  const keepSource = (entry: Entry, source: Loaded['source']): void => {
+    if (source === null) return;
+    sources.delete(entry);
+    sources.set(entry, source);
+    while (sources.size > SERVED_SOURCE_KEEP) sources.delete(sources.keys().next().value!);
+  };
+
+  async function load(url: string, userAgent: string | null, scripting: boolean, signal: AbortSignal): Promise<Loaded> {
+    const only = (state: ServedState): Loaded => ({ state, source: null });
     const fetched = await options.fetcher.fetch({
       url,
       page: url,
@@ -101,14 +142,17 @@ export function createServedHtml(options: ServedHtmlOptions): ServedHtml {
       signal,
     });
     const failed = servedFailure(fetched);
-    if (failed) return failed;
+    if (failed) return only(failed);
     const finalUrl = fetched.finalUrl ?? url;
     // Redirected elsewhere (a login page, another locale): not the page that was rendered.
-    if (pageKey(finalUrl) !== url) return unavailable('redirected', fetched.status, cutUrl(finalUrl));
+    if (pageKey(finalUrl) !== url) return only(unavailable('redirected', fetched.status, cutUrl(finalUrl)));
     const contentType = fetched.headers['content-type'] ?? null;
     const parsed = await options.parse({ url: finalUrl, contentType, body: fetched.body, scriptingEnabled: scripting }).catch((): ServedParseResult => ({ ok: false, reason: 'parse-failed' }));
-    if (!parsed.ok) return unavailable(parsed.reason, fetched.status, cutUrl(finalUrl));
-    return {
+    if (!parsed.ok) return only(unavailable(parsed.reason, fetched.status, cutUrl(finalUrl)));
+    // The worker's decoded text, checked: anything but a capped string is not kept.
+    const text = ServedSourceTextSchema.safeParse(parsed.sourceText);
+    const source = text.success ? { text: text.data, truncated: parsed.sourceTruncated === true || fetched.truncated } : null;
+    const state: ServedState = {
       status: 'ready',
       fetch: {
         url: cutUrl(url),
@@ -123,13 +167,18 @@ export function createServedHtml(options: ServedHtmlOptions): ServedHtml {
       },
       snapshot: parsed.snapshot,
     };
+    return { state, source };
   }
 
   const keyOf = (url: string, userAgent: string | null, scripting: boolean): string => [url, userAgent ?? '', scripting ? 'js' : 'no-js'].join('\n');
   /** Drops `entries`' `keys`, aborting a fetch still in flight. */
   const remove = (entries: Map<string, Entry>, keys: readonly string[]): void => {
     for (const key of keys) {
-      entries.get(key)?.controller.abort();
+      const entry = entries.get(key);
+      if (entry) {
+        entry.controller.abort();
+        sources.delete(entry);
+      }
       entries.delete(key);
     }
   };
@@ -148,17 +197,33 @@ export function createServedHtml(options: ServedHtmlOptions): ServedHtml {
       const cached = entries.get(key);
       if (cached) return cached.value;
       const controller = new AbortController();
-      const value = load(url, userAgent, scripting, controller.signal).catch(() => unavailable('unreachable'));
-      const entry: Entry = { value, controller };
+      const loaded = load(url, userAgent, scripting, controller.signal).catch((): Loaded => ({ state: unavailable('unreachable'), source: null }));
+      const value = loaded.then((done) => done.state);
+      const entry: Entry = { serial: ++serials, value, controller };
       entries.set(key, entry);
       while (entries.size > limits.maxCachedPerTab) remove(entries, [entries.keys().next().value!]);
-      void value.then((state) => (entry.settled = state));
+      void loaded.then((done) => {
+        entry.settled = done.state;
+        // Kept only while its answer is (not dropped, forgotten or cleared meanwhile).
+        if (tabs.get(contentsId)?.get(key) === entry) keepSource(entry, done.source);
+      });
       return value;
     },
     peek(contentsId, pageUrl, userAgent, how = {}) {
       const url = pageKey(pageUrl);
       return url === null ? undefined : tabs.get(contentsId)?.get(keyOf(url, userAgent, how.scripting ?? true))?.settled;
     },
+    source(contentsId, pageUrl, userAgent, how = {}) {
+      const url = pageKey(pageUrl);
+      const entry = url === null ? undefined : tabs.get(contentsId)?.get(keyOf(url, userAgent, how.scripting ?? true));
+      if (!entry) return NOT_FETCHED;
+      const state = entry.settled;
+      if (state === undefined || state.status === 'pending') return { status: 'pending' };
+      if (state.status === 'unavailable') return { status: 'unavailable', reason: state.reason, httpStatus: state.httpStatus };
+      const source = sources.get(entry);
+      return source ? { status: 'ready', ref: entry.serial, text: source.text, truncated: source.truncated } : NOT_FETCHED;
+    },
+    generation: (contentsId) => generations.get(contentsId) ?? 0,
     drop(contentsId, pageUrl) {
       const url = pageKey(pageUrl);
       const entries = tabs.get(contentsId);
@@ -166,6 +231,7 @@ export function createServedHtml(options: ServedHtmlOptions): ServedHtml {
       remove(entries, [...entries.keys()].filter((key) => key.split('\n')[0] === url));
     },
     forget(contentsId) {
+      generations.set(contentsId, (generations.get(contentsId) ?? 0) + 1);
       const entries = tabs.get(contentsId);
       if (entries) remove(entries, [...entries.keys()]);
       tabs.delete(contentsId);

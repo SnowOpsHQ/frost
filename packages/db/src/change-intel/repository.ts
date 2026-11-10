@@ -10,6 +10,7 @@ import {
   MAX_PROJECT_QUERIES,
   MAX_PROJECTS,
   MAX_RECT_JSON_BYTES,
+  MAX_SCREENSHOT_EDIT_OPS_JSON_BYTES,
   MAX_SEARCH_PARAMS_JSON_BYTES,
   MAX_SNAPSHOT_JSON_BYTES,
   PROJECT_NAME_MAX_CHARS,
@@ -46,7 +47,7 @@ import {
 import { uuidv7 } from './ids';
 import { createPurgeOperations, type PurgeOperations } from './purge';
 import { createReadingOperations, isCaptureReading, readingRow, type CaptureReadingInput, type ReadingOperations } from './readings';
-import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions } from './schema';
+import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions, screenshotEdits } from './schema';
 import { createWorkspaceOperations, type WorkspaceOperations } from './workspace';
 import { ciEntryTags, ciProjectCompetitors, ciSerpReadings } from './workspace-schema';
 
@@ -123,7 +124,22 @@ export interface AppendScreenshotInput {
   readonly createdAt: number;
 }
 
-export type StoredScreenshot = AppendScreenshotInput;
+/**
+ * A stored screenshot. `editedFrom` (Phase 11 Task 7): the screenshot it is an edited copy of, from
+ * the local `screenshot_edits` link (`null`: none; absent in shapes made before it, read as `null`).
+ * The source may no longer exist: the link outlives a purged source (the copy stays an edited copy).
+ */
+export type StoredScreenshot = AppendScreenshotInput & { readonly editedFrom?: string | null };
+
+/**
+ * An edited copy of a screenshot (Phase 11 Task 7): its `ci_screenshots` row, and the local link to
+ * its source with the crop (JSON or null) and the ops (JSON) it was drawn from.
+ */
+export interface AppendScreenshotEditInput extends AppendScreenshotInput {
+  readonly sourceId: string;
+  readonly cropJson: string | null;
+  readonly opsJson: string;
+}
 
 /** A version without its snapshot. */
 export interface VersionSummary {
@@ -243,6 +259,11 @@ export interface ChangeIntelRepository extends PurgeOperations, ReadingOperation
   /** Appends a capture (and a new version and its diff when the snapshot changed) in one transaction; `null` for invalid input. */
   appendCapture(input: AppendCaptureInput): Promise<AppendCaptureResult | null>;
   appendScreenshot(input: AppendScreenshotInput): Promise<boolean>;
+  /**
+   * Appends an edited copy's row and its link to its source in one transaction, written only if the
+   * source row is there and the project live; whether both were written.
+   */
+  appendScreenshotEdit(input: AppendScreenshotEditInput): Promise<boolean>;
   /** The lane's latest version (greatest `(created_at, id)` among rows with a well-formed id, hash and time); `null` if that row fails its checks. */
   latestVersion(laneKey: string): Promise<VersionSummary | null>;
   version(id: string): Promise<StoredVersion | null>;
@@ -379,6 +400,13 @@ function screenshotOf(row: Omit<ScreenshotRow, 'rect' | 'renderProfile' | 'searc
   return { id, projectId, pageUrl, captureId, kind, rectJson: rectJson as string | null, width, height, bytes, sha256, segments, renderProfileJson, searchParamsJson, createdAt };
 }
 const screenshotOfRow = ({ rect, renderProfile, searchParams, ...row }: ScreenshotRow) => screenshotOf({ ...row, rectJson: rect, renderProfileJson: renderProfile, searchParamsJson: searchParams });
+/** The columns a listing reads: a screenshot's, and the source its local edit link names (Phase 11 Task 7). */
+const listedColumns = { ...screenshotColumns, editedFrom: capped(screenshotEdits.sourceId, 36) };
+/** A listed row: its screenshot with `editedFrom` (a malformed link reads as none). */
+const listedOfRow = ({ editedFrom, ...row }: ScreenshotRow & { editedFrom: unknown }): StoredScreenshot | null => {
+  const shot = screenshotOfRow(row);
+  return shot === null ? null : { ...shot, editedFrom: isId(editedFrom) ? editedFrom : null };
+};
 
 const projectColumns = {
   id: ciProjects.id,
@@ -567,6 +595,27 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
       return (await db.select({ id: ciScreenshots.id }).from(ciScreenshots).where(eq(ciScreenshots.id, shot.id)).limit(1)).length > 0;
     },
 
+    async appendScreenshotEdit(input) {
+      if (typeof input !== 'object' || input === null) return false;
+      const { sourceId, cropJson, opsJson, ...screenshot } = input;
+      const pageUrl = pageKey(screenshot.pageUrl);
+      const shot = pageUrl === null ? null : screenshotOf({ ...screenshot, pageUrl });
+      if (shot === null || !isId(sourceId) || sourceId === shot.id || !isJsonOrNull(cropJson, MAX_RECT_JSON_BYTES) || !isJson(opsJson, MAX_SCREENSHOT_EDIT_OPS_JSON_BYTES)) return false;
+      if (await idTaken(ciScreenshots, 'ci_screenshots', shot.id)) return false;
+      const { rectJson, renderProfileJson, searchParamsJson, ...rest } = shot;
+      const row = { ...rest, rect: rectJson, renderProfile: renderProfileJson, searchParams: searchParamsJson };
+      // The source's existence and the project's liveness are checked in the inserts themselves; the
+      // link only if the copy's row went in.
+      const source = sql`EXISTS (SELECT 1 FROM ci_screenshots WHERE id = ${sourceId})`;
+      const link = { screenshotId: shot.id, sourceId, crop: cropJson, ops: opsJson, createdAt: shot.createdAt };
+      await batch(db, [
+        insertWhere(db, ciScreenshots, row, sql`${liveProject(shot.projectId)} AND ${source}`),
+        insertWhere(db, screenshotEdits, link, sql`EXISTS (SELECT 1 FROM ci_screenshots WHERE id = ${shot.id}) AND ${source}`),
+      ]);
+      const [written] = await db.select({ id: screenshotEdits.screenshotId }).from(screenshotEdits).where(eq(screenshotEdits.screenshotId, shot.id)).limit(1);
+      return written !== undefined;
+    },
+
     async latestVersion(laneKey) {
       if (!isHash(laneKey)) return null;
       const [row] = await db.select(versionColumns).from(ciVersions).where(laneHeads(laneKey)).orderBy(desc(ciVersions.createdAt), desc(ciVersions.id)).limit(1);
@@ -644,8 +693,9 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
       if (key === null || (projectId !== undefined && !isId(projectId)) || (cursor != null && !isCursor(cursor))) return { screenshots: [], next: null };
       const size = pageSize(limit);
       const found = await db
-        .select(screenshotColumns)
+        .select(listedColumns)
         .from(ciScreenshots)
+        .leftJoin(screenshotEdits, eq(screenshotEdits.screenshotId, ciScreenshots.id))
         .where(
           and(
             key === undefined ? undefined : eq(ciScreenshots.pageUrl, key),
@@ -655,13 +705,13 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         )
         .orderBy(desc(ciScreenshots.createdAt), desc(ciScreenshots.id))
         .limit(size + 1);
-      return { screenshots: found.slice(0, size).map(screenshotOfRow).filter(present), next: nextCursor(found, size) };
+      return { screenshots: found.slice(0, size).map(listedOfRow).filter(present), next: nextCursor(found, size) };
     },
 
     async screenshot(id) {
       if (!isId(id)) return null;
-      const [row] = await db.select(screenshotColumns).from(ciScreenshots).where(eq(ciScreenshots.id, id)).limit(1);
-      return row ? screenshotOfRow(row) : null;
+      const [row] = await db.select(listedColumns).from(ciScreenshots).leftJoin(screenshotEdits, eq(screenshotEdits.screenshotId, ciScreenshots.id)).where(eq(ciScreenshots.id, id)).limit(1);
+      return row ? listedOfRow(row) : null;
     },
 
     async pages({ projectId, limit }) {

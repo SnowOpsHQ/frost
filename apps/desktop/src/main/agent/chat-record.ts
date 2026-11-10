@@ -41,6 +41,10 @@ export interface ChatSnapshot {
   readonly usage: AgentUsageView | null;
   readonly contextTokens: number | null;
   readonly truncated: boolean;
+  /** When the user archived it (Phase 11 Task 8); `null`: not archived. */
+  readonly archivedAt: number | null;
+  /** Whether `title` is the user's (`agent.renameChat`): never replaced by the automatic one. */
+  readonly titleByUser: boolean;
   readonly history: readonly ChatMessage[];
   readonly entries: readonly EntrySnapshot[];
 }
@@ -56,6 +60,8 @@ export interface ChatHeadRow {
   readonly outputTokens: number | null;
   readonly contextTokens: number | null;
   readonly truncated: boolean;
+  readonly archivedAt: number | null;
+  readonly titleByUser: boolean;
 }
 
 /** A chat's rows (`StoredAgentChatRows`). */
@@ -125,6 +131,8 @@ export function encodeHead(chat: ChatHead): ChatHeadRow {
     outputTokens: count(chat.usage?.output),
     contextTokens: count(chat.contextTokens),
     truncated: chat.truncated,
+    archivedAt: count(chat.archivedAt),
+    titleByUser: chat.titleByUser === true,
   };
 }
 
@@ -172,6 +180,9 @@ export function decodeHead(row: ChatHeadRow, now: number): ChatHead | null {
     usage: input === null && output === null ? null : { input, output },
     contextTokens: count(row.contextTokens),
     truncated: row.truncated === true,
+    // A time in the future reads as now; anything else that isn't a time, as not archived.
+    archivedAt: count(row.archivedAt) === null ? null : Math.min(row.archivedAt as number, now),
+    titleByUser: row.titleByUser === true,
   };
 }
 

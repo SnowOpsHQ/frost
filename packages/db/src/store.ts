@@ -1,3 +1,4 @@
+import { MIGRATIONS_TABLE } from '@app/specs/browser-session-db.spec';
 import { createDrizzle } from './client';
 import { createAgentGrantsRepository, type AgentGrantsRepository } from './agent-grants';
 import { createAgentChatsRepository, type AgentChatsRepository } from './agent-chats';
@@ -43,6 +44,11 @@ export interface SessionStore {
   readonly aiChecks: AiChecksRepository;
   /** Whether the database is still open (`close()` closes it). */
   readonly isOpen: boolean;
+  /**
+   * The migration ids recorded as applied (`MIGRATIONS_TABLE`), in id order; `[]` if they cannot be
+   * read (Phase 11 Task 12: Export Diagnostics lists them).
+   */
+  migrationIds(): string[];
   /** Flushes pending writes, then closes the database (idempotent; never rejects). */
   close(): Promise<void>;
 }
@@ -71,6 +77,16 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     aiChecks: createAiChecksRepository(drizzle),
     get isOpen() {
       return db.isOpen;
+    },
+    migrationIds() {
+      try {
+        return db
+          .prepare(`SELECT id FROM ${MIGRATIONS_TABLE} ORDER BY id`)
+          .all()
+          .map((row) => String(row['id']));
+      } catch {
+        return [];
+      }
     },
     close() {
       closing ??= writer.flush().then(() => {

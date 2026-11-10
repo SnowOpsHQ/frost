@@ -3,13 +3,17 @@
  * renderer imports these constants and types at runtime (Zod in its bundle would trip the strict
  * Trusted Types CSP); the procedures' Zod inputs are in `devtools.schema.ts`, for main only.
  *
- * The drawer sits under the page area of the active tab. It is read-only by design: it never runs
- * script in a page and never edits a page's DOM; its one write is "Clear this site's data", which
- * main confirms in its own dialog. Data reaches the chrome only through the `devtools.*`
- * procedures (`enforceSender` first, Zod-validated), and every value that could be a secret is
- * masked by main before it is stored: request and response bodies are never captured, the
- * `SECRET_HEADERS` are only ever kept as `MASKED_VALUE`, and cookie values leave main only after a
- * per-cookie Reveal, which lasts until the tab's next navigation.
+ * The drawer sits under the page area of the active tab. It never edits a page's DOM, and it runs one
+ * script only (Phase 11 Task 4, Decision 6): the read-only web storage reader, in its own isolated
+ * world `DEVTOOLS_STORAGE_WORLD_ID`, in the top frame, only when the Storage tab is opened or
+ * refreshed and for a Reveal, and, while a key is revealed, for each Storage answer (to read that key
+ * alone); one script at a time per tab (`WEB_STORAGE_LIMITS`). Its one write to the page's data is "Clear this
+ * site's data", which main confirms in its own dialog; its one file is the network export, written by
+ * main where the user chose in main's own save dialog. Data reaches the chrome only through the
+ * `devtools.*` procedures (`enforceSender` first, Zod-validated), and every value that could be a
+ * secret is masked by main before it is stored: request and response bodies are never captured, the
+ * `SECRET_HEADERS` are only ever kept as `MASKED_VALUE`, and cookie and web storage values leave main
+ * only after a per-item Reveal, which lasts until the tab's next navigation.
  */
 import type { SeoPanelId } from './seo-sidebar.spec';
 
@@ -329,6 +333,173 @@ export type NetworkHeadersAnswer =
     }
   | { readonly status: 'gone' };
 
+// ---- Network export (Phase 11 Task 4, Decision 5) ----------------------------------------------
+
+/**
+ * "Export" on the Network tab: the active tab's log (`DEVTOOLS_TAB_SCOPE`) as HAR 1.2 or CSV. The
+ * chrome names only the tab and the format; main builds the file from the log as kept (rows and
+ * headers exactly as stored: allowlisted, `SECRET_HEADERS` as `MASKED_VALUE`), never a body (none is
+ * ever read), and writes it where the user chose in main's own save dialog. Every URL the file
+ * carries (`EXPORT_URL_PLACES`) goes through one redaction (`redactExportUrl`, best effort).
+ */
+export const NETWORK_EXPORT_FORMATS = ['har', 'csv'] as const;
+export type NetworkExportFormat = (typeof NETWORK_EXPORT_FORMATS)[number];
+
+/**
+ * `saved`: written; `cancelled`: the user closed the save dialog, or another export's dialog is still
+ * open (no second dialog; nothing written); `empty`: no request to export, or not the active tab (no
+ * dialog); `failed`: the file could not be written.
+ */
+export const NETWORK_EXPORT_RESULTS = ['saved', 'cancelled', 'empty', 'failed'] as const;
+export type NetworkExportResult = (typeof NETWORK_EXPORT_RESULTS)[number];
+
+/** The save dialog: its title, filter names and extensions (`showOverwriteConfirmation`, in the Downloads folder). */
+export const NETWORK_EXPORT_DIALOG = {
+  title: 'Export network log',
+  filterNames: { har: 'HTTP Archive (HAR)', csv: 'CSV' },
+  extensions: { har: 'har', csv: 'csv' },
+} as const satisfies { title: string; filterNames: Record<NetworkExportFormat, string>; extensions: Record<NetworkExportFormat, string> };
+
+/** The menu's labels. */
+export const NETWORK_EXPORT_LABELS: Readonly<Record<NetworkExportFormat, string>> = { har: 'Export HAR…', csv: 'Export CSV…' };
+
+/**
+ * The file name offered: `frost-network-<host>-<YYYYMMDD-HHMMSS>.<ext>` (local time), the host
+ * lower-cased with anything but `a-z`, `0-9`, `.` and `-` made `-` (`page` without one).
+ */
+export function networkExportFileName(pageUrl: string, format: NetworkExportFormat, at: Date): string {
+  let host = '';
+  try {
+    host = new URL(pageUrl).hostname;
+  } catch {
+    host = '';
+  }
+  const safe = host.toLowerCase().replace(/[^a-z0-9.-]/g, '-').slice(0, 100) || 'page';
+  const two = (n: number) => String(n).padStart(2, '0');
+  const stamp = `${at.getFullYear()}${two(at.getMonth() + 1)}${two(at.getDate())}-${two(at.getHours())}${two(at.getMinutes())}${two(at.getSeconds())}`;
+  return `frost-network-${safe}-${stamp}.${NETWORK_EXPORT_DIALOG.extensions[format]}`;
+}
+
+/**
+ * Said in the HAR's `log.comment`, as the CSV's first line and in the Export menu. Best effort:
+ * frost never claims an export holds no secret (a token under an unknown name or in a path is kept).
+ */
+export const EXPORT_URLS_REDACTED_NOTE = 'Known sensitive URL parameters were redacted, best effort. Review the file before you share it.' as const;
+/** The Export menu's hint beside `EXPORT_URLS_REDACTED_NOTE` (the name fragments catch some ordinary parameters). */
+export const EXPORT_REDACTION_HINT = 'Some harmless values may be redacted too.' as const;
+
+/** Each HAR entry's `request.comment` and `response.content.comment` (with `bodySize: -1`, `content.size: -1` and no `text`). */
+export const HAR_NO_BODY_COMMENT = 'Body not recorded: frost never reads request or response bodies.' as const;
+
+/** The HAR's `log.creator` (`version`: the app's). */
+export const HAR_CREATOR = { name: 'frost' } as const;
+export const HAR_VERSION = '1.2' as const;
+
+/** What the log left out, as the Network tab says it (`NetworkLogAnswer`). */
+export interface NetworkExportCounts {
+  readonly dropped: number;
+  readonly notKept: number;
+  readonly overBudget: { readonly entries: number; readonly bytes: number };
+}
+
+/** The HAR's `log.comment`: the redaction note, no bodies, and what the log did not keep. */
+export function harLogComment(counts: NetworkExportCounts): string {
+  return [
+    EXPORT_URLS_REDACTED_NOTE,
+    'Bodies are never recorded, so no entry has one (bodySize -1).',
+    `Not in this file: ${counts.dropped} requests past the log's cap (dropped), ${counts.notKept} let go while the drawer was closed (notKept), ${counts.overBudget.entries} requests and ${counts.overBudget.bytes} bytes over the log's memory budget (overBudget).`,
+  ].join(' ');
+}
+
+/**
+ * The CSV: `EXPORT_URLS_REDACTED_NOTE` as its first line, then this header and one line per request
+ * (no headers, no bodies), every cell through `csvCell` (`CSV_FORMULA_PREFIXES`, RFC 4180), CRLF.
+ * `Started` is ISO 8601; `Size` the response's `Content-Length`; the URLs redacted.
+ */
+export const NETWORK_CSV_COLUMNS = ['Document', 'Method', 'URL', 'Type', 'State', 'Status', 'Error', 'Redirect to', 'Size', 'Started', 'Duration (ms)', 'From cache', 'Third-party', 'robots.txt'] as const;
+
+/**
+ * Every place an export carries a URL; `redactExportUrl` runs over each:
+ * - `request.url`: HAR `request.url`, the CSV's URL;
+ * - `request.queryString`: HAR `request.queryString[]`, rebuilt from the redacted URL (it restates
+ *   only redacted values);
+ * - `response.redirectURL`: the entry's `redirectTo` (HAR `response.redirectURL`, the CSV's
+ *   Redirect to);
+ * - `page`: the document's page URL (HAR `pages[].title`);
+ * - `header:referer`, `header:location`: those header values (resolved against the request URL);
+ * - `header:link`: each `<…>` URL of a `link` value (an unclosed one, cut at `maxHeaderValueChars`,
+ *   and the text after a stray `>`, to the end of the value; a value with no `<` that reads as an
+ *   absolute URL, as one).
+ */
+export const EXPORT_URL_PLACES = ['request.url', 'request.queryString', 'response.redirectURL', 'page', 'header:referer', 'header:location', 'header:link'] as const;
+export type ExportUrlPlace = (typeof EXPORT_URL_PLACES)[number];
+
+/** What a redacted value (or a URL that cannot be read) is written as. */
+export const REDACTED_VALUE = 'REDACTED' as const;
+
+/**
+ * Query parameters whose value is always `REDACTED_VALUE`, whatever its length (names compared
+ * lower-cased, after percent-decoding).
+ */
+export const EXPORT_REDACTED_QUERY_PARAMS = [
+  'token',
+  'access_token',
+  'id_token',
+  'refresh_token',
+  'key',
+  'api_key',
+  'apikey',
+  'access_key',
+  'client_key',
+  'x-api-key',
+  'x-amz-credential',
+  'x-amz-signature',
+  'code',
+  'state',
+  'session',
+  'sessionid',
+  'sessid',
+  'phpsessid',
+  'jsessionid',
+  'sid',
+  'auth',
+  'password',
+  'passwd',
+  'pwd',
+  'pw',
+  'secret',
+  'signature',
+  'sig',
+  'csrf',
+  'xsrf',
+  'nonce',
+  'otp',
+  'ticket',
+  'credential',
+  'email',
+] as const;
+
+/**
+ * A parameter whose lower-cased name contains one of these is redacted too (`keyword`, `author`,
+ * `passage` included). Names are compared without trailing `[…]` brackets and by each bracket's
+ * content too (`token[]`, `data[sid]`).
+ */
+export const EXPORT_REDACT_NAME_FRAGMENTS = ['token', 'secret', 'session', 'sess', 'auth', 'pass', 'key', 'csrf', 'xsrf', 'nonce', 'credential', 'signature'] as const;
+
+/**
+ * Any parameter value (or bare query part) that, after percent-decoding (and `+` as a space, up to
+ * five times), matches one of these is redacted whatever its name: an email-shaped part, a run of at
+ * least 32 base64 / base64url / hex characters, or a JWT-shaped token. A value that holds nested
+ * parameters once decoded (`next=/cb?token=…`) is redacted whole when any nested `name=value` piece
+ * is sensitive by these rules. Path segments are never redacted (a secret in a path is a known gap,
+ * `path-secrets-not-claimed`); path matrix parameters (`;jsessionid=…`) follow the parameter rules.
+ */
+export const EXPORT_REDACT_VALUE_PATTERNS = {
+  email: /[^\s@/?#&=]+@[^\s@/?#&=]+\.[a-z]{2,}/i,
+  opaque: /[A-Za-z0-9+/=_-]{32,}/,
+  jwt: /eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/,
+} as const satisfies Record<string, RegExp>;
+
 // ---- Redirects ---------------------------------------------------------------------------------
 
 /** The headers each redirect hop and the final answer show (when the recorder saw them). */
@@ -433,13 +604,90 @@ export interface CookieView {
 }
 
 /**
- * Electron exposes no cheap per-origin storage usage (it needs script in the page or the debugger,
- * both out of bounds for a read-only drawer), so the Storage tab says so instead of a number.
+ * The site's storage usage and quota come from the storage reader (`navigator.storage.estimate()`,
+ * read with the keys; `WEB_STORAGE_LIMITS`), so they are as fresh as the last Refresh. The browser
+ * estimates them (padded for cross-site privacy) and may not offer them at all, e.g. on a page that is
+ * not a secure context; the Storage tab then shows no number.
  */
-export const STORAGE_USAGE_NOTE = 'Storage usage per site isn’t available: frost would have to run script in the page to measure it.' as const;
+export const STORAGE_USAGE_NOTE = 'Usage is the browser’s own estimate for this site, read with the keys; it can be padded and isn’t offered on every page.' as const;
 
+// ---- Web storage (Phase 11 Task 4, Decision 6) --------------------------------------------------
+
+/**
+ * The isolated world of the drawer's one script, the web storage reader (Decision 17: Phase 11 owns
+ * `1_700`–`1_709`). It is in `NON_AGENT_WORLD_IDS` (`agent-page-tools.spec.ts`).
+ */
+export const DEVTOOLS_STORAGE_WORLD_ID = 1_700;
+
+/** The page's two web storage areas: `localStorage` and `sessionStorage`. */
+export const WEB_STORAGE_AREAS = ['local', 'session'] as const;
+export type WebStorageArea = (typeof WEB_STORAGE_AREAS)[number];
+
+/**
+ * The web storage reader (Decision 6): one self-contained, read-only function run by main with
+ * `executeJavaScriptInIsolatedWorld` in `DEVTOOLS_STORAGE_WORLD_ID`, top frame only. It runs only
+ * when the chrome asks: the Storage tab opened or its Refresh (`readWebStorage`), and, while one key
+ * is revealed, to read that key alone for each Storage answer. One script at a time per tab: a read
+ * in flight is shared by the requests made meanwhile (with or without `readWebStorage`), and a clear
+ * (Clear Browsing Data, Clear this site's data) or a commit while it runs discards what it read. It runs with JavaScript off too
+ * (isolated worlds do, as the extractor's), never edits storage and keeps nothing in the page.
+ * - **Keys** (`op: 'keys'`): per area, at most `maxKeys` keys (each cut to `maxKeyChars`) with their
+ *   value's size (UTF-16 code units) and the area's total; never a value. Also
+ *   `navigator.storage.estimate()` (`usage`, `quota`; `null` where the browser offers none).
+ * - **Value** (`op: 'value'`): one key's value, cut to `maxValueChars`, for the one revealed key.
+ * Main waits at most `scriptTimeoutMs` (`timeout`), validates every answer with
+ * `WebStorageKeysAnswerSchema` / `WebStorageValueAnswerSchema` (`invalid`: the page can answer
+ * anything) and drops one whose origin is not the tab's (the page moved on). An opaque origin (a
+ * sandboxed document) answers `opaque-origin`, a storage the browser refuses `denied`.
+ * Main keeps the keys and sizes of the last read for the tab's current document (never a value); a
+ * revealed value is read again for each answer and never kept. Reveals are stamped with the tab's
+ * committed document as cookie reveals are (`COOKIE_LIMITS`): a commit, Clear this site's data, Clear
+ * Browsing Data or closing the tab forgets the keys and the reveal.
+ */
+export const WEB_STORAGE_LIMITS = {
+  maxKeys: 500,
+  maxKeyChars: 256,
+  maxValueChars: 4_096,
+  scriptTimeoutMs: 2_000,
+} as const;
+
+export const WEB_STORAGE_UNAVAILABLE_REASONS = ['opaque-origin', 'denied', 'timeout', 'invalid', 'failed'] as const;
+export type WebStorageUnavailableReason = (typeof WEB_STORAGE_UNAVAILABLE_REASONS)[number];
+
+/**
+ * One key of an area. `size`: its value's length in UTF-16 code units. `value`: `null` while masked;
+ * the (capped) value only for the one revealed key. A key cut to `maxKeyChars` (`keyTruncated`)
+ * cannot be revealed.
+ */
+export interface WebStorageItem {
+  readonly key: string;
+  readonly keyTruncated: boolean;
+  readonly size: number;
+  readonly value: string | null;
+  readonly valueTruncated: boolean;
+}
+
+export type WebStorageAreaView =
+  | { readonly status: 'ready'; readonly items: readonly WebStorageItem[]; readonly total: number }
+  | { readonly status: 'unavailable'; readonly reason: WebStorageUnavailableReason };
+
+export type WebStorageView = { readonly [area in WebStorageArea]: WebStorageAreaView };
+
+/**
+ * `devtools.storage`. `webStorage`: `null` until the reader ran for the tab's current document (the
+ * Storage tab opened, or Refresh); `usage` / `quota` in bytes from the same read (`null`: not read
+ * or not offered).
+ */
 export type StorageAnswer =
-  | { readonly status: 'ready'; readonly origin: string; readonly cookies: readonly CookieView[]; readonly cookieTotal: number; readonly usage: null }
+  | {
+      readonly status: 'ready';
+      readonly origin: string;
+      readonly cookies: readonly CookieView[];
+      readonly cookieTotal: number;
+      readonly usage: number | null;
+      readonly quota: number | null;
+      readonly webStorage: WebStorageView | null;
+    }
   | { readonly status: 'no-page' | 'no-tab' };
 
 /**

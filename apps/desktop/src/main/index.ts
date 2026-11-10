@@ -1,3 +1,5 @@
+// Export Diagnostics (specs/diagnostics.feature.md): main's own warnings and errors, scrubbed into a bounded ring, from the first import on.
+import './diagnostics/install';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, ipcMain, net, safeStorage, session, shell, webContents, type WebContents } from 'electron';
@@ -7,10 +9,10 @@ import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { createAccountMain } from './account/main';
 import { createWindowRegistry } from './app-windows';
 import { createGscMain } from './gsc/main';
-import { contextMenuTemplate } from './browser/context-menu';
+import { contextMenuTemplate, copySeoMenuForContents } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
 import { hardenBrowseSession } from './browser/guard';
-import { confirmClearHistory } from './browser/history-dialog';
+import { confirmClearHistory, confirmClearHistoryRange, confirmHistoryRetention } from './browser/history-dialog';
 import { createHistoryService, createSearchEngineSetting } from './browser/history-service';
 import { createBrowsePermissionHandlers, createPermissionBroker, createPersistentDecisionStore } from './browser/permissions';
 import { createProfileDebugger } from './browser/render-profile-debugger';
@@ -26,6 +28,7 @@ import { createCheckFetch } from './seo/checks-fetch';
 import { CHECKS_ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-checks.spec';
 import { profileUserAgent } from '@app/specs/render-profile.spec';
 import { createContentService } from './seo/content-notes';
+import { createSeoExports } from './seo/exports';
 import { confirmClearContentNotes } from './seo/content-notes-dialog';
 import { runExtractor } from './seo/extract';
 import { runHighlight, watchHighlight } from './seo/highlight';
@@ -39,7 +42,7 @@ import type { ContextSource } from './seo/auditor';
 import { contextSource, knownInput, laterInput } from './seo/context-source';
 import { observeMainFrames, observeRequests } from './browser/web-request';
 import { createDevtoolsService } from './devtools/service';
-import { browseCookies, clearBrowseOrigin, confirmClearSiteData } from './devtools/site-data';
+import { browseCookies, clearBrowseOrigin, confirmClearSiteData, networkExportIo } from './devtools/site-data';
 import { nativeWayland, runVitals, withTimeout, type CollectOptions } from './seo/vitals';
 import { createShownTimes } from './seo/vitals-shown';
 import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
@@ -63,6 +66,8 @@ import { createMainRankings } from './changes/rank-dialogs';
 import { lateSearchParams } from './changes/serp-params';
 import { createMainInspector } from './inspector/service';
 import { createAiChecksMain } from './ai-checks/main';
+import { createHelpMain } from './help/main';
+import { createDiagnosticsMain } from './diagnostics/main';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -139,7 +144,7 @@ function start(): void {
       edit: (command) => {
         if (live()) contents[command]();
       },
-    }, searchEngine.searchEngine());
+    }, searchEngine.searchEngine(), copySeoMenuForContents(browser, contents, seoExports));
     popupContextMenu(template, window as BrowserWindow);
   };
   // The active tab is audited after each load and SPA route change (specs/seo-sidebar.feature.md):
@@ -249,6 +254,7 @@ function start(): void {
     confirmClearSiteData: (origin) => confirmClearSiteData(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null, origin),
     clearOrigin: clearBrowseOrigin,
     liveWindow: (id) => BrowserWindow.fromId(id)?.isDestroyed() === false,
+    networkExport: { ...networkExportIo, appVersion: app.getVersion() },
     log: logSession,
   });
 
@@ -307,6 +313,8 @@ function start(): void {
     confirmClearAll: () => confirmClearContentNotes(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
     changed: () => browser.contentNotesChanged(),
   });
+  // SEO table exports, written by main from the tab's ready audit (specs/seo-exports.feature.md).
+  const seoExports = createSeoExports({ audit: (tabId) => browser.seo.getAudit(tabId), clipboard });
   const browser = createBrowserController({
     createView: createTabView,
     openWindow: () => openMainWindow(),
@@ -329,6 +337,7 @@ function start(): void {
     renderProfiles,
     searchEngine: () => searchEngine.searchEngine(),
     contentNotesGeneration: () => content.generation(),
+    targetQuery: (url) => content.targetQueryOf(url),
   });
 
   // Change intelligence (specs/changes-capture.feature.md): the active tab's ready audit and its regions, captured into the session database.
@@ -340,7 +349,17 @@ function start(): void {
   // Projects (specs/projects.feature.md): pages and queries, and their capture runs in a tab of their own.
   const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of, serpVerdictOf: serpParams.verdictOf, settings: sessionStore.settings });
   // The DOM inspector (specs/inspector.feature.md): reads the active tab's page in its own isolated world; never writes to it.
-  const inspector = createMainInspector({ browser, tabContents, log: logSession });
+  // Its Served view reads the audit's served HTML as the worker decoded it (never fetched for it); "Copy source" writes main's own text.
+  const inspector = createMainInspector({
+    browser,
+    tabContents,
+    log: logSession,
+    clipboard,
+    served: {
+      document: (contents) => ({ generation: served?.generation(contents.id) ?? 0, url: contents.getURL() }),
+      source: (contents) => served?.source(contents.id, contents.getURL(), tabUserAgent(contents), { scripting: tabScripting(contents) }),
+    },
+  });
 
   // The browse guard turns a tab's gesture-backed popups into background tabs
   // (specs/browse-guard.feature.md); the hooks object is part of the one set of guard options.
@@ -440,6 +459,8 @@ function start(): void {
     // The AI agent (specs/agent-host.feature.md): its SERP, intent, probe and Search Console tools. Not gated: no
     // entitlements port is passed (it must not be wired to the account; specs/entitlements-client.feature.md).
     const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, consumeGesture: (windowId) => account.gestures.consume(windowId), ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) } });
+    // Help, keyboard shortcuts and What's New (specs/help.feature.md): bundled notes, fixed pages opened on a gesture only.
+    const help = createHelpMain({ app, settings: sessionStore.settings, consumeGesture: (windowId) => account.gestures.consume(windowId), log: logSession, diagnostics: createDiagnosticsMain({ app, sessionStore, telemetry: telemetryMain.service, agent, gsc: gsc.service, sync, log: logSession }) });
     // AI checks (specs/ai-checks.feature.md): off by default; only the audit's cookieless served HTML (peeked), on the agent's own route and model.
     const aiChecks = createAiChecksMain({ browser, isBrowseContents, served: () => served, tabUserAgent, tabScripting, agent: agent.checks, sessionStore, log: logSession });
     attachIpcHandler({
@@ -475,6 +496,10 @@ function start(): void {
           writer: sessionStore.writer,
           tabs: browser,
           confirmClearAll: () => confirmClearHistory(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null),
+          // Phase 11 Task 10: clear by range (asks in main) and retention (pruned at start, then daily).
+          confirmClearRange: (range) => confirmClearHistoryRange(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null, range),
+          confirmRetention: (stored, next) => confirmHistoryRetention(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null, stored, next),
+          settings: sessionStore.settings,
           log: logSession,
         }),
         settings: searchEngine,
@@ -491,6 +516,9 @@ function start(): void {
         gsc: gsc.service,
         aiChecks,
         rankings: createMainRankings({ store: sessionStore.changeIntel, log: logSession }), // specs/rankings.feature.md: rank table, compare, CSV via main's clipboard and save dialog.
+        seoExport: seoExports,
+        tabOverrides: browser.tabOverrides,
+        help: help.service,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
@@ -506,6 +534,8 @@ function start(): void {
         robots?.clear();
         responses.clear();
         served?.clear();
+        // The Inspector's kept rendered source (inspector.feature.md).
+        inspector.forget();
         devtools.clear();
         checks?.clearCache();
         // Running checks go too: nothing they fetch afterwards is kept (seo-checks.feature.md).
@@ -525,7 +555,7 @@ function start(): void {
     });
     // Tab shortcuts (Cmd/Ctrl+T, W, L, 1…9) and page commands (reload, back, zoom …) are menu
     // accelerators calling the controller directly (specs/tabs.feature.md, page-commands.feature.md).
-    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.(), ...account.menu });
+    installAppMenu({ ...browser, clearBrowsingData: () => void clearBrowsingData?.(), ...account.menu, ...help.menu });
     // What the last launch saved, after the sessions are hardened and before any tab or window
     // exists: remembered decisions answer the first requests, and the chrome's first state already
     // has the restored tabs.

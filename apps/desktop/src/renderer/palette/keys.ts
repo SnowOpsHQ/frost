@@ -63,7 +63,8 @@ export function resolveActive(ids: readonly string[], activeId: string | null): 
 const MAC_MODIFIERS: Readonly<Record<string, string>> = { Mod: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧' };
 /** macOS lists modifiers in this order. */
 const MAC_ORDER = ['Ctrl', 'Alt', 'Shift', 'Mod'];
-const KEY_NAMES: Readonly<Record<string, string>> = { Left: '←', Right: '→', Up: '↑', Down: '↓' };
+// Phase 11 Task 11 (the keyboard shortcuts screen): the keypad keys in short words.
+const KEY_NAMES: Readonly<Record<string, string>> = { Left: '←', Right: '→', Up: '↑', Down: '↓', NumpadAdd: 'Num +', NumpadSubtract: 'Num −', Numpad0: 'Num 0' };
 
 /** `shortcut` (`Mod+Shift+R`) as this platform shows it: `⇧⌘R` on macOS, `Ctrl+Shift+R` elsewhere. */
 export function shortcutLabel(shortcut: PaletteShortcut, mac: boolean): string {

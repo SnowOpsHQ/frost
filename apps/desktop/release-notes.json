@@ -1,0 +1,21 @@
+{
+  "releases": [
+    {
+      "version": "0.0.0",
+      "date": "2026-11-09",
+      "title": "A deeper agent, Search Console and everyday SEO tools",
+      "items": [
+        "The agent gains eleven built-in SEO skills, a searchable skills library you can export and import, and a Reasoning setting for every turn.",
+        "Gemini and Grok models on the AI Gateway route, and a catalogue of presets for adding MCP servers.",
+        "Readability shows long and difficult sentences and complex words, scores Spanish, French and German, and can highlight hard sentences on the page.",
+        "Search Console: any date range, country and device filters, and URL Inspection of the page you are on.",
+        "AI readiness: a 0 to 100 score from crawler rules, probes, pre-render coverage and llms.txt, an on-device page type, and opt-in AI checks.",
+        "Projects track your site's position for saved searches from the result pages you capture, with tags, competitors, comparisons, CSV export and a capture cadence.",
+        "Copy 24 page values, export images, headings and speed as CSV, and highlight internal or external links, lazy images or a keyphrase.",
+        "Devtools export the network log as HAR or CSV and show local and session storage; the Inspector searches the page and shows its source.",
+        "Turn CSS or cookies off and override location for one tab, annotate and crop screenshots, search, rename and archive agent chats, and attach other tabs to a chat.",
+        "Resizable panes, panel pins, history retention, a Help menu, a keyboard shortcuts screen, What's New and a setup checklist on the new tab."
+      ]
+    }
+  ]
+}

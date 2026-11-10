@@ -17,6 +17,7 @@ import { createAgentHost, type AgentHost, type HostChild, type HostPort } from '
 import { createModelProxy, type ModelProxy } from './model-proxy';
 import { createAgentSettings, type AgentSettings, type SettingsFs } from './settings';
 import type { McpManager, McpSessionLike } from './mcp';
+import type { AttachedTabs } from './tools/attached-tabs';
 
 // The agent's main-side composition (Phase 5 Tasks 3 and 4): the host (the runtime's utility
 // process), the key store, the model proxy, the model settings, the entitlements port, the standing
@@ -82,6 +83,8 @@ export interface CreateAgentDeps {
    * endpoints, where plan requests are sent, and the store kind. Default none (the real endpoints).
    */
   readonly chatgptE2e?: ChatgptE2eSeam | null;
+  /** The chats' attached tabs (Phase 11 Task 9): the broker resolves `read_attached_tab` refs here. Default: none. */
+  readonly attachedTabs?: Pick<AttachedTabs, 'resolve' | 'isLive' | 'auditReady'>;
 }
 
 export interface Agent {
@@ -166,6 +169,7 @@ export function createAgent(deps: CreateAgentDeps): Agent {
     entitlements,
     ...(runner ? { runner } : {}),
     tabUrl: deps.tabUrl ?? (() => null),
+    ...(deps.attachedTabs ? { attachedTabs: deps.attachedTabs } : {}),
     log,
     ...(mcp ? { mcpLabel: (toolName: string) => mcp.labelOf(toolName), mcpInputAllowed: (toolName: string, input: JsonValue) => mcp.inputAllowed(toolName, input) } : {}),
   });

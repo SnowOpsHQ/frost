@@ -2,10 +2,10 @@
 export { appRouter, type AppRouter } from './router';
 export { enforceSender } from './trpc';
 export type { BrowserService, IpcServices, SeoAuditRef, SeoService } from './services';
-export type { ContentNotesAnswer, ContentService, ContentVariant, SnippetHtmlSource } from './content-service';
+export type { ContentNotesAnswer, ContentService, ContentVariant, PreviewJsonLdFields, PreviewJsonLdSource, SnippetHtmlSource } from './content-service';
 export type { JavascriptService } from './javascript-router';
 export type { DevtoolsService } from './devtools-service';
-export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';
+export type { FindService, HistoryCursorAnswer, HistoryPageAnswer, HistoryRetentionAnswer, HistoryService, HistoryVisitAnswer, JumpBackInAnswer, SettingsService } from './polish-services';
 export type { ChecksService } from './checks-service';
 export type { UpdateService } from './update-router';
 export type { SerpProbesService, SerpReadApi, SerpService } from './serp-service';
@@ -21,6 +21,9 @@ export type { TelemetryService } from './telemetry-service';
 export type { GscIpcService, GscService } from './gsc-service';
 export type { AiChecksService } from './ai-checks-service';
 export type { RankingsService } from './rankings-service';
+export type { SeoExportService } from './seo-export-service';
+export type { TabOverridesService } from './tab-overrides-router';
+export type { HelpService } from './help-service';
 export {
   createContext,
   createSenderPolicy,

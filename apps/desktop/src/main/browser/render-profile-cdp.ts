@@ -12,6 +12,7 @@ import {
   type RenderFit,
   type RenderProfile,
   type RenderProfileCdpMethod,
+  type TabOverrides,
 } from '@app/specs/render-profile.spec';
 
 // The CDP commands that put a render profile into effect (spec `render-profile.feature.md`, How it
@@ -74,12 +75,28 @@ export function userAgentMetadata(profile: RenderProfile, chromeVersion: string)
 }
 
 /**
+ * The tab overrides' commands (`render-profile.feature.md`, Tab overrides), last in a tab's merged
+ * list: the `document.cookie` switch, then the geolocation override (or its clear). CSS off and the
+ * HTTP cookie block are not CDP (`css-off.ts`, `cookie-block.ts`).
+ */
+export function tabOverrideCommands(overrides: TabOverrides): CdpCommand[] {
+  const geolocation = overrides.geolocation;
+  return [
+    { method: 'Emulation.setDocumentCookieDisabled', params: { disabled: overrides.cookiesDisabled } },
+    geolocation
+      ? { method: 'Emulation.setGeolocationOverride', params: { latitude: geolocation.latitude, longitude: geolocation.longitude, accuracy: geolocation.accuracy } }
+      : { method: 'Emulation.clearGeolocationOverride', params: {} },
+  ];
+}
+
+/**
  * Every command for `profile`, in order: the Network domain (enabled, with no buffers, only for
  * cache-off), the cache switch, the user agent (an empty one restores frost's own), the network
  * condition, device metrics and touch, then the JavaScript switch. `emulation` is the viewport fit to
- * the page area (`fitRenderViewport`); `undefined` uses the device's own size.
+ * the page area (`fitRenderViewport`); `undefined` uses the device's own size. With `tabOverrides`
+ * (the tab's merged list, `render-profile.ts`), the overrides' commands follow (`tabOverrideCommands`).
  */
-export function renderProfileCommands(profile: RenderProfile, options: { readonly chromeVersion: string; readonly emulation?: RenderFit['emulation'] }): CdpCommand[] {
+export function renderProfileCommands(profile: RenderProfile, options: { readonly chromeVersion: string; readonly emulation?: RenderFit['emulation']; readonly tabOverrides?: TabOverrides }): CdpCommand[] {
   const commands: CdpCommand[] = [];
   if (profile.cacheDisabled) {
     commands.push({ method: 'Network.enable', params: { ...NETWORK_ENABLE_PARAMS } }, { method: 'Network.setCacheDisabled', params: { cacheDisabled: true } });
@@ -107,10 +124,11 @@ export function renderProfileCommands(profile: RenderProfile, options: { readonl
   const touch = profile.device !== 'none' && DEVICE_PRESETS[profile.device].touch;
   commands.push({ method: 'Emulation.setTouchEmulationEnabled', params: touch ? { enabled: true, maxTouchPoints: TOUCH_POINTS } : { enabled: false } });
   commands.push({ method: 'Emulation.setScriptExecutionDisabled', params: { value: profile.javascriptDisabled } });
+  if (options.tabOverrides) commands.push(...tabOverrideCommands(options.tabOverrides));
   return commands;
 }
 
-/** A profile's commands for a cross-site child frame: all but the viewport (`TOP_LEVEL_ONLY_METHODS`). */
+/** A merged list's commands for a cross-site child frame: all but the viewport (`TOP_LEVEL_ONLY_METHODS`); the overrides' too. */
 export function childFrameCommands(commands: readonly CdpCommand[]): CdpCommand[] {
   return commands.filter((command) => !(TOP_LEVEL_ONLY_METHODS as readonly string[]).includes(command.method));
 }

@@ -3,7 +3,10 @@
  * (Phase 1 usable-browser gaps; acceptance: `page-commands.feature.md`). Plain values with no
  * imports, so the chrome renderer can use them without bundling Zod (whose eval probe the app's
  * strict Trusted Types CSP blocks). Builds on the reserved tab shortcuts in `tabs.spec.ts`.
+ * (Phase 11 Task 1: imports of the Zod-free copy keys and export labels only.)
  */
+import type { CopyValueKey } from './command-palette.spec';
+import { SEO_EXPORT_LABELS, type SeoExportKind } from './seo-exports.spec';
 
 /** What the page commands do; each acts on the **active** tab. */
 export const PAGE_COMMANDS = ['reload', 'hard-reload', 'stop', 'back', 'forward', 'zoom-in', 'zoom-out', 'zoom-reset'] as const;
@@ -66,8 +69,32 @@ export const CONTEXT_MENU_LABELS = {
   copy: 'Copy',
   paste: 'Paste',
   'select-all': 'Select All',
+  // Phase 11 Task 1 (append-only): the "Copy SEO Data" submenu (`CONTEXT_MENU_COPY_SEO_VALUES`).
+  'copy-seo': 'Copy SEO Data',
 } as const;
 export type ContextMenuItem = keyof typeof CONTEXT_MENU_LABELS | 'search';
+
+/**
+ * "Copy SEO Data" (`copy-seo`; Phase 11 Task 1, Decision 1; acceptance `seo-exports.feature.md`,
+ * Context menu): a submenu, the menu's last group, shown only when the clicked tab shows an
+ * `http(s)` page whose audit is ready. The native menu has no chrome ref, so main builds it from
+ * that tab's ready audit at the click and remembers the audit's URL and `takenAt`: an item writes
+ * (through main's clipboard, as `seo.copyValue` / `seoExport.copyCsv` would) only if the tab's ready
+ * audit is still that one when it is clicked; otherwise nothing is written. It holds the four most
+ * used values (`CONTEXT_MENU_COPY_SEO_VALUES`) and the three CSVs (`SEO_EXPORT_KINDS`, images
+ * unfiltered); a value the audit lacks (`copyValueOf` is `null`), images when the audit has none,
+ * or speed when the audit has no speed report, is shown disabled. Labels are frost's own (`CONTEXT_MENU_COPY_SEO_LABELS`).
+ */
+export const CONTEXT_MENU_COPY_SEO_VALUES = ['title', 'meta-description', 'h1', 'canonical'] as const satisfies readonly CopyValueKey[];
+export type ContextMenuCopySeoValue = (typeof CONTEXT_MENU_COPY_SEO_VALUES)[number];
+export const CONTEXT_MENU_COPY_SEO_LABELS: Readonly<Record<ContextMenuCopySeoValue | SeoExportKind, string>> = {
+  title: 'Title',
+  'meta-description': 'Meta Description',
+  h1: 'H1',
+  canonical: 'Canonical URL',
+  // The CSVs: one spelling, the exports' own labels (`seo-exports.spec.ts`).
+  ...SEO_EXPORT_LABELS,
+};
 
 /**
  * The one label with page text in it: `Search Google for “<selection>”`. The selection is shown

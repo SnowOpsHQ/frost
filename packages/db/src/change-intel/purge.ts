@@ -4,7 +4,7 @@ import { PURGE_REASONS, type CapturedTable, type PurgeReason } from '@app/specs/
 import type { SessionDatabase } from '../client';
 import { capped, chunks, isCount, isId, isJsonOrNull, isOneOf, isRetention, isTime, pageSize } from './checks';
 import { uuidv7 } from './ids';
-import { ciCaptures, ciDiffs, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions } from './schema';
+import { ciCaptures, ciDiffs, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions, screenshotEdits } from './schema';
 import { ciSerpReadings } from './workspace-schema';
 
 // Retention's purges (spec `capture-db.feature.md`, Retention planning; the plan's "The purge path").
@@ -22,6 +22,11 @@ import { ciSerpReadings } from './workspace-schema';
 //
 // After a purge, main unlinks the files of the answer's `plan.unreferencedHashes` (the plan executed,
 // planned again here), checking `isHashReferenced` once more before each unlink.
+//
+// Phase 11 Task 7: deleting a `ci_screenshots` row here also removes the local `screenshot_edits`
+// link of that row as an edited copy, in the same transaction, through migration `0231`'s
+// `screenshot_edits_follow_screenshots` trigger; so does a synced tombstone's delete. A link naming
+// the row as its source stays (council round 1), so the copy keeps its lane below.
 
 /** What to purge: a project's retention policy, or `all` (internal: the `project-deleted` purge). */
 export type PurgePolicy = { readonly mode: 'forever' } | { readonly mode: 'versions' | 'days'; readonly value: number } | { readonly mode: 'all' };
@@ -211,13 +216,19 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
           at: ciScreenshots.createdAt,
           sha256: ciScreenshots.sha256,
           bytes: ciScreenshots.bytes,
+          edited: screenshotEdits.screenshotId,
         })
         .from(ciScreenshots)
+        .leftJoin(screenshotEdits, eq(screenshotEdits.screenshotId, ciScreenshots.id))
         .where(eq(ciScreenshots.projectId, projectId))
     )
       .filter((row) => typeof row.id === 'string')
       // A screenshot's lane is its page, render profile and search parameters: a phone's and a desktop's never compete.
-      .map((row) => ({ id: row.id, group: JSON.stringify([row.pageUrl, row.kind, row.renderProfile, row.searchParams]), at: time(row.at), sha256: row.sha256, bytes: row.bytes }));
+      // Phase 11 Task 7 (security review): an edited copy (one `screenshot_edits` links) has a lane of
+      // its own beside the captured ones, so saving an edit never pushes out its source or any taken
+      // screenshot; copies are kept among copies. The link outlives its source, so a copy whose
+      // source has gone stays in the copy lane.
+      .map((row) => ({ id: row.id, group: JSON.stringify([row.pageUrl, row.kind, row.renderProfile, row.searchParams, row.edited !== null]), at: time(row.at), sha256: row.sha256, bytes: row.bytes }));
 
     const captures = purgedCaptures(captureRows, policy, now);
     const screenshots = purgedScreenshots(screenshotRows, policy, now);

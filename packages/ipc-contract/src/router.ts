@@ -32,6 +32,9 @@ import { enforceSender, middleware, publicProcedure, router } from './trpc';
 import { changesRouter, screenshotsRouter } from './changes-router';
 import { projectsRouter } from './projects-router';
 import { inspectorRouter } from './inspector-router';
+import { seoExportRouter } from './seo-export-router';
+import { tabOverridesRouter } from './tab-overrides-router';
+import { helpRouter } from './help-router';
 
 // Every procedure starts `publicProcedure.use(enforceSender)` (spec `ipc-sender.feature.md`,
 // `every-procedure-enforces-sender`; Semgrep `ipc-sender-guard` in Task 5).
@@ -235,7 +238,7 @@ const seoRouter = router({
     .use(enforceSender)
     .use(requireSeo)
     .input(SeoHighlightInputSchema)
-    .mutation(({ ctx, input }) => ctx.seo.setHighlight(input.tabId, input.mode) === true),
+    .mutation(({ ctx, input }) => ctx.seo.setHighlight(input.tabId, input.mode, input.phrase) === true),
   copyLinksCsv: publicProcedure
     .use(enforceSender)
     .use(requireSeo)
@@ -310,6 +313,12 @@ export const appRouter = router({
   // Phase 9 Task 10 (`ai-checks.feature.md`): AI checks' mode (consent in main), state and "Check this page".
   aiChecks: aiChecksRouter,
   rankings: rankingsRouter, // Phase 10 Task 5 (`rankings.feature.md`, Router): rank table, series, compare and CSV export.
+  // Phase 11 Task 1 (`seo-exports.feature.md`): the Images, Headings and Speed tables as CSV, written by main.
+  seoExport: seoExportRouter,
+  // Phase 11 Task 6 (`render-profile.feature.md`, Tab overrides): CSS off, cookies off and geolocation for one tab.
+  tabOverrides: tabOverridesRouter,
+  // Phase 11 Task 11 (`help.feature.md`): the Help menu's sheets, What's New and Help's fixed pages.
+  help: helpRouter,
 });
 
 export type AppRouter = typeof appRouter;

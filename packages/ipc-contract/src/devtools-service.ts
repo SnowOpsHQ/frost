@@ -1,4 +1,4 @@
-import type { ClearSiteDataResult, ConsoleLogAnswer, NetworkHeadersAnswer, NetworkLogAnswer, RedirectTraceAnswer, StorageAnswer } from '@app/specs/devtools.spec';
+import type { ClearSiteDataResult, ConsoleLogAnswer, NetworkExportFormat, NetworkExportResult, NetworkHeadersAnswer, NetworkLogAnswer, RedirectTraceAnswer, StorageAnswer, WebStorageArea } from '@app/specs/devtools.spec';
 
 // The SEO devtools drawer as the `devtools.*` procedures see it (Phase 2.5 Task 5; acceptance
 // `devtools.feature.md`). Main implements it (`apps/desktop/src/main/devtools/service.ts`); this
@@ -24,8 +24,12 @@ export interface DevtoolsService {
   redirects(tabId: number): RedirectTraceAnswer;
   /** The tab's console for its current document. */
   console(tabId: number): ConsoleLogAnswer;
-  /** The cookies of the tab's URL, masked but for revealed ones. Never rejects. */
-  storage(tabId: number): Promise<StorageAnswer>;
+  /**
+   * The cookies of the tab's URL, masked but for revealed ones, and its web storage (Phase 11 Task 4):
+   * with `readWebStorage`, the reader runs now (keys and sizes); otherwise the last read's keys. A
+   * revealed key's value is read again for each answer. Never rejects.
+   */
+  storage(tabId: number, options?: { readonly readWebStorage?: boolean }): Promise<StorageAnswer>;
   /** Reveals one cookie until the tab's next navigation; `false` for an unknown cookie, tab or page. Never rejects. */
   revealCookie(tabId: number, cookie: { readonly name: string; readonly domain: string; readonly path: string }): Promise<boolean>;
   /** "Clear this site's data": asks in main's own dialog first. Never rejects. */
@@ -34,4 +38,12 @@ export interface DevtoolsService {
   setOpen(windowId: number | null, open: boolean): void;
   /** "Preserve log" for the tab; `false` for an id that names no open tab. */
   setPreserveLog(tabId: number, preserve: boolean): boolean;
+  /**
+   * Exports the (active) tab's network log as `format`, built by main from its own log and written
+   * where the user chose in main's save dialog (`NETWORK_EXPORT_RESULTS`), parented to `windowId`
+   * (the sender's app window; `null` or absent: app-modal). Never rejects.
+   */
+  exportNetwork(tabId: number, format: NetworkExportFormat, windowId?: number | null): Promise<NetworkExportResult>;
+  /** Reveals one listed web storage key for the tab's current document; `false` otherwise. Never rejects. */
+  revealStorageItem(tabId: number, item: { readonly area: WebStorageArea; readonly key: string }): Promise<boolean>;
 }

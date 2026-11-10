@@ -1,15 +1,21 @@
 // Specs: specs/browser-polish.spec.ts (FIND_*, CLEAR_HISTORY, HISTORY_MENU_ID, JUMP_BACK_IN_TITLE, SEARCH_ENGINES),
 // specs/tabs.spec.ts (RESERVED_TAB_SHORTCUTS['find-in-page' | 'reopen-closed-tab']), specs/browser.spec.ts (BROWSE_PARTITION)
-// Acceptance: specs/browser-polish.feature.md (End to end)
+// Acceptance: specs/browser-polish.feature.md (End to end; History retention, ranges and projects:
+// history-project-filter-and-clear-hour); specs/help.feature.md (End to end: help-shortcuts-sheet,
+// whats-new-after-version-change, setup-checklist; specs/help.spec.ts, specs/browser-session-db.spec.ts DB_FILE_NAME)
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
-import { CLEAR_HISTORY, HISTORY_EMPTY_MESSAGE, HISTORY_MENU_ID, JUMP_BACK_IN_TITLE, searchEngineUrl } from '@app/specs/browser-polish.spec';
-import { closeApp, launchApp } from './harness';
+import { CLEAR_HISTORY, CLEAR_HISTORY_RANGE, clearHistoryRangeMessage, HISTORY_ALL_PAGES_LABEL, HISTORY_EMPTY_MESSAGE, HISTORY_MENU_ID, HISTORY_NO_MATCHES, JUMP_BACK_IN_TITLE, searchEngineUrl } from '@app/specs/browser-polish.spec';
+import { DB_FILE_NAME } from '@app/specs/browser-session-db.spec';
+import { HELP_URLS, KEYBOARD_SHORTCUTS, SETUP_CHECKLIST_ITEMS, SETUP_CHECKLIST_STORAGE_KEY, SHORTCUTS_TEXT, WHATS_NEW_SEEN_SETTING_KEY } from '@app/specs/help.spec';
+import { APP_DIR, closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
 /**
@@ -312,6 +318,77 @@ test('history-lists-searches-deletes-clears', async () => {
   await expect(history()).toHaveCount(0);
 });
 
+// Phase 11 Task 10 (Decision 13): the project filter and clearing the last hour (main asks first).
+test('history-project-filter-and-clear-hour', async () => {
+  for (const name of ['kiwi', 'mango']) {
+    await go(`${site.origin}/h/${name}`);
+    await contentsIdAt(`${site.origin}/h/${name}`);
+  }
+  // A project listing one of them, made in the Projects sheet (from the Changes panel).
+  const sidebar = page.getByTestId('seo-sidebar');
+  if ((await sidebar.getAttribute('data-open')) !== 'true' || (await page.getByTestId('seo-panel').getAttribute('data-panel')) !== 'changes')
+    await page.locator('[data-testid="seo-rail-item"][data-panel="changes"]').click();
+  await page.getByTestId('changes-open-projects').click();
+  await page.getByTestId('projects-create-name').fill('Fruit stand');
+  await page.getByTestId('projects-create').click();
+  await expect(page.getByTestId('projects-name')).toHaveText('Fruit stand');
+  await page.getByTestId('projects-page-url').fill(`${site.origin}/h/mango`);
+  await page.getByTestId('projects-page-add').click();
+  await expect(page.getByTestId('projects-status')).toHaveText('Page added.');
+  await page.getByTestId('projects-page-url').press('Escape');
+
+  await menu(HISTORY_MENU_ID);
+  await expect(history()).toBeVisible();
+  const row = (name: string) => page.locator(`[data-testid="history-row"][data-url="${site.origin}/h/${name}"]`);
+  await expect(row('kiwi')).toBeVisible();
+  await expect(row('mango')).toBeVisible();
+  // The project's pages only; back to every page.
+  const filter = page.getByTestId('history-project');
+  await expect(filter.locator('option').first()).toHaveText(HISTORY_ALL_PAGES_LABEL);
+  await filter.selectOption({ label: 'Fruit stand' });
+  await expect(rows()).toHaveCount(1);
+  await expect(row('mango')).toContainText('Mango page');
+  // Never captured: no change count.
+  await expect(row('mango').getByTestId('history-changes')).toHaveCount(0);
+  await page.getByTestId('history-search').fill('kiwi');
+  await expect(page.getByTestId('history-empty')).toHaveText(HISTORY_NO_MATCHES);
+  await page.getByTestId('history-search').fill('');
+  await filter.selectOption({ label: HISTORY_ALL_PAGES_LABEL });
+  await expect(row('kiwi')).toBeVisible();
+
+  // "Last hour" asks in main, naming the range: Cancel keeps everything, Clear removes the hour's visits.
+  await app.evaluate(({ dialog }) => {
+    const holder = globalThis as { __rangeBoxes?: string[]; __rangeAnswer?: number; __rangeBox?: typeof dialog.showMessageBox };
+    holder.__rangeBox ??= dialog.showMessageBox;
+    holder.__rangeBoxes = [];
+    dialog.showMessageBox = (async (...args: unknown[]) => {
+      const options = args.find((arg): arg is { message: string } => typeof arg === 'object' && arg !== null && 'message' in arg);
+      holder.__rangeBoxes!.push(options?.message ?? '');
+      return { response: holder.__rangeAnswer ?? 1, checkboxChecked: false };
+    }) as typeof dialog.showMessageBox;
+  });
+  const asked = () => app.evaluate(() => (globalThis as { __rangeBoxes?: string[] }).__rangeBoxes ?? []);
+  const answer = (index: number) => app.evaluate((_electron, index) => void ((globalThis as { __rangeAnswer?: number }).__rangeAnswer = index), index);
+  try {
+    await expect(page.getByTestId('history-clear-range')).toHaveValue('hour');
+    await answer(CLEAR_HISTORY_RANGE.dialog.cancelId);
+    await page.getByTestId('history-clear-range-run').click();
+    await expect.poll(asked).toEqual([clearHistoryRangeMessage('hour')]);
+    await expect(row('kiwi')).toBeVisible();
+    await answer(CLEAR_HISTORY_RANGE.confirmIndex);
+    await page.getByTestId('history-clear-range-run').click();
+    await expect(page.getByTestId('history-empty')).toHaveText(HISTORY_EMPTY_MESSAGE);
+    expect(await asked()).toHaveLength(2);
+  } finally {
+    await app.evaluate(({ dialog }) => {
+      const holder = globalThis as { __rangeBox?: typeof dialog.showMessageBox };
+      if (holder.__rangeBox) dialog.showMessageBox = holder.__rangeBox;
+    });
+  }
+  await page.keyboard.press('Escape');
+  await expect(history()).toHaveCount(0);
+});
+
 test('d-prefix-searches-duckduckgo', async () => {
   await stubHttps();
   try {
@@ -361,5 +438,182 @@ test('search-engine-persists-across-relaunch', async () => {
     await closeApp(app);
     [app, page] = [mainApp, mainPage];
     await rm(profile, { recursive: true, force: true });
+  }
+});
+
+// ---- Help, shortcuts, What's New and the setup checklist (Phase 11 Task 11, specs/help.feature.md) ----
+
+/** Replaces main's `shell.openExternal` with a recorder (nothing opens); answers what it was called with. */
+async function stubOpenExternal(): Promise<void> {
+  await app.evaluate(({ shell }) => {
+    const holder = globalThis as { __helpOpened?: string[]; __helpOpen?: typeof shell.openExternal };
+    holder.__helpOpen ??= shell.openExternal;
+    holder.__helpOpened = [];
+    shell.openExternal = async (url: string) => {
+      holder.__helpOpened!.push(url);
+    };
+  });
+}
+const openedExternally = () => app.evaluate(() => (globalThis as { __helpOpened?: string[] }).__helpOpened ?? []);
+async function restoreOpenExternal(): Promise<void> {
+  await app.evaluate(({ shell }) => {
+    const holder = globalThis as { __helpOpen?: typeof shell.openExternal };
+    if (holder.__helpOpen) shell.openExternal = holder.__helpOpen;
+  });
+}
+
+test('setup-checklist', async () => {
+  // This profile's marks start empty (an earlier test may have opened Settings).
+  await page.evaluate((key) => window.localStorage.removeItem(key), SETUP_CHECKLIST_STORAGE_KEY);
+  await menu('new-tab');
+  const checklist = page.getByTestId('setup-checklist');
+  await expect(checklist).toBeVisible();
+  const item = (id: string) => page.locator(`[data-testid="setup-item"][data-item="${id}"]`);
+  await expect(page.getByTestId('setup-item')).toHaveCount(SETUP_CHECKLIST_ITEMS.length);
+  for (const entry of SETUP_CHECKLIST_ITEMS) await expect(item(entry.id)).toContainText(entry.label);
+  // No agent key, no Search Console, nothing opened yet (a project may exist from an earlier test).
+  for (const id of ['agent', 'search-console', 'privacy', 'shortcuts']) await expect(item(id)).toHaveAttribute('data-done', 'false');
+  // Nothing remote on the new-tab page.
+  expect(await checklist.locator('img, iframe').count()).toBe(0);
+
+  // "Show shortcuts" opens the shortcuts screen and marks the step.
+  await item('shortcuts').getByTestId('setup-action').click();
+  await expect(page.getByTestId('shortcuts-view')).toBeVisible();
+  await page.getByTestId('shortcuts-view-close').click();
+  await expect(page.getByTestId('shortcuts-view')).toHaveCount(0);
+  await expect(item('shortcuts')).toHaveAttribute('data-done', 'true');
+  // "Open privacy settings" opens Settings on Telemetry and marks the step.
+  await item('privacy').getByTestId('setup-action').click();
+  await expect(page.getByTestId('settings-view')).toBeVisible();
+  await expect(page.locator('#settings-section-telemetry')).toBeFocused();
+  await page.getByTestId('settings-close').click();
+  await expect(page.getByTestId('settings-view')).toHaveCount(0);
+  await expect(item('privacy')).toHaveAttribute('data-done', 'true');
+
+  // A later new tab keeps the marks; hiding the checklist is for good.
+  await menu('new-tab');
+  await expect(item('shortcuts')).toHaveAttribute('data-done', 'true');
+  await page.getByTestId('setup-dismiss').click();
+  await expect(checklist).toHaveCount(0);
+  await menu('new-tab');
+  await expect(page.getByTestId('start-view')).toBeVisible();
+  await expect(checklist).toHaveCount(0);
+  await page.evaluate((key) => window.localStorage.removeItem(key), SETUP_CHECKLIST_STORAGE_KEY);
+});
+
+test('help-shortcuts-sheet', async () => {
+  const sheet = page.getByTestId('shortcuts-view');
+  // Help › Keyboard Shortcuts.
+  await menu('help-shortcuts');
+  await expect(sheet).toBeVisible();
+  await expect(page.locator('#shortcuts-view-title')).toBeFocused();
+  await expect(sheet).toContainText(SHORTCUTS_TEXT.title);
+  await expect(page.getByTestId('shortcuts-group')).toHaveCount(KEYBOARD_SHORTCUTS.length);
+  const mac = process.platform === 'darwin';
+  await expect(sheet.locator('[data-shortcut="command-palette"]')).toContainText(mac ? '⌘K' : 'Ctrl+K');
+  await expect(sheet.locator('[data-shortcut="shortcuts"]')).toContainText(mac ? '⌘/' : 'Ctrl+/');
+  await expect(sheet.locator('[data-shortcut="select-tab"]')).toContainText(mac ? '⌘1' : 'Ctrl+1');
+  await expect(sheet.locator('[data-shortcut="select-tab"]')).toContainText(mac ? '⌘8' : 'Ctrl+8');
+  // The page area is laid out zero-high while the sheet shows (the tab's view never covers it).
+  expect(await page.locator('.page-area').evaluate((el) => el.getBoundingClientRect().height)).toBe(0);
+  // Esc closes it.
+  await page.keyboard.press('Escape');
+  await expect(sheet).toHaveCount(0);
+
+  // The palette's "Keyboard shortcuts".
+  await chromeCaughtUp();
+  await press('chrome', 'K', ['mod']);
+  await page.getByTestId('command-palette-input').fill('keyboard shortcuts');
+  await expect(page.locator('[data-testid="command-palette-option"][aria-selected="true"]')).toHaveAttribute('data-action', 'help.shortcuts');
+  await page.getByTestId('command-palette-input').press('Enter');
+  await expect(sheet).toBeVisible();
+  // One sheet at a time: History opening closes it, and it closes History.
+  await menu(HISTORY_MENU_ID);
+  await expect(history()).toBeVisible();
+  await expect(sheet).toHaveCount(0);
+  await menu('help-shortcuts');
+  await expect(sheet).toBeVisible();
+  await expect(history()).toHaveCount(0);
+  // Settings likewise.
+  await menu('settings');
+  await expect(page.getByTestId('settings-view')).toBeVisible();
+  await expect(sheet).toHaveCount(0);
+  await menu('help-shortcuts');
+  await expect(sheet).toBeVisible();
+  await expect(page.getByTestId('settings-view')).toHaveCount(0);
+  // A page load in the tab closes it.
+  await go(`${site.origin}/h/shortcuts`);
+  await contentsIdAt(`${site.origin}/h/shortcuts`);
+  await expect(sheet).toHaveCount(0);
+
+  // Help › frost Help and Report an Issue: exactly the fixed pages, to the system browser (stubbed).
+  await stubOpenExternal();
+  try {
+    await menu('help-frost');
+    await menu('help-report-issue');
+    await expect.poll(openedExternally).toEqual([HELP_URLS.help, HELP_URLS.issue]);
+  } finally {
+    await restoreOpenExternal();
+  }
+});
+
+test('whats-new-after-version-change', async () => {
+  const version = (JSON.parse(readFileSync(path.join(APP_DIR, 'package.json'), 'utf8')) as { version: string }).version;
+  const notes = JSON.parse(readFileSync(path.join(APP_DIR, 'release-notes.json'), 'utf8')) as { releases: { version: string; title: string; items: string[] }[] };
+  const current = notes.releases.find((release) => release.version === version)!;
+  expect(current).toBeDefined();
+  const profile = await mkdtemp(path.join(tmpdir(), 'frost-e2e-whats-new-'));
+  const stored = () => {
+    const db = new DatabaseSync(path.join(profile, DB_FILE_NAME), { readOnly: true, timeout: 5_000 });
+    try {
+      return (db.prepare('SELECT value FROM app_settings WHERE key = ?').get(WHATS_NEW_SEEN_SETTING_KEY)?.['value'] as string | undefined) ?? null;
+    } finally {
+      db.close();
+    }
+  };
+  const whatsNew = () => page.getByTestId('whats-new-view');
+  const [mainApp, mainPage] = [app, page];
+  try {
+    // A first run records the version and shows nothing.
+    ({ app, page } = await launchApp([], { userDataDir: profile }));
+    await page.waitForLoadState('domcontentloaded');
+    await expect.poll(stored).toBe(version);
+    await chromeCaughtUp();
+    await expect(whatsNew()).toHaveCount(0);
+    await closeApp(app);
+
+    // The version changed since What's New was last shown: the next launch shows it once.
+    const db = new DatabaseSync(path.join(profile, DB_FILE_NAME), { timeout: 5_000 });
+    db.prepare('UPDATE app_settings SET value = ? WHERE key = ?').run('0.0.0-earlier', WHATS_NEW_SEEN_SETTING_KEY);
+    db.close();
+    ({ app, page } = await launchApp([], { userDataDir: profile }));
+    await page.waitForLoadState('domcontentloaded');
+    await expect(whatsNew()).toBeVisible();
+    await expect(page.getByTestId('whats-new-version')).toContainText(version);
+    const release = page.locator(`[data-testid="whats-new-release"][data-version="${version}"]`);
+    await expect(release).toContainText(current.title);
+    await expect(release).toContainText(current.items[0]!);
+    await expect.poll(stored).toBe(version);
+    await page.getByTestId('whats-new-view-close').click();
+    await expect(whatsNew()).toHaveCount(0);
+    // Help › What's New shows it again on request.
+    await menu('help-whats-new');
+    await expect(whatsNew()).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(whatsNew()).toHaveCount(0);
+    await closeApp(app);
+
+    // The launch after: nothing (the version was recorded).
+    ({ app, page } = await launchApp([], { userDataDir: profile }));
+    await page.waitForLoadState('domcontentloaded');
+    await chromeCaughtUp();
+    await go(`${site.origin}/h/after`);
+    await contentsIdAt(`${site.origin}/h/after`);
+    await expect(whatsNew()).toHaveCount(0);
+    expect(stored()).toBe(version);
+  } finally {
+    await closeApp(app);
+    [app, page] = [mainApp, mainPage];
+    await rm(profile, { recursive: true, force: true, maxRetries: 5 });
   }
 });

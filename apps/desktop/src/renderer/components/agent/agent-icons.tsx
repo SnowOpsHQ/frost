@@ -100,3 +100,24 @@ export function ExportIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** Rename (Phase 11 Task 8): a pencil. */
+export function PencilIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 20l4-1 11-11-3-3L5 16z" />
+      <path d="M14 7l3 3" />
+    </Icon>
+  );
+}
+
+/** Archive (Phase 11 Task 8): a box with a lid. */
+export function ArchiveIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 5h16v4H4z" />
+      <path d="M6 9v10h12V9" />
+      <path d="M10 13h4" />
+    </Icon>
+  );
+}

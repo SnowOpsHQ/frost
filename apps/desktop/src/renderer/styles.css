@@ -63,6 +63,18 @@ input {
   height: 100%;
 }
 
+/* The last two rows are pinned, counted from the end: if a slot above them ever leaves the layout
+   (display: none), the slots after it move up into an `auto` row, never the workspace into an
+   `auto` row (sized to its content) or the status bar into the page's row. Keep the slots
+   themselves in the layout; hide what is inside them. */
+.chrome > .workspace-stack {
+  grid-row: -3;
+}
+
+.chrome > .status-bar {
+  grid-row: -2;
+}
+
 /* ---- Tab strip ---------------------------------------------------------------------------- */
 
 /* The active tab is cut from the toolbar's colour and flows into it; the others sit on the darker
@@ -955,12 +967,48 @@ input {
 /* Docked left of the page area: the rail at the window's edge, then the panel. The page area
    shrinks to make room (the tab's view follows it through setPageBounds). */
 .seo {
+  position: relative;
   display: flex;
   flex: 0 1 auto;
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--bg-chrome-edge);
   background: var(--bg-chrome);
+}
+
+/* Phase 11 Task 10: a resizable pane's separator (sidebar-layout.ts), a thin strip inside the pane on
+   its edge next to the page (the tab's view covers the page area, so it never reaches past it). Its
+   line shows on hover, while dragged and with keyboard focus. */
+.pane-separator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 5;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.pane-separator::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.pane-separator:hover::after,
+.pane-separator:active::after,
+.pane-separator:focus-visible::after {
+  background: var(--accent);
+}
+
+.seo-separator,
+.seo-separator::after {
+  right: 0;
 }
 
 .seo-panel {
@@ -1162,6 +1210,76 @@ input {
 
 .seo-rail-dot[data-status='error'] {
   background: var(--danger);
+}
+
+/* "More panels" (Phase 11 Task 10): the unpinned panels, as a menu drawn over the open panel. */
+.seo-rail-more {
+  margin-top: 4px;
+}
+
+.seo-more-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  max-width: 260px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--bg-chrome-edge);
+  border-radius: 8px;
+  background: var(--bg-chrome);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.3);
+}
+
+.seo-more-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: start;
+}
+
+.seo-more-item .icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--icon);
+}
+
+.seo-more-item:hover {
+  background: var(--bg-hover);
+}
+
+.seo-more-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.seo-more-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seo-more-item .seo-more-dot {
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+}
+
+/* The open panel's pin toggle: pressed while the panel is on the rail. */
+.seo-pin[aria-pressed='true'] {
+  color: var(--accent);
 }
 
 /* The toolbar's toggle shows whether the panel is open. */
@@ -5618,6 +5736,34 @@ input {
   margin-left: 0;
 }
 
+/* Tab overrides (Phase 11 Task 6): beside the profile's chip, or alone at the right. */
+.status-render-profile + .status-tab-overrides {
+  margin-left: 6px;
+}
+
+/* The overrides' cookie or location part could not be applied (whole-branch review). */
+.status-tab-overrides[data-status='failed'] {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.render-overrides-failed {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--text);
+}
+
+.render-geo-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.render-geo-field {
+  flex: 0 1 110px;
+  min-width: 80px;
+  max-width: 130px;
+}
+
 .status-render-profile-icon {
   width: 13px;
   height: 13px;
@@ -5757,14 +5903,6 @@ input {
   height: 24px;
 }
 
-.seo-serp-glyph-disc {
-  fill: var(--serp-glyph);
-}
-
-.seo-serp-glyph-mark {
-  stroke: var(--serp-glyph-mark);
-}
-
 .seo-serp-site-text {
   display: flex;
   flex-direction: column;
@@ -5811,6 +5949,106 @@ input {
 
 .seo-serp-note {
   margin-top: 0;
+}
+
+/* Phase 11 Task 3: the result preview's facts and rich variants (frost's own drawing). */
+.seo-serp-monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--serp-glyph);
+  color: var(--serp-glyph-mark);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.seo-serp-rating {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--serp-text);
+  font-size: 12px;
+}
+
+.seo-serp-stars {
+  color: var(--warn);
+  letter-spacing: 1px;
+}
+
+.seo-serp-description-row {
+  display: block;
+}
+
+.seo-serp-date {
+  color: var(--serp-path);
+  font-size: 12.5px;
+}
+
+.seo-serp-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.seo-serp-rich-card {
+  flex-direction: row;
+  gap: 12px;
+}
+
+.seo-serp-rich-lines {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.seo-serp-rich-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--serp-text);
+  font-size: 12.5px;
+}
+
+.seo-serp-rich-line .seo-serp-glyph {
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+}
+
+.seo-serp-rich-title {
+  color: var(--serp-title);
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.seo-serp-rich-site,
+.seo-serp-rich-meta {
+  color: var(--serp-path);
+  font-size: 12px;
+}
+
+.seo-serp-rich-badge {
+  align-self: flex-start;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--serp-glyph);
+  color: var(--serp-glyph-mark);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.seo-serp-video-frame {
+  flex: none;
+  width: 96px;
+  height: 54px;
+  border-radius: 8px;
+  background: var(--serp-glyph);
 }
 
 .seo-width-meters {
@@ -6088,7 +6326,7 @@ input {
 
 .seo-ngram {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 2px 10px;
   padding: 6px 0 7px;
@@ -6133,6 +6371,41 @@ input {
   grid-column: 3;
   display: inline-flex;
   gap: 2px;
+}
+
+/* An n-gram row's keyphrase highlight (Phase 11): icon only, pressed while it shows that phrase. */
+.seo-ngram-highlight {
+  grid-row: 1 / 3;
+  grid-column: 4;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--icon);
+}
+
+.seo-ngram-highlight .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.seo-ngram-highlight:hover {
+  border-color: var(--border-field);
+}
+
+.seo-ngram-highlight:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.seo-ngram-highlight[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
 }
 
 .seo-ngram-place {
@@ -6980,6 +7253,29 @@ input {
   color: var(--caution);
 }
 
+.devtools-export-menu {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.devtools-storage-sections {
+  overflow: auto;
+}
+
+.devtools-web-storage {
+  padding: 4px 10px 8px;
+  border-top: 1px solid var(--bg-chrome-edge);
+}
+
+.devtools-web-storage .devtools-subhead {
+  margin: 6px 0;
+}
+
 /* End of Devtools drawer */
 
 /* Browser polish (Phase 2.5 Task 6, specs/browser-polish.feature.md): the find bar, the History
@@ -7351,6 +7647,61 @@ input {
   .history-row {
     grid-template-columns: 52px minmax(0, 1fr) auto auto;
   }
+}
+
+/* Phase 11 Task 10: the project filter and "Clear history from" a range, under the header. */
+.history-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  flex: none;
+  padding: 0 20px 10px;
+}
+
+.history-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.history-tool-end {
+  margin-inline-start: auto;
+}
+
+.history-tools .history-clear {
+  margin-inline-start: 0;
+}
+
+.history-select {
+  min-width: 0;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: var(--bg-field);
+  color: var(--text);
+}
+
+.history-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* A row's change count (frost's own captures of the page). */
+.history-changes {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* ---- New-tab page: Jump back in ---- */
@@ -9305,6 +9656,247 @@ input {
 }
 
 /* End of Inspector (Phase 6) */
+
+/* Inspector search and sources (Phase 11) ----------------------------------------------------------
+   Phase 11 Task 5, specs/inspector.feature.md (Search and sources): the Tree / Rendered / Served
+   toggle, the element search and its matches, and a source as numbered rows of inert text. */
+.inspector-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.inspector-view-button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.inspector-search,
+.inspector-find,
+.inspector-source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.inspector-search-mode {
+  flex: 0 1 120px;
+}
+
+.inspector-matches {
+  max-height: 24vh;
+  margin: 0;
+  padding: 4px 0;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 8px;
+  background: var(--seo-card);
+  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+.inspector-match {
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspector-match:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  outline: 0;
+}
+
+.inspector-source {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inspector-find-count {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.inspector-source-lines {
+  max-height: 60vh;
+  margin: 0;
+  padding: 4px 0;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 8px;
+  background: var(--seo-card);
+  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+.inspector-source-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 8px 0 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inspector-source-row[data-match='true'] {
+  background: var(--accent-soft);
+}
+
+.inspector-source-row[aria-current='true'] {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.inspector-source-no {
+  flex: none;
+  min-width: 4ch;
+  color: var(--text-faint);
+  text-align: right;
+  user-select: none;
+}
+
+.inspector-more-lines {
+  align-self: flex-start;
+}
+
+/* End of Inspector search and sources (Phase 11) */
+
+/* Screenshot editor (Phase 11 Task 7, `screenshot.feature.md`, Editing): a sheet over the page
+   column; the tab's view is hidden while it shows (as with Projects). */
+.page-column:has(> .shot-editor-sheet) > .page-area {
+  flex: 0 0 0;
+  height: 0;
+}
+
+.shot-editor-sheet {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+  contain: inline-size;
+  background: var(--bg-page);
+  outline: none;
+}
+
+.shot-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(1200px, 100%);
+  min-height: 0;
+  padding: 16px 20px 24px;
+}
+
+.shot-editor-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.shot-editor-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.shot-editor-hint {
+  flex: 1 1 auto;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.shot-editor-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.shot-editor-tool-group {
+  width: 260px;
+}
+
+.shot-editor-swatches {
+  display: flex;
+  gap: 4px;
+}
+
+.shot-editor-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: none;
+  /* The circle's outline (its stroke is currentColor), so a light swatch stays visible. */
+  color: var(--border-field);
+}
+
+.shot-editor-swatch[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+
+.shot-editor-swatch {
+  position: relative;
+  overflow: hidden;
+}
+
+/* The swatch's colour is an SVG fill from SCREENSHOT_EDIT_COLORS (a presentation attribute, not an
+   inline style), so the stylesheet holds no literal colours for it; its outline is the circle's stroke. */
+.shot-editor-swatch > svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.shot-editor-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.shot-editor-text {
+  width: 220px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: var(--bg-field);
+  color: var(--text);
+}
+
+.shot-editor-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.shot-editor-status {
+  min-height: 1.4em;
+  margin: 0;
+}
+
+.shot-editor-stage {
+  min-height: 0;
+}
+
+.shot-editor-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--seo-card-edge);
+  border-radius: 6px;
+  cursor: crosshair;
+  touch-action: none;
+}
 
 /* The SERP panel's search tools (Phase 10 Task 9): Edit search and Track this search…. */
 .serp-search-tools {

@@ -2,14 +2,27 @@
 // specs/capture.spec.ts (PAGE_REGIONS), specs/changes.spec.ts (REGION_EXTRACT_LIMITS, CAPTURE_BLOCK_ELEMENTS)
 // Acceptance: specs/inspector.feature.md (Page scripts; Scenarios inspector-paths-resolve, inspector-answers-are-capped,
 // inspector-stale-token, inspector-node-details, inspector-region-agrees-with-regions, inspector-pick-needs-trusted-click,
-// inspector-pick-ends-without-picking, inspector-outline-lifecycle, inspector-leaves-dom-unchanged, inspector-scripts-are-self-contained)
+// inspector-pick-ends-without-picking, inspector-outline-lifecycle, inspector-leaves-dom-unchanged, inspector-scripts-are-self-contained;
+// Phase 11 Task 5: search-text-finds-paths, search-selector-invalid-refused, search-capped, serialize-capped-and-truncated-flag,
+// scripts-never-write-dom; INSPECTOR_SEARCH_LIMITS, INSPECTOR_SOURCE_MAX_CHARS)
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import { JSDOM } from 'jsdom';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { CAPTURE_LIMITS } from '@app/specs/capture.spec';
 import { CAPTURE_BLOCK_ELEMENTS, REGION_EXTRACT_LIMITS } from '@app/specs/changes.spec';
-import { DOC_TOKEN_PATTERN, INSPECTOR_LIMITS, INSPECTOR_WORLD_ID, InspectorChildrenAnswerSchema, InspectorNodeAnswerSchema, type NodePath } from '@app/specs/inspector.schema';
+import {
+  DOC_TOKEN_PATTERN,
+  INSPECTOR_LIMITS,
+  INSPECTOR_SEARCH_LIMITS,
+  INSPECTOR_SOURCE_MAX_CHARS,
+  INSPECTOR_WORLD_ID,
+  InspectorChildrenAnswerSchema,
+  InspectorNodeAnswerSchema,
+  InspectorSearchAnswerSchema,
+  InspectorSourceAnswerSchema,
+  type NodePath,
+} from '@app/specs/inspector.schema';
 import { extractRegions, type RegionDocument } from '../../changes/regions';
 import { INSPECTOR_SCRIPT_LIMITS, INSPECTOR_STATE_KEY, inspectorScript, inspectPage, runInspector, type InspectorDocument, type InspectorRequest, type InspectorScriptLimits, type InspectorState } from '../page-script';
 
@@ -412,5 +425,166 @@ describe('scripts', () => {
     const target = { executeJavaScriptInIsolatedWorld: async (world: number, scripts: { code: string }[]) => (calls.push([world, scripts[0]!.code]), null) };
     await runInspector(target, { op: 'token' });
     expect(calls).toEqual([[INSPECTOR_WORLD_ID, inspectorScript({ op: 'token' })]]);
+  });
+});
+
+describe('search and source', () => {
+  type Search = { status: string; docToken?: string; matches?: { path: NodePath; node: { tag: string; index: number; id: string; textPreview: string } }[]; more?: boolean };
+  const search = (p: ReturnType<typeof page>, mode: 'text' | 'selector', query: string, t: string = p.token()) => p.call({ op: 'search', token: t, mode, query }) as Search;
+  const source = (p: ReturnType<typeof page>, t: string = p.token()) => p.call({ op: 'source', token: t }) as { status: string; docToken?: string; text?: string; truncated?: boolean };
+  /** The element a path names (the test's own reckoning). */
+  const at = (p: ReturnType<typeof page>, path: NodePath): Element | undefined => {
+    let el: Element | undefined = p.document.documentElement;
+    for (const i of path) el = el?.children[i];
+    return el;
+  };
+
+  test('search-text-finds-paths', () => {
+    const p = page(`${BODY}<section><p>Find THE needle here</p><div>needle<span>not mine</span></div><p>other</p></section>`);
+    const t = p.token();
+    // Something outlined: the overlay's host is in the page, and is never a match nor counted in a path.
+    p.highlight([1, 1, 0]);
+    expect(p.host()?.isConnected).toBe(true);
+    const answer = InspectorSearchAnswerSchema.parse(search(p, 'text', 'Needle'));
+    if (answer.status !== 'ok') throw new Error('not ok');
+    expect(answer.docToken).toBe(t);
+    expect(answer.more).toBe(false);
+    // Own text only, case-insensitive, in document order.
+    expect(answer.matches.map((m) => m.node.tag)).toEqual(['p', 'div']);
+    for (const match of answer.matches) {
+      const el = at(p, match.path)!;
+      expect(el.localName).toBe(match.node.tag);
+      expect(match.node.index).toBe(match.path.at(-1));
+    }
+    expect(answer.matches[0]!.node.textPreview).toBe('Find THE needle here');
+    // Text inside the head counts too; text split across child elements does not.
+    expect(search(p, 'text', 'T').matches!.map((m) => [m.node.tag, m.path])).toContainEqual(['title', [0, 0]]);
+    // Attribute values are not text.
+    expect(search(p, 'text', 'about tea').matches).toEqual([]);
+    expect(search(p, 'text', 'title bold').matches).toEqual([]);
+    expect(search(p, 'text', 'Big title').matches!.map((m) => m.node.id)).toEqual(['title']);
+    // The host's own label is never searched.
+    expect(search(p, 'text', 'h1#title').matches).toEqual([]);
+  });
+
+  test('search-selector-invalid-refused', () => {
+    const p = page();
+    p.highlight([1, 1, 0]);
+    const answer = InspectorSearchAnswerSchema.parse(search(p, 'selector', 'main a, h1.hero, div'));
+    if (answer.status !== 'ok') throw new Error('not ok');
+    // Document order; the overlay host (a `div` of the inspector's own) is never a match.
+    expect(answer.matches.map((m) => [m.node.tag, m.path])).toEqual([
+      ['h1', [1, 1, 0]],
+      ['div', [1, 1, 2]],
+    ]);
+    expect(search(p, 'selector', 'nav > a').matches!.map((m) => m.path)).toEqual([[1, 0, 0, 0]]);
+    expect(search(p, 'selector', 'blink').matches).toEqual([]);
+    for (const bad of ['h1[', '!!', 'a:nope(1)', '}']) expect(search(p, 'selector', bad)).toEqual({ status: 'invalid-selector' });
+  });
+
+  test('search-capped', () => {
+    const many = '<p>hit</p>'.repeat(INSPECTOR_SEARCH_LIMITS.maxResults + 10);
+    const p = page(many);
+    for (const mode of ['text', 'selector'] as const) {
+      const answer = InspectorSearchAnswerSchema.parse(search(p, mode, mode === 'text' ? 'hit' : 'p'));
+      if (answer.status !== 'ok') throw new Error('not ok');
+      expect(answer.matches).toHaveLength(INSPECTOR_SEARCH_LIMITS.maxResults);
+      expect(answer.more).toBe(true);
+    }
+    // Exactly the cap: nothing more.
+    const exact = page('<p>hit</p>'.repeat(INSPECTOR_SEARCH_LIMITS.maxResults));
+    expect(search(exact, 'text', 'hit')).toMatchObject({ status: 'ok', more: false });
+    // The visit budget stops a search before the end of a large document.
+    const tight = page(`${'<div><i>x</i></div>'.repeat(40)}<p>late</p>`, { limits: { maxNodesVisited: 30 } as Partial<InspectorScriptLimits> });
+    expect(search(tight, 'text', 'late')).toMatchObject({ status: 'ok', matches: [], more: true });
+    expect(search(tight, 'selector', 'i')).toMatchObject({ status: 'ok', more: true });
+    expect((search(tight, 'selector', 'i').matches ?? []).length).toBeLessThanOrEqual(30);
+    // Every node looked at counts, comments and elements without text included.
+    const comments = page(`${'<!--c-->'.repeat(40)}<p>late</p>`, { limits: { maxNodesVisited: 30 } as Partial<InspectorScriptLimits> });
+    expect(search(comments, 'text', 'late')).toMatchObject({ status: 'ok', matches: [], more: true });
+    const empties = page(`${'<b></b>'.repeat(40)}<p>late</p>`, { limits: { maxNodesVisited: 30 } as Partial<InspectorScriptLimits> });
+    expect(search(empties, 'text', 'late')).toMatchObject({ status: 'ok', matches: [], more: true });
+    expect(search(page(`${'<!--c-->'.repeat(10)}<p>late</p>`, { limits: { maxNodesVisited: 30 } as Partial<InspectorScriptLimits> }), 'text', 'late')).toMatchObject({ status: 'ok', more: false, matches: [{ node: { tag: 'p' } }] });
+    // A selector match deeper than a path may be is left out (its ancestor chain is checked first).
+    const deep = page(`${'<div>'.repeat(8)}<i class="deep">x</i>${'</div>'.repeat(8)}<i class="deep">y</i>`, { limits: { maxPathDepth: 5 } as Partial<InspectorScriptLimits> });
+    expect(search(deep, 'selector', '.deep').matches!.map((m) => m.path)).toEqual([[1, 1]]);
+    expect(search(deep, 'text', 'x').matches).toEqual([]);
+    // Another document's token.
+    expect(search(p, 'text', 'hit', 'f'.repeat(32))).toEqual({ status: 'stale' });
+    expect(source(p, 'f'.repeat(32))).toEqual({ status: 'stale' });
+  });
+
+  test('serialize-capped-and-truncated-flag', () => {
+    const p = page(`${BODY}<script>if (1 < 2) document.title = "</b>";</script>`);
+    const html = p.html();
+    const answer = InspectorSourceAnswerSchema.parse({ kind: 'rendered', ref: 0, ...source(p) });
+    if (answer.status !== 'ok') throw new Error('not ok');
+    expect(answer.text).toBe(`<!DOCTYPE html>\n${html}`);
+    expect(answer.truncated).toBe(false);
+    // With an outline showing, the overlay host is left out: the same text.
+    const t = p.token();
+    p.highlight([1, 1, 0], t);
+    expect(p.html()).not.toBe(html);
+    expect(source(p)).toMatchObject({ status: 'ok', docToken: t, text: `<!DOCTYPE html>\n${html}`, truncated: false });
+    // `<html>`'s start tag is written from its attributes (escaped as the browser does), never by cloning it.
+    const tricky = page('<p>x</p>');
+    const root = tricky.document.documentElement;
+    root.setAttribute('data-q', 'say "hi" & a\u00a0b <ok>');
+    root.setAttribute('is', 'x-root');
+    const plain = tricky.html();
+    const clone = vi.spyOn(tricky.window.Node.prototype, 'cloneNode');
+    tricky.highlight([1, 0]);
+    expect(source(tricky).text).toBe(`<!DOCTYPE html>\n${plain}`);
+    expect(source(tricky).text).toContain('data-q="say &quot;hi&quot; &amp; a&nbsp;b <ok>"');
+    expect(clone).not.toHaveBeenCalled();
+    clone.mockRestore();
+    // A legacy doctype keeps its ids; no doctype, no line for it.
+    const legacy = new JSDOM('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd"><html><body>x</body></html>');
+    const legacyAnswer = inspectPage(legacy.window.document as unknown as InspectorDocument, {}, INSPECTOR_STATE_KEY, { op: 'source', token: null }, INSPECTOR_SCRIPT_LIMITS) as { text: string };
+    expect(legacyAnswer.text.split('\n')[0]).toBe('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">');
+    const none = new JSDOM('<html><body>x</body></html>');
+    expect((inspectPage(none.window.document as unknown as InspectorDocument, {}, INSPECTOR_STATE_KEY, { op: 'source', token: null }, INSPECTOR_SCRIPT_LIMITS) as { text: string }).text).toBe('<html><head></head><body>x</body></html>');
+    // Past the cap: cut, flagged, never splitting a surrogate pair.
+    const small = page(`<p>${'a'.repeat(50)}😀😀</p>`, { limits: { maxSourceChars: 140 } as Partial<InspectorScriptLimits> });
+    const full = `<!DOCTYPE html>\n${small.html()}`;
+    const cut = source(small);
+    expect(cut.truncated).toBe(true);
+    expect(cut.text!.length).toBeLessThanOrEqual(140);
+    expect(full.startsWith(cut.text!)).toBe(true);
+    const at = full.indexOf('😀');
+    const capped = page(`<p>${'a'.repeat(50)}😀😀</p>`, { limits: { maxSourceChars: at + 1 } as Partial<InspectorScriptLimits> });
+    expect(source(capped).text).toBe(full.slice(0, at));
+    // The real cap holds for a large document, and the answer validates.
+    const big = page(`<p>${'x'.repeat(INSPECTOR_SOURCE_MAX_CHARS)}</p>`);
+    const bigAnswer = InspectorSourceAnswerSchema.parse({ kind: 'rendered', ref: 0, ...source(big) });
+    expect(bigAnswer).toMatchObject({ status: 'ok', truncated: true });
+    if (bigAnswer.status === 'ok') expect(bigAnswer.text).toHaveLength(INSPECTOR_SOURCE_MAX_CHARS);
+  });
+
+  test('scripts-never-write-dom', () => {
+    const p = page(`${BODY}<!-- a comment --><template><p>t</p></template>`);
+    const before = p.html();
+    const t = p.token();
+    const reads = () => {
+      search(p, 'text', 'title', t);
+      search(p, 'selector', '*', t);
+      search(p, 'selector', 'h1[', t);
+      search(p, 'selector', 'p:has(img)', t);
+      source(p, t);
+    };
+    reads();
+    expect(p.html()).toBe(before);
+    expect(p.host()).toBeUndefined();
+    // With an outline showing: only the inspector's own host is added, and it goes with the outline.
+    p.highlight([1, 1, 0], t);
+    reads();
+    p.highlight(null, t);
+    expect(p.html()).toBe(before);
+    for (const el of p.document.querySelectorAll('*')) expect(el.getAttribute('style')).toBeNull();
+    // The scripts run in the inspector's world, self-contained.
+    for (const request of [{ op: 'search', token: t, mode: 'selector', query: 'a' }, { op: 'source', token: t }] as InspectorRequest[]) {
+      expect(() => new vm.Script(inspectorScript(request))).not.toThrow();
+      expect(vm.runInContext(inspectorScript(request), p.dom.getInternalVMContext())).toMatchObject({ status: 'stale' });
+    }
   });
 });

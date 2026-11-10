@@ -13,8 +13,10 @@ import { z } from 'zod';
 import { MAX_TABS, NOTICE_KINDS } from './tabs.spec';
 import { MEDIA_TYPES, PERMISSION_DECISIONS, PROMPTABLE_PERMISSIONS } from './permissions.spec';
 import { HIGHLIGHT_MODES } from './seo-sidebar.spec';
+import { HIGHLIGHT_PHRASE_MAX_CHARS } from './seo-limits.spec';
 import { PALETTE_RETURN_FOCUS } from './command-palette.spec';
-import { TabRenderProfileSchema } from './render-profile.schema.spec';
+import { TabOverridesSchema, TabRenderProfileSchema } from './render-profile.schema.spec';
+import { RENDER_PROFILE_STATUSES } from './render-profile.spec';
 import { BrowserPolishStateShape } from './browser-polish.schema';
 import { DEFAULT_SEARCH_ENGINE, searchEngine } from './browser-polish.spec';
 
@@ -195,11 +197,49 @@ export const TabStateSchema = z.strictObject({
    */
   highlight: z.enum(HIGHLIGHT_MODES),
   /**
+   * The phrase the `keyphrase` highlight boxes (Phase 11 Task 2; `seo-snapshot.spec.ts`,
+   * `SeoHighlightInputSchema`): main's own copy of the phrase it accepted, `null` in every other mode.
+   * It goes back to `null` with the mode (navigation, another tab, the page removing the overlay).
+   */
+  highlightPhrase: z.string().max(HIGHLIGHT_PHRASE_MAX_CHARS).nullable(),
+  /**
    * The tab's render profile (`render-profile.spec.ts`, `TabRenderProfile`): its own, or its site's
    * pin; `null` while it renders as frost does by default. Always shown on the tab, in the status bar
    * and around the page area (`render-profile.feature.md`).
    */
   renderProfile: TabRenderProfileSchema.nullable(),
+  /**
+   * The tab's overrides (Phase 11 Task 6; `render-profile.spec.ts`, `TabOverrides`): CSS off, cookies
+   * off and a browser geolocation, beside the render profile and never part of it. All off by
+   * default; they end with the tab and are never pinned or inherited.
+   */
+  tabOverrides: TabOverridesSchema,
+  /**
+   * Whether the overrides' CDP part (cookies off, a location) is in effect (`RenderProfileStatus`,
+   * whole-branch review): `applying` while their commands are unanswered, `failed` when the debugger
+   * could not be attached or refused one (the page then runs without them, and the render-profile
+   * bar and the status-bar chip say so, with or without a profile), else `active` (also when no
+   * override has a CDP part: CSS off is a page script).
+   */
+  overridesStatus: z.enum(RENDER_PROFILE_STATUSES),
+  /**
+   * The document marker (Decision 8): the tab's current main-frame document **loaded** under an
+   * override. Set when a main-frame document commits, or is still loading, while any override is on
+   * (also one switched on mid-load), and (security-review ruling, stricter than Decision 8's wording)
+   * whenever an override turns on while the tab shows a committed document, even one that finished
+   * loading; cleared only by a later main-frame navigation to a new document
+   * during which no override was on at any point between the navigation's start and its completion.
+   * When both rules meet, setting wins. Same-document navigations neither set nor clear it, and
+   * turning the overrides off never clears it. Capture and screenshots refuse while it is set.
+   */
+  loadedUnderOverrides: z.boolean(),
+  /**
+   * The tab's override revision (Decision 8): raised on every `tabOverrides.set` of the tab and every
+   * time the document marker is set; `0` for a tab that never had either. A capture or screenshot
+   * records it when it starts and refuses (`tab-emulation-on`, nothing stored) if it moved before
+   * the result is stored.
+   */
+  overridesRevision: z.int().nonnegative(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 

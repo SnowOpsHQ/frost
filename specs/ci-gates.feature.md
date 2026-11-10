@@ -24,7 +24,8 @@ without a pull request; a superseded PR run is cancelled, a `main` run never is.
   accepted entry that matches more or fewer findings than its `count` (stale or duplicated), and on
   any file the scanner could not parse.
 - **Gate: semgrep-rule-test** — `pnpm security:semgrep:test`: Semgrep's native rule test of each
-  `semgrep/<name>.yml` (`ipc-sender-guard`, `webcontents-factory`, `debugger-allowlist`) against
+  `semgrep/<name>.yml` (`ipc-sender-guard`, `webcontents-factory`, `debugger-allowlist`,
+  `webrequest-blocking-allowlist`) against
   `semgrep/__fixtures__/<name>.ts`; every `// ruleid:` line must be flagged and every `// ok:` line
   must not.
 - **Gate: semgrep-repo-scan** — `pnpm security:semgrep:scan`: all those rules over `apps`,
@@ -34,7 +35,8 @@ without a pull request; a superseded PR run is cancelled, a `main` run never is.
   build (`ipc-e2e.feature.md` and the scenarios below), Chromium sandbox on.
 
 ## Semgrep `ipc-sender-guard` rules (Review Focus `semgrep-flags-unguarded-handler`)
-Exercised by **semgrep-rule-test** (fixture) and **semgrep-repo-scan** (the real code is clean).
+Exercised by **semgrep-rule-test** (fixture `semgrep/__fixtures__/ipc-sender-guard.ts`) and
+**semgrep-repo-scan** (the real code is clean).
 Test-only code (`__tests__/`, `*.test.ts`, `apps/desktop/src/test/`) is never bundled and is
 excluded from every rule.
 - **Scenario: semgrep-flags-unguarded-handler** — the fixture's deliberately unguarded handlers
@@ -93,6 +95,22 @@ code is excluded as above.
   flagged (fixture
   `semgrep/__fixtures__/debugger-allowlist.ts`); other WebContents members and a `'debugger'` string
   are not; the repo scan is clean.
+
+## Semgrep `webrequest-blocking-allowlist` rule (Phase 11 Task 6, `render-profile.feature.md`, Page writes)
+A blocking `webRequest` listener holds every request of its session until main answers, and Electron
+keeps one per event per session. So `onBeforeRequest`, `onBeforeSendHeaders` and `onHeadersReceived`
+are reachable only from allowlisted modules (the rule's `paths.exclude`):
+`apps/desktop/src/main/protocol/requests.ts`, `security/register.ts`, `update/fetch.ts` and
+`browser/cookie-block.ts` (a browse-class session's pair, only while one of its tabs has cookies off).
+Test-only code is excluded as above (tests and `src/test/electron-fake.ts` use these names).
+- **Scenario: semgrep-flags-blocking-webrequest-outside-allowlist** —
+  `webrequest-blocking-outside-allowlisted-modules`: any of the three members of anything (a call, an
+  alias, an index access), a destructured binding of one (typed or untyped, in a declaration, a
+  parameter or an assignment) and a reflective read of one by name (`Reflect.get`,
+  `Reflect.getOwnPropertyDescriptor`, `Object.getOwnPropertyDescriptor`), outside the allowlist, are
+  flagged (fixture `semgrep/__fixtures__/webrequest-blocking-allowlist.ts`, which also flags a
+  geolocation `sendCommand` in the debugger rule's fixture); the observers (`onSendHeaders`,
+  `onCompleted`, `onResponseStarted` …) and the names as strings are not; the repo scan is clean.
 
 ## Electronegativity (`scripts/electronegativity.mjs`)
 - **Scenario: electronegativity-sees-literal-hardening** — `createMainWindow()` writes `sandbox`,

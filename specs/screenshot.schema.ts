@@ -11,10 +11,18 @@ import { MAX_HISTORY_PAGE, SCREENSHOT_KINDS, UUIDV7_PATTERN } from './capture-db
 import { SearchParamsSchema } from './serp-search-params.schema';
 import { RenderProfileSchema } from './render-profile.schema.spec';
 import {
+  MAX_OVERLAY_DATA_URL_CHARS,
+  SCREENSHOT_EDIT_COLORS,
+  SCREENSHOT_EDIT_LIMITS,
+  SCREENSHOT_EDIT_RESULTS,
   SCREENSHOT_IMAGE_SIZES,
   SCREENSHOT_LIMITS,
+  SCREENSHOT_OVERLAY_PREFIX,
   SCREENSHOT_REFUSALS,
   type CancelAreaInput,
+  type SaveScreenshotEditAnswer,
+  type SaveScreenshotEditInput,
+  type ScreenshotEditOp,
   type ScreenshotEntry,
   type ScreenshotIdInput,
   type ScreenshotImageAnswer,
@@ -88,6 +96,8 @@ export const ScreenshotEntrySchema = z
     /** Phase 3's search parameters of a result page (`serp-search-params.schema.ts`); `null` for any other page. */
     searchParams: SearchParamsSchema.nullable(),
     createdAt: count,
+    /** Phase 11 Task 7: the screenshot this one is an edited copy of (local link), else `null`. */
+    editedFrom: id.nullable(),
   })
   .refine((entry) => (entry.kind === 'area') === (entry.rect !== null), { message: 'an area screenshot has its rect, the other kinds none', path: ['rect'] }) satisfies z.ZodType<ScreenshotEntry>;
 
@@ -102,3 +112,40 @@ export const ScreenshotImageAnswerSchema = z
   .max(SCREENSHOT_LIMITS.maxImageDataUrlChars)
   .regex(/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/)
   .nullable() satisfies z.ZodType<ScreenshotImageAnswer>;
+
+// ---- Editing (Phase 11 Task 7, Decision 9) ------------------------------------------------------
+
+/** A coordinate in screenshot pixels: a whole number within `maxCoordinate`. */
+const coordinate = z.int().min(0).max(SCREENSHOT_EDIT_LIMITS.maxCoordinate);
+const extent = z.int().min(1).max(SCREENSHOT_EDIT_LIMITS.maxCoordinate);
+const point = z.strictObject({ x: coordinate, y: coordinate });
+const color = z.enum(SCREENSHOT_EDIT_COLORS);
+const size = z.int().min(SCREENSHOT_EDIT_LIMITS.minOpSize).max(SCREENSHOT_EDIT_LIMITS.maxOpSize);
+/** A rectangle in screenshot pixels (a box, a crop), whole pixels, at least 1 × 1. */
+const pixelRect = z.strictObject({ x: coordinate, y: coordinate, width: extent, height: extent }) satisfies z.ZodType<ScreenshotRect>;
+
+export const ScreenshotEditOpSchema = z.discriminatedUnion('tool', [
+  z.strictObject({ tool: z.literal('arrow'), color, size, from: point, to: point }),
+  z.strictObject({ tool: z.literal('box'), color, size, rect: pixelRect, filled: z.boolean() }),
+  z.strictObject({ tool: z.literal('text'), color, size, at: point, text: z.string().min(1).max(SCREENSHOT_EDIT_LIMITS.maxTextChars) }),
+]) satisfies z.ZodType<ScreenshotEditOp>;
+
+/**
+ * `screenshots.saveEdit`: the overlay's length is capped here (`MAX_OVERLAY_DATA_URL_CHARS`) before
+ * main decodes anything, and it must be `SCREENSHOT_OVERLAY_PREFIX` and base64; at most `maxOps` ops.
+ */
+export const SaveScreenshotEditInputSchema = z.strictObject({
+  sourceId: id,
+  crop: pixelRect.nullable(),
+  overlay: z
+    .string()
+    // Over the cap: refused at once (`abort`), so the checks below never scan an oversized string.
+    .max(MAX_OVERLAY_DATA_URL_CHARS, { abort: true })
+    .refine((value) => value.startsWith(SCREENSHOT_OVERLAY_PREFIX), { message: 'not a PNG data URL' })
+    .refine((value) => /^[A-Za-z0-9+/]+={0,2}$/.test(value.slice(SCREENSHOT_OVERLAY_PREFIX.length)), { message: 'not base64' }),
+  ops: z.array(ScreenshotEditOpSchema).max(SCREENSHOT_EDIT_LIMITS.maxOps),
+}) satisfies z.ZodType<SaveScreenshotEditInput>;
+
+const savedEdit = z.strictObject({ status: z.literal('saved'), id, width: positive, height: positive, bytes: positive });
+const refusedEdit = z.strictObject({ status: z.enum(SCREENSHOT_EDIT_RESULTS.filter((result): result is Exclude<(typeof SCREENSHOT_EDIT_RESULTS)[number], 'saved'> => result !== 'saved')) });
+export const SaveScreenshotEditAnswerSchema = z.union([savedEdit, refusedEdit]) satisfies z.ZodType<SaveScreenshotEditAnswer>;

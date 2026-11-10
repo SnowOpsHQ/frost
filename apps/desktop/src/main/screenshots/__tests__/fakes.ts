@@ -144,31 +144,62 @@ export class FakeTab extends EventEmitter implements ScreenshotTarget {
 
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
+/**
+ * A stand-in for a PNG the chrome sends (Phase 11 Task 7): a real PNG signature and `IHDR` header
+ * naming `bitmap`'s size (`header` overrides it), followed by its raw BGRA bytes. `fakeImaging`'s
+ * `decode` reads it back.
+ */
+export function fakePng(bitmap: Bitmap, header: { width: number; height: number } = bitmap): Buffer {
+  const head = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(head, 0);
+  head.writeUInt32BE(13, 8);
+  head.write('IHDR', 12, 'latin1');
+  head.writeUInt32BE(header.width, 16);
+  head.writeUInt32BE(header.height, 20);
+  head.set([8, 6, 0, 0, 0], 24);
+  return Buffer.concat([head, bitmap.bitmap]);
+}
+
 /** Imaging without Electron: a "PNG" that names its size and the bitmap's hash; renders and copies recorded. */
-export function fakeImaging(): ScreenshotImaging & { copied: Buffer[]; encoded: Bitmap[]; renders: string[] } {
+export function fakeImaging(): ScreenshotImaging & { copied: Buffer[]; encoded: Bitmap[]; renders: string[]; decoded: number } {
   const copied: Buffer[] = [];
   const encoded: Bitmap[] = [];
   const renders: string[] = [];
-  return {
+  /** What each encoded "PNG" decodes to. */
+  const pixels = new Map<string, Bitmap>();
+  const imaging = {
     copied,
     encoded,
     renders,
-    thumbnail: (bitmap) => Buffer.from(`thumb:PNG ${bitmap.width}x${bitmap.height}`),
-    encodePng: (bitmap) => {
+    decoded: 0,
+    thumbnail: (bitmap: Bitmap) => Buffer.from(`thumb:PNG ${bitmap.width}x${bitmap.height}`),
+    encodePng: (bitmap: Bitmap) => {
       encoded.push(bitmap);
-      return Buffer.from(`PNG ${bitmap.width}x${bitmap.height} ${sha(bitmap.bitmap)}`);
+      const png = Buffer.from(`PNG ${bitmap.width}x${bitmap.height} ${sha(bitmap.bitmap)}`);
+      pixels.set(png.toString('latin1'), { ...bitmap, bitmap: Buffer.from(bitmap.bitmap) });
+      return png;
     },
-    render: (png, size, maxBytes) => {
+    // An encoded "PNG" (by its bytes), or a `fakePng` (its header, then its bytes); a copy, as Electron's is.
+    decode: (png: Buffer, expected: { width: number; height: number }): Bitmap | null => {
+      imaging.decoded += 1;
+      const known = pixels.get(png.toString('latin1'));
+      if (known) return known.width === expected.width && known.height === expected.height ? { ...known, bitmap: Buffer.from(known.bitmap) } : null;
+      if (png.length < 33 || png.readUInt32BE(16) !== expected.width || png.readUInt32BE(20) !== expected.height) return null;
+      const bytes = png.subarray(33);
+      return bytes.length === expected.width * expected.height * 4 ? { bitmap: Buffer.from(bytes), width: expected.width, height: expected.height } : null;
+    },
+    render: (png: Buffer, size: 'thumb' | 'preview', maxBytes: number) => {
       renders.push(size);
       const data = Buffer.from(`${size}:${png.toString()}`);
-      return png.subarray(0, 4).toString() === 'PNG ' && data.length <= maxBytes ? { type: size === 'thumb' ? 'image/png' : 'image/jpeg', data } : null;
+      return png.subarray(0, 4).toString() === 'PNG ' && data.length <= maxBytes ? { type: size === 'thumb' ? ('image/png' as const) : ('image/jpeg' as const), data } : null;
     },
-    copy: async (png) => {
+    copy: async (png: Buffer) => {
       if (png.subarray(0, 4).toString() !== 'PNG ') return false;
       copied.push(png);
       return true;
     },
   };
+  return imaging satisfies ScreenshotImaging;
 }
 
 // ---- A service over a real session store and file store, with fake tabs ---------------------------
@@ -182,7 +213,14 @@ export interface ServiceSetup {
   readonly files: ScreenshotFiles;
   readonly imaging: ReturnType<typeof fakeImaging>;
   readonly tabs: Map<number, FakeTab>;
-  readonly state: { active: number | null; profiles: Map<number, RenderProfile | AuditRenderProfile | null> };
+  readonly state: {
+    active: number | null;
+    profiles: Map<number, RenderProfile | AuditRenderProfile | null>;
+    /** A tab's live overrides or document marker (`ScreenshotTabs.overridesOn`); absent: off. */
+    overrides: Map<number, boolean>;
+    /** A tab's override revision (`ScreenshotTabs.overridesRevision`); absent: 0. */
+    revisions: Map<number, number>;
+  };
   readonly logs: string[];
   readonly revealed: string[];
   readonly cleanup: () => Promise<void>;
@@ -199,7 +237,7 @@ export function serviceSetup(deps: Partial<ScreenshotsServiceDeps> = {}): Servic
     [1, new FakeTab()],
     [2, new FakeTab({ url: 'https://example.com/other' })],
   ]);
-  const state = { active: 1 as number | null, profiles: new Map<number, RenderProfile | AuditRenderProfile | null>() };
+  const state = { active: 1 as number | null, profiles: new Map<number, RenderProfile | AuditRenderProfile | null>(), overrides: new Map<number, boolean>(), revisions: new Map<number, number>() };
   const logs: string[] = [];
   const revealed: string[] = [];
   let clock = 1_700_000_000_000;
@@ -218,6 +256,8 @@ export function serviceSetup(deps: Partial<ScreenshotsServiceDeps> = {}): Servic
         const profile = state.profiles.get(tabId) ?? null;
         return profile === null ? null : 'partial' in profile ? profile : { profile, partial: false };
       },
+      overridesOn: (tabId) => state.overrides.get(tabId) ?? false,
+      overridesRevision: (tabId) => state.revisions.get(tabId) ?? 0,
     },
     reveal: (file) => revealed.push(file),
     now: () => (clock += 1_000),

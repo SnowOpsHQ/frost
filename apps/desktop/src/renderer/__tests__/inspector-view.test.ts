@@ -1,17 +1,44 @@
 // Spec: specs/inspector.spec.ts (INSPECTOR_REFUSAL_MESSAGES, INSPECTOR_REGION_LABELS, the answer types),
 // specs/command-palette.spec.ts (FEATURE_PANEL_JUMPS, Registration API), specs/seo-sidebar.spec.ts (SEO_PANELS)
 // Acceptance: specs/inspector.feature.md (The panel, Command palette; Scenarios inspector-row-labels,
-// inspector-tree-model, inspector-tree-keys, inspector-details-text, inspector-palette-actions)
+// inspector-tree-model, inspector-tree-keys, inspector-details-text, inspector-palette-actions; Phase 11 Task 5:
+// source-lines-are-text, source-window-bounded, INSPECTOR_SOURCE_VIEW; council rounds 1–2: find-across-row-boundary)
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, test, vi } from 'vitest';
 import type { SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
 import { FEATURE_PANEL_JUMPS } from '@app/specs/command-palette.spec';
-import { INSPECTOR_REFUSAL_MESSAGES, type InspectorChild, type InspectorChildrenAnswer, type InspectorNode, type InspectorPickAnswer } from '@app/specs/inspector.spec';
+import { INSPECTOR_REFUSAL_MESSAGES, INSPECTOR_SOURCE_MAX_CHARS, INSPECTOR_SOURCE_VIEW, type InspectorChild, type InspectorChildrenAnswer, type InspectorNode, type InspectorPickAnswer } from '@app/specs/inspector.spec';
 import { SEO_PANELS } from '@app/specs/seo-sidebar.spec';
 import { inspectorPaletteSources } from '../inspector-palette';
-import { ROOT_KEY, boxText, canInspect, mergeChildren, moreKey, pathKey, pathsToReveal, pickOutcomeText, rowLabel, seoRows, setExpanded, summaryRows, treeKeyAction, visibleRows, type Tree } from '../inspector-view';
+import {
+  ROOT_KEY,
+  boxText,
+  canInspect,
+  extendWindow,
+  findRows,
+  firstWindow,
+  mergeChildren,
+  moreKey,
+  pathKey,
+  pathsToReveal,
+  pickOutcomeText,
+  rowLabel,
+  seoRows,
+  setExpanded,
+  sourceRows,
+  summaryRows,
+  treeKeyAction,
+  visibleRows,
+  windowAround,
+  type Tree,
+} from '../inspector-view';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
+
+// The panel's module talks to main through `ipc`; the line list under test never does.
+vi.mock('../ipc', () => ({ ipc: {} }));
 
 const TOKEN = 'a'.repeat(32);
 const URL_A = 'https://www.example.com/a';
@@ -169,7 +196,7 @@ describe('inspector view', () => {
     const registry = createPaletteRegistry();
     registry.register(...builtinPaletteSources(new Proxy({}, { get: () => vi.fn(async () => true) }) as PaletteApi), ...inspectorPaletteSources(api));
     const ctxFor = (changes: Partial<TabState> | undefined): PaletteContext => {
-      const active = changes === undefined ? undefined : ({ id: 3, url: URL_A, title: 'A', loading: false, crashed: false, documentSeq: 1, highlight: 'off', ...changes } as TabState);
+      const active = changes === undefined ? undefined : ({ id: 3, url: URL_A, title: 'A', loading: false, crashed: false, documentSeq: 1, highlight: 'off', highlightPhrase: null, ...changes } as TabState);
       const state = { version: 1, tabs: active ? [active] : [], activeTabId: active?.id ?? null } as unknown as BrowserState;
       const audit: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1 } as unknown as SeoAudit };
       return { state, tab: active, audit, sidebarOpen: false, chrome: { openPanel: vi.fn(), setSidebarOpen: vi.fn() } };
@@ -193,5 +220,125 @@ describe('inspector view', () => {
       expect(ids(other)).toContain('panel.inspector');
       expect(ids(other)).not.toContain('inspector.pick');
     }
+  });
+
+  test('find-across-row-boundary', () => {
+    // Council round 1: find searches the source itself, so a match across the 500-character row
+    // boundary is found, and marks (and jumps to) each row it covers.
+    const long = 'x'.repeat(495) + 'canonical';
+    const listed = sourceRows(long);
+    expect(listed.rows.map((row) => row.text.length)).toEqual([500, 4]);
+    expect(findRows(long, listed.rows, 'canonical')).toEqual([0, 1]);
+    expect(findRows(long, listed.rows, 'CANONICAL')).toEqual([0, 1]);
+    // Council round 2: a match that overlaps an earlier one and crosses the boundary still counts.
+    const dashes = 'x'.repeat(498) + '---' + 'y'.repeat(10);
+    expect(findRows(dashes, sourceRows(dashes).rows, '--')).toEqual([0, 1]);
+    const aba = 'x'.repeat(496) + 'ababa' + 'y';
+    expect(findRows(aba, sourceRows(aba).rows, 'aba')).toEqual([0, 1]);
+    // A match wholly in one row marks that row; regex characters are literal.
+    expect(findRows(long, listed.rows, 'ical')).toEqual([1]);
+    expect(findRows(long, listed.rows, 'x.c')).toEqual([]);
+    const dotted = 'a.b' + 'y'.repeat(600) + 'a.b';
+    expect(findRows(dotted, sourceRows(dotted).rows, 'A.B')).toEqual([0, 1]);
+    // Across a line break nothing joins (the query is one line); a narrower view wraps more rows.
+    const view = { ...INSPECTOR_SOURCE_VIEW, rowChars: 4, maxRows: 6 };
+    const wrapped = 'abcdefghij\r\nklmn';
+    const rows = sourceRows(wrapped, view).rows;
+    expect(findRows(wrapped, rows, 'cdefghi')).toEqual([0, 1, 2]);
+    expect(findRows(wrapped, rows, 'lm')).toEqual([3]);
+    // Still capped by rows; matches past the listed rows (`cut`) mark nothing.
+    expect(findRows(wrapped, rows, 'bcdefghij', 2)).toEqual([0, 1]);
+    const cutSource = 'q\n'.repeat(10);
+    const cut = sourceRows(cutSource, view);
+    expect(cut.cut).toBe(true);
+    expect(findRows(cutSource, cut.rows, 'q')).toEqual([0, 1, 2, 3, 4, 5]);
+    // A lone surrogate in the query is a code unit like any other.
+    const lone = 'ab\ud800cd';
+    expect(findRows(lone, sourceRows(lone).rows, '\ud800c')).toEqual([0]);
+  });
+
+  test('source-lines-are-text', async () => {
+    const hostile = '<!DOCTYPE html>\n<html><head><script>alert("x")</script></head>\r\n<body onload="steal()"><img src=x onerror=alert(1)>\r<p>مرحبا</p></body></html>';
+    const { rows, cut, lines } = sourceRows(hostile);
+    // Lines split on \n, \r\n and \r; each row is the page's text as a plain string, numbered from 1.
+    expect(lines).toBe(4);
+    expect(cut).toBe(false);
+    expect(rows).toEqual([
+      { line: 1, text: '<!DOCTYPE html>', start: 0 },
+      { line: 2, text: '<html><head><script>alert("x")</script></head>', start: 16 },
+      { line: 3, text: '<body onload="steal()"><img src=x onerror=alert(1)>', start: 64 },
+      { line: 4, text: '<p>مرحبا</p></body></html>', start: 116 },
+    ]);
+    // Each row's `start` is where its text is in the source.
+    for (const row of rows) expect(hostile.slice(row.start, row.start + row.text.length)).toBe(row.text);
+    expect(rows.map((r) => r.text).join('\n')).toBe(hostile.replace(/\r\n?/g, '\n'));
+    // A long line wraps into rows of `rowChars` (only the first carries its number), never splitting a surrogate pair.
+    const view = { ...INSPECTOR_SOURCE_VIEW, rowChars: 4, maxRows: 6 };
+    expect(sourceRows('abcdefghij\nk', view).rows).toEqual([
+      { line: 1, text: 'abcd', start: 0 },
+      { line: null, text: 'efgh', start: 4 },
+      { line: null, text: 'ij', start: 8 },
+      { line: 2, text: 'k', start: 11 },
+    ]);
+    expect(sourceRows('abc😀d', view).rows.map((r) => r.text)).toEqual(['abc', '😀d']);
+    expect(sourceRows('', view)).toEqual({ rows: [{ line: 1, text: '', start: 0 }], cut: false, lines: 1 });
+    // At most `maxRows` rows: the rest is cut, and said so.
+    const many = sourceRows('a\n'.repeat(20), view);
+    expect(many.rows).toHaveLength(6);
+    expect(many.cut).toBe(true);
+    // The largest source stays a bounded list: one long line, or nothing but line breaks.
+    expect(sourceRows('x'.repeat(INSPECTOR_SOURCE_MAX_CHARS)).rows).toHaveLength(Math.ceil(INSPECTOR_SOURCE_MAX_CHARS / INSPECTOR_SOURCE_VIEW.rowChars));
+    const breaks = sourceRows('\n'.repeat(INSPECTOR_SOURCE_MAX_CHARS));
+    expect([breaks.rows.length, breaks.cut]).toEqual([INSPECTOR_SOURCE_VIEW.maxRows, true]);
+    // Find: case-insensitive, capped; a blank query finds nothing.
+    const foundIn = '<H1>Title</H1>\n<p>title again</p>\n<p>none</p>';
+    const found = sourceRows(foundIn);
+    expect(findRows(foundIn, found.rows, 'TITLE')).toEqual([0, 1]);
+    expect(findRows(foundIn, found.rows, '  ')).toEqual([]);
+    expect(findRows('x\n'.repeat(10), sourceRows('x\n'.repeat(10)).rows, 'x', 3)).toEqual([0, 1, 2]);
+
+    // The panel's line list renders every row as text: the page's markup never becomes markup.
+    const { SourceLines } = await import('../components/changes/Inspector');
+    const html = renderToStaticMarkup(createElement(SourceLines, { rows, start: 0, end: rows.length, matches: [2], current: 2 }));
+    // No tag of the page's, and no attribute of its: its quotes and angle brackets are escaped text.
+    expect(html).not.toMatch(/<(script|img|body|p|html|head)\b/i);
+    expect(html).not.toContain('onload="');
+    expect(html).toContain('&lt;body onload=&quot;steal()&quot;&gt;&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;');
+    expect(html).toContain('<bdi dir="auto">&lt;p&gt;مرحبا&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</bdi>');
+    expect(html).toMatch(/data-line="3"[^>]*data-match="true"[^>]*aria-current="true"/);
+    // Only the window's rows are rendered, each with its index in the whole source.
+    const windowed = renderToStaticMarkup(createElement(SourceLines, { rows, start: 1, end: 3, matches: [], current: null }));
+    expect(windowed.match(/<li/g)).toHaveLength(2);
+    expect([...windowed.matchAll(/data-row="(\d+)"/g)].map((m) => m[1])).toEqual(['1', '2']);
+  });
+
+  test('source-window-bounded', () => {
+    const view = { pageRows: 500, maxRendered: 1_000 };
+    const total = INSPECTOR_SOURCE_VIEW.maxRows;
+    expect(firstWindow(total, view)).toEqual({ start: 0, end: 500 });
+    expect(firstWindow(30, view)).toEqual({ start: 0, end: 30 });
+    // A match inside the window keeps it; one far away renders the page of rows around it, never everything before it.
+    const first = firstWindow(total, view);
+    expect(windowAround(first, 499, total, view)).toBe(first);
+    expect(windowAround(first, 99_000, total, view)).toEqual({ start: 98_750, end: 99_250 });
+    expect(windowAround(first, total - 1, total, view)).toEqual({ start: total - 500, end: total });
+    expect(windowAround({ start: 50_000, end: 50_500 }, 3, total, view)).toEqual({ start: 0, end: 500 });
+    expect(windowAround(firstWindow(30, view), 29, 30, view)).toEqual({ start: 0, end: 30 });
+    // Showing more lines after or before adds a page, never more than `maxRendered` rows at once.
+    let win = first;
+    for (let i = 0; i < 400; i++) {
+      win = extendWindow(win, 'after', total, view);
+      expect(win.end - win.start).toBeLessThanOrEqual(view.maxRendered);
+    }
+    expect(win).toEqual({ start: total - 1_000, end: total });
+    for (let i = 0; i < 400; i++) {
+      win = extendWindow(win, 'before', total, view);
+      expect(win.end - win.start).toBeLessThanOrEqual(view.maxRendered);
+    }
+    expect(win).toEqual({ start: 0, end: 1_000 });
+    expect(extendWindow({ start: 0, end: 500 }, 'after', 700, view)).toEqual({ start: 0, end: 700 });
+    // The spec's own bound on what is rendered at once.
+    expect(INSPECTOR_SOURCE_VIEW.maxRendered * INSPECTOR_SOURCE_VIEW.rowChars).toBeLessThanOrEqual(1_000_000);
   });
 });

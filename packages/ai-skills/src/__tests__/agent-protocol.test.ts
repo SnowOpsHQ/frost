@@ -3,8 +3,8 @@
 // specs/agent-tools.spec.ts (CHAT_MAX_MESSAGES, TOOL_RESULT_MAX_CHARS), specs/agent-reasoning.spec.ts
 // (REASONING_EFFORTS: chat.start.reasoningEffort, protocol version 8), specs/ai-checks.spec.ts
 // (AI_CHECK_LIMITS, AI_CHECK_ERROR_CODES: check.start / check.stop / check.finish / check.error and
-// fetch.request.checkId, protocol version 9)
-// Acceptance: specs/agent-protocol.feature.md (Protocol)
+// fetch.request.checkId, protocol version 9), specs/agent-tools.spec.ts (read_attached_tab, protocol version 10)
+// Acceptance: specs/agent-protocol.feature.md (Protocol), specs/agent-attach.feature.md
 import { describe, expect, test } from 'vitest';
 import type { z } from 'zod';
 import {
@@ -400,7 +400,7 @@ describe('AI checks (protocol version 9, Phase 9 Task 9)', () => {
   const error = runtimeToMain[13];
 
   test('unknown-check-message-dropped', () => {
-    expect(AGENT_PROTOCOL_VERSION).toBe(9);
+    expect(AGENT_PROTOCOL_VERSION).toBeGreaterThanOrEqual(9);
     for (const message of [start, stop]) expect(MainToRuntimeMessageSchema.parse(structuredClone(message))).toStrictEqual(message);
     for (const message of [tagged, finish, error]) expect(RuntimeToMainMessageSchema.parse(structuredClone(message))).toStrictEqual(message);
     // No effort field (a check always runs at `auto`), no key, no token, nothing else.
@@ -457,3 +457,16 @@ describe('AI checks (protocol version 9, Phase 9 Task 9)', () => {
   });
 });
 
+
+// Phase 11 Task 9 (specs/agent-attach.feature.md): one more tool name, so version 10.
+describe('attached tabs (protocol version 10, Phase 11 Task 9)', () => {
+  test('protocol-10-accepts-read-attached-tab', () => {
+    expect(AGENT_PROTOCOL_VERSION).toBe(10);
+    const invoke = { type: 'tool.invoke', chatId: CHAT, callId: 'call_9', toolName: 'read_attached_tab', input: { ref: 'tab-1', part: 'text' } };
+    expect(RuntimeToMainMessageSchema.safeParse(invoke).success).toBe(true);
+    // A near miss is still not a tool name.
+    expect(RuntimeToMainMessageSchema.safeParse({ ...invoke, toolName: 'read_attached_tabs' }).success).toBe(false);
+    const start = { ...mainToRuntime[0], allowedTools: [...mainToRuntime[0].allowedTools, 'read_attached_tab'] };
+    expect(MainToRuntimeMessageSchema.safeParse(start).success).toBe(true);
+  });
+});

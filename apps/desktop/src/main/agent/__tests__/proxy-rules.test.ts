@@ -707,6 +707,23 @@ describe('proxy rules', () => {
       expect(body.tools.some((tool) => tool.name === mcp.name)).toBe(false);
     });
 
+    // Phase 11 Task 9 (specs/agent-attach.feature.md): the attached-tab reader is one more frost tool in the namespace.
+    test('proxy-accepts-real-provider-requests (chatgpt: read_attached_tab is inside the frost namespace)', async () => {
+      const modelId = 'chatgpt/gpt-6.1-sol';
+      const request = await captureProviderRequest('chatgpt', modelId, 1, [], ['page_audit', 'page_text', 'navigate', 'read_attached_tab']);
+      const text = request.body as string;
+      expect(checkModelRequestBody('chatgpt', modelId, text, filterRequestHeaders('chatgpt', request.headers))).toEqual({ ok: true, body: text });
+      const body = JSON.parse(text) as { tools: { type: string; name: string; tools?: { type: string; name: string; parameters?: unknown }[] }[] };
+      expect(body.tools).toHaveLength(1);
+      expect(body.tools[0]).toMatchObject({ type: 'namespace', name: 'frost' });
+      const tool = body.tools[0]!.tools!.find((item) => item.name === 'read_attached_tab');
+      expect(tool).toMatchObject({ type: 'function', name: 'read_attached_tab' });
+      // Its input schema (Zod, converted in the runtime) names the refs and parts and nothing else.
+      expect(JSON.stringify(tool!.parameters)).toContain('tab-1');
+      expect(JSON.stringify(tool!.parameters)).toContain('audit');
+      expect(body.tools.some((item) => item.name === 'read_attached_tab')).toBe(false);
+    });
+
     test('proxy-accepts-real-provider-requests', async () => {
       for (const route of MODEL_ROUTES) {
         for (const modelId of ALLOWED_MODEL_IDS) {

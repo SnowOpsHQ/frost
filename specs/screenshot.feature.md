@@ -154,6 +154,49 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
 - It uses the panel's project seam (`capture-project.ts`), as Capture now does. No inline styles.
 - Palette actions: Screenshot viewport, Screenshot full page, Screenshot an area.
 
+## Editing (Phase 11 Task 7, Decision 9)
+- **Edit** on a gallery entry opens the editor over the page area (the tab's view is hidden while it
+  is open, as with the Projects sheet). It is one of the page-column sheets, one at a time with the
+  Help sheets, Settings, Projects and History (`help.feature.md`): its opening closes them (Settings
+  stays, and the editor shut, while a sign-in waits there) and theirs closes it. It shows the entry's preview and draws on it: **Arrow**,
+  **Box** (outline or filled), **Text** (one line of at most `maxTextChars`, typed in the toolbar and
+  placed with a click) and **Crop**, in one of six colours (`SCREENSHOT_EDIT_COLORS`). **Undo** and
+  **Redo** (also Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z) step through the drawings and crops; the editor holds
+  at most `maxOps` steps (`SCREENSHOT_EDIT_FULL_NOTE`). Pen, circle and zoom are cut.
+- **Save as a copy** renders the annotations alone onto a transparent canvas exactly the crop's size
+  in the screenshot's own pixels (ops are kept in those pixels, converted from the preview), and
+  sends it as a PNG `data:` URL with the crop and the ops. A crop larger than the chrome can draw
+  (`maxOverlaySide`, `maxOverlayPixels`, Open question 9) is refused there with
+  `SCREENSHOT_EDIT_TOO_BIG_NOTE`; so is a canvas that does not encode.
+- **Main composites.** `screenshots.saveEdit` takes the input through `SaveScreenshotEditInputSchema`
+  (the overlay's length is capped before anything is decoded). Main reads the source row and its
+  file (by hash; else `no-source`), checks the crop lies inside it (else `invalid`), decodes the
+  overlay's base64 (over `maxOverlayBytes`: `too-large`), reads its PNG header and refuses one that is
+  not exactly the crop's size before decoding it (`invalid`), decodes both, crops the source,
+  blends the overlay over it (premultiplied BGRA, only within the overlay's non-transparent bounds),
+  encodes a PNG (over `maxPngBytes`: `too-large`), writes it as a new hash-named file, and appends a
+  new `ci_screenshots` row (the source's project, page, kind, area, segments, render profile and
+  search parameters; `capture_id` null) and a local `screenshot_edits` row naming its source, in one
+  transaction that holds only if the source row is still there and its project live (else
+  `no-source`). The source file and row never change; the overlay is never stored as sent.
+- The gallery lists the copy like any screenshot, labelled "Edited" (`editedFrom`). Purging the copy
+  removes the link (a trigger on `ci_screenshots`, so a synced tombstone does too). Purging the
+  source does not: the copy stays labelled "Edited", its `editedFrom` naming a source that no longer
+  exists.
+- **Retention:** an edited copy (one a `screenshot_edits` row links) is in a lane of its own beside
+  the captured screenshots of its page, kind, profile and search parameters, so saving an edit (which
+  runs the project's retention) never purges its source or any taken screenshot; copies are kept
+  among copies. A copy whose source has been purged keeps its link and its lane, so a later purge
+  never takes a taken screenshot in its place (council round 1; `purged-source-keeps-copy-lane`,
+  `packages/db/src/__tests__/repository.test.ts`).
+  **Known limit (lead ruling, whole-branch review):** the copy's lane rests on the `screenshot_edits`
+  link, which is local-only (never synced). A device that receives the copy's `ci_screenshots` row by
+  sync without the link treats it as a taken screenshot of that lane, so its retention can count it
+  among (and purge it with) the taken ones. Latent until `ci_*` sync ships (issue #15); fixing it
+  needs a synced marker column on `ci_screenshots` and a sync schema bump.
+- **One at a time:** main saves one edit at a time (each holds decoded bitmaps); a save while one is
+  running answers `busy`.
+
 ## Scenarios
 - **Scenario: plan-stitch-covers-page-once** — for several page and viewport sizes and scales, the
   planned segments cover rows `0 … height` exactly once, in order; the last segment scrolls to the
@@ -259,6 +302,29 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
   panel until it answers, a second one does not clobber it, and the answer reaches every listener.
   Test: `apps/desktop/src/renderer/__tests__/screenshot-runs.test.ts`.
 
+- **Scenario: overlay-must-match-crop-size**, **composite-alpha-over-source**,
+  **source-unchanged-new-hash-and-row**, **oversize-overlay-refused**,
+  **missing-or-changed-source-no-source**, **crop-outside-source-invalid**, **edit-row-links-source**
+  — the overlay's header and decoded size must equal the crop (or the whole screenshot); the
+  composite is the premultiplied "over" of the overlay on the cropped source, untouched outside the
+  overlay's non-transparent bounds; a save writes a new file and row and leaves the source's bytes and
+  row as they were; an overlay over `maxOverlayBytes` (or a result over `maxPngBytes`) is `too-large`;
+  a missing, changed or purged source is `no-source`; a crop past the source's edges is `invalid`;
+  the edit row names the source, its crop and ops, and the copy lists with `editedFrom`;
+  **edit-does-not-purge-its-source** (versions = 1 keeps the source and its newest copy; a second copy
+  purges only the older copy); **save-edit-one-at-a-time** (a save while one runs is `busy`). Test:
+  `apps/desktop/src/main/screenshots/__tests__/edit.test.ts`.
+- **Scenario: save-edit-enforces-sender-and-bounds-input** — `screenshots.saveEdit` refuses a foreign
+  sender before anything, and refuses an overlay over `MAX_OVERLAY_DATA_URL_CHARS`, another `data:`
+  type, non-base64, a path or hash under any key, more than `maxOps` ops, an unknown colour or tool,
+  text over `maxTextChars` (an overlay past the cap is refused before its base64 is scanned); its
+  answer is checked on the way out. Test:
+  `packages/ipc-contract/src/__tests__/screenshots-router.test.ts`.
+- **Scenario: screenshot-editor-history** (tests `undo-redo`, `ops-bounded`, `overlay-sized-to-crop`) — undo and redo step through the drawings and crops; a new
+  step drops the redo tail; at `maxOps` steps nothing more is added; the overlay is sized to the crop
+  in source pixels and drawn translated by its origin; a crop past the canvas limits is refused. Test:
+  `apps/desktop/src/renderer/__tests__/screenshot-editor.test.ts`.
+
 ### End to end (`apps/desktop/e2e/screenshots.e2e.ts`, a loopback page about three viewports tall, coloured bands, a fixed header)
 - **screenshot-viewport** — saved; the gallery shows it; the file is
   `<userData>/frost-captures/screenshots/<sha>.png` (`0600`, its directory `0700`), its SHA-256 is its
@@ -271,3 +337,7 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
   nothing; Cancel ends it.
 - **screenshot-leaves-page-dom-unchanged** — `document.documentElement.outerHTML` is the same before
   and after each kind.
+- **annotate-crop-and-save-a-copy** — a viewport screenshot is opened in the editor, a filled box is
+  drawn and a crop made; Save writes a second file, the size of the crop, whose pixels under the box
+  are the box's colour; the source file is byte-for-byte unchanged; the gallery lists both, the copy
+  labelled Edited.

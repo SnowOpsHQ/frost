@@ -88,6 +88,17 @@ to one named test.
   select reflects main's state, not the click.
 - **Scenario: composer-enter-sends-shift-enter-does-not** — and Stop replaces Send while running.
 
+## Resize (Phase 11 Task 10, Decision 12)
+- The open panel's edge next to the page is a separator (`AGENT_PANEL_WIDTH_RANGE`,
+  `AGENT_PANEL_WIDTH_STORAGE_KEY`): drag or arrow keys set its width; the tab's view follows.
+- **Scenario: narrow-window-shrinks-agent-pane-first** (`renderer/__tests__/sidebar-layout.test.ts`) —
+  given both panels open at widths the window cannot hold beside `PAGE_MIN_WIDTH`, when the layout
+  is worked out, then the agent panel shrinks to its `min` first, then the SEO sidebar's panel to
+  its `min`, and only then do both narrow as before.
+- **Scenario: agent-pane-resize** (e2e `agent.e2e.ts`) — dragging the separator 100 px towards the
+  page widens the panel and narrows the tab's view by 100 px; ArrowRight narrows it by one step; in a
+  narrower window the agent panel gives way before the SEO sidebar's.
+
 ## Wiring
 - **Scenario: agent-watch-hook-backs-off-and-stops**, **agent-watch-pauses-when-version-does-not-advance**
   (`agent-state-hook.test.ts`).

@@ -132,7 +132,14 @@ const START_HISTORY: Extract<MainToRuntimeMessage, { type: 'chat.start' }>['mess
  * The `request`th `fetch.request` (1 or 2) of a turn on `route` with `modelId`: with 2, the first is
  * answered with the scripted reasoning-and-two-tool-calls step and both calls get a result.
  */
-export async function captureProviderRequest(route: ModelRoute, modelId: AgentModelId, request: 1 | 2 = 1, mcpTools: Extract<MainToRuntimeMessage, { type: 'chat.start' }>['mcpTools'] = []): Promise<CapturedRequest> {
+export async function captureProviderRequest(
+  route: ModelRoute,
+  modelId: AgentModelId,
+  request: 1 | 2 = 1,
+  mcpTools: Extract<MainToRuntimeMessage, { type: 'chat.start' }>['mcpTools'] = [],
+  /** frost's tools the turn offers (Phase 11 Task 9 adds `read_attached_tab` to check it on the ChatGPT route). */
+  catalogueTools: readonly string[] = ['page_audit', 'page_text', 'navigate'],
+): Promise<CapturedRequest> {
   const [main, runtimeEnd] = createMemoryPortPair();
   const requests: CapturedRequest[] = [];
   const post = (message: MainToRuntimeMessage) => main.post(message);
@@ -153,7 +160,7 @@ export async function captureProviderRequest(route: ModelRoute, modelId: AgentMo
     post({ type: 'fetch.error', requestId: message.requestId, code: 'refused', message: 'test' });
   });
   const runtime = startRuntime(runtimeEnd, { modelFactory: createModel });
-  post({ type: 'chat.start', chatId: 'chat-1', route, modelId, systemPrompt: 'You are an SEO assistant.', allowedTools: ['page_audit', 'page_text', 'navigate', ...mcpTools.map((tool) => tool.name)], mcpTools: [...mcpTools], messages: START_HISTORY, reasoningEffort: 'auto' });
+  post({ type: 'chat.start', chatId: 'chat-1', route, modelId, systemPrompt: 'You are an SEO assistant.', allowedTools: [...catalogueTools, ...mcpTools.map((tool) => tool.name)], mcpTools: [...mcpTools], messages: START_HISTORY, reasoningEffort: 'auto' });
   await vi.waitFor(() => {
     if (requests.length < request) throw new Error(`waiting for request ${request} (${requests.length} so far)`);
   });

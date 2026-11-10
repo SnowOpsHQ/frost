@@ -150,6 +150,23 @@ image and social rules: `seo-rules.feature.md`) and `specs/browser.spec.ts` (`Ta
 - **Scenario: highlight-runs-in-seo-world** — `runHighlight` calls
   `executeJavaScriptInIsolatedWorld` once with `SEO_WORLD_ID`.
 
+### Phase 11 Task 2: internal, external, lazy images, everything (`highlight.test.ts`)
+`internal` / `external` outline only the links of that kind with today's styles, and a `nofollow`
+link still draws as `nofollow`; `lazy-images` outlines the images with `loading="lazy"` (any case),
+`lazy-first-viewport` when the box overlaps the first viewport (the top `innerHeight` × `innerWidth`
+of the document), `lazy` otherwise; `all` draws the links, headings and lazy images together, each
+capped as its own mode. The Links panel has "Internal" and "External" toggles beside "Highlight on
+page", the Images panel "Highlight lazy images", Overview "Highlight everything" (`HIGHLIGHT_PANELS`).
+- **Scenario: plan-internal-external-only** — `internal` boxes only the internal links (labels
+  `int`), `external` only the external ones (`ext`); `other` links (mail, script) are in neither.
+- **Scenario: plan-internal-shows-nofollow-as-nofollow** — an internal `rel="nofollow"` link shows
+  under `internal` as `nofollow`, never under `external`; an external nofollow one under `external`.
+- **Scenario: plan-lazy-images-marks-first-viewport** — only `loading="lazy"` images are boxed; one
+  overlapping the first viewport is `lazy-first-viewport`, one below it `lazy`; eager and hidden
+  images are not boxed.
+- **Scenario: plan-all-combines** — `all` boxes the links by kind, the headings by level and the lazy
+  images together.
+
 ## Controller (`apps/desktop/src/main/seo/__tests__/panels.test.ts`, fakes)
 - **Scenario: highlight-sets-tab-state** — `seo.setHighlight` on the active tab paints the mode and
   reports it in `TabState.highlight` (the version bumps); another mode replaces it; `off` turns it
@@ -170,6 +187,13 @@ image and social rules: `seo-rules.feature.md`) and `specs/browser.spec.ts` (`Ta
   tab's highlight off and removes its overlay.
 - **Scenario: highlight-resets-on-error-and-crash** — a main-frame load error or a crash turns it
   off.
+- **Scenario: keyphrase-must-be-an-audit-ngram** (Phase 11 Task 2) — `keyphrase` with a phrase that
+  is one of the tab's ready audit's n-grams paints with main's own target (the n-gram's text, its
+  terms and the page's declared language) and sets `TabState.highlightPhrase`; the page's stored
+  target query is accepted too; any other phrase, no ready audit, or a phrase for another mode answers
+  `false` and paints nothing; another mode clears `highlightPhrase`.
+- **Scenario: keyphrase-resets-on-navigation** — an in-page navigation to another URL and a new
+  document turn `keyphrase` off and `highlightPhrase` back to `null`.
 - **Scenario: open-background-tab** — an `http(s)` URL opens right of the active tab (after the tabs
   it opened), which stays active; the URL is loaded as given.
 - **Scenario: open-background-tab-is-web-only** — `javascript:`, `file:`, `data:`, `app:`,
@@ -251,6 +275,12 @@ image and social rules: `seo-rules.feature.md`) and `specs/browser.spec.ts` (`Ta
 - **Scenario: highlight-follows-the-sidebar-and-the-page** — collapsing the sidebar, and opening
   another panel, each turn the overlay off and leave the page's `<html>` as it was; the page removing
   the overlay's host stops it and the toggle unpresses.
+- **Scenario: highlight-external-only** (Phase 11 Task 2) — the Links panel's "External" toggle
+  draws boxes only over the page's external links (`ext`, and `nofollow` for an external nofollow
+  one), none over its internal links; off leaves the page's `<html>` as it was.
+- **Scenario: highlight-lazy-images** (Phase 11 Task 2) — the Images panel's "Highlight lazy images"
+  boxes the lazy image at the top as `lazy, first screen` and the lazy one far below as `lazy`, and
+  not the eager images; leaving the panel removes it.
 - **Scenario: highlight-headings-on-strict-csp-page** — a page served with `style-src 'none'`,
   `script-src 'none'` and Trusted Types (its own `setAttribute('style')` has no effect) gets three
   heading boxes whose CSSOM styles apply (absolute, solid border in the H1 colour, white 10 px

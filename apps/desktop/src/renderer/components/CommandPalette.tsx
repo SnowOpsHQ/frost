@@ -23,6 +23,7 @@ import { paletteSections, rankActions, type RankedAction } from '../palette/matc
 import { pushRecent, readRecents, writeRecents } from '../palette/recents';
 import { paletteRegistry, registerPaletteActions, type PaletteAction, type PaletteConfirm, type PaletteContext, type PanelJump } from '../palette/registry';
 import { isolatedTooltip } from '../seo-view';
+import { exportPaletteSources } from '../export-palette';
 
 // The command palette (spec `command-palette.spec.ts`; acceptance `command-palette.feature.md`).
 // Main opens it (Mod+K is reserved in `before-input-event`, View › Command Palette…) by bumping
@@ -38,6 +39,9 @@ import { isolatedTooltip } from '../seo-view';
 // its per-host answers in the chrome's own localStorage (a preference, not browsing data).
 const unregisterBuiltins = registerPaletteActions(...builtinPaletteSources(actions, createConsentStore(storage())));
 import.meta.hot?.dispose(unregisterBuiltins);
+// Phase 11 Task 1 (`seo-exports.feature.md`): the SEO table exports, written by main.
+const unregisterExports = registerPaletteActions(...exportPaletteSources(actions));
+import.meta.hot?.dispose(unregisterExports);
 
 const MAC = /\bMac/.test(navigator.userAgent);
 const GROUP_LABELS: Readonly<Record<string, string>> = Object.fromEntries(PALETTE_GROUPS.map((g) => [g.id, g.label]));

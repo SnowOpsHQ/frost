@@ -1,5 +1,7 @@
 import type { PageBounds } from '@app/specs/browser.spec';
 import {
+  DEFAULT_RENDER_PROFILE,
+  DEFAULT_TAB_OVERRIDES,
   fitRenderViewport,
   isDefaultRenderProfile,
   sameRenderProfile,
@@ -8,6 +10,7 @@ import {
   type RenderProfile,
   type RenderProfileSource,
   type RenderProfileStatus,
+  type TabOverrides,
   type TabRenderProfile,
 } from '@app/specs/render-profile.spec';
 import { isWebUrl, webOrigin } from '@app/specs/web-url.spec';
@@ -25,6 +28,17 @@ import type { Tab, TabView } from './tab-model';
 // screen loaded under the profile now in effect ("Reload to apply"). State lives per tab object and
 // goes with it: a closed tab's profile is gone, and its debugger is detached when its view is
 // released. Nothing here reaches another tab, the chrome's WebContents or the session.
+//
+// Tab overrides (Phase 11 Task 6, Decision 8; `render-profile.feature.md`, Tab overrides): each tab's
+// overrides are held here too, as `entry.tabOverrides` (never `emulation`, which is the viewport fit),
+// so the tab has **one merged command list**: the effective profile (frost's defaults when there is
+// none) followed by the overrides' commands, sent whole through the tab's debugger. Its child-frame
+// share and its re-attach after a Chromium-initiated detach therefore always restore both. The
+// debugger is detached only when the profile is default and the overrides have no CDP part on (CSS
+// off is not CDP). `tab-overrides.ts` keeps the overrides' state and hands them here
+// (`setTabOverrides`); it never talks to the debugger. Whether their CDP part is in effect is
+// `TabState.overridesStatus` (`overridesStatus`), tracked apart from the profile's status so a
+// failure shows with no profile too (whole-branch review).
 
 type TabContents = TabView['webContents'];
 
@@ -74,6 +88,13 @@ export interface TabRenderProfiles {
   auditProfile(tab: Tab): AuditRenderProfile | null;
   /** Forgets every pin in memory (Clear Browsing Data). */
   forgetPins(): void;
+  /**
+   * The tab's overrides changed (`tab-overrides.ts`): kept as `entry.tabOverrides`, and the merged list
+   * is sent again when their CDP part changed (the profile kept); detached when nothing is left.
+   */
+  setTabOverrides(tab: Tab, overrides: TabOverrides): void;
+  /** `TabState.overridesStatus`: whether the overrides' CDP part is in effect (`active` when it has none). */
+  overridesStatus(tab: Tab): RenderProfileStatus;
 }
 
 interface Effective {
@@ -110,6 +131,23 @@ interface Entry {
   emulation: RenderFit['emulation'];
   /** A detach frost did not ask for was answered already (for this `seq`). */
   reattached: boolean;
+  /** The tab's overrides (`TabOverrides`), merged into the list after the profile's commands. */
+  tabOverrides: TabOverrides;
+  /** The last list dispatched since the attach carried overrides that were on (a later one must clear them). */
+  overridesSent: boolean;
+  /** Whether the overrides' CDP part is in effect (`TabState.overridesStatus`). */
+  overridesStatus: RenderProfileStatus;
+  /** Bumped on every list dispatched (or detach): only the latest one's answer settles `overridesStatus`. */
+  sends: number;
+}
+
+/** Whether `overrides` has anything for the debugger (CSS off is a page script, not CDP). */
+const cdpOverridesOn = (overrides: TabOverrides): boolean => overrides.cookiesDisabled || overrides.geolocation !== null;
+
+/** Whether the overrides' CDP part is the same in `a` and `b`. */
+function sameCdpOverrides(a: TabOverrides, b: TabOverrides): boolean {
+  const [ga, gb] = [a.geolocation, b.geolocation];
+  return a.cookiesDisabled === b.cookiesDisabled && (ga === gb || (ga !== null && gb !== null && ga.latitude === gb.latitude && ga.longitude === gb.longitude && ga.accuracy === gb.accuracy));
 }
 
 function sameEffective(a: Effective | null, b: Effective | null): boolean {
@@ -126,7 +164,7 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
   const entryOf = (tab: Tab): Entry => {
     let entry = entries.get(tab);
     if (!entry) {
-      entry = { own: null, origin: null, effective: null, seq: 0, dispatchedSeq: 0, appliedSeq: 0, status: 'active', nav: null, doc: null, contents: null, dbg: null, emulation: null, reattached: false };
+      entry = { own: null, origin: null, effective: null, seq: 0, dispatchedSeq: 0, appliedSeq: 0, status: 'active', nav: null, doc: null, contents: null, dbg: null, emulation: null, reattached: false, tabOverrides: DEFAULT_TAB_OVERRIDES, overridesSent: false, overridesStatus: 'active', sends: 0 };
       entries.set(tab, entry);
     }
     return entry;
@@ -140,14 +178,20 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
 
   const needsReload = (entry: Entry): boolean => entry.doc !== null && (entry.doc.seq !== entry.seq || !entry.doc.applied);
 
+  /** The tab needs its debugger: a profile, or overrides with a CDP part. */
+  const needsDebugger = (entry: Entry): boolean => entry.effective !== null || cdpOverridesOn(entry.tabOverrides);
+
   const mark = (entry: Entry): Mark => ({ seq: entry.seq, applied: entry.dispatchedSeq === entry.seq && entry.status !== 'failed', profiled: entry.effective !== null });
 
   const debuggerOf = (tab: Tab, entry: Entry, contents: TabContents): ProfileDebugger => {
     entry.dbg ??= options!.debuggerFor(contents, () => {
-      // Chromium closed frost's session (frost never detaches without `detach()`): attach once more.
-      if (entries.get(tab) !== entry || entry.contents !== contents || !entry.effective) return;
+      // Chromium closed frost's session (frost never detaches without `detach()`): attach once more,
+      // with the profile and the tab's overrides (one merged list), or the overrides alone.
+      entry.overridesSent = false;
+      if (entries.get(tab) !== entry || entry.contents !== contents || !needsDebugger(entry)) return;
       if (entry.reattached) {
         entry.status = 'failed';
+        if (cdpOverridesOn(entry.tabOverrides)) entry.overridesStatus = 'failed';
         ctx.changed();
         return;
       }
@@ -160,43 +204,69 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
   };
 
   /**
-   * Puts `entry.effective` into effect now: the whole profile is dispatched at once (or the debugger
-   * detached, which drops every override); its answers settle the status later (`applying` until
-   * then; a fresh tab's renderer-side commands are answered only once its first load made a renderer).
+   * Puts `entry.effective` and `entry.tabOverrides` into effect now: the merged list (the profile, or
+   * frost's defaults without one, then the overrides) is dispatched at once, or the debugger detached
+   * when neither needs it (which drops every override); its answers settle the status later
+   * (`applying` until then; a fresh tab's renderer-side commands are answered only once its first load
+   * made a renderer).
    */
   function apply(tab: Tab, entry: Entry): void {
     const contents = entry.contents;
     const seq = entry.seq;
     const effective = entry.effective;
     entry.status = effective ? 'applying' : 'active';
+    const send = ++entry.sends;
+    // Without render profiles nothing is sent: the overrides' CDP part is never in effect.
+    entry.overridesStatus = !cdpOverridesOn(entry.tabOverrides) ? 'active' : options ? 'applying' : 'failed';
     // No view yet: applied once it comes (`wire`).
     if (!contents || !options) return;
-    if (!effective) {
+    if (!needsDebugger(entry)) {
       entry.dbg?.detach();
       entry.emulation = null;
+      entry.overridesSent = false;
       entry.dispatchedSeq = seq;
       entry.appliedSeq = seq;
       return;
     }
     let answered: Promise<void>;
+    let withOverrides = false;
     try {
+      const profile = effective?.profile ?? DEFAULT_RENDER_PROFILE;
       const area = ctx.pageArea();
-      const emulation = effective.profile.device === 'none' ? null : area ? fitRenderViewport(area, effective.profile.device).emulation : undefined;
-      answered = debuggerOf(tab, entry, contents).send(renderProfileCommands(effective.profile, { chromeVersion: options.chromeVersion, emulation }));
+      const emulation = profile.device === 'none' ? null : area ? fitRenderViewport(area, profile.device).emulation : undefined;
+      // The overrides' commands go along while any is on, and once more to clear them after.
+      const overridesOn = cdpOverridesOn(entry.tabOverrides);
+      withOverrides = overridesOn || entry.overridesSent;
+      answered = debuggerOf(tab, entry, contents).send(renderProfileCommands(profile, { chromeVersion: options.chromeVersion, emulation, ...(withOverrides ? { tabOverrides: entry.tabOverrides } : {}) }));
+      entry.overridesSent = overridesOn;
       entry.emulation = emulation ?? null;
       entry.dispatchedSeq = seq;
     } catch (error) {
       answered = Promise.reject(error);
     }
+    // The overrides' status follows this list's answer if it is still the latest one sent.
+    const settleOverrides = (status: RenderProfileStatus): boolean => {
+      if (entry.sends !== send || !withOverrides || !cdpOverridesOn(entry.tabOverrides) || entry.overridesStatus === status) return false;
+      entry.overridesStatus = status;
+      return true;
+    };
     answered.then(
       () => {
-        if (entry.seq !== seq) return;
+        const overrides = settleOverrides('active');
+        if (entry.seq !== seq) {
+          if (overrides) ctx.changed();
+          return;
+        }
         entry.appliedSeq = seq;
         entry.status = 'active';
         ctx.changed();
       },
       () => {
-        if (entry.seq !== seq) return;
+        const overrides = settleOverrides('failed');
+        if (entry.seq !== seq) {
+          if (overrides) ctx.changed();
+          return;
+        }
         entry.status = 'failed';
         ctx.changed();
       },
@@ -294,6 +364,7 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
       entry.nav = null;
       entry.doc = null;
       entry.emulation = null;
+      entry.overridesSent = false;
       const emitter = contents as unknown as NodeJS.EventEmitter;
       const owns = (): boolean => entries.get(tab) === entry && entry.contents === contents;
       const listeners: [string, (...args: never[]) => void][] = [
@@ -336,8 +407,8 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
         ],
       ];
       for (const [event, listener] of listeners) emitter.on(event, listener as (...args: unknown[]) => void);
-      // A profile set before the view existed (an empty tab, a popup) is applied now.
-      if (entry.effective) apply(tab, entry);
+      // A profile (or overrides) set before the view existed (an empty tab, a popup) is applied now.
+      if (needsDebugger(entry)) apply(tab, entry);
       else entry.dispatchedSeq = entry.appliedSeq = entry.seq;
       return () => {
         for (const [event, listener] of listeners) emitter.off(event, listener as (...args: unknown[]) => void);
@@ -354,6 +425,8 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
       entry.doc = null;
       entry.dispatchedSeq = entry.appliedSeq = -1;
       entry.emulation = null;
+      entry.overridesSent = false;
+      entry.sends += 1;
       dbg?.dispose();
     },
 
@@ -391,6 +464,26 @@ export function createTabRenderProfiles(options: RenderProfileOptions | undefine
 
     forgetPins() {
       options?.pins.forget();
+    },
+
+    setTabOverrides(tab, overrides) {
+      const entry = entryOf(tab);
+      const before = entry.tabOverrides;
+      entry.tabOverrides = overrides;
+      // Without render profiles there is no debugger: the CDP part cannot be put into effect.
+      if (!options) {
+        entry.overridesStatus = cdpOverridesOn(overrides) ? 'failed' : 'active';
+        return;
+      }
+      // CSS off is not CDP: only a change of the CDP part sends the list again (the profile kept).
+      if (sameCdpOverrides(before, overrides)) return;
+      entry.reattached = false;
+      apply(tab, entry);
+      ctx.changed();
+    },
+
+    overridesStatus(tab) {
+      return entries.get(tab)?.overridesStatus ?? 'active';
     },
   };
 }

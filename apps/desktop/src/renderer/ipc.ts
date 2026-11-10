@@ -5,10 +5,11 @@ import type { SeoAuditRef } from '@app/ipc-contract';
 import type { CopyValueKey, OpenInTemplateId } from '@app/specs/command-palette.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
 import type { PermissionDecision } from '@app/specs/permissions.spec';
-import type { RenderProfile } from '@app/specs/render-profile.spec';
-import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
-import type { HistoryCursorAnswer, HistoryPageAnswer, JumpBackInAnswer } from '@app/ipc-contract';
-import type { SearchEngineId } from '@app/specs/browser-polish.spec';
+import type { RenderProfile, TabOverrides } from '@app/specs/render-profile.spec';
+import type { HighlightMode, ImageFilter } from '@app/specs/seo-sidebar.spec';
+import type { SeoExportKind } from '@app/specs/seo-exports.spec';
+import type { HistoryCursorAnswer, HistoryPageAnswer, HistoryRetentionAnswer, JumpBackInAnswer } from '@app/ipc-contract';
+import type { HistoryClearRange, HistoryRetentionResult, SearchEngineId } from '@app/specs/browser-polish.spec';
 import type { CompareAnswer, CopyCsvAnswer, RankCsvKind, RankRange, RankSeriesAnswer, RankTableAnswer, ReadingDatesAnswer, SaveCsvAnswer } from '@app/specs/rankings.spec';
 import type { AddCompetitorAnswer, BulkAddAnswer, BulkSearchesInput, ProjectChangeAnswer, SetSiteAnswer, SetTagsAnswer } from '@app/specs/projects.spec';
 import type { CaptureCadence, EntryKind } from '@app/specs/workspace-db.spec';
@@ -37,14 +38,21 @@ export const actions = {
   rerunAudit: (tabId: number) => ipc.seo.rerun.mutate({ tabId }).catch(ignore),
   /** Opens an `http(s)` URL from a panel in a background tab (main checks the scheme); resolves the tab's id or `null`. */
   openBackgroundTab: (url: string, options: { readonly inherit?: boolean } = {}) => ipc.browser.openBackgroundTab.mutate({ url, ...(options.inherit === true ? { inherit: true } : {}) }).catch(() => null),
-  /** Sets the tab's highlight overlay (`seo.setHighlight`); resolves whether it was set. */
-  setHighlight: (tabId: number, mode: HighlightMode) => ipc.seo.setHighlight.mutate({ tabId, mode }).catch(() => false),
+  /** Sets the tab's highlight overlay (`seo.setHighlight`; `phrase` only for `keyphrase`); resolves whether it was set. */
+  setHighlight: (tabId: number, mode: HighlightMode, phrase?: string) => ipc.seo.setHighlight.mutate(phrase === undefined ? { tabId, mode } : { tabId, mode, phrase }).catch(() => false),
   /** Copies the filtered links of the audit on screen as CSV through main's clipboard; resolves how many rows (`null`: nothing copied). */
   copyLinksCsv: (tabId: number, audit: SeoAuditRef, filter: LinkFilter) => ipc.seo.copyLinksCsv.mutate({ tabId, audit, filter }).catch(() => null),
   /** Copies a URL the audit on screen lists through main's clipboard; resolves whether it was copied. */
   copyUrl: (tabId: number, audit: SeoAuditRef, url: string) => ipc.seo.copyUrl.mutate({ tabId, audit, url }).catch(() => false),
   /** Copies one JSON-LD block of the audit on screen through main's clipboard (main formats it); resolves whether it was copied. */
   copySchemaJson: (tabId: number, audit: SeoAuditRef, block: number) => ipc.seo.copySchemaJson.mutate({ tabId, audit, block }).catch(() => false),
+  /**
+   * Copies a table of the audit on screen as CSV through main's clipboard (`seoExport.copyCsv`, Phase 11
+   * Task 1): images (with the panel's filter), headings, or the audit's speed report; resolves how many rows (`null`: main
+   * wrote nothing, the audit changed; `'failed'`: the IPC call failed).
+   */
+  copySeoCsv: (tabId: number, audit: SeoAuditRef, kind: SeoExportKind, filter?: ImageFilter): Promise<number | null | 'failed'> =>
+    ipc.seoExport.copyCsv.mutate({ tabId, audit, kind, ...(filter === undefined ? {} : { filter }) }).catch(() => 'failed' as const),
   /** Measures the active tab's page speed (`seo.measureSpeed`); resolves its answer, `null` on an IPC failure. */
   measureSpeed: (tabId: number) => ipc.seo.measureSpeed.mutate({ tabId }).catch(() => null),
   /** Starts the accessibility check on the tab's page (`seo.runAccessibility`); resolves whether one is running. */
@@ -64,6 +72,8 @@ export const actions = {
   setRenderProfile: (tabId: number, profile: RenderProfile, pin?: boolean) => ipc.browser.setRenderProfile.mutate({ tabId, profile, ...(pin === undefined ? {} : { pin }) }).catch(() => false),
   /** Reset: the tab's render profile and this site's pin go; resolves whether it had one. */
   clearRenderProfile: (tabId: number) => ipc.browser.clearRenderProfile.mutate({ tabId }).catch(() => false),
+  /** Sets the tab's overrides (CSS off, cookies off, location; all off: normal); resolves whether it was set (Phase 11 Task 6). */
+  setTabOverrides: (tabId: number, overrides: TabOverrides) => ipc.tabOverrides.set.mutate({ tabId, overrides }).catch(() => false),
   // Browser polish (`browser-polish.feature.md`): find in page, history, reopen tab, search engine.
   /** Opens the active tab's find bar (as Mod+F). */
   openFind: () => ipc.find.open.mutate().catch(ignore),
@@ -72,11 +82,20 @@ export const actions = {
   findStep: (tabId: number, forward: boolean) => ipc.find.step.mutate({ tabId, forward }).catch(() => false),
   closeFind: (tabId: number) => ipc.find.close.mutate({ tabId }).catch(() => false),
   /** One page of history; an empty one on an IPC failure. */
-  historyList: (query: string, after: HistoryCursorAnswer | null): Promise<HistoryPageAnswer> => ipc.history.list.query({ query, after }).catch(() => ({ visits: [], next: null })),
+  historyList: (query: string, after: HistoryCursorAnswer | null, projectId?: string): Promise<HistoryPageAnswer> =>
+    ipc.history.list.query({ query, after, ...(projectId === undefined ? {} : { projectId }) }).catch(() => ({ visits: [], next: null })),
   jumpBackIn: (): Promise<JumpBackInAnswer> => ipc.history.jumpBackIn.query().catch(() => ({ mostVisited: [], recent: [] })),
   removeVisit: (url: string) => ipc.history.remove.mutate({ url }).catch(() => false),
   /** "Clear all history" (main asks first); resolves whether it cleared. */
   clearHistory: () => ipc.history.clearAll.mutate().catch(() => false),
+  /** Clear by range (Phase 11 Task 10; main asks first); resolves whether it cleared. */
+  clearHistoryRange: (range: HistoryClearRange) => ipc.history.clearRange.mutate({ range }).catch(() => false),
+  /** The history retention settings; `null` on an IPC failure. */
+  historyRetention: (): Promise<HistoryRetentionAnswer | null> => ipc.history.retention.query().catch(() => null),
+  /** Stores the history retention settings (main asks first when visits would go, then applies them); `failed` on an IPC failure. */
+  setHistoryRetention: (settings: HistoryRetentionAnswer): Promise<HistoryRetentionResult> => ipc.history.setRetention.mutate(settings).catch(() => 'failed' as const),
+  /** The live projects, for the History view's filter; none on an IPC failure. */
+  listProjects: () => ipc.projects.list.query().then((answer) => answer.projects).catch(() => []),
   reopenClosedTab: () => ipc.history.reopenClosedTab.mutate().catch(() => null),
   showHistory: () => ipc.history.show.mutate().catch(ignore),
   setSearchEngine: (engine: SearchEngineId) => ipc.settings.setSearchEngine.mutate({ engine }).catch(() => false),

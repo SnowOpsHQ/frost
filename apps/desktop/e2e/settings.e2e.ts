@@ -2,8 +2,9 @@
 // (ACCOUNT_CONFIG_ENV, AccountStateSchema), specs/account-api.schema.ts (requestFingerprint, DesktopAuthorizeQuerySchema),
 // specs/telemetry-consent.schema.ts (TELEMETRY_CONFIG_ENV, TelemetryStateSchema), specs/gsc.schema.ts (GSC_SCOPE, GscStatusSchema)
 // Acceptance: specs/account-settings.feature.md (End to end) · review focus "Telemetry UI matches behaviour", the in-app
-// sign-in confirmation
-import { mkdtemp, rm } from 'node:fs/promises';
+// sign-in confirmation · specs/diagnostics.feature.md (End to end: export-diagnostics-saves-reviewed-report;
+// specs/diagnostics.spec.ts DIAGNOSTICS_TEXT, DIAGNOSTICS_REPORT_HEADER, DIAGNOSTICS_FORBIDDEN_CHARS)
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
@@ -11,6 +12,7 @@ import { ACCOUNT_SETTINGS_TEXT, SETTINGS_MENU } from '@app/specs/account-setting
 import { DesktopAuthorizeQuerySchema, requestFingerprint } from '@app/specs/account-api.schema';
 import { ACCOUNT_CONFIG_ENV, AccountStateSchema, type AccountState } from '@app/specs/account-state.schema';
 import { HISTORY_MENU_ID } from '@app/specs/browser-polish.spec';
+import { DIAGNOSTICS_FORBIDDEN_CHARS, DIAGNOSTICS_REPORT_HEADER, DIAGNOSTICS_TEXT } from '@app/specs/diagnostics.spec';
 import { GSC_SCOPE, GscStatusSchema, type GscStatus } from '@app/specs/gsc.schema';
 import { IPC_BRIDGE_KEY } from '@app/specs/ipc-transport.spec';
 import { TELEMETRY_CONFIG_ENV, TelemetryStateSchema, type TelemetryState } from '@app/specs/telemetry-consent.schema';
@@ -253,4 +255,70 @@ test('settings-search-console-connect-disconnect', async () => {
   await expect(page.getByTestId('gsc-connect')).toBeVisible();
   await expect.poll(() => google.revoked.includes(refresh)).toBe(true);
   expect(await gscStatus()).toMatchObject({ connected: false, connecting: false });
+});
+
+// Phase 11 Task 12 (specs/diagnostics.feature.md): Help › Export Diagnostics… shows main's scrubbed
+// report; Save… writes exactly that text through main's (stubbed) save dialog; nothing is sent.
+test('export-diagnostics-saves-reviewed-report', async () => {
+  const out = await mkdtemp(path.join(tmpdir(), 'frost-e2e-diagnostics-'));
+  const file = path.join(out, 'report.txt');
+  try {
+    const userData = await app!.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
+    // Main's own warnings and errors, carrying what a report must never hold.
+    await app!.evaluate((_electron, userData) => {
+      console.warn(`frost: fetch failed for https://shop.example.com/cart?token=abc123 for alice@example.com in ${userData}`);
+      console.error(new Error(`could not open ${userData}${userData.includes('\\') ? '\\' : '/'}frost-session.db (http://127.0.0.1:9/x)`));
+    }, userData);
+    // The save dialog answers `file` (and records that it was asked).
+    await app!.evaluate(({ dialog }, file) => {
+      const holder = globalThis as { __diagnosticsSave?: typeof dialog.showSaveDialog; __diagnosticsAsked?: number };
+      holder.__diagnosticsSave ??= dialog.showSaveDialog;
+      holder.__diagnosticsAsked = 0;
+      dialog.showSaveDialog = (async () => {
+        holder.__diagnosticsAsked! += 1;
+        return { canceled: false, filePath: file };
+      }) as typeof dialog.showSaveDialog;
+    }, file);
+
+    // Help › Export Diagnostics…: the sheet (one at a time: Settings closes), with the report.
+    await menu('help-diagnostics');
+    const sheet = page.getByTestId('diagnostics-view');
+    await expect(sheet).toBeVisible();
+    await expect(settings()).toHaveCount(0);
+    await expect(page.locator('#diagnostics-view-title')).toBeFocused();
+    await expect(sheet).toContainText(DIAGNOSTICS_TEXT.intro);
+    const text = page.getByTestId('diagnostics-text');
+    await expect(text).toContainText(DIAGNOSTICS_REPORT_HEADER[0]);
+    await expect(text).toContainText('[url]');
+    const shown = (await text.textContent()) ?? '';
+    expect(shown).toContain('fetch failed for [url] for [email] in [path]');
+
+    await page.getByTestId('diagnostics-save').click();
+    await expect(page.getByTestId('diagnostics-note')).toHaveText(DIAGNOSTICS_TEXT.notes.saved);
+    expect(await app!.evaluate(() => (globalThis as { __diagnosticsAsked?: number }).__diagnosticsAsked)).toBe(1);
+    // The file is exactly the reviewed text, and holds no URL, address or profile path.
+    const saved = await readFile(file, 'utf8');
+    expect(saved).toBe(shown);
+    expect(saved).not.toMatch(/http/i);
+    expect(saved).not.toMatch(/[^\s@]+@[^\s@]+/);
+    expect(saved).not.toMatch(DIAGNOSTICS_FORBIDDEN_CHARS);
+    for (const folder of new Set([userData, profile, await realpath(profile), path.basename(profile)])) expect(saved).not.toContain(folder);
+    expect(saved).not.toContain('example.com');
+    expect(saved).not.toContain('abc123');
+
+    // The palette opens it too (a fresh report); Esc closes it.
+    await page.keyboard.press('Escape');
+    await expect(sheet).toHaveCount(0);
+    await palette('help.diagnostics', 'export diagnostics');
+    await expect(sheet).toBeVisible();
+    await expect(text).toContainText(DIAGNOSTICS_REPORT_HEADER[0]);
+    await page.keyboard.press('Escape');
+    await expect(sheet).toHaveCount(0);
+  } finally {
+    await app!.evaluate(({ dialog }) => {
+      const holder = globalThis as { __diagnosticsSave?: typeof dialog.showSaveDialog };
+      if (holder.__diagnosticsSave) dialog.showSaveDialog = holder.__diagnosticsSave;
+    });
+    await rm(out, { recursive: true, force: true, maxRetries: 5 });
+  }
 });

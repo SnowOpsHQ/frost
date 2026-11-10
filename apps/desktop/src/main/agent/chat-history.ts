@@ -1,4 +1,13 @@
-import { DEFAULT_CHAT_RETENTION, isChatRetention, MAX_STORED_CHATS, MAX_STORED_ROWS_PER_CHAT, retentionCutoff, type ChatRetention } from '@app/specs/agent-data.spec';
+import {
+  CHAT_SEARCH_SCAN_MAX_CHARS,
+  chatTitleFromUser,
+  DEFAULT_CHAT_RETENTION,
+  isChatRetention,
+  MAX_STORED_CHATS,
+  MAX_STORED_ROWS_PER_CHAT,
+  retentionCutoff,
+  type ChatRetention,
+} from '@app/specs/agent-data.spec';
 import type { ChatMessage } from '@app/specs/agent-protocol.schema';
 import { decodeHead, decodeRows, encodeEntries, encodeHead, encodeMessages, type ChatHead, type ChatHeadRow, type ChatRowsRow, type ChatRowsUpdate, type EntrySnapshot } from './chat-record';
 
@@ -11,6 +20,9 @@ import { decodeHead, decodeRows, encodeEntries, encodeHead, encodeMessages, type
 // only the chats' own rows are read; a chat's messages are read when it is opened (`loadChat`).
 // Writes run one after another, after the setting has been read, so a chat ended before the setting
 // loaded is never stored against an `off` the user chose.
+// Phase 11 Task 8 (Decision 10): a stored chat is renamed or archived on its own row (its rows are
+// not read), and search reads a stored chat's display text only (`texts`); under `off` nothing is
+// written or read.
 
 /** The database side (`SessionStore.agentChats` from `@app/db`, or `createMemoryChatsStore`). */
 export interface AgentChatsStore {
@@ -18,6 +30,10 @@ export interface AgentChatsStore {
   chatRows(id: string): Promise<ChatRowsRow | null>;
   saveChat(head: ChatHeadRow, rows: ChatRowsUpdate): Promise<boolean>;
   deleteChat(id: string): Promise<void>;
+  /** Phase 11 Task 8: the user's title, an archive time (`null`: unarchived), and a chat's display text for search. */
+  renameChat(id: string, title: string): Promise<boolean>;
+  setChatArchived(id: string, archivedAt: number | null): Promise<boolean>;
+  chatTexts(id: string): Promise<readonly string[] | null>;
   deleteAllChats(): Promise<void>;
   deleteChatsUpdatedBefore(cutoff: number): Promise<void>;
   countChatsUpdatedBefore(cutoff: number): Promise<number>;
@@ -70,6 +86,12 @@ export interface ChatHistory {
   save(chat: ChatSave): Promise<boolean>;
   /** Deletes a stored chat. */
   remove(id: string): Promise<void>;
+  /** Gives a stored chat the user's title (nothing under `off`); `false` if it couldn't be written. */
+  rename(id: string, title: string): Promise<boolean>;
+  /** Archives a stored chat at `archivedAt` (`null`: unarchives it; nothing under `off`); `false` if it couldn't be written. */
+  setArchived(id: string, archivedAt: number | null): Promise<boolean>;
+  /** A stored chat's display text for search (the user's and the assistant's, never tool output), or `null`. Never rejects. */
+  texts(id: string): Promise<readonly string[] | null>;
   /** Deletes every stored chat; `false` if that failed. */
   removeAll(): Promise<boolean>;
   /** Deletes what the retention no longer keeps; answers the cutoff applied (`null`: none). */
@@ -203,6 +225,48 @@ export function createChatHistory(deps: ChatHistoryDeps): ChatHistory {
         }
       });
     },
+    rename(id, title) {
+      return serial(async () => {
+        if (retention === 'off') return true;
+        try {
+          return (await deps.store.renameChat(id, title)) === true;
+        } catch {
+          log('agent chats: a chat could not be renamed');
+          return false;
+        }
+      });
+    },
+    setArchived(id, archivedAt) {
+      return serial(async () => {
+        if (retention === 'off') return true;
+        try {
+          return (await deps.store.setChatArchived(id, archivedAt)) === true;
+        } catch {
+          log('agent chats: a chat could not be archived');
+          return false;
+        }
+      });
+    },
+    texts(id) {
+      return serial(async () => {
+        if (retention === 'off') return null;
+        const texts = await deps.store.chatTexts(id);
+        if (!Array.isArray(texts)) return null;
+        // The store's bound, applied again: only strings, within the scan's bound in all.
+        const out: string[] = [];
+        let left = CHAT_SEARCH_SCAN_MAX_CHARS;
+        for (const text of texts.slice(0, MAX_STORED_ROWS_PER_CHAT)) {
+          if (left <= 0) break;
+          if (typeof text !== 'string') continue;
+          out.push(text.slice(0, left));
+          left -= text.length;
+        }
+        return out;
+      }).catch(() => {
+        log('agent chats: a stored chat could not be searched');
+        return null;
+      });
+    },
     removeAll() {
       return serial(async () => {
         try {
@@ -243,13 +307,39 @@ export function createMemoryChatsStore(
       if (update.messagesFrom > current.messages.length || update.entriesFrom > current.entries.length) return false;
       if (update.messagesFrom + update.messages.length > MAX_STORED_ROWS_PER_CHAT || update.entriesFrom + update.entries.length > MAX_STORED_ROWS_PER_CHAT) return false;
       writes.push(update);
-      heads.set(head.id, { ...head, createdAt: heads.get(head.id)?.createdAt ?? head.createdAt });
+      const before = heads.get(head.id);
+      // As the database: a stored user title stays unless the save carries one too.
+      const keepTitle = before?.titleByUser === true && !head.titleByUser;
+      heads.set(head.id, { ...head, createdAt: before?.createdAt ?? head.createdAt, ...(keepTitle ? { title: before.title, titleByUser: true } : {}) });
       rows.set(head.id, { messages: [...current.messages.slice(0, update.messagesFrom), ...update.messages], entries: [...current.entries.slice(0, update.entriesFrom), ...update.entries] });
       for (const extra of sorted().slice(MAX_STORED_CHATS)) drop(extra.id);
       return true;
     },
     async deleteChat(id) {
       drop(id);
+    },
+    async renameChat(id, title) {
+      const clean = chatTitleFromUser(title);
+      if (clean === null) return false;
+      const head = heads.get(id);
+      if (head !== undefined) heads.set(id, { ...head, title: clean, titleByUser: true });
+      return true;
+    },
+    async setChatArchived(id, archivedAt) {
+      const head = heads.get(id);
+      if (head !== undefined) heads.set(id, { ...head, archivedAt });
+      return true;
+    },
+    async chatTexts(id) {
+      if (!heads.has(id)) return null;
+      return (rows.get(id)?.entries ?? []).flatMap((entry) => {
+        try {
+          const parsed = JSON.parse(entry) as { kind?: unknown; text?: unknown };
+          return (parsed.kind === 'user' || parsed.kind === 'assistant') && typeof parsed.text === 'string' ? [parsed.text] : [];
+        } catch {
+          return [];
+        }
+      });
     },
     async deleteAllChats() {
       heads.clear();

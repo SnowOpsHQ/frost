@@ -9,8 +9,9 @@ import { registerPaletteActions } from './palette/registry';
 import { AccountSettings } from './settings-account';
 import { AiChecksSettings } from './settings-ai-checks';
 import { GscSettings } from './settings-gsc';
+import { HistorySettings } from './settings-history';
 import { accountStore, settingsActions, useAccountState, useSettingsMenuSeq } from './settings-hooks';
-import { closeCancelsSignIn, holdsSheet, isMenuRequest, onSettingsRequest, opensForConfirmation, requestSettings, SETTINGS_CLOSED, settingsReducer } from './settings-open';
+import { closeCancelsSignIn, holdsSheet, isMenuRequest, onSettingsCloseAsked, onSettingsRequest, opensForConfirmation, requestSettings, SETTINGS_CLOSED, settingsOpened, settingsReducer } from './settings-open';
 import { settingsPaletteSources } from './settings-palette';
 import { TelemetrySettings } from './settings-telemetry';
 import './settings.css';
@@ -98,6 +99,7 @@ function SettingsView({ section, focusSeq, account, tabId, closeLabel, onClose, 
                 {entry.id === 'search-console' ? <GscSettings /> : null}
                 {entry.id === 'ai-checks' ? <AiChecksSettings tabId={tabId} /> : null}
                 {entry.id === 'telemetry' ? <TelemetrySettings /> : null}
+                {entry.id === 'history' ? <HistorySettings /> : null}
               </section>
             ))}
           </div>
@@ -119,6 +121,8 @@ export function SettingsSlot({ tab, historySeq, onOpen }: { readonly tab: Pick<T
   latestOnOpen.current = onOpen;
   const open = (section: SettingsSectionId) => {
     latestOnOpen.current();
+    // Phase 11 Task 11: the Help sheets close (one sheet at a time).
+    settingsOpened();
     dispatch({ type: 'request', section });
   };
   const openRef = useRef(open);
@@ -141,6 +145,18 @@ export function SettingsSlot({ tab, historySeq, onOpen }: { readonly tab: Pick<T
     lastStatus.current = status;
   }, [status]);
   const holding = holdsSheet(status);
+  // Phase 11 Task 11: a Help sheet opening closes Settings, unless a confirmation waits here (the Help sheet stays shut).
+  const holdingRef = useRef(false);
+  holdingRef.current = holding && state.open;
+  useEffect(
+    () =>
+      onSettingsCloseAsked(() => {
+        if (holdingRef.current) return false;
+        dispatch({ type: 'close' });
+        return true;
+      }),
+    [],
+  );
   // History opening closes Settings; while a confirmation waits, History is closed instead.
   const seenHistory = useRef(historySeq);
   useEffect(() => {

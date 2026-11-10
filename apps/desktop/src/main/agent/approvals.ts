@@ -9,6 +9,7 @@ import {
   decide,
   grantOriginFor,
   isApprovalDecision,
+  isAttachedTabTool,
   isGrantOrigin,
   isPublicPage,
   isSafeInputJson,
@@ -26,10 +27,12 @@ import {
 import { ToolInputSchema, type JsonValue, type ToolResult } from '@app/specs/agent-protocol.schema';
 import { completeToolInput, invokeTimeAnswer } from '@app/specs/agent-search-tools.spec';
 import { mcpServerIdOf, mcpToolLabel } from '@app/specs/agent-mcp.spec';
-import { AGENT_TOOLS, isAgentToolName, isGrantable, isMcpToolName, TOOL_ERROR_CODES, toolRisk, type AgentToolRisk, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { pageSource } from '@app/specs/agent-page-tools.spec';
+import { AGENT_TOOLS, ATTACHED_TAB_NOT_READY_NOTE, isAgentToolName, isGrantable, isMcpToolName, MAX_ATTACHED_READS_PER_TURN, TOOL_ERROR_CODES, toolRisk, type AgentToolRisk, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import type { AgentEntitlements } from './entitlements';
 import type { AgentGrants } from './grants';
 import type { AgentHost, AgentToolInvoke } from './host';
+import type { AttachedTabs, AttachedTabTarget } from './tools/attached-tabs';
 import { wrapToolOutput } from './tool-output';
 
 // The approval broker (Phase 5 Task 4, plan decision 7; spec `specs/agent-approvals.spec.ts`;
@@ -43,10 +46,21 @@ import { wrapToolOutput } from './tool-output';
 // canonical input and, for a page tool, the exact page), answered once, and expires after
 // `APPROVAL_TIMEOUT_MS` or when its chat's turn ends. The run uses the input main stored, never
 // anything sent later, and the runner is told what the page must still be (`ToolRunContext`).
+//
+// Phase 11 Task 9 (Decision 11, `specs/agent-attach.feature.md`): `read_attached_tab` names a tab the
+// user attached to the chat by its ref. The broker resolves the ref for the calling chat only
+// (`not-allowed` otherwise), answers `expired` when that tab closed or left the page it was attached
+// at, caps the reads per attachment per turn (`MAX_ATTACHED_READS_PER_TURN`), and decides the call
+// with the **attached tab's** page: its origin keys grants and the private-page rule and is the one
+// the approval card names, and the runner gets the attached tab's id. An `audit` read with no ready
+// audit of the attach URL is answered `not-ready` as it arrives (no card).
 
 /** What a tool run gets besides its input. */
 export interface ToolRunContext {
-  /** The chat's tab: the only tab the agent acts on. */
+  /**
+   * The chat's tab: the only tab the agent acts on. For `read_attached_tab` (Phase 11 Task 9), the
+   * attached tab the broker resolved the call's ref to (it only reads it).
+   */
   readonly tabId: number;
   /** Aborted when the chat's turn ends (Stop) or the broker is disposed. */
   readonly signal: AbortSignal;
@@ -182,6 +196,11 @@ export interface ApprovalBrokerDeps {
    * call `invalid-input` before the user is asked. Main's runner checks it again before the call.
    */
   readonly mcpInputAllowed?: (toolName: string, input: JsonValue) => boolean;
+  /**
+   * The chats' attached tabs (Phase 11 Task 9, `./tools/attached-tabs`); default: none (every
+   * `read_attached_tab` is refused `not-allowed`).
+   */
+  readonly attachedTabs?: Pick<AttachedTabs, 'resolve' | 'isLive' | 'auditReady'>;
 }
 
 export interface ApprovalBroker {
@@ -240,9 +259,11 @@ interface Decided {
   /** The exact canonical input (JSON text of the re-parsed input). */
   readonly canonical: string;
   readonly origin: string | null;
-  /** The tab's page (no fragment) for a page tool, `null` otherwise. */
+  /** The tab's page (no fragment) for a page tool (the attached tab's attach URL for `read_attached_tab`), `null` otherwise. */
   readonly pageUrl: string | null;
   readonly target: RunTarget;
+  /** `read_attached_tab`'s resolved attachment; `null` for every other tool. */
+  readonly attached: AttachedTabTarget | null;
 }
 
 interface Pending {
@@ -257,6 +278,8 @@ interface ChatState {
   readonly tabId: number;
   readonly allowed: ReadonlySet<string>;
   readonly seen: Set<string>;
+  /** `read_attached_tab` calls this turn, per ref (`MAX_ATTACHED_READS_PER_TURN`). */
+  readonly attachedReads: Map<string, number>;
   active: boolean;
 }
 
@@ -381,6 +404,12 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
 
   const entitled = (risk: AgentToolRisk) => deps.entitlements.allowed('agent') && (risk !== 'external' || deps.entitlements.allowed('agent.mcp'));
 
+  /** Whether `target` is still `chatId`'s attachment (the same one, not detached or renewed) and still ready. */
+  const stillAttached = (chatId: string, target: AttachedTabTarget): boolean => {
+    const again = deps.attachedTabs?.resolve(chatId, target.ref) ?? null;
+    return again !== null && again === target && deps.attachedTabs?.isLive(again) === true;
+  };
+
   /** Runs `call` with the stored input, `via` the read setting, a grant, or the user's approval. */
   const run = async (call: Call, decided: Decided, via: ToolRunVia) => {
     try {
@@ -399,13 +428,20 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
         fail(call, 'expired');
         return;
       }
+      // An attached tab is read only while it is still attached to this chat, as the same tab at the
+      // same page (detached, closed or moved on while the card waited: `expired`).
+      const attached = decided.attached;
+      if (attached !== null && !stillAttached(chat.chatId, attached)) {
+        fail(call, 'expired');
+        return;
+      }
       const controller = new AbortController();
       call.controller = controller;
       setStatus(call, 'running');
       let outcome: ToolRunOutcome;
       try {
         outcome = await runner.run(call.toolName, JSON.parse(decided.canonical) as JsonValue, {
-          tabId: chat.tabId,
+          tabId: attached !== null ? attached.tabId : chat.tabId,
           signal: controller.signal,
           via,
           expectedOrigin: decided.target.expectedOrigin,
@@ -531,20 +567,54 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
         fail(call, 'invalid-input');
         return;
       }
-      const pageUrl = isTabBound(invoke.toolName) ? pageUrlOf(tabUrl) : null;
+      // `read_attached_tab`: the ref, resolved for this chat only, is the page the call is decided on.
+      let attached: AttachedTabTarget | null = null;
+      if (isAttachedTabTool(invoke.toolName)) {
+        const ref = (input.value as { ref?: unknown }).ref;
+        attached = deps.attachedTabs?.resolve(chat.chatId, ref) ?? null;
+        const reads = typeof ref === 'string' ? (chat.attachedReads.get(ref) ?? 0) : MAX_ATTACHED_READS_PER_TURN;
+        if (attached === null || reads >= MAX_ATTACHED_READS_PER_TURN) {
+          stats.refused += 1;
+          fail(call, 'not-allowed');
+          return;
+        }
+        chat.attachedReads.set(attached.ref, reads + 1);
+        if (deps.attachedTabs?.isLive(attached) !== true) {
+          // Closed, or no longer the page the user attached (fragment aside).
+          fail(call, 'expired');
+          return;
+        }
+      }
+      /** The page the call is decided on: the attached tab's attach URL, else the chat tab's. */
+      const decideUrl = attached !== null ? attached.url : tabUrl;
+      const pageUrl = isTabBound(invoke.toolName) ? pageUrlOf(tabUrl) : attached !== null ? attached.url : null;
       if (isTabBound(invoke.toolName) && pageUrl === null) {
         // A page tool with no web page in the tab: nothing to read or act on.
         fail(call, 'unavailable');
         return;
       }
-      const grantOrigin = grantOriginFor(invoke.toolName, input.value, tabUrl);
+      const grantOrigin = grantOriginFor(invoke.toolName, input.value, decideUrl);
       const decided: Decided = {
         risk,
         canonical: input.canonical,
-        origin: approvalOriginFor(invoke.toolName, input.value, tabUrl),
+        origin: approvalOriginFor(invoke.toolName, input.value, decideUrl),
         pageUrl,
-        target: runTargetFor(invoke.toolName, input.value, tabUrl),
+        target: runTargetFor(invoke.toolName, input.value, decideUrl),
+        attached,
       };
+      // An attached tab's audit that frost doesn't hold (it audits only the tab on screen): said as
+      // data at once, with nothing read and no card.
+      if (attached !== null && (input.value as { part?: unknown }).part === 'audit' && deps.attachedTabs?.auditReady(attached) !== true) {
+        const result = wrapToolOutput(invoke.toolName, pageSource(attached.origin), { status: 'not-ready', ref: attached.ref, note: ATTACHED_TAB_NOT_READY_NOTE });
+        if (result === null) {
+          fail(call, 'failed');
+          return;
+        }
+        call.settled = true;
+        send(call.chatId, call.callId, call.toolName, result);
+        setStatus(call, 'done');
+        return;
+      }
       // A call frost answers as it arrives, without asking or running anything (a probe run for a
       // private page: nothing would be fetched, so an approval card would only invite a reflex Allow).
       const answered = invokeTimeAnswer(invoke.toolName, pageUrl);
@@ -609,7 +679,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
       if (disposed) return;
       endTurn(chatId);
       activities.delete(chatId);
-      chats.set(chatId, { chatId, tabId: context.tabId, allowed: new Set(context.allowedTools), seen: new Set(), active: true });
+      chats.set(chatId, { chatId, tabId: context.tabId, allowed: new Set(context.allowedTools), seen: new Set(), attachedReads: new Map(), active: true });
       changed();
     },
     unregister(chatId) {

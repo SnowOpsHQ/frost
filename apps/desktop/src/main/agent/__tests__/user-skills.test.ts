@@ -268,6 +268,8 @@ describe('user skills', () => {
       usage: null,
       contextTokens: null,
       truncated: false,
+      archivedAt: null,
+      titleByUser: false,
       history: [{ role: 'user', content: 'Run the frost skill "My brief".' }],
       entries: [{ kind: 'user', text: '', tools: [], skill: { id: 'content-brief', name: 'My brief' } }],
     });

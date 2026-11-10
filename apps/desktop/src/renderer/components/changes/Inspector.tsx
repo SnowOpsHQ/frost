@@ -1,18 +1,28 @@
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type Ref } from 'react';
 import type { TabState } from '@app/specs/browser.spec';
 import {
   INSPECTOR_LABELS,
   INSPECTOR_PICK_HINT,
   INSPECTOR_PICK_NOTE,
+  INSPECTOR_SEARCH_LIMITS,
+  INSPECTOR_SOURCE_NOTES,
+  INSPECTOR_SOURCE_VIEW,
   type InspectorChildrenAnswer,
+  type InspectorCopySourceAnswer,
   type InspectorNode,
   type InspectorPickAnswer,
+  type InspectorSearchMatch,
+  type InspectorSearchMode,
+  type InspectorSourceAnswer,
+  type InspectorSourceKind,
   type NodePath,
 } from '@app/specs/inspector.spec';
+import { SERVED_UNAVAILABLE_MESSAGES } from '@app/specs/seo-javascript.spec';
 import { inspectorPaletteSources } from '../../inspector-palette';
 import {
   ROOT_KEY,
   canInspect,
+  findRows,
   mergeChildren,
   moreKey,
   pathKey,
@@ -22,9 +32,15 @@ import {
   rowLabel,
   seoRows,
   setExpanded,
+  extendWindow,
+  firstWindow,
+  sourceRows,
   summaryRows,
   treeKeyAction,
   visibleRows,
+  windowAround,
+  type RowWindow,
+  type SourceRow,
   type Tree,
   type TreeEntry,
 } from '../../inspector-view';
@@ -39,6 +55,10 @@ import { InspectorIcon, PickGlyph } from './changes-icons';
 // (`inspector.highlight`); leaving it removes the outline. Every new document or URL in the tab reads
 // the top of the tree again: the same document keeps the tree (rows that changed start afresh), a new
 // one (a `stale` answer) starts over, with a note.
+//
+// Phase 11 Task 5: a search form over the tree (own text or a CSS selector; a match opens the tree to
+// it), and the Rendered and Served source views: numbered rows of plain text (`<bdi dir="auto">`,
+// never markup), a page of rows at a time, find in source, and "Copy source" (main writes it).
 
 /** Most pages of children read to reveal one picked node, over all its levels (`maxChildren` each). */
 const MAX_REVEAL_PAGES = 100;
@@ -89,6 +109,29 @@ import.meta.hot?.dispose(unregisterPaletteActions);
 // ---- The panel -----------------------------------------------------------------------------------
 
 type OkChildren = Extract<InspectorChildrenAnswer, { status: 'ok' }>;
+type View = 'tree' | InspectorSourceKind;
+const VIEWS: readonly { readonly view: View; readonly label: string }[] = [
+  { view: 'tree', label: INSPECTOR_LABELS.viewTree },
+  { view: 'rendered', label: INSPECTOR_LABELS.viewRendered },
+  { view: 'served', label: INSPECTOR_LABELS.viewServed },
+];
+type Search = { readonly status: 'loading' } | { readonly status: 'ok'; readonly matches: readonly InspectorSearchMatch[]; readonly more: boolean } | { readonly status: 'refused'; readonly message: string };
+/** A source view's state, for the document `token`. */
+type Source = { readonly kind: InspectorSourceKind; readonly token: string } & ({ readonly status: 'loading' } | { readonly status: 'ok'; readonly ref: number; readonly text: string; readonly truncated: boolean } | { readonly status: 'pending' } | { readonly status: 'message'; readonly message: string });
+/** How often, and how many times, a served source still being fetched is read again. */
+const PENDING_RETRY_MS = 1_000;
+const PENDING_RETRIES = 30;
+/** Control characters (a pasted tab, a line separator) read as spaces in a query. */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+
+/** What a source or copy answer that is not text says. */
+function sourceMessage(answer: Exclude<InspectorSourceAnswer | InspectorCopySourceAnswer, { status: 'ok' } | { status: 'copied' }> | null): string {
+  if (answer !== null && answer.status === 'refused' && answer.reason === 'stale') return INSPECTOR_LABELS.sourceChanged;
+  if (answer === null) return refusalText('failed');
+  if (answer.status === 'pending') return INSPECTOR_LABELS.servedPending;
+  if (answer.status === 'unavailable') return SERVED_UNAVAILABLE_MESSAGES[answer.reason].replace('{status}', answer.httpStatus === null ? '' : String(answer.httpStatus));
+  return refusalText(answer.reason);
+}
 type Details = { readonly key: string } & ({ readonly status: 'loading' } | { readonly status: 'ready'; readonly node: InspectorNode } | { readonly status: 'refused'; readonly message: string });
 
 function Hint({ title, message, testId }: { readonly title: string; readonly message: string; readonly testId: string }) {
@@ -131,6 +174,20 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
   const pendingFocus = useRef<string | null>(null);
   /** The row whose node the hover outline is on (`null`: none). */
   const hovered = useRef<string | null>(null);
+  /** The document the panel shows (`tokenRef`, as state: a source view reads again when it changes). */
+  const [token, setToken] = useState<string | null>(null);
+  const [view, setView] = useState<View>('tree');
+  const [searchMode, setSearchMode] = useState<InspectorSearchMode>('text');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [search, setSearch] = useState<Search | null>(null);
+  const [source, setSourceState] = useState<Source | null>(null);
+  const sourceRef = useRef<Source | null>(null);
+  const setSource = useCallback((next: Source | null) => {
+    sourceRef.current = next;
+    setSourceState(next);
+  }, []);
+  /** The source view a pending read is for (`null`: none): a read again is dropped once another view shows. */
+  const pendingRead = useRef<InspectorSourceKind | null>(null);
 
   const commit = useCallback((next: Tree) => {
     treeRef.current = next;
@@ -187,6 +244,8 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
         return;
       }
       tokenRef.current = answer.docToken;
+      setToken(answer.docToken);
+      setSearch(null);
       commit(mergeChildren(new Map(), answer));
       setFocusKey(ROOT_KEY);
       setDetails(null);
@@ -328,6 +387,61 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
     revealRun.current += 1;
     hovered.current = null;
   }, [isPicking]);
+
+  /** Searches the panel's document; a `stale` answer reads the tree afresh. */
+  const runSearch = async (): Promise<void> => {
+    const docToken = tokenRef.current;
+    const query = searchQuery.replace(CONTROL, ' ');
+    if (docToken === null || query.trim() === '') return;
+    setSearch({ status: 'loading' });
+    const answer = await ipc.inspector.search.query({ tabId, docToken, mode: searchMode, query }).catch(() => null);
+    if (tokenRef.current !== docToken) return;
+    if (answer?.status === 'refused' && answer.reason === 'stale') {
+      void ipc.inspector.clear.mutate({ tabId }).catch(() => null);
+      return void load(false, refusalText('stale'));
+    }
+    setSearch(answer === null || answer.status === 'refused' ? { status: 'refused', message: refusalText(answer === null ? 'failed' : answer.reason) } : { status: 'ok', matches: answer.matches, more: answer.more });
+  };
+
+  /** Reads the `kind` source of the panel's document (a served source still being fetched is read again, a few times). */
+  const readSource = useCallback(
+    async (kind: InspectorSourceKind, tries = 0): Promise<void> => {
+      const docToken = tokenRef.current;
+      if (docToken === null) return;
+      if (tries === 0) setSource({ kind, token: docToken, status: 'loading' });
+      const answer = await ipc.inspector.source.query({ tabId, docToken, kind }).catch(() => null);
+      if (tokenRef.current !== docToken) return;
+      if (answer?.status === 'refused' && answer.reason === 'stale') {
+        void ipc.inspector.clear.mutate({ tabId }).catch(() => null);
+        return void load(false, refusalText('stale'));
+      }
+      let next: Source;
+      if (answer !== null && answer.status === 'ok') next = { kind, token: docToken, status: 'ok', ref: answer.ref, text: answer.text, truncated: answer.truncated };
+      else if (answer !== null && answer.status === 'pending') next = { kind, token: docToken, status: 'pending' };
+      else next = { kind, token: docToken, status: 'message', message: sourceMessage(answer) };
+      // Only while that view still shows that document's source.
+      const shown = sourceRef.current;
+      if (shown === null || shown.kind !== kind || shown.token !== docToken) return;
+      setSource(next);
+      if (next.status === 'pending' && tries < PENDING_RETRIES)
+        setTimeout(() => {
+          if (pendingRead.current === kind && tokenRef.current === docToken && sourceRef.current?.status === 'pending') void readSource(kind, tries + 1);
+        }, PENDING_RETRY_MS);
+    },
+    [tabId, load, setSource],
+  );
+  // A source view reads its source when shown, for a new document, and for a new URL in the same
+  // document (an in-page move: the served HTML is the new URL's, and the page has likely changed).
+  useEffect(() => {
+    pendingRead.current = view === 'tree' ? null : view;
+    if (view !== 'tree' && token !== null) void readSource(view);
+  }, [view, token, tab.url, readSource]);
+  useEffect(
+    () => () => {
+      pendingRead.current = null;
+    },
+    [],
+  );
 
   const rows = visibleRows(tree);
 
@@ -500,21 +614,261 @@ function InspectorTab({ tab }: { readonly tab: TabState }) {
           {note}
         </p>
       ) : null}
+      <div className="inspector-views" role="group" aria-label={INSPECTOR_LABELS.views}>
+        {VIEWS.map((entry) => (
+          <button key={entry.view} type="button" className="seo-action inspector-view-button" aria-pressed={view === entry.view} data-testid="inspector-view" data-view={entry.view} onClick={() => setView(entry.view)}>
+            {entry.label}
+          </button>
+        ))}
+      </div>
       {status === 'refused' ? (
         <p className="changes-note" data-tone="warn" data-testid="inspector-refused">
           {message}
         </p>
       ) : status === 'loading' && tree.size === 0 ? (
         <p className="changes-note">{INSPECTOR_LABELS.loading}</p>
+      ) : view === 'tree' ? (
+        <>
+          <form
+            className="inspector-search"
+            role="search"
+            aria-label={INSPECTOR_LABELS.search}
+            data-testid="inspector-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void runSearch();
+            }}
+          >
+            <select className="projects-select inspector-search-mode" aria-label={INSPECTOR_LABELS.search} data-testid="inspector-search-mode" value={searchMode} onChange={(event) => setSearchMode(event.target.value === 'selector' ? 'selector' : 'text')}>
+              <option value="text">{INSPECTOR_LABELS.searchModeText}</option>
+              <option value="selector">{INSPECTOR_LABELS.searchModeSelector}</option>
+            </select>
+            <input
+              className="projects-input"
+              type="search"
+              spellCheck={false}
+              autoComplete="off"
+              aria-label={INSPECTOR_LABELS.searchQuery}
+              placeholder={INSPECTOR_LABELS.searchQuery}
+              maxLength={INSPECTOR_SEARCH_LIMITS.maxQueryChars}
+              data-testid="inspector-search-query"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+            <button type="submit" className="seo-action" data-testid="inspector-search-run" disabled={status !== 'ready' || searchQuery.trim() === ''}>
+              {INSPECTOR_LABELS.searchRun}
+            </button>
+          </form>
+          <SearchResults search={search} onChoose={(match) => void reveal(match.path)} />
+          <ul className="inspector-tree" role="tree" aria-label={INSPECTOR_LABELS.tree} data-testid="inspector-tree" onKeyDown={onTreeKey}>
+            {renderItem(ROOT_KEY, 1)}
+          </ul>
+          <NodeDetails details={details} />
+        </>
       ) : (
-        <ul className="inspector-tree" role="tree" aria-label={INSPECTOR_LABELS.tree} data-testid="inspector-tree" onKeyDown={onTreeKey}>
-          {renderItem(ROOT_KEY, 1)}
-        </ul>
+        <SourceView key={`${view}:${source?.token ?? ''}`} tabId={tabId} kind={view} source={source !== null && source.kind === view ? source : null} onReadAgain={() => void readSource(view)} />
       )}
-      <NodeDetails details={details} />
     </div>
   );
 }
+
+function SearchResults({ search, onChoose }: { readonly search: Search | null; readonly onChoose: (match: InspectorSearchMatch) => void }) {
+  if (search === null) return null;
+  if (search.status === 'loading') return <p className="changes-note">{INSPECTOR_LABELS.loading}</p>;
+  if (search.status === 'refused')
+    return (
+      <p className="changes-note" data-tone="warn" role="status" data-testid="inspector-search-status">
+        {search.message}
+      </p>
+    );
+  return (
+    <>
+      <p className="changes-note" role="status" data-testid="inspector-search-status">
+        {search.matches.length === 0 ? INSPECTOR_LABELS.searchNone : `${search.matches.length} ${search.matches.length === 1 ? 'match' : 'matches'}`}
+        {search.more ? ` · ${INSPECTOR_LABELS.searchMore}` : ''}
+      </p>
+      {search.matches.length > 0 ? (
+        <ul className="inspector-matches" aria-label={INSPECTOR_LABELS.searchResults} data-testid="inspector-search-results">
+          {search.matches.map((match) => (
+            <li key={pathKey(match.path)}>
+              <button type="button" className="inspector-row inspector-match" data-testid="inspector-search-match" data-path={pathKey(match.path)} data-tag={match.node.tag} onClick={() => onChoose(match)}>
+                <span className="inspector-tag">{`<${rowLabel(match.node)}>`}</span>
+                {match.node.textPreview !== '' ? (
+                  <bdi className="inspector-preview" dir="auto">
+                    {match.node.textPreview}
+                  </bdi>
+                ) : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+}
+
+/** A source view: what it is, Copy source, Read again, find in source and the numbered rows (a page at a time). */
+function SourceView({ tabId, kind, source, onReadAgain }: { readonly tabId: number; readonly kind: InspectorSourceKind; readonly source: Source | null; readonly onReadAgain: () => void }) {
+  const ids = useId();
+  const text = source?.status === 'ok' ? source.text : null;
+  const listing = useMemo(() => (text === null ? null : sourceRows(text)), [text]);
+  const total = listing?.rows.length ?? 0;
+  const [win, setWin] = useState<RowWindow>(() => firstWindow(total));
+  // Another reading of the source starts at its top.
+  useEffect(() => {
+    setWin(firstWindow(listing?.rows.length ?? 0));
+  }, [listing]);
+  const [find, setFind] = useState('');
+  const [at, setAt] = useState<number | null>(null);
+  const [copied, setCopied] = useState('');
+  const listRef = useRef<HTMLOListElement | null>(null);
+  const matches = useMemo(() => (listing === null ? [] : findRows(text ?? '', listing.rows, find)), [text, listing, find]);
+  const current = at === null || matches.length === 0 ? null : matches[Math.min(at, matches.length - 1)]!;
+
+  /** Moves to the next (or previous) match; a match outside the rendered window renders the rows around it instead. */
+  const step = (by: 1 | -1): void => {
+    if (matches.length === 0) return;
+    const next = at === null ? (by === 1 ? 0 : matches.length - 1) : (Math.min(at, matches.length - 1) + by + matches.length) % matches.length;
+    setAt(next);
+    setWin((shown) => windowAround(shown, matches[next]!, total));
+  };
+  // The current match is scrolled into view once rendered.
+  useEffect(() => {
+    if (current === null) return;
+    listRef.current?.querySelector(`[data-row="${current}"]`)?.scrollIntoView?.({ block: 'nearest' });
+  }, [current, win]);
+
+  /** Copy source: main writes the text it answered under this view's `ref`; if the page changed since, the source is read again. */
+  const copy = async (): Promise<void> => {
+    if (source === null || source.status !== 'ok') return;
+    setCopied('');
+    const answer = await ipc.inspector.copySource.mutate({ tabId, docToken: source.token, kind, ref: source.ref }).catch(() => null);
+    setCopied(answer === null ? sourceMessage(null) : answer.status === 'copied' ? INSPECTOR_LABELS.sourceCopied : sourceMessage(answer));
+    if (answer !== null && answer.status === 'refused' && answer.reason === 'stale') onReadAgain();
+  };
+
+  return (
+    <section className="inspector-source" aria-label={kind === 'rendered' ? INSPECTOR_LABELS.viewRendered : INSPECTOR_LABELS.viewServed} data-testid="inspector-source" data-kind={kind} data-state={source?.status ?? 'loading'}>
+      <p className="changes-note">{INSPECTOR_SOURCE_NOTES[kind]}</p>
+      <div className="inspector-source-actions">
+        <button type="button" className="seo-action" data-testid="inspector-copy-source" disabled={source?.status !== 'ok'} onClick={() => void copy()}>
+          {INSPECTOR_LABELS.copySource}
+        </button>
+        <button type="button" className="seo-action" data-testid="inspector-read-source" disabled={source?.status === 'loading'} onClick={onReadAgain}>
+          {INSPECTOR_LABELS.readSource}
+        </button>
+      </div>
+      <p className="changes-status" role="status" aria-live="polite" data-testid="inspector-source-status">
+        {copied}
+      </p>
+      {source === null || source.status === 'loading' ? (
+        <p className="changes-note">{INSPECTOR_LABELS.loading}</p>
+      ) : source.status === 'pending' ? (
+        <p className="changes-note" data-testid="inspector-source-message">
+          {INSPECTOR_LABELS.servedPending}
+        </p>
+      ) : source.status === 'message' ? (
+        <p className="changes-note" data-tone="warn" data-testid="inspector-source-message">
+          {source.message}
+        </p>
+      ) : listing === null ? null : (
+        <>
+          <form
+            className="inspector-find"
+            role="search"
+            aria-label={INSPECTOR_LABELS.findInSource}
+            onSubmit={(event) => {
+              event.preventDefault();
+              step(1);
+            }}
+          >
+            <input
+              className="projects-input"
+              type="search"
+              spellCheck={false}
+              autoComplete="off"
+              aria-label={INSPECTOR_LABELS.findInSource}
+              aria-describedby={`${ids}-find-count`}
+              placeholder={INSPECTOR_LABELS.findInSource}
+              maxLength={INSPECTOR_SOURCE_VIEW.maxFindChars}
+              data-testid="inspector-find"
+              value={find}
+              onChange={(event) => {
+                setFind(event.target.value);
+                setAt(null);
+              }}
+            />
+            <button type="button" className="seo-action" aria-label={INSPECTOR_LABELS.findPrevious} data-testid="inspector-find-previous" disabled={matches.length === 0} onClick={() => step(-1)}>
+              ↑
+            </button>
+            <button type="submit" className="seo-action" aria-label={INSPECTOR_LABELS.findNext} data-testid="inspector-find-next" disabled={matches.length === 0}>
+              ↓
+            </button>
+            <span className="inspector-find-count" id={`${ids}-find-count`} data-testid="inspector-find-count">
+              {find.trim() === '' ? '' : matches.length === 0 ? INSPECTOR_LABELS.findNone : `${at === null ? 0 : Math.min(at, matches.length - 1) + 1} / ${matches.length}`}
+            </span>
+          </form>
+          {source.truncated ? (
+            <p className="changes-note" data-tone="warn" data-testid="inspector-source-truncated">
+              {INSPECTOR_LABELS.sourceTruncated}
+            </p>
+          ) : null}
+          {listing.cut ? <p className="changes-note">{INSPECTOR_LABELS.sourceRowsCut}</p> : null}
+          {win.start > 0 ? (
+            <button type="button" className="seo-action inspector-more-lines" data-testid="inspector-earlier-lines" onClick={() => setWin((shown) => extendWindow(shown, 'before', total))}>
+              {INSPECTOR_LABELS.showEarlierLines}
+            </button>
+          ) : null}
+          <SourceLines rows={listing.rows} start={win.start} end={win.end} matches={matches} current={current} listRef={listRef} />
+          {win.end < total ? (
+            <button type="button" className="seo-action inspector-more-lines" data-testid="inspector-more-lines" onClick={() => setWin((shown) => extendWindow(shown, 'after', total))}>
+              {INSPECTOR_LABELS.showMoreLines}
+            </button>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * A source's rows as a numbered list: each row's text is React text in `<bdi dir="auto">` (the
+ * page's markup is never markup here), only the window `start`–`end` (`data-row` is the row's index
+ * in the whole source); rows holding the find query are marked (`data-match`), the current one
+ * `aria-current`. Memoised: typing elsewhere re-renders nothing here.
+ */
+export const SourceLines = memo(function SourceLines({
+  rows,
+  start,
+  end,
+  matches,
+  current,
+  listRef,
+}: {
+  readonly rows: readonly SourceRow[];
+  readonly start: number;
+  readonly end: number;
+  readonly matches: readonly number[];
+  readonly current: number | null;
+  readonly listRef?: Ref<HTMLOListElement>;
+}) {
+  const marked = useMemo(() => new Set(matches), [matches]);
+  return (
+    <ol className="inspector-source-lines" aria-label={INSPECTOR_LABELS.sourceLines} data-testid="inspector-source-lines" ref={listRef}>
+      {rows.slice(start, end).map((row, offset) => {
+        const i = start + offset;
+        return (
+          <li key={i} className="inspector-source-row" data-testid="inspector-source-row" data-row={i} data-line={row.line ?? undefined} data-match={marked.has(i) ? 'true' : undefined} aria-current={current === i ? 'true' : undefined}>
+            <span className="inspector-source-no" aria-hidden="true">
+              {row.line ?? ''}
+            </span>
+            <bdi dir="auto">{row.text}</bdi>
+          </li>
+        );
+      })}
+    </ol>
+  );
+});
 
 function NodeDetails({ details }: { readonly details: Details | null }) {
   if (details === null) return <p className="changes-note inspector-empty-details">{INSPECTOR_LABELS.empty}</p>;

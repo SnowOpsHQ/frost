@@ -152,7 +152,7 @@ describe('agent service wiring', () => {
     const DAY = 86_400_000;
     const now = 1000 * DAY;
     const chat = (id: string, updatedAt: number) =>
-      encodeChat({ id, title: `Chat ${id.slice(-1)}`, createdAt: updatedAt, updatedAt, modelId: null, usage: null, contextTokens: null, truncated: false, history: [{ role: 'user', content: 'hi' }], entries: [{ kind: 'user', text: 'hi', tools: [] }] });
+      encodeChat({ id, title: `Chat ${id.slice(-1)}`, createdAt: updatedAt, updatedAt, modelId: null, usage: null, contextTokens: null, truncated: false, archivedAt: null, titleByUser: false, history: [{ role: 'user', content: 'hi' }], entries: [{ kind: 'user', text: 'hi', tools: [] }] });
     const agentChats = createMemoryChatsStore({ chats: [chat('00000000-0000-4000-8000-000000000001', now - 40 * DAY), chat('00000000-0000-4000-8000-000000000002', now - DAY)] });
     const agentSkills = createMemorySkillsStore();
     await agentSkills.saveSkill('my-skill', JSON.stringify({ id: 'my-skill', name: 'Mine', description: 'Mine.', allowedTools: ['page_data'], instructions: 'Check {{pageUrl}}.', version: 1 }), 1);

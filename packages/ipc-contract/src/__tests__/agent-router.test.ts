@@ -1,12 +1,20 @@
 // Spec: specs/agent-ipc.schema.ts (the agent.* inputs; AgentSetReasoningEffortInputSchema, Phase 8 Task 8b),
 // specs/agent-session.spec.ts (answers, AGENT_WATCH_TIMEOUT_MS, AgentSetupView.reasoning), specs/agent-reasoning.spec.ts
 // (REASONING_EFFORTS), specs/ipc-sender.spec.ts, specs/skills.spec.ts (SKILL_LIMITS, SKILL_SLOT_MAX_CHARS)
-// Acceptance: specs/agent-session.feature.md (Router), specs/skills.feature.md (Router), specs/agent-data.feature.md (Skills library)
+// Phase 11 Task 8: specs/agent-ipc.schema.ts (AgentListChatsInputSchema, AgentRenameChatInputSchema, AgentArchiveChatInputSchema),
+// specs/agent-data.spec.ts (CHAT_SEARCH_MAX_CHARS, CHAT_SEARCH_SNIPPET_CHARS, STORED_CHAT_TITLE_MAX_CHARS)
+// Phase 11 Task 9: specs/agent-ipc.schema.ts (AgentAttachableTabsInputSchema, AgentAttachTabInputSchema, AgentDetachTabInputSchema),
+// specs/agent-session.spec.ts (AGENT_ATTACH_RESULTS, ATTACHABLE_TAB_TITLE_MAX_CHARS, MAX_ATTACHABLE_TABS)
+// Acceptance: specs/agent-session.feature.md (Router), specs/skills.feature.md (Router), specs/agent-data.feature.md (Skills library, Chat history),
+// specs/agent-attach.feature.md
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
+  CHAT_SEARCH_MAX_CHARS,
+  CHAT_SEARCH_SNIPPET_CHARS,
   MAX_USER_SKILLS,
   SKILL_FILE_MAX_BYTES,
+  STORED_CHAT_TITLE_MAX_CHARS,
   type AgentDeleteAllChatsResult,
   type AgentGrantView,
   type AgentSaveSkillResult,
@@ -19,7 +27,19 @@ import {
 } from '@app/specs/agent-data.spec';
 import { CREDENTIAL_LIMITS } from '@app/specs/agent-proxy.spec';
 import { REASONING_EFFORTS } from '@app/specs/agent-reasoning.spec';
-import { AGENT_WATCH_TIMEOUT_MS, CHAT_TEXT_MAX_CHARS, type AgentSetKeyResult, type AgentState } from '@app/specs/agent-session.spec';
+import {
+  AGENT_WATCH_TIMEOUT_MS,
+  ATTACHABLE_TAB_TITLE_MAX_CHARS,
+  ATTACHMENT_ORIGIN_MAX_CHARS,
+  CHAT_TEXT_MAX_CHARS,
+  MAX_ATTACHABLE_TABS,
+  MAX_CHATS_KEPT_IN_MEMORY,
+  type AgentAttachableTab,
+  type AgentAttachResult,
+  type AgentChatSummary,
+  type AgentSetKeyResult,
+  type AgentState,
+} from '@app/specs/agent-session.spec';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
@@ -32,6 +52,7 @@ import { createIpcRequestHandler } from '../transport/main';
 
 const WINDOW_ID = 7;
 const CHAT = '0f8fad5b-d9cb-469f-a165-70867728950e';
+const SUMMARY: AgentChatSummary = { id: CHAT, title: 'Green tea notes', tabId: 3, updatedAt: 9, running: false, archived: false, match: { snippet: 'The oolong is fresh.', start: 4, length: 6 } };
 const KEY = 'sk-ant-secret-key-0123456789abcdef';
 const TOKEN = 'mcp-bearer-token-0123456789abcdef';
 const IMPORT_TOKEN = '3b241101-e2bb-4255-8caf-4136c566a962';
@@ -85,6 +106,7 @@ function stateAt(version: number): AgentState {
     grantsVersion: 1,
     chatRetention: '30d',
     mcp: { available: true, servers: [] },
+    draftAttachments: [],
   };
 }
 
@@ -135,6 +157,12 @@ function fakeAgent(version = 3) {
     chatgptCancel: vi.fn(() => true),
     chatgptSignOut: vi.fn(async (): Promise<ChatgptSignOutResult> => 'signed-out'),
     chatgptAcknowledge: vi.fn(async () => true),
+    listChats: vi.fn(async (_filter: string, _query?: string): Promise<readonly AgentChatSummary[]> => [SUMMARY]),
+    renameChat: vi.fn((chatId: string, _title: string) => chatId === CHAT),
+    archiveChat: vi.fn((chatId: string, _archived: boolean) => chatId === CHAT),
+    attachableTabs: vi.fn((_chatId: string | null): readonly AgentAttachableTab[] => [{ tabId: 4, title: 'Other page', origin: 'https://other.example' }]),
+    attachTab: vi.fn((_chatId: string | null, _tabId: number, _origin: string): AgentAttachResult => 'attached'),
+    detachTab: vi.fn((_chatId: string | null, ref: string) => ref === 'tab-1'),
   } satisfies AgentService;
   return {
     service,
@@ -210,6 +238,12 @@ const VALID_INPUT: Record<string, unknown> = {
   chatgptCancel: undefined,
   chatgptSignOut: undefined,
   chatgptAcknowledge: undefined,
+  listChats: { filter: 'active', query: 'oolong' },
+  renameChat: { chatId: CHAT, title: 'My title' },
+  archiveChat: { chatId: CHAT, archived: true },
+  attachableTabs: { chatId: null },
+  attachTab: { chatId: CHAT, tabId: 4, origin: 'https://other.example' },
+  detachTab: { chatId: CHAT, ref: 'tab-1' },
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 
@@ -320,6 +354,37 @@ describe('agent router', () => {
       chatgptCancel: [],
       chatgptSignOut: [],
       chatgptAcknowledge: [],
+      listChats: [undefined, {}, { filter: 'all' }, { filter: 'active', query: 'x'.repeat(CHAT_SEARCH_MAX_CHARS + 1) }, { filter: 'active', query: 5 }, { filter: 'active', extra: 1 }],
+      renameChat: [
+        undefined,
+        { chatId: CHAT },
+        { chatId: 'chat-1', title: 'x' },
+        { chatId: CHAT, title: '' },
+        { chatId: CHAT, title: '   ' },
+        { chatId: CHAT, title: 'two\nlines' },
+        { chatId: CHAT, title: 'tab\tinside' },
+        { chatId: CHAT, title: 't'.repeat(STORED_CHAT_TITLE_MAX_CHARS + 1) },
+        { chatId: CHAT, title: 'ok', titleByUser: false },
+      ],
+      archiveChat: [undefined, { chatId: CHAT }, { chatId: CHAT, archived: 'yes' }, { chatId: 'x', archived: true }, { chatId: CHAT, archived: true, at: 5 }],
+      attachableTabs: [undefined, {}, { chatId: 'chat-1' }, { chatId: null, all: true }],
+      attachTab: [
+        undefined,
+        { chatId: CHAT },
+        { tabId: 4 },
+        { chatId: CHAT, tabId: 4 },
+        { chatId: CHAT, tabId: 0 },
+        { chatId: CHAT, tabId: -1 },
+        { chatId: CHAT, tabId: 1.5 },
+        { chatId: CHAT, tabId: '4' },
+        { chatId: CHAT, tabId: 4, origin: 'https://other.example', url: 'https://evil.example/' },
+        { chatId: CHAT, tabId: 4, origin: 'https://other.example', ref: 'tab-1' },
+        { chatId: 'x', tabId: 4, origin: 'https://other.example' },
+        { chatId: CHAT, tabId: 4, origin: '' },
+        { chatId: CHAT, tabId: 4, origin: `https://${'a'.repeat(ATTACHMENT_ORIGIN_MAX_CHARS)}.example` },
+        { chatId: CHAT, tabId: 4, origin: 5 },
+      ],
+      detachTab: [undefined, { chatId: CHAT }, { chatId: CHAT, ref: 'tab-4' }, { chatId: CHAT, ref: 1 }, { chatId: CHAT, ref: 'tab-1', tabId: 4 }],
     };
     for (const name of PROCEDURES) {
       for (const input of bad[name]!) {
@@ -431,6 +496,79 @@ describe('agent router', () => {
     await expect(procedure(ctx, 'duplicateSkill')({ id: 'audit-this-page' })).resolves.toStrictEqual({ result: 'failed' });
     service.listGrants.mockReturnValueOnce([{ tool: 'navigate', label: 'l', origin: 'https://example.com', createdAt: 1, approvalId: 'leak' } as never]);
     await expect(procedure(ctx, 'listGrants')()).resolves.toStrictEqual([{ tool: 'navigate', label: 'l', origin: 'https://example.com', createdAt: 1 }]);
+  });
+
+  test('chat-history-procedures', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    await expect(procedure(ctx, 'listChats')({ filter: 'archived', query: 'oolong' })).resolves.toStrictEqual([SUMMARY]);
+    expect(service.listChats).toHaveBeenLastCalledWith('archived', 'oolong');
+    await procedure(ctx, 'listChats')({ filter: 'active' });
+    expect(service.listChats).toHaveBeenLastCalledWith('active', undefined);
+    await expect(procedure(ctx, 'renameChat')({ chatId: CHAT, title: '  Mine ' })).resolves.toBe(true);
+    expect(service.renameChat).toHaveBeenLastCalledWith(CHAT, '  Mine ');
+    await expect(procedure(ctx, 'renameChat')({ chatId: '6ba7b810-9dad-41d1-80b4-00c04fd430c8', title: 'Mine' })).resolves.toBe(false);
+    await expect(procedure(ctx, 'archiveChat')({ chatId: CHAT, archived: false })).resolves.toBe(true);
+    expect(service.archiveChat).toHaveBeenLastCalledWith(CHAT, false);
+    // The list is rebuilt field by field: extra fields dropped, malformed entries left out, text bounded.
+    const { match: _match, ...plain } = SUMMARY;
+    service.listChats.mockResolvedValueOnce([
+      { ...SUMMARY, approvalId: 'leak' } as never,
+      { ...plain, id: 'not-a-chat' },
+      { ...plain, title: 't'.repeat(500), match: { snippet: 's'.repeat(500), start: 0, length: 3 } },
+      { ...plain, match: { snippet: 'short', start: 3, length: 9 } },
+      { ...plain, archived: 'yes' } as never,
+      { ...plain, tabId: 'tab' } as never,
+      'nope' as never,
+    ]);
+    const listed = (await procedure(ctx, 'listChats')({ filter: 'active' })) as AgentChatSummary[];
+    expect(listed).toStrictEqual([
+      SUMMARY,
+      { ...plain, title: 't'.repeat(STORED_CHAT_TITLE_MAX_CHARS), match: { snippet: 's'.repeat(CHAT_SEARCH_SNIPPET_CHARS), start: 0, length: 3 } },
+      plain,
+    ]);
+    service.listChats.mockResolvedValueOnce(Array.from({ length: MAX_CHATS_KEPT_IN_MEMORY + 5 }, () => plain));
+    await expect(procedure(ctx, 'listChats')({ filter: 'active' })).resolves.toHaveLength(MAX_CHATS_KEPT_IN_MEMORY);
+    service.listChats.mockRejectedValueOnce(new Error('x'));
+    await expect(procedure(ctx, 'listChats')({ filter: 'active' })).resolves.toEqual([]);
+    service.renameChat.mockReturnValueOnce('yes' as never);
+    await expect(procedure(ctx, 'renameChat')({ chatId: CHAT, title: 'Mine' })).resolves.toBe(false);
+  });
+
+  // Phase 11 Task 9 (specs/agent-attach.feature.md): attach and detach are the user's, from the app window.
+  test('attach-procedures', async () => {
+    const { service } = fakeAgent();
+    const ctx = ctxFor(service);
+    await expect(procedure(ctx, 'attachableTabs')({ chatId: null })).resolves.toStrictEqual([{ tabId: 4, title: 'Other page', origin: 'https://other.example' }]);
+    expect(service.attachableTabs).toHaveBeenLastCalledWith(null);
+    await expect(procedure(ctx, 'attachTab')({ chatId: CHAT, tabId: 4, origin: 'https://other.example' })).resolves.toBe('attached');
+    expect(service.attachTab).toHaveBeenLastCalledWith(CHAT, 4, 'https://other.example');
+    await expect(procedure(ctx, 'detachTab')({ chatId: null, ref: 'tab-1' })).resolves.toBe(true);
+    expect(service.detachTab).toHaveBeenLastCalledWith(null, 'tab-1');
+    // Answers are rebuilt: fixed values only, tabs field by field (bounded title, a real web origin).
+    service.attachTab.mockReturnValueOnce('granted' as never);
+    await expect(procedure(ctx, 'attachTab')({ chatId: CHAT, tabId: 4, origin: 'https://other.example' })).resolves.toBe('not-attachable');
+    service.detachTab.mockReturnValueOnce('yes' as never);
+    await expect(procedure(ctx, 'detachTab')({ chatId: CHAT, ref: 'tab-1' })).resolves.toBe(false);
+    service.attachableTabs.mockReturnValueOnce([
+      { tabId: 4, title: 'Other page', origin: 'https://other.example', url: 'https://other.example/secret' } as never,
+      { tabId: 5, title: 't'.repeat(500), origin: 'http://b.example:8080' },
+      { tabId: 0, title: 'x', origin: 'https://a.example' },
+      { tabId: 6, title: 'x', origin: 'app://app' },
+      { tabId: 7, title: 'x', origin: 'https://a.example/path' },
+      { tabId: 8, title: 5, origin: 'https://a.example' } as never,
+      'nope' as never,
+    ]);
+    await expect(procedure(ctx, 'attachableTabs')({ chatId: CHAT })).resolves.toStrictEqual([
+      { tabId: 4, title: 'Other page', origin: 'https://other.example' },
+      { tabId: 5, title: 't'.repeat(ATTACHABLE_TAB_TITLE_MAX_CHARS), origin: 'http://b.example:8080' },
+    ]);
+    service.attachableTabs.mockReturnValueOnce(Array.from({ length: MAX_ATTACHABLE_TABS + 5 }, (_, index) => ({ tabId: index + 1, title: 't', origin: 'https://a.example' })));
+    await expect(procedure(ctx, 'attachableTabs')({ chatId: CHAT })).resolves.toHaveLength(MAX_ATTACHABLE_TABS);
+    service.attachableTabs.mockImplementationOnce(() => {
+      throw new Error('x');
+    });
+    await expect(procedure(ctx, 'attachableTabs')({ chatId: CHAT })).resolves.toEqual([]);
   });
 
   test('agent-set-skill-enabled-bounds', async () => {

@@ -2,7 +2,8 @@
 // Spec: specs/agent-data.spec.ts (AGENT_GRANTS_EXPLAINER, AGENT_GRANTS_REVOKE_ALL_CONFIRM, CHAT_RETENTION_HINTS,
 // CHAT_EXPORT_MESSAGES, SKILL_BUILTIN_LABEL, SKILL_USER_LABEL, SKILL_DUPLICATE_LABEL, AGENT_SAVE_SKILL_MESSAGES,
 // SKILL_FILE_WORDS, SKILL_IMPORT_MESSAGES, SKILL_EXPORT_MESSAGES, SKILL_IMPORT_CONFLICT_MESSAGES, AgentSkillImportPreview)
-// Acceptance: specs/agent-data.feature.md (Panel, Skills library, Import and export)
+// Phase 11 Task 8: CHAT_HISTORY_WORDS, CHAT_SEARCH_DEBOUNCE_MS
+// Acceptance: specs/agent-data.feature.md (Panel, Skills library, Import and export, Chat history)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -13,7 +14,9 @@ import {
   AGENT_GRANTS_EXPLAINER,
   AGENT_SAVE_SKILL_MESSAGES,
   CHAT_EXPORT_MESSAGES,
+  CHAT_HISTORY_WORDS,
   CHAT_RETENTION_HINTS,
+  CHAT_SEARCH_DEBOUNCE_MS,
   SKILL_BUILTIN_LABEL,
   SKILL_DUPLICATE_LABEL,
   SKILL_EXPORT_MESSAGES,
@@ -56,6 +59,9 @@ const calls = vi.hoisted(() => ({
   cancelSkillImport: vi.fn(async (..._args: unknown[]) => true),
   selectChat: vi.fn(async () => true),
   deleteChat: vi.fn(async () => true),
+  listChats: vi.fn(async (..._args: unknown[]) => [] as unknown[]),
+  renameChat: vi.fn(async (..._args: unknown[]) => true),
+  archiveChat: vi.fn(async (..._args: unknown[]) => true),
   setModel: vi.fn(async () => true),
   setKey: vi.fn(async () => 'stored' as const),
   clearKey: vi.fn(async () => true),
@@ -175,7 +181,7 @@ describe('agent data components', () => {
   });
 
   test('chat-list-exports', async () => {
-    const chats = [{ id: '00000000-0000-4000-8000-000000000001', title: 'First', tabId: null, updatedAt: 1, running: false }];
+    const chats = [{ id: '00000000-0000-4000-8000-000000000001', title: 'First', tabId: null, updatedAt: 1, running: false, archived: false }];
     render(createElement(AgentChatList, { chats, activeId: null, onSelected: () => undefined, chatRetention: 'off' }));
     expect(byTestId('agent-chats-hint')!.textContent).toBe(CHAT_RETENTION_HINTS.off);
     click(byTestId('agent-chat-export-toggle'));
@@ -190,6 +196,79 @@ describe('agent data components', () => {
     expect(byTestId('agent-export-message')!.textContent).toBe(CHAT_EXPORT_MESSAGES.cancelled);
     render(createElement(AgentChatList, { chats: [], activeId: null, onSelected: () => undefined, chatRetention: '30d' }));
     expect(byTestId('agent-chats-empty')!.textContent).toContain(CHAT_RETENTION_HINTS['30d']);
+  });
+
+  test('chat-list-search-rename-archive', async () => {
+    const A = '00000000-0000-4000-8000-00000000000a';
+    const B = '00000000-0000-4000-8000-00000000000b';
+    const chats = [
+      { id: A, title: 'First', tabId: 1, updatedAt: 2, running: false, archived: false },
+      { id: B, title: '<b>Old</b>', tabId: null, updatedAt: 1, running: false, archived: true },
+    ];
+    render(createElement(AgentChatList, { chats, activeId: null, onSelected: () => undefined, chatRetention: '30d' }));
+    const titles = () => allByTestId('agent-chat-title').map((el) => el.textContent);
+    // Active first: the archived chat is hidden.
+    expect(byTestId('agent-chats-filter-active')!.getAttribute('aria-pressed')).toBe('true');
+    expect(titles()).toEqual(['First']);
+    click(byTestId('agent-chat-archive'));
+    expect(calls.archiveChat).toHaveBeenLastCalledWith(A, true);
+    // Archived: its title is text (never markup), and it can be brought back.
+    click(byTestId('agent-chats-filter-archived'));
+    expect(byTestId('agent-chats-filter-archived')!.getAttribute('aria-pressed')).toBe('true');
+    expect(titles()).toEqual(['<b>Old</b>']);
+    expect(host.querySelector('[data-testid="agent-chat-title"] b')).toBeNull();
+    expect(byTestId('agent-chat-archive')!.getAttribute('aria-label')).toContain(CHAT_HISTORY_WORDS.unarchive);
+    click(byTestId('agent-chat-archive'));
+    expect(calls.archiveChat).toHaveBeenLastCalledWith(B, false);
+    click(byTestId('agent-chats-filter-active'));
+
+    // Rename inline: Escape cancels, a refused title says so, Enter saves.
+    const key = (el: HTMLElement | null, name: string) => act(() => el!.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true })));
+    click(byTestId('agent-chat-rename'));
+    const field = () => byTestId('agent-chat-rename-input') as HTMLInputElement | null;
+    expect(field()!.value).toBe('First');
+    key(field(), 'Escape');
+    expect(field()).toBeNull();
+    click(byTestId('agent-chat-rename'));
+    type(field(), '   ');
+    key(field(), 'Enter');
+    expect(byTestId('agent-chat-rename-message')!.textContent).toBe(CHAT_HISTORY_WORDS.renameFailed);
+    type(field(), ' Mine ');
+    key(field(), 'Enter');
+    await flush();
+    expect(calls.renameChat).toHaveBeenCalledOnce();
+    expect(calls.renameChat).toHaveBeenLastCalledWith(A, ' Mine ');
+    expect(field()).toBeNull();
+
+    // Search: main answers after the pause, with a snippet; the match is marked, as text.
+    calls.listChats.mockResolvedValueOnce([{ ...chats[0], match: { snippet: 'The <i>oolong</i> is fresh.', start: 4, length: 13 } }]);
+    type(byTestId('agent-chats-search'), 'oolong');
+    expect(calls.listChats).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(calls.listChats).toHaveBeenCalledWith('active', 'oolong'));
+    await flush();
+    expect(titles()).toEqual(['First']);
+    expect(byTestId('agent-chat-snippet')!.textContent).toBe('The <i>oolong</i> is fresh.');
+    expect(host.querySelector('[data-testid="agent-chat-snippet"] mark')!.textContent).toBe('<i>oolong</i>');
+    expect(host.querySelector('[data-testid="agent-chat-snippet"] i')).toBeNull();
+    // No hit: said so.
+    calls.listChats.mockResolvedValueOnce([]);
+    type(byTestId('agent-chats-search'), 'nothing');
+    await vi.waitFor(() => expect(calls.listChats).toHaveBeenLastCalledWith('active', 'nothing'));
+    await flush();
+    expect(titles()).toEqual([]);
+    expect(byTestId('agent-chats-no-match')!.textContent).toBe(CHAT_HISTORY_WORDS.noMatch);
+    // Cleared: the list again, and no search scheduled or sent.
+    const asked = calls.listChats.mock.calls.length;
+    vi.useFakeTimers();
+    try {
+      type(byTestId('agent-chats-search'), '');
+      expect(titles()).toEqual(['First']);
+      expect(vi.getTimerCount()).toBe(0);
+      act(() => vi.advanceTimersByTime(2 * CHAT_SEARCH_DEBOUNCE_MS));
+      expect(calls.listChats.mock.calls.length).toBe(asked);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('skills-list-marks-builtins', () => {

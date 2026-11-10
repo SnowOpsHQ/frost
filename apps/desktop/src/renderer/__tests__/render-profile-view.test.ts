@@ -3,7 +3,8 @@
 // Acceptance: specs/render-profile.feature.md (Visible state)
 import { describe, expect, test } from 'vitest';
 import { DEFAULT_RENDER_PROFILE, fitRenderViewport, MAX_CUSTOM_USER_AGENT_LENGTH, PROFILE_FAILED_NOTE, type TabRenderProfile } from '@app/specs/render-profile.spec';
-import { badgeLabel, chipText, draftOf, frameNotes, outlineRect, profileOfDraft } from '../render-profile-view';
+import { DEFAULT_TAB_OVERRIDES, GEOLOCATION_PRESETS, TAB_OVERRIDES_FAILED_NOTE } from '@app/specs/render-profile.spec';
+import { badgeLabel, chipText, draftOf, frameNotes, geolocationChoiceOf, geolocationDraftOf, geolocationOfDraft, outlineRect, overridesChipText, overridesFailedNote, profileOfDraft } from '../render-profile-view';
 
 const state = (over: Partial<TabRenderProfile> = {}): TabRenderProfile => ({
   profile: { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'googlebot-smartphone' },
@@ -43,5 +44,41 @@ describe('render-profile view', () => {
     expect(profileOfDraft({ ...draft, userAgent: 'custom', customUserAgent: 'x'.repeat(MAX_CUSTOM_USER_AGENT_LENGTH + 1) })).toMatchObject({ ok: false });
     expect(profileOfDraft({ ...draft, userAgent: 'custom', customUserAgent: 'boté' })).toMatchObject({ ok: false });
     expect(profileOfDraft({ ...draft, userAgent: 'mobile', customUserAgent: 'left over' })).toMatchObject({ ok: true, profile: { customUserAgent: '' } });
+  });
+});
+
+// Phase 11 Task 6 (render-profile.feature.md, Tab overrides: Visible state): the overrides' chip and the location form.
+describe('tab overrides view', () => {
+  test('tab-overrides-view', () => {
+    expect(overridesChipText(DEFAULT_TAB_OVERRIDES)).toBeNull();
+    expect(overridesChipText({ cssDisabled: true, cookiesDisabled: true, geolocation: { latitude: 48.8566, longitude: 2.3522, accuracy: 100 } })).toBe('CSS off (stylesheets) · Cookies off · Location 48.85660, 2.35220');
+    expect(geolocationChoiceOf(null)).toBe('off');
+    expect(geolocationChoiceOf(GEOLOCATION_PRESETS[1].geolocation)).toBe(GEOLOCATION_PRESETS[1].id);
+    expect(geolocationChoiceOf({ ...GEOLOCATION_PRESETS[1].geolocation, accuracy: 5 })).toBe('custom');
+    expect(geolocationDraftOf(null)).toEqual({ latitude: '', longitude: '', accuracy: '100' });
+    expect(geolocationOfDraft({ latitude: '48.8566', longitude: '-2.35221', accuracy: '25' })).toEqual({ ok: true, geolocation: { latitude: 48.8566, longitude: -2.35221, accuracy: 25 } });
+    for (const bad of [
+      { latitude: '', longitude: '0', accuracy: '10' },
+      { latitude: '91', longitude: '0', accuracy: '10' },
+      { latitude: '0', longitude: '180.5', accuracy: '10' },
+      { latitude: '1.123456', longitude: '0', accuracy: '10' },
+      { latitude: '1e2', longitude: '0', accuracy: '10' },
+      { latitude: '0', longitude: '0', accuracy: '0' },
+      { latitude: '0', longitude: '0', accuracy: '1.5' },
+      { latitude: '0', longitude: '0', accuracy: '100001' },
+    ]) expect(geolocationOfDraft(bad).ok, JSON.stringify(bad)).toBe(false);
+  });
+});
+
+// Whole-branch review: a failed CDP part of the overrides shows with or without a profile.
+describe('tab overrides failure', () => {
+  test('tab-overrides-failure-shown', () => {
+    const cookies = { ...DEFAULT_TAB_OVERRIDES, cookiesDisabled: true };
+    expect(overridesChipText(cookies, 'applying')).toBe('Cookies off');
+    expect(overridesChipText(cookies, 'failed')).toBe('Cookies off · not applied');
+    expect(overridesChipText(DEFAULT_TAB_OVERRIDES, 'failed')).toBeNull();
+    expect(overridesFailedNote(cookies, 'failed')).toBe(TAB_OVERRIDES_FAILED_NOTE);
+    expect(overridesFailedNote(cookies, 'active')).toBeNull();
+    expect(overridesFailedNote(DEFAULT_TAB_OVERRIDES, 'failed')).toBeNull();
   });
 });

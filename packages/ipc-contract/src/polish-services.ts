@@ -1,4 +1,4 @@
-import type { SearchEngineId } from '@app/specs/browser-polish.spec';
+import type { HistoryClearRange, HistoryRetention, HistoryRetentionResult, SearchEngineId } from '@app/specs/browser-polish.spec';
 
 // Browser polish as the `find.*`, `history.*` and `settings.*` procedures see it (Phase 2.5 Task 6;
 // acceptance `browser-polish.feature.md`). Main implements them (the browser controller, the
@@ -22,6 +22,14 @@ export interface HistoryVisitAnswer {
   readonly title: string;
   readonly visitCount: number;
   readonly lastVisitAt: number;
+  /** `list` only (Phase 11 Task 10): how many times frost recorded the page changing (`browser-polish.spec.ts`). */
+  readonly changeCount?: number;
+}
+
+/** How long visits are kept, and whether visits to project pages are kept anyway (Phase 11 Task 10). */
+export interface HistoryRetentionAnswer {
+  readonly retention: HistoryRetention;
+  readonly keepProjectPages: boolean;
 }
 
 export interface HistoryCursorAnswer {
@@ -41,8 +49,12 @@ export interface JumpBackInAnswer {
 }
 
 export interface HistoryService {
-  /** One page of visits, newest first (pending visit writes are flushed first). Never rejects: an empty page on failure. */
-  list(query: string, after: HistoryCursorAnswer | null, limit?: number): Promise<HistoryPageAnswer>;
+  /**
+   * One page of visits, newest first (pending visit writes are flushed first), each with its
+   * `changeCount`; with `projectId`, only visits to that live project's live pages. Never rejects: an
+   * empty page on failure.
+   */
+  list(query: string, after: HistoryCursorAnswer | null, limit?: number, projectId?: string): Promise<HistoryPageAnswer>;
   /** The new-tab page's tiles. Never rejects. */
   jumpBackIn(): Promise<JumpBackInAnswer>;
   /** Deletes one URL's visit (stored and pending); `false` when nothing could be deleted. Never rejects. */
@@ -56,6 +68,20 @@ export interface HistoryService {
   reopenClosedTab(): number | null;
   /** Asks the chrome to open the History view (bumps `BrowserState.historyViewSeq`). */
   show(): void;
+  /** Phase 11 Task 10: the retention settings (their defaults when they cannot be read). Never rejects. */
+  retention(): Promise<HistoryRetentionAnswer>;
+  /**
+   * Stores the retention settings and applies them at once. A change that would delete visits
+   * (`historyRetentionDeletes`) asks first in main's own message box (`CONFIRM_HISTORY_RETENTION`):
+   * `cancelled` stores nothing. `failed` when they could not be stored. Never rejects.
+   */
+  setRetention(settings: HistoryRetentionAnswer): Promise<HistoryRetentionResult>;
+  /**
+   * Clear by range: asks first in main's own message box (`CLEAR_HISTORY_RANGE`), then clears every
+   * visit last seen within the range (pending ones written first) and the closed-tab stack. `true`
+   * once cleared, `false` when cancelled or failed. Never rejects.
+   */
+  clearRange(range: HistoryClearRange): Promise<boolean>;
 }
 
 export interface SettingsService {

@@ -78,6 +78,25 @@ browser and run SEO skills.
   without a click (builds are unsigned, so updates install by hand); and a libSQL driver seam with
   the groundwork for opt-in sync of change intelligence. The plan and how it was built:
   [`docs/plans/phase-7-sync-update-platforms.md`](docs/plans/phase-7-sync-update-platforms.md).
+- **Phase 11 — Practitioner tooling:** built (Tasks 1–13). The everyday tools around the audit:
+  - **Copy and export:** 24 page values, Images, Headings and Speed tables as CSV, and a Copy SEO
+    Data context menu, all written by main from the audit; Copy JSON-LD, the page's or a suggested
+    one.
+  - **Highlights** of internal or external links, lazy images, a keyphrase, or everything at once,
+    and a fuller **result preview** (site name, schema breadcrumb, date, rating, rich cards).
+  - **Devtools:** the network log exported as HAR or CSV (no bodies; known sensitive URL parameters
+    redacted, best effort, so review the file before sharing), and local and session storage keys.
+    The **Inspector** searches the DOM and shows the rendered and served source.
+  - **This tab only:** CSS off, cookies off, or a browser location, beside the render profile.
+  - **Screenshot editor:** arrows, boxes, text and crop, saved as a copy.
+  - **Agent:** search, rename and archive chats; attach up to three other tabs to a chat.
+  - **Workspace:** resizable sidebar and agent panes, panels pinned to the rail, history retention
+    and clearing by time range.
+  - **Help:** keyboard shortcuts, What's New, a setup checklist, and Export Diagnostics, a scrubbed
+    report you review and save yourself (frost never sends it).
+
+  The plan and how it was built:
+  [`docs/plans/phase-11-practitioner-tooling.md`](docs/plans/phase-11-practitioner-tooling.md).
 - **Next:** finishing sync (the switch to turn it on, a worker thread, a real server), and code
   signing for macOS and Windows (`docs/design/IMPLEMENTATION-PLAN.md` §4).
 

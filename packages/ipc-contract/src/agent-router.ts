@@ -19,9 +19,17 @@ import {
   AgentCancelSkillImportInputSchema,
   AgentExportSkillsInputSchema,
   AgentImportSkillsInputSchema,
+  AgentArchiveChatInputSchema,
+  AgentListChatsInputSchema,
+  AgentRenameChatInputSchema,
+  AgentAttachableTabsInputSchema,
+  AgentAttachTabInputSchema,
+  AgentDetachTabInputSchema,
 } from '@app/specs/agent-ipc.schema';
 import { CHATGPT_SIGN_IN_RESULTS, CHATGPT_SIGN_OUT_RESULTS, type ChatgptSignInResult, type ChatgptSignOutResult } from '@app/specs/agent-chatgpt.spec';
 import {
+  CHAT_SEARCH_SNIPPET_CHARS,
+  STORED_CHAT_TITLE_MAX_CHARS,
   AGENT_DELETE_ALL_CHATS_RESULTS,
   AGENT_SAVE_SKILL_RESULTS,
   AGENT_SET_RETENTION_RESULTS,
@@ -46,7 +54,26 @@ import {
 } from '@app/specs/agent-data.spec';
 import { AGENT_TOOL_NAMES, isSafeInputText, type AgentToolName } from '@app/specs/agent-tools.spec';
 import { isSkillId, SKILL_ACTING_TOOLS, SKILL_INPUT_SLOTS, SKILL_LIMITS, type SkillInputSlot } from '@app/specs/skills.spec';
-import { AGENT_ANSWER_RESULTS, AGENT_SEND_RESULTS, AGENT_SET_KEY_RESULTS, AGENT_WATCH_TIMEOUT_MS, type AgentAnswerResult, type AgentSendResult, type AgentSetKeyResult, type AgentSkillRequest, type AgentState } from '@app/specs/agent-session.spec';
+import {
+  AGENT_ANSWER_RESULTS,
+  AGENT_ATTACH_RESULTS,
+  AGENT_SEND_RESULTS,
+  AGENT_SET_KEY_RESULTS,
+  AGENT_WATCH_TIMEOUT_MS,
+  ATTACHABLE_TAB_TITLE_MAX_CHARS,
+  ATTACHMENT_ORIGIN_MAX_CHARS,
+  MAX_ATTACHABLE_TABS,
+  MAX_CHATS_KEPT_IN_MEMORY,
+  type AgentAttachableTab,
+  type AgentAttachResult,
+  type AgentChatSummary,
+  type AgentAnswerResult,
+  type AgentSendResult,
+  type AgentSetKeyResult,
+  type AgentSkillRequest,
+  type AgentState,
+} from '@app/specs/agent-session.spec';
+import { webOrigin } from '@app/specs/web-url.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { isMcpServerId, MCP_SAVE_RESULTS, MCP_START_RESULTS, MCP_TOKEN_RESULTS, type McpSaveResult, type McpStartResult, type McpTokenResult } from '@app/specs/agent-mcp.spec';
 import { AgentMcpServerIdInputSchema, AgentSaveMcpServerInputSchema, AgentSetMcpServerEnabledInputSchema, AgentSetMcpTokenInputSchema } from '@app/specs/agent-mcp.schema';
@@ -175,6 +202,53 @@ function checkedSkillImportResult(value: unknown): AgentSkillImportResult {
     return Number.isInteger(answer.count) && (answer.count as number) >= 0 && (answer.count as number) <= MAX_USER_SKILLS ? { result: 'imported', count: answer.count as number } : { result: 'failed' };
   }
   return { result: refusalOf(answer.result) };
+}
+
+/**
+ * `listChats`' answer (Phase 11 Task 8), rebuilt field by field: at most `MAX_CHATS_KEPT_IN_MEMORY`
+ * chats, each with a chat id, a title cut to `STORED_CHAT_TITLE_MAX_CHARS` and its fixed fields; a
+ * match's snippet cut to `CHAT_SEARCH_SNIPPET_CHARS`, kept only if its offsets lie inside it. A
+ * malformed chat is left out.
+ */
+function checkedChatSummaries(value: unknown): AgentChatSummary[] {
+  if (!Array.isArray(value)) return [];
+  const out: AgentChatSummary[] = [];
+  for (const raw of value.slice(0, MAX_CHATS_KEPT_IN_MEMORY) as unknown[]) {
+    const chat = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+    const { id, title, tabId, updatedAt, running, archived } = chat;
+    if (typeof id !== 'string' || !UUID.test(id) || typeof title !== 'string') continue;
+    if (!(tabId === null || Number.isSafeInteger(tabId)) || typeof updatedAt !== 'number' || !Number.isFinite(updatedAt) || typeof running !== 'boolean' || typeof archived !== 'boolean') continue;
+    const summary: AgentChatSummary = { id, title: text(title, STORED_CHAT_TITLE_MAX_CHARS), tabId: tabId as number | null, updatedAt, running, archived };
+    const match = (typeof chat['match'] === 'object' && chat['match'] !== null ? chat['match'] : null) as Record<string, unknown> | null;
+    if (match !== null && typeof match['snippet'] === 'string') {
+      const snippet = text(match['snippet'], CHAT_SEARCH_SNIPPET_CHARS);
+      const { start, length } = match;
+      if (Number.isSafeInteger(start) && Number.isSafeInteger(length) && (start as number) >= 0 && (length as number) >= 0 && (start as number) + (length as number) <= snippet.length) {
+        out.push({ ...summary, match: { snippet, start: start as number, length: length as number } });
+        continue;
+      }
+    }
+    out.push(summary);
+  }
+  return out;
+}
+
+/**
+ * `attachableTabs`' answer (Phase 11 Task 9), rebuilt field by field: at most `MAX_ATTACHABLE_TABS`
+ * tabs, each a positive tab id, a title cut to `ATTACHABLE_TAB_TITLE_MAX_CHARS` and an `http(s)`
+ * origin written as the URL parser writes it. A malformed tab is left out.
+ */
+function checkedAttachableTabs(value: unknown): AgentAttachableTab[] {
+  if (!Array.isArray(value)) return [];
+  const out: AgentAttachableTab[] = [];
+  for (const raw of value.slice(0, MAX_ATTACHABLE_TABS) as unknown[]) {
+    const tab = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+    const { tabId, title, origin } = tab;
+    if (!Number.isSafeInteger(tabId) || (tabId as number) <= 0 || typeof title !== 'string' || typeof origin !== 'string') continue;
+    if (origin.length > ATTACHMENT_ORIGIN_MAX_CHARS || webOrigin(origin) !== origin) continue;
+    out.push({ tabId: tabId as number, title: text(title, ATTACHABLE_TAB_TITLE_MAX_CHARS), origin });
+  }
+  return out;
 }
 
 /** A grant as the page lists it, field by field. */
@@ -448,4 +522,52 @@ export const agentRouter = router({
     .use(enforceSender)
     .use(requireAgent)
     .mutation(async ({ ctx }) => (await ctx.agent.chatgptAcknowledge()) === true),
+
+  // ---- Phase 11 Task 8: chat history (`agent-data.spec.ts`; acceptance `agent-data.feature.md`, Chat history) ----
+  /** A query because it only reads; main scans at most `MAX_STORED_CHATS` chats' text (never tool output). */
+  listChats: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentListChatsInputSchema)
+    .query(async ({ ctx, input }): Promise<AgentChatSummary[]> => {
+      try {
+        return checkedChatSummaries(await ctx.agent.listChats(input.filter, input.query));
+      } catch {
+        return [];
+      }
+    }),
+  renameChat: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentRenameChatInputSchema)
+    .mutation(({ ctx, input }) => ctx.agent.renameChat(input.chatId, input.title) === true),
+  archiveChat: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentArchiveChatInputSchema)
+    .mutation(({ ctx, input }) => ctx.agent.archiveChat(input.chatId, input.archived) === true),
+
+  // ---- Phase 11 Task 9: @-attached tabs (`agent-attach.feature.md`, Decision 11) ----
+  // Attaching is the user's, from the app window only: no runtime message reaches these.
+  attachableTabs: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentAttachableTabsInputSchema)
+    .query(({ ctx, input }): AgentAttachableTab[] => {
+      try {
+        return checkedAttachableTabs(ctx.agent.attachableTabs(input.chatId));
+      } catch {
+        return [];
+      }
+    }),
+  attachTab: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentAttachTabInputSchema)
+    .mutation(({ ctx, input }): AgentAttachResult => oneOf(AGENT_ATTACH_RESULTS, ctx.agent.attachTab(input.chatId, input.tabId, input.origin), 'not-attachable')),
+  detachTab: publicProcedure
+    .use(enforceSender)
+    .use(requireAgent)
+    .input(AgentDetachTabInputSchema)
+    .mutation(({ ctx, input }) => ctx.agent.detachTab(input.chatId, input.ref) === true),
 });

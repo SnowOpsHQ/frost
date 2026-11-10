@@ -8,3 +8,20 @@ export { SNIPPET_FONT_TABLE } from './snippet-font';
 export { STOP_WORDS } from './stop-words';
 export { escapeHtml, formatPx, measureSnippet, minSnippetWidth, snippetHtml, snippetText, textWidth, truncateToWidth, type SnippetCut, type SnippetMeasure } from './widths';
 export { contentLanguage, fieldRuns, hasPhrase, hasSequence, isUnspaced, joinTerms, normaliseTerm, primaryLanguage, sentencesOf, stopWordsFor, wordRuns, wordsOf, type ContentLanguage, type Word } from './words';
+// The result preview's facts and Copy JSON-LD (Phase 11 Task 3, Decision 4).
+export {
+  previewJsonLdBlocks,
+  serpPreview,
+  suggestedJsonLd,
+  type SerpBreadcrumb,
+  type SerpCrumb,
+  type SerpDate,
+  type SerpPreviewFacts,
+  type SerpPreviewInput,
+  type SerpPreviewOptions,
+  type SerpRating,
+  type SerpRecipe,
+  type SerpSiteName,
+  type SerpVideo,
+  type SuggestedJsonLdFields,
+} from './serp-preview';

@@ -7,7 +7,8 @@
  */
 import { z } from 'zod';
 import { MAX_STORED_URL_LENGTH } from './browser-session-db.spec';
-import { CLOSED_TABS_MAX, FIND_TEXT_MAX_CHARS, HISTORY_PAGE_SIZE, HISTORY_QUERY_MAX_CHARS, SEARCH_ENGINE_IDS } from './browser-polish.spec';
+import { CLOSED_TABS_MAX, FIND_TEXT_MAX_CHARS, HISTORY_CLEAR_RANGE_IDS, HISTORY_PAGE_SIZE, HISTORY_QUERY_MAX_CHARS, HISTORY_RETENTION_IDS, HISTORY_RETENTION_RESULTS, SEARCH_ENGINE_IDS } from './browser-polish.spec';
+import { UUIDV7_PATTERN } from './capture-db.spec';
 import { isWebUrl } from './web-url.spec';
 
 const tabId = z.int().positive();
@@ -59,11 +60,15 @@ export type FindCloseInput = z.infer<typeof FindCloseInputSchema>;
 export const HistoryCursorSchema = z.strictObject({ lastVisitAt: z.int().nonnegative(), url: z.string().min(1).max(MAX_STORED_URL_LENGTH) });
 export type HistoryCursor = z.infer<typeof HistoryCursorSchema>;
 
-/** `history.list`: one page of visits matching `query` (`''`: all), after `after` (`null`: the newest). */
+/**
+ * `history.list`: one page of visits matching `query` (`''`: all), after `after` (`null`: the newest);
+ * with `projectId` (Phase 11 Task 10), only visits to that live project's live pages.
+ */
 export const HistoryListInputSchema = z.strictObject({
   query: z.string().max(HISTORY_QUERY_MAX_CHARS),
   after: HistoryCursorSchema.nullable(),
   limit: z.int().min(1).max(HISTORY_PAGE_SIZE).optional(),
+  projectId: z.string().regex(UUIDV7_PATTERN).optional(),
 });
 export type HistoryListInput = z.infer<typeof HistoryListInputSchema>;
 
@@ -74,3 +79,17 @@ export type HistoryRemoveInput = z.infer<typeof HistoryRemoveInputSchema>;
 /** `settings.setSearchEngine`: one of `SEARCH_ENGINES`. */
 export const SetSearchEngineInputSchema = z.strictObject({ engine: z.enum(SEARCH_ENGINE_IDS) });
 export type SetSearchEngineInput = z.infer<typeof SetSearchEngineInputSchema>;
+
+/**
+ * Phase 11 Task 10 (Decision 13): `history.retention` answers, and `history.setRetention` stores, how
+ * long visits are kept and whether visits to project pages are kept whatever that is.
+ */
+export const HistoryRetentionSettingsSchema = z.strictObject({ retention: z.enum(HISTORY_RETENTION_IDS), keepProjectPages: z.boolean() });
+export type HistoryRetentionSettings = z.infer<typeof HistoryRetentionSettingsSchema>;
+
+/** `history.setRetention`'s answer (`HISTORY_RETENTION_RESULTS`; `cancelled`: main asked and the user said no). */
+export const HistoryRetentionResultSchema = z.enum(HISTORY_RETENTION_RESULTS);
+
+/** `history.clearRange`: clears the visits last seen within the range (main asks first). */
+export const HistoryClearRangeInputSchema = z.strictObject({ range: z.enum(HISTORY_CLEAR_RANGE_IDS) });
+export type HistoryClearRangeInput = z.infer<typeof HistoryClearRangeInputSchema>;

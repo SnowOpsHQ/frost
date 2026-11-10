@@ -3,7 +3,7 @@
 // Acceptance: specs/seo-panels.feature.md (Links, Images and Social helpers)
 import { describe, expect, test } from 'vitest';
 import { CSV_FORMULA_PREFIXES, LINKS_CSV_COLUMNS } from '@app/specs/seo-sidebar.spec';
-import { altState, csvCell, filterImages, filterLinks, imageCounts, linkCounts, linksCsv, NO_LINK_FILTER, pageFacts, pageUrls, relFlags, socialPreview, type PageImage, type PageLink } from '../index';
+import { altState, csvCell, filterImages, filterLinks, imageCounts, linkCounts, linksCsv, NO_LINK_FILTER, pageFacts, pageUrls, relFlags, runAudit, serpPreview, socialPreview, type PageImage, type PageLink } from '../index';
 import { page, socialTags, text } from './fixtures';
 
 const link = (changes: Partial<PageLink> = {}): PageLink => ({ href: 'https://example.com/a', scheme: 'https:', rel: '', text: 'A page', kind: 'internal', target: null, ...changes });
@@ -150,6 +150,16 @@ describe('social', () => {
       pageFacts(page({ titles: [], titleTotal: 0, metaDescriptions: [], metaDescriptionTotal: 0, ogUrl: null, url: 'https://www.example.org/x', social: socialTags(Object.fromEntries(Object.keys(socialTags()).map((k) => [k, null]))) })),
     );
     expect(bare).toMatchObject({ large: { title: { value: '', source: 'none' }, description: { source: 'none' }, image: null }, summary: { image: null }, domain: 'example.org', siteName: null, card: null });
+  });
+
+  // Phase 11 Task 3 (Decision 4): the Open Graph article times are social tags the audit carries,
+  // read by the result preview as its last date sources.
+  test('article-time-tags-read', () => {
+    const tagged = page({ jsonLd: [], jsonLdTotal: 0, social: socialTags({ 'article:published_time': '2025-01-05T08:00:00Z', 'article:modified_time': '  2025-02-01  ' }) });
+    expect(pageFacts(tagged).social).toMatchObject({ 'article:published_time': '2025-01-05T08:00:00Z', 'article:modified_time': '  2025-02-01  ' });
+    expect(serpPreview(runAudit(tagged)).date).toEqual({ iso: '2025-01-05T08:00:00Z', shown: 'Jan 5, 2025', source: 'article-published-time' });
+    const modifiedOnly = page({ jsonLd: [], jsonLdTotal: 0, social: socialTags({ 'article:modified_time': '  2025-02-01  ' }) });
+    expect(serpPreview(runAudit(modifiedOnly)).date).toEqual({ iso: '2025-02-01', shown: 'Feb 1, 2025', source: 'article-modified-time' });
   });
 
   test('page-urls-are-parsed-hrefs', () => {

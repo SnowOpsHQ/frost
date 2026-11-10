@@ -48,6 +48,8 @@ Phase 1 usable-browser gaps. Each scenario maps to one named test.
   Groups are separated; nothing else is offered (no Inspect Element, no Save As). Every label is
   frost's own (`CONTEXT_MENU_LABELS`) except the selection quoted in the search item, which is
   cleaned and cut (`CONTEXT_MENU_SEARCH_LABEL`) and is only ever used as a search query.
+  Phase 11 Task 1 appends one group: **Copy SEO Data** (`copy-seo`), a submenu on a tab showing an
+  `http(s)` page with a ready audit only (`CONTEXT_MENU_COPY_SEO_VALUES`, `seo-exports.feature.md`).
 
 ## Shortcut matching (`apps/desktop/src/main/browser/__tests__/shortcuts.test.ts`)
 - **Scenario: page-shortcut-matcher-follows-spec** — `matchPageShortcut(input, platform)` maps
@@ -97,6 +99,11 @@ Phase 1 usable-browser gaps. Each scenario maps to one named test.
 - **Scenario: context-menu-labels-are-frost-own** — over a set of hostile params (labels-like link
   text, titles, alt text, filenames, misspellings and suggestions), every label is a
   `CONTEXT_MENU_LABELS` value or the search label; no item is an inspect or save item.
+- **Scenario: context-menu-copy-seo-submenu-on-web-pages-only** (Phase 11 Task 1) — with the tab's
+  ready audit of an `http(s)` page, every menu ends with the Copy SEO Data submenu (its four values
+  and three CSVs; a missing value, no images or no speed report disabled); with no audit, or a non-web page, there is none.
+- **Scenario: context-menu-copy-skips-when-audit-changed-since-the-menu-opened** (Phase 11 Task 1) —
+  an item clicked after the tab's ready audit changed (another `takenAt`, pending, gone) writes nothing.
 
 ## Menu (`apps/desktop/src/main/__tests__/menu.test.ts`)
 - **Scenario: menu-page-commands** — the View and History items have the accelerators above and

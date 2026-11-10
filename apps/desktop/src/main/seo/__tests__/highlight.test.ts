@@ -1,12 +1,15 @@
-// Spec: specs/seo-sidebar.spec.ts (HIGHLIGHT_MODES, HIGHLIGHT_STYLES, TextHighlightTarget, TEXT_HIGHLIGHT_UNMATCHED_NOTE),
-// specs/seo-limits.spec.ts (SEO_WORLD_ID, HIGHLIGHT_BUDGET_MS, MAX_TEXT_HIGHLIGHT_TARGETS, MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET)
-// Acceptance: specs/seo-panels.feature.md (Highlight), specs/seo-content.feature.md (Highlight, Phase 8)
+// Spec: specs/seo-sidebar.spec.ts (HIGHLIGHT_MODES, HIGHLIGHT_STYLES, TextHighlightTarget, TEXT_HIGHLIGHT_UNMATCHED_NOTE,
+// KEYPHRASE_UNMATCHED_NOTE), specs/seo-limits.spec.ts (SEO_WORLD_ID, HIGHLIGHT_BUDGET_MS, MAX_TEXT_HIGHLIGHT_TARGETS,
+// MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET, MAX_KEYPHRASE_MATCHES)
+// Acceptance: specs/seo-panels.feature.md (Highlight; Phase 11 Task 2), specs/seo-content.feature.md (Highlight, Phase 8;
+// Keyphrase highlight, Phase 11 Task 2)
 import vm from 'node:vm';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, test, vi } from 'vitest';
-import type { SeoAudit } from '@app/seo-core';
-import { MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET, MAX_TEXT_HIGHLIGHT_TARGETS, SEO_WORLD_ID } from '@app/specs/seo-limits.spec';
-import { HIGHLIGHT_STYLES, TEXT_HIGHLIGHT_UNMATCHED_NOTE, type TextHighlightTarget } from '@app/specs/seo-sidebar.spec';
+import { wordRuns, type SeoAudit } from '@app/seo-core';
+import { CONTENT_LIMITS } from '@app/specs/seo-content.spec';
+import { MAX_KEYPHRASE_MATCHES, MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET, MAX_TEXT_HIGHLIGHT_TARGETS, SEO_WORLD_ID } from '@app/specs/seo-limits.spec';
+import { HIGHLIGHT_STYLES, KEYPHRASE_UNMATCHED_NOTE, TEXT_HIGHLIGHT_UNMATCHED_NOTE, type HighlightMode, type TextHighlightTarget } from '@app/specs/seo-sidebar.spec';
 import { highlightEndedScript, highlightScript, OVERLAY_CONFIG, OVERLAY_KEY, paintHighlight, planHighlight, planTextHighlight, runHighlight, watchHighlight, type HighlightItem, type OverlayDocument, type OverlayState } from '../highlight';
 import { sentenceHighlightTargets } from '../highlight-targets';
 
@@ -75,7 +78,7 @@ function pageWith(body: string, url = 'https://www.example.com/page') {
   };
   const before = document.documentElement.outerHTML;
   const store: Record<string, unknown> = {};
-  const paint = (mode: 'off' | 'links' | 'headings', config = OVERLAY_CONFIG) => paintHighlight(document as unknown as OverlayDocument, mode, config, planHighlight, store);
+  const paint = (mode: HighlightMode, config = OVERLAY_CONFIG) => paintHighlight(document as unknown as OverlayDocument, mode, config, planHighlight, store);
   const state = () => store[OVERLAY_KEY] as OverlayState | undefined;
   /** The overlay's box elements, through the closed root it keeps in this world. */
   const boxes = () => [...((state()?.root as unknown as ShadowRoot | undefined)?.children ?? [])] as HTMLElement[];
@@ -475,5 +478,200 @@ describe('text highlight overlay', () => {
     const targets = [long('A sentence.')];
     await expect(runHighlight(contents, 'sentences', [], targets)).resolves.toEqual({ mode: 'sentences', boxes: 2, unmatched: 0 });
     expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledExactlyOnceWith(SEO_WORLD_ID, [{ code: highlightScript('sentences', [], targets) }]);
+  });
+});
+
+// ---- Phase 11 Task 2: internal, external, lazy images, all, keyphrase ------------------------------
+
+/** `pageWith`, plus a box for each `img` from its `data-top` (none without it: a hidden image). */
+function imagePage(body: string) {
+  const page = pageWith(body);
+  page.document.querySelectorAll('img').forEach((img) => {
+    const top = img.getAttribute('data-top');
+    img.getBoundingClientRect = () => (top === null ? domRect(0, 0, 0, 0) : domRect(20, Number(top), 200, 100));
+  });
+  return page;
+}
+
+const IMAGES = `<img src="/top.png" loading="lazy" data-top="40"><img src="/below.png" loading=" LAZY " data-top="3000">
+  <img src="/eager.png" data-top="60"><img src="/explicit.png" loading="eager" data-top="80"><img src="/hidden.png" loading="lazy">`;
+
+describe('box highlight modes (Phase 11)', () => {
+  test('plan-internal-external-only', async () => {
+    const { paint, boxes } = pageWith(PAGE);
+    // PAGE: two internal links, one external, an internal nofollow one, a mail link (other), one without a box.
+    await expect(paint('internal')).resolves.toEqual({ mode: 'internal', boxes: 3 });
+    expect(boxes().map((b) => b.textContent)).toEqual(['int', 'int', 'nofollow']);
+    await expect(paint('external')).resolves.toEqual({ mode: 'external', boxes: 1 });
+    expect(boxes().map((b) => b.textContent)).toEqual(['ext']);
+    await paint('off');
+  });
+
+  test('plan-internal-shows-nofollow-as-nofollow', async () => {
+    const { paint, boxes } = pageWith('<a href="/in" rel="nofollow">In</a><a href="https://other.org/" rel="ugc nofollow">Out</a><a href="/plain">Plain</a>');
+    await paint('internal');
+    expect(boxes().map((b) => b.textContent)).toEqual(['nofollow', 'int']);
+    await paint('external');
+    expect(boxes().map((b) => b.textContent)).toEqual(['nofollow']);
+    await paint('links');
+    expect(boxes().map((b) => b.textContent)).toEqual(['nofollow', 'nofollow', 'int']);
+    await paint('off');
+  });
+
+  test('plan-lazy-images-marks-first-viewport', async () => {
+    const { dom, paint, boxes, document, before } = imagePage(IMAGES);
+    expect(dom.window.innerHeight).toBeGreaterThan(140);
+    expect(dom.window.innerHeight).toBeLessThan(3000);
+    await expect(paint('lazy-images')).resolves.toEqual({ mode: 'lazy-images', boxes: 2 });
+    expect(boxes().map((b) => b.textContent)).toEqual([HIGHLIGHT_STYLES['lazy-first-viewport'].label, HIGHLIGHT_STYLES.lazy.label]);
+    expect(boxes().map((b) => b.style.getPropertyValue('top'))).toEqual(['40px', '3000px']);
+    // Scrolled down: the first viewport is still the document's top.
+    Object.defineProperty(dom.window, 'scrollY', { value: 2900, configurable: true });
+    document.querySelectorAll('img').forEach((img) => {
+      const top = img.getAttribute('data-top');
+      img.getBoundingClientRect = () => (top === null ? domRect(0, 0, 0, 0) : domRect(20, Number(top) - 2900, 200, 100));
+    });
+    await paint('lazy-images');
+    expect(boxes().map((b) => b.textContent)).toEqual([HIGHLIGHT_STYLES['lazy-first-viewport'].label, HIGHLIGHT_STYLES.lazy.label]);
+    await paint('off');
+    expect(document.documentElement.outerHTML).toBe(before);
+  });
+
+  test('plan-all-combines', async () => {
+    const { paint, boxes } = imagePage(`${PAGE}${IMAGES}`);
+    await expect(paint('all')).resolves.toEqual({ mode: 'all', boxes: 10 });
+    expect(boxes().map((b) => b.textContent)).toEqual(['int', 'int', 'ext', 'nofollow', 'other', 'H1', 'H2', 'H3', HIGHLIGHT_STYLES['lazy-first-viewport'].label, HIGHLIGHT_STYLES.lazy.label]);
+    // Each part keeps its own cap.
+    await expect(paint('all', { ...OVERLAY_CONFIG, maxLinks: 2, maxHeadings: 1, maxImages: 1 })).resolves.toEqual({ mode: 'all', boxes: 4 });
+    expect(boxes().map((b) => b.textContent)).toEqual(['int', 'int', 'H1', HIGHLIGHT_STYLES['lazy-first-viewport'].label]);
+    await paint('off');
+  });
+});
+
+const phrase = (text: string, terms: readonly string[], lang: string | null = 'en'): TextHighlightTarget => ({ text, kind: 'keyphrase', terms, lang });
+const EVERY = { maxMatches: MAX_KEYPHRASE_MATCHES, maxWordChars: CONTENT_LIMITS.maxWordChars };
+
+describe('keyphrase plan (pure)', () => {
+  test('plan-text-highlight-every-occurrence-capped', () => {
+    // Split mid-word, across nodes, with case and width differences, and white space runs.
+    const texts = ['Running shoes. ', 'RUNNING   Shoes and running ', 'sh', 'oes; ｒｕｎｎｉｎｇ shoes!'];
+    const all = [
+      { kind: 'keyphrase', start: [0, 0], end: [0, 13] },
+      { kind: 'keyphrase', start: [1, 0], end: [1, 15] },
+      // "running " then "sh" + "oes": one word across two nodes.
+      { kind: 'keyphrase', start: [1, 20], end: [3, 3] },
+      // Full-width letters read as their NFKC form, as the audit's words are.
+      { kind: 'keyphrase', start: [3, 5], end: [3, 18] },
+    ];
+    expect(planTextHighlight(texts, [phrase('running shoes', ['running', 'shoes'])], 1, EVERY)).toEqual({ spans: all, unmatched: 0 });
+    // Capped at the option's maximum, in page order.
+    expect(planTextHighlight(texts, [phrase('running shoes', ['running', 'shoes'])], 1, { ...EVERY, maxMatches: 2 }).spans).toEqual(all.slice(0, 2));
+    const many = Array.from({ length: MAX_KEYPHRASE_MATCHES + 50 }, () => 'cat ');
+    expect(planTextHighlight(many, [phrase('cat', ['cat'])], 1, EVERY).spans).toHaveLength(MAX_KEYPHRASE_MATCHES);
+    // Not on the page: counted.
+    expect(planTextHighlight(texts, [phrase('trail shoes', ['trail', 'shoes'])], 1, EVERY)).toEqual({ spans: [], unmatched: 1 });
+    // Without the option the planner is Phase 8's: the first text match, case and all, words or not.
+    expect(planTextHighlight(texts, [{ text: 'running sh', kind: 'keyphrase' }], 1)).toEqual({ spans: [{ kind: 'keyphrase', start: [1, 20], end: [2, 2] }], unmatched: 0 });
+  });
+
+  test('plan-text-highlight-every-occurrence-stops-early', () => {
+    // Matched while segmenting: once `maxMatches` spans are found no further segment is read.
+    const Real = Intl.Segmenter;
+    let read = 0;
+    const spy = vi.spyOn(Intl, 'Segmenter').mockImplementation(
+      class {
+        private readonly real: Intl.Segmenter;
+        constructor(...args: ConstructorParameters<typeof Intl.Segmenter>) {
+          this.real = new Real(...args);
+        }
+        *segment(text: string) {
+          for (const segment of this.real.segment(text)) {
+            read += 1;
+            yield segment;
+          }
+        }
+      } as unknown as typeof Intl.Segmenter,
+    );
+    try {
+      const page = [Array.from({ length: 10_000 }, () => 'cat').join(' ')];
+      expect(planTextHighlight(page, [phrase('cat', ['cat'])], 1, { ...EVERY, maxMatches: 3 }).spans).toHaveLength(3);
+      // "cat", " ", "cat", " ", "cat": five segments, not twenty thousand.
+      expect(read).toBe(5);
+      // Past its deadline it stops too, with what it found (the clock is read every 64 segments).
+      read = 0;
+      const late = planTextHighlight(page, [phrase('cat', ['cat'])], 1, { ...EVERY, until: performance.now() - 1 });
+      expect(read).toBe(64);
+      expect(late.spans).toHaveLength(32);
+      expect(late.unmatched).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('keyphrase-whole-words-only', () => {
+    const cat = [phrase('cat', ['cat'])];
+    const texts = ['A cat, the Category, concat and CAT-like cats. Cat'];
+    const spans = planTextHighlight(texts, cat, 1, EVERY).spans;
+    const words = spans.map((span) => texts[0]!.slice(span.start[1], span.end[1]));
+    // "CAT-like" is two words (cat, like); never "Category", "concat" or "cats".
+    expect(words).toEqual(['cat', 'CAT', 'Cat']);
+    // A phrase never spans punctuation; a hyphen or apostrophe between its words is fine.
+    expect(planTextHighlight(['red, shoes. red-shoes, red shoes'], [phrase('red shoes', ['red', 'shoes'])], 1, EVERY).spans).toEqual([
+      { kind: 'keyphrase', start: [0, 12], end: [0, 21] },
+      { kind: 'keyphrase', start: [0, 23], end: [0, 32] },
+    ]);
+    // Japanese: the phrase's words as the audit's n-grams read them (Intl.Segmenter), found only at the segmenter's word boundaries.
+    const ja = '東京タワーに行きました。東京タワーは高いです。東京都に住む。';
+    const runs = wordRuns(ja, 'ja', null);
+    const two = runs[0]!.slice(0, 2).map((word) => word.term);
+    const found = planTextHighlight([ja], [phrase(two.join(''), two, 'ja')], 1, EVERY).spans;
+    expect(found.map((span) => ja.slice(span.start[1], span.end[1]))).toEqual([two.join('')]);
+    // "東京" is a word of its own only where the segmenter reads it so (before "都"), never inside "東京タワー".
+    const tokyo = runs[2]![0]!.term;
+    expect(tokyo).toBe('東京');
+    const alone = planTextHighlight([ja], [phrase(tokyo, [tokyo], 'ja')], 1, EVERY).spans;
+    expect(alone.map((span) => [span.start[1], span.end[1]])).toEqual([[ja.lastIndexOf('東京'), ja.lastIndexOf('東京') + 2]]);
+    // Part of a word is never a match.
+    expect(planTextHighlight([ja], [phrase('京', ['京'], 'ja')], 1, EVERY)).toEqual({ spans: [], unmatched: 1 });
+    // No terms (a target without them) finds nothing.
+    expect(planTextHighlight(texts, [{ text: 'cat', kind: 'keyphrase' }], 1, EVERY)).toEqual({ spans: [], unmatched: 1 });
+  });
+});
+
+describe('keyphrase overlay', () => {
+  test('keyphrase-highlight-draws-every-occurrence', async () => {
+    const page = textPage('<p>Trail <b>running</b> shoes. Running shoes!</p><p>Not runningshoes, but running   shoes.</p>', 1);
+    const target = phrase('running shoes', ['running', 'shoes']);
+    const answer = await paintHighlight(page.document as unknown as OverlayDocument, 'keyphrase', OVERLAY_CONFIG, planHighlight, page.store, [], [target], planTextHighlight);
+    // The first occurrence covers two text nodes ("running", " shoes. …"), the others one each.
+    expect(answer).toEqual({ mode: 'keyphrase', boxes: 4, unmatched: 0 });
+    expect(page.children().map((el) => el.textContent)).toEqual(['phrase', '', 'phrase', 'phrase']);
+    await paintHighlight(page.document as unknown as OverlayDocument, 'keyphrase', OVERLAY_CONFIG, planHighlight, page.store, [], [phrase('trail shoes', ['trail', 'shoes'])], planTextHighlight);
+    expect(page.children().map((el) => el.textContent)).toEqual([KEYPHRASE_UNMATCHED_NOTE]);
+    await paintHighlight(page.document as unknown as OverlayDocument, 'off', OVERLAY_CONFIG, planHighlight, page.store);
+    // Leaving a block breaks words as entering one does: "running" ends its paragraph, " shoes" follows it.
+    const blocks = textPage('<div><p>Trail running</p> shoes</div><div>running <span>shoes</span></div>', 1);
+    await expect(paintHighlight(blocks.document as unknown as OverlayDocument, 'keyphrase', OVERLAY_CONFIG, planHighlight, blocks.store, [], [target], planTextHighlight)).resolves.toEqual({ mode: 'keyphrase', boxes: 2, unmatched: 0 });
+    await paintHighlight(blocks.document as unknown as OverlayDocument, 'off', OVERLAY_CONFIG, planHighlight, blocks.store);
+    // One occurrence the page changed while it was read is not drawn, but the others are: no "not on the page" note.
+    const changing = textPage('<p>running shoes and running shoes</p><p>running shoes</p>', 1);
+    const createRange = changing.document.createRange.bind(changing.document);
+    let calls = 0;
+    changing.document.createRange = () => {
+      calls += 1;
+      if (calls === 1) throw new Error('gone');
+      return createRange();
+    };
+    await expect(paintHighlight(changing.document as unknown as OverlayDocument, 'keyphrase', OVERLAY_CONFIG, planHighlight, changing.store, [], [target], planTextHighlight)).resolves.toEqual({ mode: 'keyphrase', boxes: 2, unmatched: 0 });
+    expect(changing.children().map((el) => el.textContent)).not.toContain(KEYPHRASE_UNMATCHED_NOTE);
+    await paintHighlight(changing.document as unknown as OverlayDocument, 'off', OVERLAY_CONFIG, planHighlight, changing.store);
+    // The script carries the one target, terms and language as JSON; the stringified plan plans alike.
+    const script = highlightScript('keyphrase', [], [target, phrase('extra', ['extra'])]);
+    expect(script).toContain(JSON.stringify([target]));
+    const evaluated = textPage('<p>Trail <b>running</b> shoes. Running shoes!</p>', 1);
+    await expect(evaluated.dom.window.eval(script) as Promise<unknown>).resolves.toEqual({ mode: 'keyphrase', boxes: 3, unmatched: 0 });
+    const fresh = vm.runInNewContext(`(${planTextHighlight.toString()})`) as typeof planTextHighlight;
+    const texts = ['Running shoes. ', 'RUNNING   Shoes and running ', 'sh', 'oes; ｒｕｎｎｉｎｇ shoes!'];
+    expect(JSON.parse(JSON.stringify(fresh(texts, [target], 1, EVERY)))).toEqual(planTextHighlight(texts, [target], 1, EVERY));
   });
 });

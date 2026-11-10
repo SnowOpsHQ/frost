@@ -2,17 +2,18 @@
 // specs/seo-snapshot.spec.ts (PageSnapshotSchema, hidden elements, wordCount, ImageSchema, SocialSchema)
 // Acceptance: specs/seo-sidebar.feature.md (Extraction, Against a DOM), specs/seo-panels.feature.md (Extraction),
 // specs/seo-content.feature.md (Visible text; spec specs/seo-content.spec.ts VISIBLE_TEXT_LIMITS, VISIBLE_TEXT_BLOCKS;
-// Highlight, Phase 8: spec specs/seo-sidebar.spec.ts TextHighlightTarget, specs/seo-limits.spec.ts HIGHLIGHT_BUDGET_MS)
+// Highlight, Phase 8: spec specs/seo-sidebar.spec.ts TextHighlightTarget, specs/seo-limits.spec.ts HIGHLIGHT_BUDGET_MS;
+// Keyphrase highlight, Phase 11 Task 2: specs/seo-limits.spec.ts MAX_KEYPHRASE_MATCHES)
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, test } from 'vitest';
-import { sentenceReport, type SeoAudit } from '@app/seo-core';
+import { contentReport, sentenceReport, type SeoAudit } from '@app/seo-core';
 import { EXTRACT_BUDGET_MS, HIGHLIGHT_BUDGET_MS, ROBOTS_META_NAMES, SNAPSHOT_LIMITS, SOCIAL_TAGS, SOCIAL_URL_TAGS, type SnapshotLimits } from '@app/specs/seo-limits.spec';
 import { PageSnapshotSchema, type PageSnapshot } from '@app/specs/seo-snapshot.spec';
 import { SECURITY_LIMITS } from '@app/specs/seo-compliance.spec';
 import { VISIBLE_TEXT_BLOCKS, VISIBLE_TEXT_LIMITS } from '@app/specs/seo-content.spec';
 import { extractPage, type PageDocument } from '../extract';
 import { highlightScript, OVERLAY_KEY, type OverlayState } from '../highlight';
-import { sentenceHighlightTargets } from '../highlight-targets';
+import { keyphraseHighlightTarget, sentenceHighlightTargets } from '../highlight-targets';
 import { extractSecurity, RESOURCE_SELECTOR, type SecurityDocument } from '../security-extract';
 
 const PAGE = 'https://example.com/guides/page';
@@ -316,7 +317,8 @@ describe('extractor on a DOM', () => {
         <meta name="OG:Description" content="${long}"><meta property="og:image" content=" /img/share.png?x=${long} ">
         <meta property="og:image:width" content="1200"><meta property="og:type" content="article"><meta property="og:site_name" content="Example">
         <meta name="twitter:card" content="summary_large_image"><meta property="twitter:title" content="Tw title"><meta name="twitter:image" content="https://example.com/t.png">
-        <meta name="twitter:site" content="@example"><meta property="og:url" content="${PAGE}">`,
+        <meta name="twitter:site" content="@example"><meta property="og:url" content="${PAGE}">
+        <meta property="article:published_time" content=" 2025-01-05 ">`,
     });
     expect(PageSnapshotSchema.safeParse(snapshot).success).toBe(true);
     expect(snapshot.social).toEqual({
@@ -332,6 +334,9 @@ describe('extractor on a DOM', () => {
       'twitter:description': null,
       'twitter:image': 'https://example.com/t.png',
       'twitter:site': '@example',
+      // Phase 11 Task 3 (article-time-tags-read): the article times are read like the others.
+      'article:published_time': '2025-01-05',
+      'article:modified_time': null,
     });
     // og:url stays the snapshot's own field (cut to maxUrlChars like every URL).
     expect(snapshot.ogUrl).toBe(PAGE.slice(0, 30));
@@ -650,6 +655,40 @@ describe('text highlight on a DOM', () => {
     // The only change: that host appended to <html>. No attribute, style, text or other node changed.
     expect(records.map((r) => [r.type, r.target, r.addedNodes.length, r.removedNodes.length])).toEqual([['childList', document.documentElement, 1, 0]]);
     expect(records[0]!.addedNodes[0]).toBe(host);
+    expect(document.body.outerHTML).toBe(new JSDOM(before).window.document.body.outerHTML);
+
+    await expect(run(highlightScript('off'))).resolves.toEqual({ mode: 'off', boxes: 0 });
+    records.push(...observer.takeRecords());
+    observer.disconnect();
+    expect(records.map((r) => [r.type, r.target, r.addedNodes.length, r.removedNodes.length])).toEqual([
+      ['childList', document.documentElement, 1, 0],
+      ['childList', document.documentElement, 0, 1],
+    ]);
+    expect(document.documentElement.outerHTML).toBe(before);
+    expect((dom.window as unknown as Record<string, unknown>)[OVERLAY_KEY]).toBeUndefined();
+  });
+
+  test('keyphrase-highlight-leaves-page-untouched', async () => {
+    // A phrase across an inline element, in another case, inside a longer word, and in hidden text.
+    const body = `<article style="color: red" data-x="1"><h1>Trail shoes</h1><p class="lead">Light <b>trail</b> shoes for wet trail
+      shoes days.</p><p>TRAIL   SHOES grip; mountaintrail shoes do not count.</p><p hidden>trail shoes hidden.</p><script>var trail = 'trail shoes';</script></article>`;
+    const audit = { content: contentReport(visible({ body })), url: PAGE } as unknown as SeoAudit;
+    const target = keyphraseHighlightTarget(audit, 'trail shoes', null)!;
+    expect(target).toEqual({ text: 'trail shoes', kind: 'keyphrase', terms: ['trail', 'shoes'], lang: 'en' });
+    const { dom, document, run } = scriptedPage(body);
+    const before = document.documentElement.outerHTML;
+    const records: MutationRecord[] = [];
+    const observer = new dom.window.MutationObserver((list) => records.push(...list));
+    observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true, attributeOldValue: true, characterDataOldValue: true });
+
+    // The heading's, the `<b>`'s and its rest (two ranges), the wrapped one, the upper-case one: five boxes.
+    await expect(run(highlightScript('keyphrase', [], [target]))).resolves.toEqual({ mode: 'keyphrase', boxes: 5, unmatched: 0 });
+    records.push(...observer.takeRecords());
+    const host = document.documentElement.lastElementChild as HTMLElement;
+    expect(document.documentElement.children).toHaveLength(3);
+    expect(host.shadowRoot).toBeNull();
+    // The only change: that host appended to <html>.
+    expect(records.map((r) => [r.type, r.target, r.addedNodes.length, r.removedNodes.length])).toEqual([['childList', document.documentElement, 1, 0]]);
     expect(document.body.outerHTML).toBe(new JSDOM(before).window.document.body.outerHTML);
 
     await expect(run(highlightScript('off'))).resolves.toEqual({ mode: 'off', boxes: 0 });

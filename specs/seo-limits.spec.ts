@@ -60,6 +60,13 @@ export type RobotsMetaName = (typeof ROBOTS_META_NAMES)[number];
  * (case-insensitive; sites use both for either family), its `content` trimmed and
  * whitespace-normalised. `og:url` is not in this list: it is the snapshot's own `ogUrl`
  * (Task 1), read the same way from `property` only.
+ *
+ * Phase 11 Task 3 (Decision 4) appends the Open Graph article times `article:published_time` and
+ * `article:modified_time`, read like the others (text values, never parsed here): the result
+ * preview's last date sources (`SERP_DATE_SOURCES`, `seo-content.spec.ts`). They are not `og:` tags,
+ * so the Social panel's Open Graph list and the `og-tags` copy value leave them out. Change tracking
+ * picks the social tags it keeps by name (`changes/snapshot.ts`: `og:title`, `og:description`,
+ * `og:image`), so a capture's identity does not change with them.
  */
 export const SOCIAL_TAGS = [
   'og:title',
@@ -74,6 +81,8 @@ export const SOCIAL_TAGS = [
   'twitter:description',
   'twitter:image',
   'twitter:site',
+  'article:published_time',
+  'article:modified_time',
 ] as const;
 export type SocialTag = (typeof SOCIAL_TAGS)[number];
 /** The social tags whose value is a URL (cut to `maxUrlChars`, not normalised). */
@@ -105,6 +114,15 @@ export const HIGHLIGHT_FRAME_MS = 8;
  */
 export const MAX_TEXT_HIGHLIGHT_TARGETS = 20;
 export const MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET = 16;
+
+/**
+ * The keyphrase highlight (Phase 11 Task 2; `seo-sidebar.spec.ts`, `HIGHLIGHT_MODES` `keyphrase`):
+ * every whole-word occurrence of the phrase is boxed, the first `MAX_KEYPHRASE_MATCHES` in page order
+ * (each with at most `MAX_TEXT_HIGHLIGHT_RECTS_PER_TARGET` rects), found by the same bounded text walk.
+ * The phrase `seo.setHighlight` names is 1 to `HIGHLIGHT_PHRASE_MAX_CHARS` characters on one line.
+ */
+export const MAX_KEYPHRASE_MATCHES = 500;
+export const HIGHLIGHT_PHRASE_MAX_CHARS = 100;
 
 /**
  * Caps on the snapshot. Lists keep their **first** `max…` entries in document order and report the

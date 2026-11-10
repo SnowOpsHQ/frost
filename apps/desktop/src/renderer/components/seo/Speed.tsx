@@ -19,13 +19,14 @@ import {
   VITAL_THRESHOLDS,
   type VitalBand,
 } from '@app/specs/seo-speed.spec';
-import { OpenTabIcon, ReloadIcon } from '../../icons';
+import { CopyIcon, OpenTabIcon, ReloadIcon } from '../../icons';
+import { exportStatus } from '../../export-palette';
 import { actions } from '../../ipc';
 import { useSpeed } from '../../hooks/useSpeed';
 import { formatCount } from '../../seo-view';
 import { agoText, barWidth, meterGeometry, missingVitalText, openableResource, PHASE_LABELS, shareText, shownSpeed, speedIssues, speedNotes, waterfall } from '../../speed-view';
 import type { SpeedPollState } from '../../speed-poller';
-import { Flash, useFlash } from './actions';
+import { auditRef, Flash, useFlash } from './actions';
 import { Issue } from './Overview';
 import { PageText } from './parts';
 
@@ -35,6 +36,8 @@ import { PageText } from './parts';
 // from main's live measurement while the panel is open (`useSpeed`), else from the one taken with
 // the audit. Every bar is an SVG `<rect>` sized by attributes (no `style=`: strict CSP); every URL
 // is React text, opened only through "Open" (`browser.openBackgroundTab`, http(s) only).
+// Copy as CSV (Phase 11 Task 1, `seo-exports.feature.md`) exports the audit's own measurement, never
+// the live one: main formats it and writes its own clipboard; disabled when the audit has none.
 
 // ---- Icons (frost's own, 24×24, stroked; colour from styles.css) ------------------------------
 
@@ -522,6 +525,21 @@ export function Speed({ audit, tab, renderProfile = null }: { readonly audit: Se
       ) : (
         <Issues findings={speedIssues(null, audit)} source={null} />
       )}
+      <div className="seo-panel-tools">
+        <button
+          type="button"
+          className="seo-toggle"
+          data-testid="seo-speed-copy-csv"
+          disabled={audit.performance === null}
+          title="Copies the measurement taken with the audit, not the live one"
+          onClick={() => {
+            void actions.copySeoCsv(tab.id, auditRef(audit), 'speed').then((copied) => flash(exportStatus('speed', copied)));
+          }}
+        >
+          <CopyIcon />
+          <span>Copy audit measurement as CSV</span>
+        </button>
+      </div>
       <Flash message={message} testId="seo-speed-flash" />
     </div>
   );

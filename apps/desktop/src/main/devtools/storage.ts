@@ -119,7 +119,10 @@ export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
           return shown?.get(keyOf(masked)) === now ? cookieView(c, true) : masked;
         }),
         cookieTotal: cookies.length,
+        // The web storage reader's (`web-storage.ts`), filled in by the service.
         usage: null,
+        quota: null,
+        webStorage: null,
       };
     },
 

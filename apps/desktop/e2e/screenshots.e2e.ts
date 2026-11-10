@@ -1,14 +1,15 @@
 // Specs: specs/screenshot.spec.ts (SCREENSHOT_REFUSAL_MESSAGES, FULL_PAGE_SCROLL_NOTE, AREA_SELECT_HINT,
-// SCREENSHOTS_DIR_NAME), specs/capture-db.spec.ts (CAPTURES_DIR_NAME, SHA256_HEX_PATTERN)
-// Acceptance: specs/screenshot.feature.md (End to end)
+// SCREENSHOTS_DIR_NAME, SCREENSHOT_EDIT_RESULT_MESSAGES), specs/capture-db.spec.ts (CAPTURES_DIR_NAME, SHA256_HEX_PATTERN)
+// Acceptance: specs/screenshot.feature.md (End to end; Editing)
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { HISTORY_MENU_ID } from '@app/specs/browser-polish.spec';
 import { CAPTURES_DIR_NAME, SHA256_HEX_PATTERN } from '@app/specs/capture-db.spec';
-import { AREA_SELECT_HINT, FULL_PAGE_SCROLL_NOTE, SCREENSHOT_REFUSAL_MESSAGES, SCREENSHOTS_DIR_NAME } from '@app/specs/screenshot.spec';
+import { AREA_SELECT_HINT, FULL_PAGE_SCROLL_NOTE, SCREENSHOT_EDIT_RESULT_MESSAGES, SCREENSHOT_REFUSAL_MESSAGES, SCREENSHOTS_DIR_NAME } from '@app/specs/screenshot.spec';
 import { closeApp, launchApp, pageAt } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -42,7 +43,7 @@ let tabPage: Page;
 let site: Awaited<ReturnType<typeof startSite>>;
 let url: string;
 let shotsDir: string;
-const { go } = chromeHelpers(
+const { go, menu } = chromeHelpers(
   () => app,
   () => page,
 );
@@ -291,4 +292,108 @@ test('screenshot-leaves-page-dom-unchanged', async () => {
   // (Reveal in folder is not pressed here: it would open the system's file manager.) No inline styles.
   await expect(gallery().first().getByTestId('screenshot-reveal')).toBeEnabled();
   expect(await page.getByTestId('changes').evaluate((root) => root.querySelectorAll('[style]').length)).toBe(0);
+});
+
+test('annotate-crop-and-save-a-copy', async () => {
+  // A viewport screenshot at a scroll position no other test uses (so its file is new).
+  await tabPage.evaluate(() => window.scrollTo({ top: 137, behavior: 'instant' }));
+  await expect.poll(async () => Math.abs((await scrollY()) - 137)).toBeLessThan(1);
+  const listed = (await gallery().count()) + 1;
+  const { name: sourceName, bytes: sourceBytes } = await shoot('viewport');
+  const source = pngSize(sourceBytes);
+  await expect(gallery()).toHaveCount(listed);
+  const before = files();
+
+  // Open it in the editor: a sheet over the page column (the tab's view is hidden meanwhile).
+  await gallery().first().getByTestId('screenshot-edit').click();
+  const editor = page.getByTestId('screenshot-editor');
+  await expect(editor).toHaveAttribute('data-state', 'ready');
+  const canvas = page.getByTestId('screenshot-editor-canvas');
+  await expect(canvas).toBeVisible();
+  await expect.poll(async () => (await page.getByTestId('page-area').boundingBox())?.height ?? 0).toBeLessThan(1);
+  const box = (await canvas.boundingBox())!;
+  const at = (fx: number, fy: number) => ({ x: box.x + box.width * fx, y: box.y + box.height * fy });
+  const dragOnCanvas = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 });
+    await page.mouse.move(to.x, to.y, { steps: 4 });
+    await page.mouse.up();
+  };
+
+  // An arrow, undone and redone, undone again.
+  await page.getByTestId('screenshot-editor-tool-arrow').click();
+  await dragOnCanvas(at(0.7, 0.7), at(0.8, 0.8));
+  await expect(page.getByTestId('screenshot-editor-undo')).toBeEnabled();
+  await page.getByTestId('screenshot-editor-undo').click();
+  await expect(page.getByTestId('screenshot-editor-redo')).toBeEnabled();
+  await page.getByTestId('screenshot-editor-redo').click();
+  await page.getByTestId('screenshot-editor-undo').click();
+  // A filled blue box, then a crop around it.
+  await page.getByTestId('screenshot-editor-tool-box').click();
+  await page.getByTestId('screenshot-editor-filled').check();
+  await page.locator('[data-testid="screenshot-editor-color"][data-color="#0090ff"]').click();
+  await dragOnCanvas(at(0.2, 0.2), at(0.4, 0.4));
+  await page.getByTestId('screenshot-editor-tool-crop').click();
+  await dragOnCanvas(at(0.1, 0.1), at(0.6, 0.6));
+  await page.getByTestId('screenshot-editor-save').click();
+  const outcome = page.getByTestId('screenshot-editor-status');
+  await expect(outcome).toHaveAttribute('data-outcome', 'saved', { timeout: 30_000 });
+  await expect(outcome).toHaveText(SCREENSHOT_EDIT_RESULT_MESSAGES.saved);
+
+  // A second file, named by its own hash, the size of the crop (half the shot, give or take rounding).
+  const { name, bytes } = newFile(before);
+  expect(sha256(bytes)).toBe(name.slice(0, 64));
+  const size = pngSize(bytes);
+  expect(Math.abs(size.width - source.width * 0.5)).toBeLessThanOrEqual(4);
+  expect(Math.abs(size.height - source.height * 0.5)).toBeLessThanOrEqual(4);
+  // The source is byte-for-byte as it was.
+  expect(readFileSync(path.join(shotsDir, sourceName))).toEqual(sourceBytes);
+  // Under the box (its centre: 0.3 of the shot, 0.2 of it inside the crop) the pixels are the box's colour;
+  // the crop's corner is the page's.
+  const pixels = await app.evaluate(({ nativeImage }, { file, points }) => {
+    const image = nativeImage.createFromPath(file);
+    const { width } = image.getSize();
+    const bitmap = image.toBitmap();
+    return points.map(([x, y]) => [...bitmap.subarray((y * width + x) * 4, (y * width + x) * 4 + 4)]);
+  }, { file: path.join(shotsDir, name), points: [[Math.round(source.width * 0.2), Math.round(source.height * 0.2)], [2, 2]] as [number, number][] });
+  expect(pixels[0]).toEqual([0xff, 0x90, 0x00, 0xff]);
+  expect(pixels[1]).not.toEqual([0xff, 0x90, 0x00, 0xff]);
+
+  // Close: the gallery lists both, the copy first and labelled Edited; the tab's view is back.
+  await page.getByTestId('screenshot-editor-close').click();
+  await expect(editor).toHaveCount(0);
+  await expect(gallery()).toHaveCount(listed + 1);
+  await expect(gallery().first().getByTestId('screenshot-edited')).toHaveText('Edited');
+  await expect(gallery().nth(1).getByTestId('screenshot-edited')).toHaveCount(0);
+  await expect(gallery().first().getByTestId('screenshot-size')).toContainText(`${size.width.toLocaleString('en-US')} × ${size.height.toLocaleString('en-US')} px`);
+  await expect.poll(async () => (await page.getByTestId('page-area').boundingBox())?.height ?? 0).toBeGreaterThan(100);
+  expect(await page.getByTestId('changes').evaluate((root) => root.querySelectorAll('[style]').length)).toBe(0);
+});
+
+test('screenshot-editor-one-sheet-at-a-time', async () => {
+  // A screenshot to open (any: the gallery lists at least one by now, or this one).
+  if ((await gallery().count()) === 0) await shoot('viewport');
+  const editor = page.getByTestId('screenshot-editor');
+  const openEditor = async () => {
+    await gallery().first().getByTestId('screenshot-edit').click();
+    await expect(editor).toBeVisible();
+  };
+  // Each sheet opening closes the editor, and the editor opening closes it.
+  const sheets: { name: string; open: () => Promise<void>; testId: string }[] = [
+    { name: 'Settings', open: () => menu('settings'), testId: 'settings-view' },
+    { name: 'History', open: () => menu(HISTORY_MENU_ID), testId: 'history-view' },
+    { name: 'Keyboard shortcuts', open: () => menu('help-shortcuts'), testId: 'shortcuts-view' },
+    { name: 'Projects', open: () => page.getByTestId('changes-open-projects').click(), testId: 'projects-view' },
+  ];
+  for (const sheet of sheets) {
+    await openEditor();
+    await sheet.open();
+    await expect(page.getByTestId(sheet.testId), sheet.name).toBeVisible();
+    await expect(editor, `${sheet.name} closes the editor`).toHaveCount(0);
+    await openEditor();
+    await expect(page.getByTestId(sheet.testId), `the editor closes ${sheet.name}`).toHaveCount(0);
+    await page.getByTestId('screenshot-editor-close').click();
+    await expect(editor).toHaveCount(0);
+  }
 });

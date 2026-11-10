@@ -1,4 +1,4 @@
-// Spec: specs/changes.spec.ts (CAPTURE_REFUSALS, CAPTURE_BUSY, CAPTURE_STALE_RETRIES), specs/changes.schema.ts
+// Spec: specs/changes.spec.ts (CAPTURE_REFUSALS incl. tab-emulation-on, CAPTURE_BUSY, CAPTURE_STALE_RETRIES), specs/changes.schema.ts
 // (RegionAnswerSchema, CHANGES_READ_API), specs/capture-db.spec.ts (UNFILED_PROJECT_ID), specs/capture.spec.ts (DIFF_ENGINE_VERSION),
 // specs/rankings.spec.ts (searchIdentityJson), specs/rankings-url.spec.ts (serpFiltersOf), specs/rankings.schema.ts (StoredReadingSchema),
 // specs/workspace-db.spec.ts (SEARCH_KEY_VERSION, MAX_SERP_READING_JSON_BYTES)
@@ -21,9 +21,10 @@ import { SerpSnapshotSchema, type SerpSnapshot } from '@app/specs/serp-snapshot.
 import { SERP_RESULT_TYPES } from '@app/specs/serp-selector-pack.spec';
 import { MAX_SERP_FILTERS_JSON_BYTES, MAX_SERP_READING_JSON_BYTES, SEARCH_KEY_VERSION } from '@app/specs/workspace-db.spec';
 import { CAPTURE_BUSY, CHANGES_READ_API, type CaptureAnswer, type RegionAnswer } from '@app/specs/changes.schema';
-import { DEFAULT_RENDER_PROFILE, type AuditRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
+import { DEFAULT_RENDER_PROFILE, DEFAULT_TAB_OVERRIDES, type AuditRenderProfile, type RenderProfile, type TabOverrides } from '@app/specs/render-profile.spec';
+import type { TabState } from '@app/specs/browser.spec';
 import { auditOf, readyReading, regionAnswer, regionText } from './fakes';
-import { createChangesService, type ChangesServiceDeps } from '../service';
+import { changesTabs, createChangesService, type ChangesServiceDeps } from '../service';
 import { savedSearchParams } from '../projects';
 import { createRankingsService } from '../rankings';
 import { searchKeyOf } from '../search-key';
@@ -75,6 +76,10 @@ function setup(deps: Partial<ChangesServiceDeps> = {}) {
     answer: regionAnswer(PAGE) as unknown,
     params: null as SearchParams | null,
     loadedAt: null as number | null,
+    /** The tab's live overrides or its document marker (`ChangesTabs.overridesOn`). */
+    overridesOn: false,
+    /** The tab's override revision (`ChangesTabs.overridesRevision`). */
+    revision: 0,
   };
   const contents = new Map([1, 2].map((id) => [id, { executeJavaScriptInIsolatedWorld: vi.fn(async () => null), getURL: () => state.url }]));
   const extract = vi.fn(async (_contents: unknown): Promise<unknown> => state.answer);
@@ -86,6 +91,8 @@ function setup(deps: Partial<ChangesServiceDeps> = {}) {
       contentsOf: (tabId) => contents.get(tabId) ?? null,
       getAudit: (tabId) => (contents.has(tabId) ? state.response : { status: 'unavailable', url: '', reason: 'no-tab' }),
       loadedAt: () => state.loadedAt,
+      overridesOn: () => state.overridesOn,
+      overridesRevision: () => state.revision,
     },
     extract,
     now: tick,
@@ -778,5 +785,131 @@ describe('changes service', () => {
     expect(await service.history({ url: PAGE, cursor: page.next as never })).toMatchObject({ versions: [{ versionId: one.versionId }], next: null });
     expect(answers.getVersion).toEqual([await service.version({ versionId: one.versionId }), null]);
     expect(answers.diff![1]).toBeNull();
+  });
+});
+
+describe('capture refuses with tab overrides (Phase 11 Task 6, Decision 8)', () => {
+  const CSS_OFF: TabOverrides = { ...DEFAULT_TAB_OVERRIDES, cssDisabled: true };
+  const stamped = (tabOverrides: TabOverrides | undefined): SeoAuditResponse => ({ status: 'ready', url: PAGE, audit: auditOf(PAGE), renderProfile: null, ...(tabOverrides ? { tabOverrides } : {}) });
+  const count = (rows: (table: string) => Record<string, unknown>[]) => rows('ci_captures').length;
+
+  test('capture-refused-when-the-stamp-shows-an-override', async () => {
+    // The audit ran with CSS off; the overrides were turned off afterwards (live: all off).
+    const { service, state, extract, rows } = setup();
+    state.response = stamped(CSS_OFF);
+    expect(refused(await service.capture(1))).toBe('tab-emulation-on');
+    expect(extract).not.toHaveBeenCalled();
+    expect(count(rows)).toBe(0);
+  });
+
+  test('capture-refused-when-overrides-turned-on-after-audit', async () => {
+    // A clean audit, then CSS off (no new audit): the regions would be read from a stylesheet-less page.
+    const { service, state, extract, rows } = setup();
+    state.response = stamped(DEFAULT_TAB_OVERRIDES);
+    state.overridesOn = true;
+    expect(refused(await service.capture(1))).toBe('tab-emulation-on');
+    expect(extract).not.toHaveBeenCalled();
+    expect(count(rows)).toBe(0);
+  });
+
+  test('capture-refused-when-overrides-turned-on-during-extraction', async () => {
+    const { service, state, extract, rows } = setup();
+    state.response = stamped(DEFAULT_TAB_OVERRIDES);
+    extract.mockImplementationOnce(async () => {
+      state.overridesOn = true;
+      return state.answer;
+    });
+    expect(refused(await service.capture(1))).toBe('tab-emulation-on');
+    expect(extract).toHaveBeenCalledOnce();
+    expect(count(rows)).toBe(0);
+  });
+
+  test('capture-allowed-when-stamp-and-live-both-off', async () => {
+    const { service, state, rows } = setup();
+    state.response = stamped(DEFAULT_TAB_OVERRIDES);
+    captured(await service.capture(1));
+    // Into the normal lane (the profile's, no overrides in it).
+    expect(rows('ci_captures')[0]).toMatchObject({ lane_key: laneKeyFor(PAGE, null, null) });
+  });
+
+  test('capture-refused-while-emulation-on', async () => {
+    const { service, state, extract } = setup();
+    state.response = stamped(CSS_OFF);
+    state.overridesOn = true;
+    expect(refused(await service.capture(1))).toBe('tab-emulation-on');
+    expect(extract).not.toHaveBeenCalled();
+    // Other refusals keep their order: another tab in front is still `not-active`.
+    state.active = 2;
+    expect(refused(await service.capture(1))).toBe('not-active');
+  });
+
+  test('capture-without-overridesOn-reads-live-as-off', async () => {
+    // An older `ChangesTabs` (no `overridesOn`, no `overridesRevision`) captures as before.
+    const state = { response: stamped(undefined) };
+    const { service, rows } = setup({
+      tabs: {
+        activeTabId: () => 1,
+        contentsOf: (tabId) => (tabId === 1 ? { executeJavaScriptInIsolatedWorld: vi.fn(async () => null), getURL: () => PAGE } : null),
+        getAudit: () => state.response,
+        loadedAt: () => null,
+      },
+    });
+    captured(await service.capture(1));
+    expect(rows('ci_captures')).toHaveLength(1);
+  });
+
+  test('capture-lane-unchanged-by-emulation-stamp', async () => {
+    // A stamp (all off) or none: the same lane, and one version (the page did not change).
+    const { service, state, rows } = setup();
+    state.response = stamped(undefined);
+    captured(await service.capture(1));
+    state.response = stamped(DEFAULT_TAB_OVERRIDES);
+    const second = captured(await service.capture(1));
+    expect(second.newVersion).toBe(false);
+    expect(new Set(rows('ci_captures').map((row) => row['lane_key']))).toEqual(new Set([laneKeyFor(PAGE, null, null)]));
+  });
+
+  test('capture-refused-when-document-loaded-under-overrides', async () => {
+    // cookies off → reload → cookies on → re-audit (no reload): stamp and live both off, the marker set.
+    const tab: Pick<TabState, 'id' | 'tabOverrides' | 'loadedUnderOverrides' | 'overridesRevision'> = { id: 1, tabOverrides: DEFAULT_TAB_OVERRIDES, loadedUnderOverrides: true, overridesRevision: 3 };
+    const response = stamped(DEFAULT_TAB_OVERRIDES);
+    const contents = { executeJavaScriptInIsolatedWorld: vi.fn(async () => null), getURL: () => PAGE };
+    const browser = { getState: () => ({ activeTabId: 1, tabs: [tab] }), seo: { getAudit: () => response } };
+    const tabs = changesTabs(browser, (id) => (id === 1 ? contents : null), { loadedAt: () => null, watch: () => undefined });
+    expect(tabs.overridesOn!(1)).toBe(true);
+    expect(tabs.overridesRevision!(1)).toBe(3);
+    expect(tabs.overridesOn!(9)).toBe(false);
+    const { service, extract, rows } = setup({ tabs });
+    expect(refused(await service.capture(1))).toBe('tab-emulation-on');
+    expect(extract).not.toHaveBeenCalled();
+    // Reloaded with every override off: the marker is cleared, and the capture goes through.
+    tab.loadedUnderOverrides = false;
+    captured(await service.capture(1));
+    expect(rows('ci_captures')).toHaveLength(1);
+  });
+
+  test('capture-refused-when-overrides-revision-changes-before-persist', async () => {
+    // The revision moves after the capture started (an override toggled on and off again while the
+    // regions were read): live is off by the second check, yet nothing is stored.
+    const { service, state, extract, rows } = setup();
+    state.response = stamped(DEFAULT_TAB_OVERRIDES);
+    extract.mockImplementationOnce(async () => {
+      state.revision += 2;
+      return state.answer;
+    });
+    expect(refused(await service.capture(1))).toBe('tab-emulation-on');
+    expect(count(rows)).toBe(0);
+    // The marker set meanwhile (raises the revision too): refused, nothing stored.
+    extract.mockImplementationOnce(async () => {
+      state.revision += 1;
+      state.overridesOn = true;
+      return state.answer;
+    });
+    expect(refused(await service.capture(1))).toBe('tab-emulation-on');
+    expect(count(rows)).toBe(0);
+    // A revision that holds still: captured.
+    state.overridesOn = false;
+    captured(await service.capture(1));
+    expect(count(rows)).toBe(1);
   });
 });

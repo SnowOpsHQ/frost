@@ -1,4 +1,5 @@
 import type { SeoAuditResponse } from '@app/seo-core';
+import type { TabOverrides } from '@app/specs/render-profile.spec';
 import type { ToolRunner } from '../approvals';
 import { createTabNavigator, type NavigableContents } from './navigator';
 import { createPageToolRunner, type PageContents, type PageToolDeps } from './runner';
@@ -14,7 +15,11 @@ import { createPageToolRunner, type PageContents, type PageToolDeps } from './ru
 /** The controller calls the page tools make (`BrowserController`). */
 export interface PageToolsBrowser {
   tabIdOf(contents: unknown): number | null;
-  getState(): { readonly activeTabId: number | null };
+  getState(): {
+    readonly activeTabId: number | null;
+    /** The tabs' overrides and loaded-under-overrides markers (`TabState`), told to the model with `page_text`. */
+    readonly tabs?: readonly { readonly id: number; readonly tabOverrides?: TabOverrides; readonly loadedUnderOverrides?: boolean }[];
+  };
   navigate(input: string): boolean;
   readonly seo: { getAudit(tabId: number): SeoAuditResponse };
 }
@@ -37,6 +42,7 @@ export function createBrowserPageToolRunner(deps: BrowserPageToolDeps): ToolRunn
     contentsOf,
     audit: (tabId) => deps.browser.seo.getAudit(tabId),
     navigate: createTabNavigator({ browser: deps.browser, contentsOf }),
+    overridesOf: (tabId) => deps.browser.getState().tabs?.find((tab) => tab.id === tabId) ?? null,
     ...(deps.now ? { now: deps.now } : {}),
     ...(deps.ports ? { ports: deps.ports } : {}),
   });

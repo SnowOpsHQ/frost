@@ -30,6 +30,12 @@ import {
   TOOL_NAME_PATTERN,
   TOOL_RESULT_MAX_CHARS,
   toolRisk,
+  ATTACHED_TAB_NOT_READY_NOTE,
+  ATTACHED_TAB_REFS,
+  attachedTabsPrompt,
+  isAttachedTabRef,
+  MAX_ATTACHED_READS_PER_TURN,
+  MAX_CHAT_ATTACHMENTS,
 } from '@app/specs/agent-tools.spec';
 
 describe('agent tool catalogue', () => {
@@ -210,5 +216,32 @@ describe('agent tool catalogue', () => {
     expect(punycode).toMatch(/^https:\/\/xn--/);
     expect(isAllowedModelRequest('byok-anthropic', 'POST', punycode)).toBe(false);
     for (const value of [undefined, null, 42, {}, 'not a url', '']) expect(isCanonicalUrl(value)).toBe(false);
+  });
+});
+
+// Phase 11 Task 9 (specs/agent-attach.feature.md, Decision 11).
+describe('attached tabs', () => {
+  test('attached-tab-constants', () => {
+    expect(AGENT_TOOLS.read_attached_tab).toMatchObject({ risk: 'read', grantable: true });
+    expect(ATTACHED_TAB_REFS).toEqual(['tab-1', 'tab-2', 'tab-3']);
+    expect(MAX_CHAT_ATTACHMENTS).toBe(3);
+    expect(ATTACHED_TAB_REFS.length).toBe(MAX_CHAT_ATTACHMENTS);
+    expect(MAX_ATTACHED_READS_PER_TURN).toBe(2);
+    expect(ATTACHED_TAB_NOT_READY_NOTE).toBe('Ask the user to switch to that tab so frost can audit it.');
+    expect(isAttachedTabRef('tab-2')).toBe(true);
+    expect(isAttachedTabRef('tab-4')).toBe(false);
+    expect(isAttachedTabRef(2)).toBe(false);
+  });
+
+  test('attached-tabs-prompt-names-refs-and-origins', () => {
+    expect(attachedTabsPrompt([])).toBe('');
+    const prompt = attachedTabsPrompt([
+      { ref: 'tab-1', origin: 'https://a.example' },
+      { ref: 'tab-3', origin: 'http://b.example:8080' },
+    ]);
+    expect(prompt).toContain('tab-1 (https://a.example)');
+    expect(prompt).toContain('tab-3 (http://b.example:8080)');
+    expect(prompt).toContain('read_attached_tab');
+    expect(prompt).not.toContain('\n');
   });
 });

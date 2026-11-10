@@ -25,7 +25,7 @@ import { createPaletteRegistry, type PaletteAction, type PaletteContext } from '
 const URL_A = 'https://www.example.com/a';
 
 function tab(changes: Partial<TabState> = {}): TabState {
-  return { id: 1, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null, ...changes };
+  return { id: 1, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false, overridesRevision: 0, overridesStatus: 'active', ...changes };
 }
 
 function state(tabs: TabState[], activeTabId = tabs[0]?.id ?? null): BrowserState {
@@ -48,8 +48,22 @@ function audit(changes: { title?: string | null; description?: string | null; h1
       canonical: URL_A,
       robots: changes.robots === undefined ? 'robots: index, follow' : changes.robots,
       headings: h1 === null ? [{ level: 2, text: 'Section' }] : [{ level: 1, text: h1 }],
+      // Phase 11 Task 1: every appended copy key has a value too.
+      ogUrl: URL_A,
+      social: { 'og:title': 'A title', 'twitter:card': 'summary' },
+      wordCount: 120,
+      linkList: [
+        { href: 'https://www.example.com/b', scheme: 'https:', rel: '', text: 'B', kind: 'internal', target: null },
+        { href: 'https://other.example.net/', scheme: 'https:', rel: '', text: 'O', kind: 'external', target: null },
+      ],
     },
-    indexability: { canonical: { html: URL_A, header: null, effective: URL_A, elsewhere: false, conflict: false }, http: changes.status === null ? null : { status: changes.status ?? 200 } },
+    indexability: {
+      canonical: { html: URL_A, header: null, effective: URL_A, elsewhere: false, conflict: false },
+      http: changes.status === null ? null : { status: changes.status ?? 200, headers: [{ name: 'content-type', value: 'text/html' }] },
+      hreflang: { entries: [{ value: 'en', href: URL_A, resolved: URL_A }] },
+      xRobotsTag: [{ agent: null, directives: ['noarchive'], value: 'noarchive' }],
+      robots: { sitemaps: [{ raw: '/sitemap.xml', url: 'https://www.example.com/sitemap.xml', line: 1 }] },
+    },
     schema: { blocks, entities: blocks.map((b) => ({ key: b.index, block: b.index, types: [b.index === 0 ? 'Organization' : 'WebSite'], topLevel: true })) },
   } as unknown as SeoAudit;
 }

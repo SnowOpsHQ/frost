@@ -154,6 +154,34 @@ describe('command palette (controller)', () => {
     expect(controller.openTool('rich-results')).toEqual({ status: 'refused', reason: 'not-opened' });
   });
 
+  test('open-in-backlink-entries-are-fixed-https-templates', () => {
+    // Decision 2: data only, on the same openTool path (the chrome's consent step is per host, `open-in.test.ts`).
+    const backlinks = OPEN_IN_TEMPLATES.filter((t) => t.id.startsWith('backlinks-'));
+    expect(backlinks.length).toBeGreaterThan(0);
+    const page = 'https://user:pw@www.example.com/guide?x=1#frag';
+    for (const template of backlinks) {
+      create();
+      const contents = loadPage(page);
+      addresses.set(contents, '93.184.216.34');
+      expect(controller.openTool(template.id).status, template.id).toBe('opened');
+      const loaded = new URL(views.at(-1)!.contents.loadURL.mock.lastCall![0] as string);
+      // Main builds it from the table: the vendor's fixed https origin and path, the page URL (no
+      // credentials, no fragment) only as the `urlParam` value.
+      expect(loaded.origin, template.id).toBe(template.origin);
+      expect(loaded.protocol).toBe('https:');
+      expect(loaded.pathname).toBe(template.path);
+      expect(loaded.searchParams.get(template.urlParam)).toBe('https://www.example.com/guide?x=1');
+      expect(loaded.href).toBe(openInUrl(template, page));
+      // A page from a private address, or a non-public name: refused like every other entry.
+      create();
+      addresses.set(loadPage('https://www.example.com/'), '10.0.0.8');
+      expect(controller.openTool(template.id), template.id).toEqual({ status: 'refused', reason: 'private-address' });
+      create();
+      loadPage('http://intranet/');
+      expect(controller.openTool(template.id), template.id).toEqual({ status: 'refused', reason: 'not-public' });
+    }
+  });
+
   test('open-tool-refuses-private-addresses', () => {
     const page = 'https://intranet-looks-public.example.com/';
     for (const address of ['10.1.2.3', '192.168.0.10', '127.0.0.1', '::1', '[fd00::1]', '169.254.1.1', '100.64.0.1', '::ffff:192.168.1.1', 'garbage']) {

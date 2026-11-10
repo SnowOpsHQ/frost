@@ -25,6 +25,16 @@ export interface ContentNotesAnswer {
 /** What Copy as HTML writes: the page's own title and description, or a stored draft. */
 export type SnippetHtmlSource = 'page' | { readonly slot: number };
 
+/** What Copy JSON-LD writes (Phase 11 Task 3, `SNIPPET_JSONLD_SOURCES`). */
+export type PreviewJsonLdSource = 'page' | 'suggested';
+
+/** The editor's session-only state a suggested JSON-LD takes (validated by `SuggestedJsonLdFieldsSchema`). */
+export interface PreviewJsonLdFields {
+  readonly siteName?: string | undefined;
+  readonly breadcrumb?: boolean | undefined;
+  readonly date?: boolean | undefined;
+}
+
 export interface ContentService {
   /** The notes stored for `url` (without its fragment); none when there are none or it fails. Never rejects. */
   notes(url: string): Promise<ContentNotesAnswer>;
@@ -48,4 +58,11 @@ export interface ContentService {
    * user cancels or it fails. Never rejects.
    */
   clearAllNotes(): Promise<boolean>;
+  /**
+   * Copy JSON-LD (Phase 11 Task 3): writes to the system clipboard, from the tab's ready audit if it
+   * is the one the panel shows (`audit`), the page's own JSON-LD blocks that fed the result preview
+   * (`page`) or a suggested minimal JSON-LD main builds from the audit and `fields` (`suggested`).
+   * `false`, nothing written, for a stale audit or nothing to copy. Never rejects.
+   */
+  copyPreviewJsonLd(tabId: number, audit: SeoAuditRef, source: PreviewJsonLdSource, fields?: PreviewJsonLdFields): Promise<boolean>;
 }

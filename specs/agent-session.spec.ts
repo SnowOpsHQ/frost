@@ -9,12 +9,12 @@
  * secret is ever in it; tool output appears only as bounded, inert preview text.
  */
 import { MAX_TOOL_CALLS_PER_TURN, type ApprovalDecision, type ToolActivityStatus } from './agent-approvals.spec';
-import type { ChatRetention } from './agent-data.spec';
+import type { ChatRetention, ChatSearchMatch } from './agent-data.spec';
 import type { ChatgptAccountView, ChatgptFailure, ChatgptModelView } from './agent-chatgpt.spec';
 import type { AgentMcpView } from './agent-mcp.spec';
 import { MAX_OUTPUT_TOKENS, type KeyProtection } from './agent-proxy.spec';
 import type { ReasoningEffort } from './agent-reasoning.spec';
-import { isAllowedModelId, type AgentModelId, type AgentToolRisk, type ModelId, type ModelRoute, type ToolErrorCode } from './agent-tools.spec';
+import { isAllowedModelId, type AgentModelId, type AgentToolRisk, type AttachedTabRef, type ModelId, type ModelRoute, type ToolErrorCode } from './agent-tools.spec';
 import type { SkillCategory, SkillInputSlot } from './skills.spec';
 import { PROBE_AGENT_IDS, PROBE_LIMITS } from './visibility-probes.spec';
 
@@ -244,6 +244,16 @@ export interface AgentChatSummary {
   readonly tabId: number | null;
   readonly updatedAt: number;
   readonly running: boolean;
+  /**
+   * Whether the user archived it (Phase 11 Task 8, `agent-data.spec.ts` `CHAT_LIST_FILTERS`): the
+   * `active` list hides it, the `archived` list shows it. `AgentState.chats` lists both.
+   */
+  readonly archived: boolean;
+  /**
+   * `agent.listChats` with a query only: where the query matched the chat's text (the user's and the
+   * assistant's, never tool output). Absent when only the title matched.
+   */
+  readonly match?: ChatSearchMatch;
 }
 
 /** A tool call's card. Its output preview is untrusted page or third-party data: shown as inert text only. */
@@ -312,6 +322,8 @@ export interface AgentActiveChatView {
   readonly contextWindow: number | null;
   /** The model the last turn used, `null` before one ran. */
   readonly modelId: AgentModelId | null;
+  /** The tabs the user attached to this chat (Phase 11 Task 9), in ref order. */
+  readonly attachments: readonly AgentAttachmentView[];
 }
 
 /** An approval request as the panel shows it (main's broker's view, field for field). */
@@ -379,7 +391,7 @@ export interface AgentState {
   readonly setup: AgentSetupView;
   /** The skills that can run (Task 7), in the picker's order. */
   readonly skills: readonly AgentSkillView[];
-  /** Every chat, most recently updated first. */
+  /** Every chat, most recently updated first (archived ones too, marked `archived`; never a `match`). */
   readonly chats: readonly AgentChatSummary[];
   /** The selected chat; `null` for a new, empty one. */
   readonly active: AgentActiveChatView | null;
@@ -398,6 +410,12 @@ export interface AgentState {
   readonly chatRetention: ChatRetention;
   /** The MCP servers and whether they may be used (Task 10, `agent-mcp.spec.ts`). Never a token or an environment value. */
   readonly mcp: AgentMcpView;
+  /**
+   * The tabs attached to the new chat (Phase 11 Task 9; `chatId` `null` in `agent.attachTab`): a
+   * typed message from the draft composer moves them to the chat it starts (a skill run never does);
+   * selecting another existing chat drops them.
+   */
+  readonly draftAttachments: readonly AgentAttachmentView[];
 }
 
 /** What a refused send says (the panel shows it as a notice). */
@@ -416,3 +434,49 @@ export const AGENT_NOTICE_MESSAGES: Readonly<Record<AgentNoticeView['kind'], str
 
 /** Re-exported for the panel's approval buttons. */
 export type { ApprovalDecision };
+
+// ---- Phase 11 Task 9: @-attached tabs (`agent-attach.feature.md`, Decision 11) -----------------
+
+/** Longest title the attach menu and a chip show (characters; main cuts it). */
+export const ATTACHABLE_TAB_TITLE_MAX_CHARS = 80;
+/** Most tabs `agent.attachableTabs` lists. */
+export const MAX_ATTACHABLE_TABS = 50;
+/** Longest origin an attachment carries (characters). */
+export const ATTACHMENT_ORIGIN_MAX_CHARS = 2048;
+
+/**
+ * An open web tab the user may attach (`agent.attachableTabs`): main's tab id, its title cut to
+ * `ATTACHABLE_TAB_TITLE_MAX_CHARS` and its origin. Web (`http(s)`) tabs only; never the chat's own
+ * tab or one already attached. The title is untrusted page text: shown as React text only.
+ */
+export interface AgentAttachableTab {
+  readonly tabId: number;
+  readonly title: string;
+  readonly origin: string;
+}
+
+/**
+ * An attachment's state now: `ready` (the tab still shows the page it was attached at, fragment
+ * aside), `changed` (it left that page: reads answer `expired` until the user attaches it again),
+ * `closed` (the tab is gone). `changed` and `closed` are sticky: a tab that comes back stays so
+ * until attached again.
+ */
+export const AGENT_ATTACHMENT_STATES = ['ready', 'changed', 'closed'] as const;
+export type AgentAttachmentState = (typeof AGENT_ATTACHMENT_STATES)[number];
+
+/** A chip in the composer: the ref the model reads it by, its origin and its (cut, untrusted) title. */
+export interface AgentAttachmentView {
+  readonly ref: AttachedTabRef;
+  readonly origin: string;
+  readonly title: string;
+  readonly state: AgentAttachmentState;
+}
+
+/**
+ * `agent.attachTab`'s answer: `attached` (also renewing the same tab's `changed` / `closed`
+ * attachment); `not-attachable` (no such open web tab, the chat's own tab, or its page is no longer
+ * on the origin the menu showed); `already-attached` (and still `ready`); `full`
+ * (`MAX_CHAT_ATTACHMENTS`); `unknown-chat`.
+ */
+export const AGENT_ATTACH_RESULTS = ['attached', 'not-attachable', 'already-attached', 'full', 'unknown-chat'] as const;
+export type AgentAttachResult = (typeof AGENT_ATTACH_RESULTS)[number];

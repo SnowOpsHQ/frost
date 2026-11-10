@@ -21,7 +21,7 @@ const URL_A = 'https://www.google.com/search?q=tea';
 const PACK: PackStatus = { state: 'ready', version: 2, source: 'remote', published: '2026-10-28', lastUpdate: null, checking: false };
 
 function tab(changes: Partial<TabState> = {}): TabState {
-  return { id: 3, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null, ...changes };
+  return { id: 3, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false, overridesRevision: 0, overridesStatus: 'active', ...changes };
 }
 
 function serpState(status: 'ready' | 'not-serp' | 'pending', changes: Partial<SerpTabState> = {}): SerpTabState {

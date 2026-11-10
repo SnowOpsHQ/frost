@@ -4,6 +4,8 @@
 export { countSeverities, pageFacts, panelStatus, rankFindings, runAudit, scoreAudit, scoreBand } from './audit';
 export { RULES } from './rules';
 export { copyValueOf } from './copy-values';
+// The Images, Headings and Speed tables as CSV (Phase 11 Task 1, `seo-exports.spec.ts`).
+export { exportCsv, headingsCsv, imagesCsv, speedCsv, type CsvExport } from './exports';
 export * from './content';
 export * from './javascript';
 // AI readiness: the AI crawlers' robots.txt verdicts (Phase 9 Task 6).

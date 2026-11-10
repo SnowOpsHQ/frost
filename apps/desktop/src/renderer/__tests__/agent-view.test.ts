@@ -2,7 +2,10 @@
 // (MODEL_REASONING_SUPPORT, REASONING_EFFORTS), specs/agent-session.spec.ts
 // (AgentState views, MODEL_CONTEXT_WINDOWS, EXECUTE_JS_APPROVAL_NOTE), specs/agent-tools.spec.ts (MODEL_PROVIDERS, byProvider)
 // Acceptance: specs/agent-panel.feature.md (View model: reasoning-options-follow-the-model, reasoning-auto-only-explained), specs/skills.feature.md (skill-view-helpers)
+// Phase 11 Task 8: specs/agent-data.spec.ts (chatTitleFromUser, chatSearchMatcher, chatSearchSnippet, CHAT_SEARCH_SNIPPET_CHARS,
+// STORED_CHAT_TITLE_MAX_CHARS); acceptance specs/agent-data.feature.md (Chat history: chat-history-helpers)
 import { describe, expect, test } from 'vitest';
+import { CHAT_SEARCH_MAX_CHARS, CHAT_SEARCH_SCAN_MAX_CHARS, CHAT_SEARCH_SNIPPET_CHARS, chatSearchMatcher, chatSearchSnippet, chatTitleFromUser, STORED_CHAT_TITLE_MAX_CHARS } from '@app/specs/agent-data.spec';
 import {
   AGENT_ANSWER_MESSAGES,
   AGENT_KEY_PROTECTION_MESSAGES,
@@ -17,7 +20,7 @@ import {
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
 import { MODEL_REASONING_SUPPORT, REASONING_EFFORTS, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
-import { EXECUTE_JS_APPROVAL_NOTE, MODEL_CONTEXT_WINDOWS, type AgentSkillView } from '@app/specs/agent-session.spec';
+import { CHAT_ENTRIES_MAX_CHARS, EXECUTE_JS_APPROVAL_NOTE, MODEL_CONTEXT_WINDOWS, type AgentSkillView } from '@app/specs/agent-session.spec';
 import { ALLOWED_MODEL_IDS, byProvider, GATEWAY_ONLY_PROVIDERS, MODEL_PROVIDERS, routeModelId } from '@app/specs/agent-tools.spec';
 import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_SLOT_MAX_CHARS, SKILL_USER_GROUP_LABEL, SKILL_WARNINGS } from '@app/specs/skills.spec';
 import { SKILLS } from './agent-fixtures';
@@ -37,6 +40,8 @@ import {
   canSend,
   chatHeading,
   chatListItems,
+  chatsInView,
+  snippetParts,
   composerKey,
   contextMeter,
   formatTokens,
@@ -55,6 +60,9 @@ import {
   setupChecklist,
   toolCardModel,
   visibleNotice,
+  atMenuTrigger,
+  attachmentName,
+  withoutAtTrigger,
 } from '../agent-view';
 import { approval, card, jsApproval, setup, state } from './agent-fixtures';
 
@@ -298,12 +306,12 @@ describe('agent panel view model', () => {
     expect(isAtBottom({ scrollTop: 476, scrollHeight: 1000, clientHeight: 500 })).toBe(true);
     expect(isAtBottom({ scrollTop: 300, scrollHeight: 1000, clientHeight: 500 })).toBe(false);
     const chats = [
-      { id: 'a', title: 'First', tabId: 1, updatedAt: 2, running: true },
-      { id: 'b', title: ' ', tabId: 1, updatedAt: 1, running: false },
+      { id: 'a', title: 'First', tabId: 1, updatedAt: 2, running: true, archived: false },
+      { id: 'b', title: ' ', tabId: 1, updatedAt: 1, running: false, archived: true, match: { snippet: 'tea', start: 0, length: 3 } },
     ];
     expect(chatListItems(chats, 'b')).toEqual([
-      { id: 'a', title: 'First', selected: false, running: true },
-      { id: 'b', title: 'Untitled chat', selected: true, running: false },
+      { id: 'a', title: 'First', selected: false, running: true, archived: false },
+      { id: 'b', title: 'Untitled chat', selected: true, running: false, archived: true, match: { snippet: 'tea', start: 0, length: 3 } },
     ]);
     expect(runningChatId(state({ chats }))).toBe('a');
     expect(runningChatId(state())).toBeNull();
@@ -391,5 +399,72 @@ describe('agent panel view model', () => {
 
   test('probe-approval-title', () => {
     expect(approvalTitle(approval({ toolName: 'run_visibility_probes', label: 'Fetch this page as search and AI crawlers would', risk: 'act', origin: 'https://www.example.com', input: '{}' }))).toBe('Fetch https://www.example.com/a as search and AI crawlers would?');
+  });
+
+  test('chat-history-helpers', () => {
+    // A user's title: trimmed, one line, bounded.
+    expect(chatTitleFromUser('  Tea notes  ')).toBe('Tea notes');
+    expect(chatTitleFromUser('t'.repeat(STORED_CHAT_TITLE_MAX_CHARS))).toHaveLength(STORED_CHAT_TITLE_MAX_CHARS);
+    for (const bad of ['', '   ', 'two\nlines', 'cr\rhere', 'tab\there', 'sep\u2028here', 'nul\u0000', 't'.repeat(STORED_CHAT_TITLE_MAX_CHARS + 1), 5, null]) expect(chatTitleFromUser(bad), String(bad).slice(0, 12)).toBeNull();
+    // The matcher: words in order, any whitespace between, any case; literal (no pattern characters).
+    expect(chatSearchMatcher('   ')).toBeNull();
+    expect(chatSearchMatcher(undefined)).toBeNull();
+    const tea = chatSearchMatcher('Green  TEA')!;
+    expect(tea('Fresh green\n\ttea leaves')).toEqual({ index: 6, length: 10 });
+    expect(tea('tea green')).toBeNull();
+    expect(chatSearchMatcher('ÉTÉ')!('un été chaud')).toEqual({ index: 3, length: 3 });
+    expect(chatSearchMatcher('a.b')!('axb')).toBeNull();
+    expect(chatSearchMatcher('a.b')!('see a.b here')).toEqual({ index: 4, length: 3 });
+    expect(chatSearchMatcher('(x|y)*')!('x')).toBeNull();
+    expect(chatSearchMatcher('[a-z]\\d+$/-')!('this [a-z]\\d+$/- that')).toEqual({ index: 5, length: 11 });
+    expect(chatSearchMatcher('x'.repeat(CHAT_SEARCH_MAX_CHARS + 50))!('x'.repeat(CHAT_SEARCH_MAX_CHARS))).not.toBeNull();
+    // The snippet: one line, bounded, the match inside it, more after than before.
+    const short = chatSearchSnippet('The oolong  is\nfresh.', 4, 6);
+    expect(short).toEqual({ snippet: 'The oolong is fresh.', start: 4, length: 6 });
+    const long = `${'a '.repeat(300)}NEEDLE${' b'.repeat(300)}`;
+    const cut = chatSearchSnippet(long, 600, 6);
+    expect(cut.snippet).toHaveLength(CHAT_SEARCH_SNIPPET_CHARS);
+    expect(cut.snippet.slice(cut.start, cut.start + cut.length)).toBe('NEEDLE');
+    expect(cut.start).toBe(Math.floor((CHAT_SEARCH_SNIPPET_CHARS - 6) / 3));
+    // Near the end, the room goes before the match.
+    const end = chatSearchSnippet(`${'a'.repeat(300)} NEEDLE`, 301, 6);
+    expect(end.snippet).toHaveLength(CHAT_SEARCH_SNIPPET_CHARS);
+    expect(end.snippet.endsWith('NEEDLE')).toBe(true);
+    // A match longer than the snippet is cut; never half a surrogate pair at either end.
+    expect(chatSearchSnippet('z'.repeat(500), 0, 500).snippet).toHaveLength(CHAT_SEARCH_SNIPPET_CHARS);
+    // With a surrogate pair at the cut, the match is one shorter, and no text from after it follows.
+    const longHit = chatSearchSnippet(`${'z'.repeat(CHAT_SEARCH_SNIPPET_CHARS - 1)}😀zz AFTER`, 0, CHAT_SEARCH_SNIPPET_CHARS + 3);
+    expect(longHit).toEqual({ snippet: 'z'.repeat(CHAT_SEARCH_SNIPPET_CHARS - 1), start: 0, length: CHAT_SEARCH_SNIPPET_CHARS - 1 });
+    const emoji = '😀'.repeat(200);
+    const pairs = chatSearchSnippet(`${emoji}x${emoji}`, 400, 1);
+    expect(pairs.snippet.slice(pairs.start, pairs.start + 1)).toBe('x');
+    expect(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/.test(pairs.snippet)).toBe(false);
+    // A search reads per chat what the panel keeps of it in memory.
+    expect(CHAT_SEARCH_SCAN_MAX_CHARS).toBe(CHAT_ENTRIES_MAX_CHARS);
+    // The panel's helpers: a view's chats, and a snippet in three parts.
+    const chats = [
+      { id: 'a', title: 'A', tabId: null, updatedAt: 2, running: false, archived: false },
+      { id: 'b', title: 'B', tabId: null, updatedAt: 1, running: false, archived: true },
+    ];
+    expect(chatsInView(chats, 'active').map((chat) => chat.id)).toEqual(['a']);
+    expect(chatsInView(chats, 'archived').map((chat) => chat.id)).toEqual(['b']);
+    expect(snippetParts({ snippet: 'The oolong is fresh.', start: 4, length: 6 })).toEqual({ before: 'The ', hit: 'oolong', after: ' is fresh.' });
+    expect(snippetParts({ snippet: 'abc', start: 2, length: 9 })).toEqual({ before: 'ab', hit: 'c', after: '' });
+  });
+});
+
+// Phase 11 Task 9 (specs/agent-attach.feature.md): when `@` opens the attach menu.
+describe('attach menu trigger', () => {
+  test('at-menu-trigger', () => {
+    expect(atMenuTrigger('@', 1)).toBe(true);
+    expect(atMenuTrigger('compare @', 9)).toBe(true);
+    expect(atMenuTrigger('line\n@', 6)).toBe(true);
+    expect(atMenuTrigger('me@x', 3)).toBe(false);
+    expect(atMenuTrigger('@x', 2)).toBe(false);
+    expect(atMenuTrigger('', 0)).toBe(false);
+    expect(withoutAtTrigger('compare @ now', 9)).toEqual({ text: 'compare  now', caret: 8 });
+    expect(withoutAtTrigger('me@', 3)).toEqual({ text: 'me@', caret: 3 });
+    expect(attachmentName({ title: '  ', origin: 'https://a.example' })).toBe('https://a.example');
+    expect(attachmentName({ title: 'A', origin: 'https://a.example' })).toBe('A');
   });
 });

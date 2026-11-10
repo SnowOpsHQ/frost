@@ -246,7 +246,7 @@ describe('captures', () => {
     const area = screenshotInput({ pageUrl: `${PAGE}#x`, createdAt: 2_000, kind: 'area', rectJson: '{"h":10,"w":20,"x":1,"y":2}' });
     const full = screenshotInput({ pageUrl: OTHER, createdAt: 3_000, kind: 'full', segments: 4, height: 9_000, sha256: first.sha256 });
     for (const input of [first, area, full]) expect(await t.repo.appendScreenshot(input)).toBe(true);
-    expect(await t.repo.screenshot(area.id)).toEqual({ ...area, pageUrl: PAGE });
+    expect(await t.repo.screenshot(area.id)).toEqual({ ...area, pageUrl: PAGE, editedFrom: null });
     const page = await t.repo.screenshots({ pageUrl: PAGE, limit: 1 });
     expect(page.screenshots.map((s) => s.id)).toEqual([area.id]);
     expect((await t.repo.screenshots({ pageUrl: PAGE, cursor: page.next!, limit: 1 })).screenshots.map((s) => s.id)).toEqual([first.id]);

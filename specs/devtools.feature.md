@@ -3,10 +3,15 @@
 Spec: `specs/devtools.spec.ts` (`DEVTOOLS_TOGGLE_SHORTCUT`, `DEVTOOLS_STORAGE_KEYS`,
 `DEVTOOLS_HEIGHT`, `DEVTOOLS_TABS`, `NETWORK_LIMITS`, `NETWORK_TYPE_OF`, `CRAWLABLE_TYPES`,
 `SECRET_HEADERS`, `REQUEST_HEADER_ALLOWLIST`, `RESPONSE_HEADER_KEEP`, `REDIRECT_KEY_HEADERS`,
-`CONSOLE_LIMITS`, `COOKIE_LIMITS`, `CLEAR_SITE_DATA`, `ISSUE_SORT_KEYS`),
-`specs/devtools.schema.ts` (the `devtools.*` inputs, `RobotsVerdictJobSchema`) and
-`specs/browser.spec.ts` (`BrowserState.devtoolsToggleSeq`). Phase 2.5 Task 5. Each line maps to one
-named test.
+`CONSOLE_LIMITS`, `COOKIE_LIMITS`, `CLEAR_SITE_DATA`, `ISSUE_SORT_KEYS`; Phase 11 Task 4:
+`NETWORK_EXPORT_FORMATS`, `NETWORK_EXPORT_RESULTS`, `NETWORK_CSV_COLUMNS`, `HAR_NO_BODY_COMMENT`,
+`EXPORT_URLS_REDACTED_NOTE`, `EXPORT_URL_PLACES`, `EXPORT_REDACTED_QUERY_PARAMS`,
+`EXPORT_REDACT_NAME_FRAGMENTS`, `EXPORT_REDACT_VALUE_PATTERNS`, `REDACTED_VALUE`, `HAR_CREATOR`,
+`DEVTOOLS_STORAGE_WORLD_ID`, `WEB_STORAGE_AREAS`, `WEB_STORAGE_LIMITS`, `STORAGE_USAGE_NOTE`),
+`specs/devtools.schema.ts` (the `devtools.*` inputs, `RobotsVerdictJobSchema`,
+`WebStorageKeysAnswerSchema`, `WebStorageValueAnswerSchema`, `HarLogSchema`) and
+`specs/browser.spec.ts` (`BrowserState.devtoolsToggleSeq`). Phase 2.5 Task 5, Phase 11 Task 4. Each
+line maps to one named test.
 
 ## Decisions
 - **A band under the page area.** The tab's view is a native `WebContentsView` drawn above the
@@ -21,11 +26,17 @@ named test.
   `before-input-event` of every tab and of the chrome (consumed, so a page can neither see nor
   block it); View › SEO Devtools has it as its accelerator; the palette has "Toggle SEO devtools"
   and one "Show devtools: …" action per tab. Main bumps `devtoolsToggleSeq`; the chrome toggles.
-- **Read-only by design.** No script runs in the page for the drawer and no DOM is edited. The one
-  write is "Clear this site's data", which main confirms in its own dialog (Cancel is the default).
+- **Never edits a page; one read-only script** (Phase 11 Task 4, under its security review). The
+  drawer never edits a page's DOM. It runs one script only: the read-only web storage reader, in its
+  own isolated world `DEVTOOLS_STORAGE_WORLD_ID` (`1_700`), in the top frame, only when the Storage
+  tab is opened or refreshed and for a Reveal, and, while a key is revealed, for each Storage answer
+  (reading that key alone); one script at a time per tab (`WEB_STORAGE_LIMITS`). The one write to the page's
+  data is "Clear this site's data", which main confirms in its own dialog (Cancel is the default);
+  the one file is the network export, which main writes where the user chose in its own save dialog.
 - **Data only through `devtools.*`.** Every procedure is `enforceSender`-first and Zod-validated:
   `watch` (a long-poll on the tab's devtools version), `network`, `requestHeaders`, `redirects`,
-  `console`, `storage`, `revealCookie`, `clearSiteData`, `setOpen` and `setPreserveLog`. A combined
+  `console`, `storage`, `revealCookie`, `clearSiteData`, `setOpen`, `setPreserveLog`, and (Phase 11)
+  `exportNetwork` and `revealStorageItem`. A combined
   state long-poll was rejected: the network log is large, so the chrome waits on a small version and
   fetches only the tab it shows (no sooner than `DEVTOOLS_REFRESH_MIN_MS` apart). They serve only
   the active tab (`DEVTOOLS_TAB_SCOPE`): any other id answers `no-tab`.
@@ -67,8 +78,50 @@ named test.
   level, text, source and line with a count, capped (`CONSOLE_LIMITS`).
 - **Cookies masked; Reveal per cookie, per document.** Main keeps which cookies were revealed for
   the tab, stamped with its committed document, and forgets that on its next committed cross-document
-  navigation, on Clear this site's data and when the tab closes; `devtools.storage` answers `value: null` for every other cookie. Storage usage is
-  not shown (`STORAGE_USAGE_NOTE`): Electron has no cheap per-origin figure.
+  navigation, on Clear this site's data and when the tab closes; `devtools.storage` answers `value: null` for every other cookie. Storage usage
+  and quota come from the web storage reader's `navigator.storage.estimate()` (`STORAGE_USAGE_NOTE`).
+- **Network export: HAR or CSV, written by main, URLs redacted best effort** (Phase 11 Decision 5).
+  The chrome sends only the tab and the format (`ExportNetworkInputSchema`); the active tab only.
+  Main builds the file from its log as kept (rows and headers as stored, secret headers `•••`),
+  asks where in its own save dialog (`NETWORK_EXPORT_DIALOG`), parented to the window that asked
+  (the IPC sender's; none or closed: app-modal), and writes it with mode 0600 (narrowed after the
+  write when the file existed; not on Windows; a failed narrowing never fails the save), as Export
+  Diagnostics does; Cancel writes nothing.
+  One export at a time: another asked while the dialog is open answers `cancelled` (no second
+  dialog).
+  Never a body: each HAR entry has `bodySize: -1`, `content.size: -1`, no `content.text`, and
+  `HAR_NO_BODY_COMMENT`. One function, `redactExportUrl` (`main/devtools/url-redact.ts`), runs over
+  every URL the file carries (`EXPORT_URL_PLACES`): it drops user info and the fragment; it writes
+  `REDACTED_VALUE` for a parameter named on `EXPORT_REDACTED_QUERY_PARAMS` or containing an
+  `EXPORT_REDACT_NAME_FRAGMENTS` part (compared without trailing `[…]` and by each bracket's content),
+  whatever the value's length, for any value that after percent-decoding matches
+  `EXPORT_REDACT_VALUE_PATTERNS` (email, long opaque run, JWT), and for a value whose nested
+  parameters (`next=/cb?token=…`, encoded or not) include a sensitive one. It is a
+  heuristic (a secret under an unknown name or in a path stays), so frost never says the file holds
+  no secret: the HAR `log.comment`, the CSV's first line and the Export menu say
+  `EXPORT_URLS_REDACTED_NOTE`, and the menu adds `EXPORT_REDACTION_HINT`. CSV cells go through the
+  formula guard (`csvCell`). *Rejected:* reading bodies through the CDP `Network` domain; exporting
+  URLs as recorded with only a disclosure; redacting path segments.
+- **HAR without bodies (Open question 5).** HAR 1.2 allows `-1` for a size that is unknown
+  (`headersSize`, `bodySize`) and leaves `content.text` optional, so a body-less entry is valid HAR;
+  the export is checked against `HarLogSchema` (`har-matches-har-log-schema`). Importing a file into
+  a browser's devtools or a HAR viewer was not tried in this task's environment; a viewer may show
+  such entries with an empty response body.
+- **Web storage: keys and sizes, one value on Reveal** (Phase 11 Decision 6). The reader runs in
+  `DEVTOOLS_STORAGE_WORLD_ID`, top frame only, when the Storage tab opens or Refresh is pressed
+  (`readWebStorage`). By default it answers key names (capped) and value sizes only, per area, and
+  the browser's usage estimate; a value crosses into main only for the one key the user reveals (a
+  second call reading that key alone), stamped with the tab's committed document like a cookie
+  Reveal, and is never kept: each Storage answer reads it again. Main keeps the last read's keys and
+  sizes for the tab's current document, never a value. One script at a time per tab: a read in flight
+  is shared by the requests made meanwhile, and one overtaken by a commit or a clear saves nothing.
+  Every answer is validated
+  (`WebStorageKeysAnswerSchema`, `WebStorageValueAnswerSchema`) and capped; a page's own getters or
+  `Proxy` on `localStorage` live in its main world, out of the isolated world's reach, but the
+  answers are still treated as untrusted. A timeout, an opaque origin or a refused storage answers
+  `unavailable` with its reason. Read-only: no edit or delete ("Clear this site's data" exists).
+  *Rejected:* CDP `DOMStorage` (an observing domain); returning every value for main to mask;
+  editing values.
 - **Issues from the shown audit.** The chrome's own audit (the sidebar's), every finding in one
   table sortable by severity, rule and category; clicking a row opens the SEO sidebar on the most
   specific panel after Overview that covers the finding's category (the one with the fewest
@@ -147,6 +200,86 @@ named test.
   origin shares its answer and one for another origin answers `busy` (nothing asked, nothing
   cleared).
 
+## URL redaction (`main/devtools/__tests__/url-redact.test.ts`, pure)
+- **Scenario: denylisted-names** — every `EXPORT_REDACTED_QUERY_PARAMS` name has its value replaced
+  by `REDACTED_VALUE`, in any case and percent-encoded.
+- **Scenario: short-values-under-sensitive-names** — `csrf=ab12`, `nonce=7`, `access_key=x` are
+  redacted whatever the value's length.
+- **Scenario: name-fragments** — `x-api-key`, `client_secret` (an `EXPORT_REDACT_NAME_FRAGMENTS`
+  part) are redacted.
+- **Scenario: fragment-dropped** — `#access_token=…` never leaves.
+- **Scenario: user-info-dropped** — `user:password@` never leaves.
+- **Scenario: percent-encoded-email-redacted** — `a%40b.example` (and double-encoded) is redacted
+  under any name.
+- **Scenario: email-inside-longer-value** — an email inside a longer value is redacted.
+- **Scenario: long-opaque-and-jwt-values** — a 32-character hex or base64 run and a JWT-shaped value
+  are redacted; a 31-character run is kept.
+- **Scenario: nested-url-params-redacted** — `?next=/cb?token=abc`, `?next=%2Fcb%3Fcode%3Dabc%26state%3Dxyz`
+  and `?a=1?token=abc` are redacted whole; nested ordinary parameters are kept.
+- **Scenario: bracketed-and-session-names** — `token[]`, `token%5B%5D`, `data[sid]` and the session
+  and password names (`pwd`, `pw`, `phpsessid`, `jsessionid`, `sessid`, the `sess` fragment) are
+  redacted.
+- **Scenario: ordinary-params-kept** — `q`, `page`, `utm_source` keep their values; unreadable URLs
+  answer `REDACTED_VALUE`.
+- **Scenario: path-secrets-not-claimed** — a token in a path segment is kept (the documented gap),
+  which is why the file never claims to hold no secret.
+
+## Network export (`main/devtools/__tests__/network-export.test.ts`)
+- **Scenario: har-has-no-bodies-and-says-so** — every entry has `bodySize: -1`, `content.size: -1`,
+  no `text`, `HAR_NO_BODY_COMMENT`; `log.comment` says bodies are never recorded.
+- **Scenario: har-masks-secret-headers** — `SECRET_HEADERS` appear only as `MASKED_VALUE`.
+- **Scenario: har-redacts-sensitive-query-params** — `request.url` is redacted.
+- **Scenario: har-querystring-array-redacted** — `request.queryString` restates only redacted values.
+- **Scenario: har-redirect-url-redacted** — `response.redirectURL` is redacted.
+- **Scenario: har-redacts-referer-and-location-headers** — those header values are redacted.
+- **Scenario: har-redacts-link-header-urls** — each `<…>` URL of a `link` value is redacted, an
+  unclosed one too.
+- **Scenario: har-page-url-redacted** — `pages[].title` is redacted.
+- **Scenario: csv-redacts-sensitive-query-params** — the CSV's URL and Redirect to are redacted.
+- **Scenario: export-says-best-effort-redaction** — the HAR `log.comment` and the CSV's first line
+  say `EXPORT_URLS_REDACTED_NOTE` and never claim the file holds no secret.
+- **Scenario: har-matches-har-log-schema** — a log with every state (pending, done, redirected,
+  failed, preserved documents) is valid `HarLogSchema`.
+- **Scenario: har-comment-counts-dropped** — `log.comment` states `dropped`, `notKept` and
+  `overBudget`.
+- **Scenario: csv-formula-guard** — a cell starting with `=`, `+`, `-`, `@` gets a leading `'`.
+- **Scenario: export-active-tab-only** — another tab answers `empty`: no dialog, nothing written.
+- **Scenario: one-export-dialog-at-a-time** — a second export while main's save dialog is open
+  answers `cancelled` without a second dialog; the next one after it asks again.
+- **Scenario: cancelled-writes-nothing** — the save dialog cancelled: `cancelled`, nothing written;
+  an empty log is `empty` without a dialog; a write error is `failed`.
+- **Scenario: network-export-dialog-parented-to-the-sender-window** (`site-data.test.ts`) — the
+  dialog goes to the sender's window even when another has focus; no, an unknown or a closed window:
+  app-modal.
+- **Scenario: network-export-file-is-private-even-when-overwritten** (`site-data.test.ts`) — the
+  HAR / CSV is mode 0600, also over an existing 0644 file (POSIX only).
+
+## Web storage (`main/devtools/__tests__/web-storage.test.ts`)
+- **Scenario: reads-in-storage-world-only** — every script runs with
+  `executeJavaScriptInIsolatedWorld(DEVTOOLS_STORAGE_WORLD_ID, …)`, never another world, and the
+  world is in `NON_AGENT_WORLD_IDS` (with `1_601` and `1_602`); the script is self-contained and
+  read-only (it never calls `setItem`, `removeItem` or `clear`).
+- **Scenario: refresh-returns-keys-and-sizes-only** — a read answers each area's keys and value sizes
+  with `value: null`, and usage and quota; no answer without `readWebStorage` runs the reader; the
+  listing is answered again until the next commit.
+- **Scenario: reveal-reads-one-key-and-keeps-nothing** — Reveal of a listed key answers `true`; the
+  next answer reads that key alone (a second call) and shows its capped value; nothing of the value
+  is held by main (each answer reads it again); an unlisted or cut key answers `false`.
+- **Scenario: reveal-stale-after-navigation** — a commit forgets the keys and the reveal; a value
+  read that a commit overtakes, or that answers for another origin, is dropped.
+- **Scenario: answer-validated-and-capped** — a malformed or over-long answer is `invalid`, never
+  shown.
+- **Scenario: opaque-origin-unavailable** — the script answers `opaque-origin` for a document whose
+  origin is opaque; a refused storage is `denied`.
+- **Scenario: script-timeout-unavailable** — no answer within `scriptTimeoutMs` is `timeout`.
+- **Scenario: reads-coalesced-per-tab** — requests while a keys read is in flight share it (one
+  script); answers asking for a revealed value at once share one read; never two scripts at a time on
+  a tab.
+- **Scenario: clear-during-read-saves-nothing** — a clear while a keys or value read runs leaves
+  nothing listed or shown.
+- **Scenario: reader-runs-with-javascript-off** — the reader does not depend on the page's scripting
+  (an isolated world runs with JavaScript off, as the extractor's does).
+
 ## Service (`main/devtools/__tests__/service.test.ts`)
 - **Scenario: devtools-watch-wakes-on-change** — `watch` answers at once for an older version, else
   on the tab's next change (a request, a console message, a reveal), or with the current version when
@@ -165,8 +298,9 @@ named test.
   on; closing it (or the window going away) turns it off.
 
 ## Router (`packages/ipc-contract/src/__tests__/devtools-router.test.ts`)
-- **Scenario: devtools-procedures-enforce-sender** — every `devtools.*` procedure rejects a foreign
-  sender before validation or the service, and fails closed without the service.
+- **Scenario: devtools-procedures-enforce-sender** — every `devtools.*` procedure (with
+  `exportNetwork` and `revealStorageItem`) rejects a foreign sender before validation or the
+  service, and fails closed without the service.
 - **Scenario: devtools-inputs-validated** — unknown keys, bad ids and over-long values are rejected
   before the service is called.
 - **Scenario: devtools-procedures-call-the-service** — each procedure (with `requestHeaders`) passes its input (and, for
@@ -226,3 +360,10 @@ named test.
 - **Scenario: issues-jump-to-panel** — clicking an issue opens the SEO sidebar on its panel.
 - **Scenario: devtools-shortcut-not-swallowed** — a page that cancels every key still cannot keep
   `Mod+Shift+D` from toggling the drawer, and never sees it.
+- **Scenario: network-export-har-without-bodies-and-redacted** — with main's save dialog stubbed,
+  Export HAR writes a file that matches `HarLogSchema`, has no body, says
+  `EXPORT_URLS_REDACTED_NOTE`, and holds no sensitive query value, fragment or email the page sent;
+  the menu shows the note and the hint.
+- **Scenario: storage-shows-local-and-session-keys-masked** — the Storage tab lists the page's local
+  and session keys with sizes and masked values (no value in the chrome); Reveal shows one; a
+  navigation masks it again.

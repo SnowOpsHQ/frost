@@ -25,7 +25,7 @@ describe('robots verdicts', () => {
   });
 
   test('robots-verdicts-same-origin-crawlable-only', async () => {
-    const tab: DevtoolsContents = { id: 11, getURL: () => `${ORIGIN}/page`, isDestroyed: () => false, on: vi.fn(), once: vi.fn() };
+    const tab: DevtoolsContents = { id: 11, getURL: () => `${ORIGIN}/page`, isDestroyed: () => false, executeJavaScriptInIsolatedWorld: vi.fn(), on: vi.fn(), once: vi.fn() };
     let answer: RobotsFetch | null = robots('User-agent: *\nDisallow: /blocked/\n');
     const get = vi.fn(async () => answer);
     const verdicts = vi.fn(async (job: { robots: RobotsFetch; urls: string[] }) => robotsVerdicts(job));

@@ -6,7 +6,8 @@ import { ipc } from '../ipc';
 // The Content panel's notes for one page URL (acceptance `seo-content.feature.md`): the target query
 // and the snippet drafts live in main's database (`content.*` procedures). Edits show at once and are
 // saved after `SAVE_DELAY_MS` without another edit; `flush()` saves whatever is pending now (before a
-// copy, when the page changes, when the panel closes).
+// copy, when the page changes, when the panel closes, before the target query is highlighted) and
+// resolves once every save, also one already sent, was answered.
 //
 // Main counts the deletions of every note (`BrowserState.contentNotesGeneration`: Clear Browsing Data
 // with its box ticked, "Delete all notes"). When that changes, the view drops its pending edits and
@@ -55,6 +56,13 @@ export function useContentNotes(url: string, generation = 0): ContentNotesApi {
   const [state, setState] = useState<NotesState>({ url, loaded: false, query: '', drafts: [] });
   // Each pending save with the generation it was made in.
   const pending = useRef(new Map<string, { timer: ReturnType<typeof setTimeout>; run: () => Promise<unknown>; from: number }>());
+  // Saves sent and not answered yet (a flush waits for them too).
+  const inflight = useRef(new Set<Promise<unknown>>());
+  const track = useCallback((save: Promise<unknown>) => {
+    const settled = save.catch(ignore);
+    inflight.current.add(settled);
+    void settled.finally(() => inflight.current.delete(settled));
+  }, []);
   // The generation the shown notes were read in (each write carries it), and main's latest one.
   const readIn = useRef(generation);
   const latest = useRef(generation);
@@ -64,18 +72,19 @@ export function useContentNotes(url: string, generation = 0): ContentNotesApi {
     const runs = [...pending.current.values()];
     pending.current.clear();
     for (const entry of runs) clearTimeout(entry.timer);
-    await Promise.all(runs.map((entry) => entry.run().catch(ignore)));
-  }, []);
+    for (const entry of runs) track(entry.run());
+    await Promise.all([...inflight.current]);
+  }, [track]);
 
   const schedule = useCallback((key: string, from: number, run: (from: number) => Promise<unknown>) => {
     const previous = pending.current.get(key);
     if (previous) clearTimeout(previous.timer);
     const timer = setTimeout(() => {
       pending.current.delete(key);
-      void run(from).catch(ignore);
+      track(run(from));
     }, SAVE_DELAY_MS);
     pending.current.set(key, { timer, run: () => run(from), from });
-  }, []);
+  }, [track]);
 
   useEffect(() => {
     let live = true;
@@ -141,4 +150,19 @@ export function useContentNotes(url: string, generation = 0): ContentNotesApi {
 export function copySnippetHtml(tabId: number, audit: { url: string; takenAt: number }, slot: number | null): Promise<boolean> {
   const input = slot === null ? { tabId, audit, source: 'page' as const } : { tabId, audit, source: 'variant' as const, slot };
   return ipc.content.copySnippetHtml.mutate(input).catch(() => false);
+}
+
+/**
+ * Copy JSON-LD through main (`content.copyPreviewJsonLd`, Phase 11 Task 3): the page's blocks that
+ * fed the preview (`page`), or a suggested JSON-LD main builds with the editor's session fields
+ * (`suggested`). Resolves whether it was written.
+ */
+export function copyPreviewJsonLd(
+  tabId: number,
+  audit: { url: string; takenAt: number },
+  source: 'page' | 'suggested',
+  fields?: { siteName?: string; breadcrumb?: boolean; date?: boolean },
+): Promise<boolean> {
+  const input = source === 'suggested' && fields !== undefined ? { tabId, audit, source, fields } : { tabId, audit, source };
+  return ipc.content.copyPreviewJsonLd.mutate(input).catch(() => false);
 }

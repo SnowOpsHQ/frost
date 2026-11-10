@@ -11,7 +11,7 @@
  */
 import { z } from 'zod';
 import { CanonicalSchema, HeadingSchema, HreflangLinkSchema, JsonLdBlockSchema, LinkSchema, RobotsMetaSchema, SNAPSHOT_LIMITS as L } from './seo-snapshot.spec';
-import { SERVED_FETCH_LIMITS, SERVED_LEAD_TEXT_MAX_CHARS, SERVED_UNAVAILABLE_REASONS } from './seo-javascript.spec';
+import { SERVED_FETCH_LIMITS, SERVED_LEAD_TEXT_MAX_CHARS, SERVED_SOURCE_MAX_CHARS, SERVED_UNAVAILABLE_REASONS } from './seo-javascript.spec';
 import { isWebUrl } from './web-url.spec';
 
 const count = z.int().nonnegative().max(L.maxCount);
@@ -137,8 +137,17 @@ export interface ServedParseInput {
   /** Parse as a browser with scripting on (default) or off (a render profile with JavaScript off). */
   readonly scriptingEnabled?: boolean;
 }
-/** The parse job's answer. */
-export type ServedParseResult = { readonly ok: true; readonly snapshot: ServedSnapshot } | { readonly ok: false; readonly reason: 'parse-failed' | 'parse-timeout' };
+/**
+ * The parse job's answer. `sourceText` (Phase 11 Task 5): the decoded text the parse read, cut at
+ * `SERVED_SOURCE_MAX_CHARS` (`sourceTruncated`: it was longer); absent from a parse that keeps none.
+ * Main checks it with `ServedSourceTextSchema` before keeping it.
+ */
+export type ServedParseResult =
+  | { readonly ok: true; readonly snapshot: ServedSnapshot; readonly sourceText?: string; readonly sourceTruncated?: boolean }
+  | { readonly ok: false; readonly reason: 'parse-failed' | 'parse-timeout' };
+
+/** The served source as main keeps it: a string of at most `SERVED_SOURCE_MAX_CHARS`. */
+export const ServedSourceTextSchema = z.string().max(SERVED_SOURCE_MAX_CHARS);
 
 /** `javascript.refetchServed` input: the tab. */
 export const RefetchServedInputSchema = z.strictObject({ tabId: z.int().positive() });

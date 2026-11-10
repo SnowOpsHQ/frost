@@ -5,7 +5,8 @@
 // SKILL_FILE_FORMAT, SKILL_FILE_VERSION, SKILL_EXPORT_MESSAGES, SKILL_IMPORT_MESSAGES, SKILL_FILE_WORDS, SKILL_IMPORT_CONFLICT_MESSAGES),
 // specs/agent-mcp.spec.ts (MCP_NO_SANDBOX_SENTENCE)
 // Acceptance: specs/agent-panel.feature.md (End to end, agent-model-and-reasoning-settings), specs/skills.feature.md (agent-skill-narrows-tools, agent-skill-pack-listed),
-// specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end), specs/agent-mcp-presets.feature.md (End to end)
+// specs/agent-data.feature.md (End to end), specs/agent-mcp.feature.md (End to end), specs/agent-mcp-presets.feature.md (End to end),
+// specs/agent-attach.feature.md (attach-second-tab-and-read-it; specs/agent-panel.spec.ts AGENT_ATTACHMENT_STATE_LABELS)
 import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -14,11 +15,23 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { AGENT_MODEL_PROVIDER_LABELS, AGENT_REASONING_HINT, AGENT_REASONING_UNAVAILABLE, AGENT_SET_KEY_MESSAGES, AGENT_TOOL_STATUS_LABELS } from '@app/specs/agent-panel.spec';
+import {
+  AGENT_ATTACHMENT_STATE_LABELS,
+  AGENT_MODEL_PROVIDER_LABELS,
+  AGENT_PANEL_RESIZE_LABEL,
+  AGENT_PANEL_WIDTH,
+  AGENT_PANEL_WIDTH_RANGE,
+  AGENT_REASONING_HINT,
+  AGENT_REASONING_UNAVAILABLE,
+  AGENT_SET_KEY_MESSAGES,
+  AGENT_TOOL_STATUS_LABELS,
+} from '@app/specs/agent-panel.spec';
+import { PAGE_MIN_WIDTH, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 import {
   AGENT_GRANTS_EXPLAINER,
   CHAT_EXPORT_MESSAGES,
   CHAT_EXPORT_UNTRUSTED_NOTE,
+  CHAT_HISTORY_WORDS,
   SKILL_EXPORT_MESSAGES,
   SKILL_FILE_FORMAT,
   SKILL_FILE_VERSION,
@@ -102,7 +115,7 @@ let page: Page;
 let site: Awaited<ReturnType<typeof startSite>>;
 let tlsSite: Awaited<ReturnType<typeof startTlsSite>>;
 let scripts: string;
-const { go, contentsIdAt, urlOf } = chromeHelpers(
+const { go, contentsIdAt, urlOf, strip, activeTab } = chromeHelpers(
   () => app!,
   () => page,
 );
@@ -255,6 +268,64 @@ test('agent-panel-keeps-the-page-view-clear', async () => {
     const view = (await viewBounds())!;
     return view.x + view.width <= Math.ceil(await panelLeft());
   }).toBe(true);
+});
+
+// Phase 11 Task 10 (`agent-panel.feature.md`, Resize): the separator on the panel's page side.
+test('agent-pane-resize', async () => {
+  await launchWith([{ text: ['unused'] }]);
+  // Hyprland tiles the window: the chrome is laid out at a set size instead.
+  await page.setViewportSize({ width: 1_280, height: 800 });
+  try {
+    const separator = page.getByTestId('agent-resize');
+    await expect(separator).toHaveAttribute('role', 'separator');
+    await expect(separator).toHaveAttribute('aria-label', AGENT_PANEL_RESIZE_LABEL);
+    await expect(separator).toHaveAttribute('aria-valuenow', String(AGENT_PANEL_WIDTH));
+    await expect.poll(async () => (await viewBounds())!.x + (await viewBounds())!.width).toBeLessThanOrEqual(Math.ceil((await panel().boundingBox())!.x));
+    const before = (await viewBounds())!;
+    // Dragged 100 px towards the page (left): the panel widens, the tab's view narrows by as much.
+    const box = (await separator.boundingBox())!;
+    const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x - 50, y, { steps: 4 });
+    await page.mouse.move(x - 100, y, { steps: 4 });
+    await page.mouse.up();
+    await expect(separator).toHaveAttribute('aria-valuenow', String(AGENT_PANEL_WIDTH + 100));
+    await expect.poll(async () => (await viewBounds())!.width).toBe(before.width - 100);
+    expect((await viewBounds())!.x).toBe(before.x);
+    // ArrowRight moves the separator right: the panel narrows by one step.
+    await separator.focus();
+    await page.keyboard.press('ArrowRight');
+    const chosen = AGENT_PANEL_WIDTH + 100 - AGENT_PANEL_WIDTH_RANGE.keyboardStep;
+    await expect(separator).toHaveAttribute('aria-valuenow', String(chosen));
+    await expect.poll(async () => (await viewBounds())!.width).toBe(before.width - 100 + AGENT_PANEL_WIDTH_RANGE.keyboardStep);
+
+    // Both panels open in a chrome too narrow for both as chosen: the agent gives way first.
+    await page.getByTestId('seo-toggle').click();
+    await expect(page.getByTestId('seo-resize')).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH));
+    const agentRoom = 400;
+    const width = PAGE_MIN_WIDTH + SIDEBAR_RAIL_WIDTH + 2 + SIDEBAR_PANEL_WIDTH + agentRoom;
+    await page.setViewportSize({ width, height: 800 });
+    // (Within a pixel: on a scaled display the chrome's width is a fraction off the one asked for.)
+    const near = (locator: ReturnType<Page['getByTestId']>, value: number) => expect.poll(async () => Math.abs(Number(await locator.getAttribute('aria-valuenow')) - value)).toBeLessThanOrEqual(1);
+    await near(separator, agentRoom);
+    await expect(page.getByTestId('seo-resize')).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH));
+    // The page at its minimum (borders are one device pixel: a fraction of a CSS px on a scaled display).
+    await expect.poll(async () => (await viewBounds())!.width).toBeGreaterThanOrEqual(PAGE_MIN_WIDTH);
+    expect((await viewBounds())!.width).toBeLessThanOrEqual(PAGE_MIN_WIDTH + 2);
+    // Narrower still: the agent at its minimum, then the sidebar gives way.
+    await page.setViewportSize({ width: width - (agentRoom - AGENT_PANEL_WIDTH_RANGE.min) - 30, height: 800 });
+    await expect(separator).toHaveAttribute('aria-valuenow', String(AGENT_PANEL_WIDTH_RANGE.min));
+    await near(page.getByTestId('seo-resize'), SIDEBAR_PANEL_WIDTH - 30);
+    // The page at its minimum (borders are one device pixel: a fraction of a CSS px on a scaled display).
+    await expect.poll(async () => (await viewBounds())!.width).toBeGreaterThanOrEqual(PAGE_MIN_WIDTH);
+    expect((await viewBounds())!.width).toBeLessThanOrEqual(PAGE_MIN_WIDTH + 2);
+    // Wide again: the chosen width comes back.
+    await page.setViewportSize({ width: 1_600, height: 800 });
+    await expect(separator).toHaveAttribute('aria-valuenow', String(chosen));
+  } finally {
+    await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
+  }
 });
 
 test('agent-approval-deny', async () => {
@@ -781,6 +852,116 @@ test('agent-chat-export-and-restore', async () => {
     app = undefined;
     await rm(profile, { recursive: true, force: true });
   }
+});
+
+// Phase 11 Task 8 (specs/agent-data.feature.md, Chat history): two chats with the scripted model; one
+// renamed inline and archived (it leaves Active, shows under Archived); main's search finds it by the
+// assistant's text, with the match marked in a snippet, and a phrase only a tool read finds nothing.
+test('chat-rename-archive-search', async () => {
+  await launchWith([{ text: ['The oolong is fresh and floral.'] }, { toolCalls: [{ toolName: 'page_text', input: {} }] }, { text: ['Done reading.'] }]);
+  await send('Green tea notes');
+  await expect(assistantTexts().last()).toHaveText('The oolong is fresh and floral.');
+  await page.getByTestId('agent-new-chat').click();
+  await send('What does this page say?');
+  await expect(assistantTexts().last()).toHaveText('Done reading.');
+  await expect(toolCards().last()).toContainText(AGENT_TOOL_STATUS_LABELS.done);
+
+  await page.getByTestId('agent-chats-toggle').click();
+  const items = page.getByTestId('agent-chat-item');
+  const titles = page.getByTestId('agent-chat-title');
+  await expect(titles).toHaveText(['What does this page say?', 'Green tea notes']);
+  // Rename inline: Escape keeps the title, Enter saves the new one.
+  const tea = items.filter({ hasText: 'Green tea notes' });
+  await tea.getByTestId('agent-chat-rename').click();
+  const field = page.getByTestId('agent-chat-rename-input');
+  await expect(field).toBeFocused();
+  await field.fill('Discarded');
+  await field.press('Escape');
+  await expect(titles).toHaveText(['What does this page say?', 'Green tea notes']);
+  await tea.getByTestId('agent-chat-rename').click();
+  await field.fill('  Tea tasting  ');
+  await field.press('Enter');
+  await expect(titles).toHaveText(['What does this page say?', 'Tea tasting']);
+  // Archive: gone from Active, listed under Archived.
+  await items.filter({ hasText: 'Tea tasting' }).getByTestId('agent-chat-archive').click();
+  await expect(titles).toHaveText(['What does this page say?']);
+  await page.getByTestId('agent-chats-filter-archived').click();
+  await expect(titles).toHaveText(['Tea tasting']);
+  await expect(page.getByTestId('agent-chat-archive')).toHaveAttribute('aria-label', `${CHAT_HISTORY_WORDS.unarchive}: Tea tasting`);
+  // Search (main's): the assistant's words, with a snippet and the match marked.
+  const search = page.getByTestId('agent-chats-search');
+  await search.fill('FRESH and');
+  await expect(titles).toHaveText(['Tea tasting']);
+  await expect(page.getByTestId('agent-chat-snippet')).toHaveText('The oolong is fresh and floral.');
+  await expect(page.getByTestId('agent-chat-snippet').locator('mark')).toHaveText('fresh and');
+  // The archived chat isn't in the Active list's search; the other chat's words are.
+  await page.getByTestId('agent-chats-filter-active').click();
+  await expect(page.getByTestId('agent-chats-no-match')).toHaveText(CHAT_HISTORY_WORDS.noMatch);
+  await search.fill('page say');
+  await expect(titles).toHaveText(['What does this page say?']);
+  // "Where the agent begins." is only in what page_text read: tool output is never searched.
+  await search.fill('agent begins');
+  await expect(page.getByTestId('agent-chats-no-match')).toHaveText(CHAT_HISTORY_WORDS.noMatch);
+  await expect(titles).toHaveCount(0);
+  // Cleared: the Active list again; unarchive brings the chat back.
+  await search.fill('');
+  await page.getByTestId('agent-chats-filter-archived').click();
+  await page.getByTestId('agent-chat-archive').click();
+  await expect(page.getByTestId('agent-chats-view-empty')).toHaveText(CHAT_HISTORY_WORDS.noArchived);
+  await page.getByTestId('agent-chats-filter-active').click();
+  await expect(titles).toHaveText(['What does this page say?', 'Tea tasting']);
+});
+
+// Phase 11 Task 9 (specs/agent-attach.feature.md): the user attaches a second tab from the `@` menu; the
+// scripted model reads it through `read_attached_tab` (the real runtime's utility process: the new
+// tool's schema validates there too), and its chip follows the tab when it moves on.
+test('attach-second-tab-and-read-it', async () => {
+  const next = `${site.origin}/next`;
+  await launchWith([{ toolCalls: [{ toolName: 'read_attached_tab', input: { ref: 'tab-1', part: 'text' } }] }, { text: ['The other tab is about the next page.'] }]);
+  // A second tab on /next, then back to the first (the chat's tab).
+  await page.getByTestId('new-tab').click();
+  await expect(strip()).toHaveCount(2);
+  await go(next);
+  const otherId = await contentsIdAt(next);
+  await strip().nth(0).click();
+  await expect(activeTab()).toHaveAttribute('title', 'Agent start');
+
+  // `@` opens the menu: the other web tab, by title and origin (not the chat's own tab).
+  const input = page.getByTestId('agent-input');
+  await input.click();
+  await input.pressSequentially('@');
+  const options = page.getByTestId('agent-attach-option');
+  await expect(options).toHaveCount(1);
+  await expect(options.first()).toContainText('Agent next');
+  await expect(options.first()).toContainText(site.origin);
+  await options.first().click();
+  await expect(page.getByTestId('agent-attach-menu')).toHaveCount(0);
+  // The `@` gave way to a chip.
+  await expect(input).toHaveValue('');
+  const chip = page.getByTestId('agent-attachment');
+  await expect(chip).toHaveCount(1);
+  await expect(chip).toHaveAttribute('data-ref', 'tab-1');
+  await expect(chip).toHaveAttribute('data-state', 'ready');
+  await expect(chip.getByTestId('agent-attachment-title')).toHaveText('Agent next');
+
+  await send('What does the other tab say?');
+  // A public page: read without asking, from the attached tab (not the chat's tab).
+  await expect(toolCards().first()).toHaveAttribute('data-status', 'done');
+  await expect(toolCards().first().getByTestId('agent-tool-output')).toContainText('The next page');
+  await expect(toolCards().first().getByTestId('agent-tool-output')).not.toContainText('Where the agent begins');
+  await expect(assistantTexts().last()).toHaveText('The other tab is about the next page.');
+  expect(await urlOf(otherId)).toBe(next);
+  await expect(activeTab()).toHaveAttribute('title', 'Agent start');
+  // The chip moved to the chat the message started.
+  await expect(chip).toHaveCount(1);
+
+  // The attached tab moves on in the background: its chip says so.
+  await app!.evaluate(({ webContents }, { id, url }) => void webContents.fromId(id)!.loadURL(url), { id: otherId, url: `${site.origin}/markup` });
+  await expect(chip).toHaveAttribute('data-state', 'changed');
+  await expect(chip.getByTestId('agent-attachment-state')).toHaveText(AGENT_ATTACHMENT_STATE_LABELS.changed);
+  // Detached: gone.
+  await chip.getByTestId('agent-attachment-detach').click();
+  await expect(chip).toHaveCount(0);
 });
 
 // Task 10 (specs/agent-mcp.feature.md, End to end): a command MCP server configured in the

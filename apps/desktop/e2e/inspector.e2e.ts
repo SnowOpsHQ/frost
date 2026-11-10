@@ -1,9 +1,10 @@
-// Specs: specs/inspector.spec.ts (INSPECTOR_PICK_HINT, INSPECTOR_REFUSAL_MESSAGES, INSPECTOR_REGION_LABELS)
-// Acceptance: specs/inspector.feature.md (End to end)
+// Specs: specs/inspector.spec.ts (INSPECTOR_PICK_HINT, INSPECTOR_REFUSAL_MESSAGES, INSPECTOR_REGION_LABELS, INSPECTOR_LABELS,
+// INSPECTOR_SOURCE_NOTES)
+// Acceptance: specs/inspector.feature.md (End to end; Phase 11 Task 5: inspector-search-selects-node, rendered-and-served-source)
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { INSPECTOR_PICK_HINT, INSPECTOR_REFUSAL_MESSAGES, INSPECTOR_REGION_LABELS } from '@app/specs/inspector.spec';
+import { INSPECTOR_LABELS, INSPECTOR_PICK_HINT, INSPECTOR_REFUSAL_MESSAGES, INSPECTOR_REGION_LABELS, INSPECTOR_SOURCE_NOTES } from '@app/specs/inspector.spec';
 import { closeApp, launchApp, pageAt } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -17,7 +18,8 @@ const PAGE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><t
 <body><header><nav><a href="/other">Other page</a></nav></header><main><h1 id="title" class="hero">Inspect me</h1><p>Some text and <a id="go" href="/other">a link</a>.</p>
 <iframe id="frame" title="frame" srcdoc="<a id='in' href='/other' style='display:block;font:30px sans-serif;padding:20px'>Frame link</a>"></iframe></main><footer>Foot</footer>
 <script>window.__heard = []; window.__menus = []; document.addEventListener('click', (event) => window.__heard.push(event.isTrusted), true);
-document.addEventListener('contextmenu', (event) => window.__menus.push(event.isTrusted), true);</script></body></html>`;
+document.addEventListener('contextmenu', (event) => window.__menus.push(event.isTrusted), true);
+const added = document.createElement('div'); added.id = 'added'; added.textContent = 'Built by ' + 'the page'; document.body.append(added);</script></body></html>`;
 const OTHER_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Other</title></head><body><main><h2>Another page</h2></main></body></html>';
 
 async function startSite() {
@@ -246,6 +248,98 @@ test('inspector-leaves-page-dom-unchanged', async () => {
   await expect.poll(htmlChildren).toBe(2);
   expect(await pageDom()).toBe(dom);
   expect(tabPage.url()).toBe(url);
+});
+
+/** Shows the Inspector's `view` (tree, rendered or served). */
+async function showView(view: 'tree' | 'rendered' | 'served'): Promise<void> {
+  await page.locator(`[data-testid="inspector-view"][data-view="${view}"]`).click();
+  await expect(page.locator(`[data-testid="inspector-view"][data-view="${view}"]`)).toHaveAttribute('aria-pressed', 'true');
+}
+/** The source rows' text, joined by line breaks (a wrapped line's rows run on). */
+const sourceText = () => page.getByTestId('inspector-source-row').evaluateAll((rows) => rows.map((row) => `${row.hasAttribute('data-line') && row.getAttribute('data-row') !== '0' ? '\n' : ''}${row.querySelector('bdi')?.textContent ?? ''}`).join(''));
+
+test('inspector-search-selects-node', async () => {
+  await showView('tree');
+  // A CSS selector: the H1, chosen from the matches, opens the tree to it and shows its details.
+  await page.getByTestId('inspector-search-mode').selectOption('selector');
+  await page.getByTestId('inspector-search-query').fill('main h1.hero');
+  await page.getByTestId('inspector-search-run').click();
+  await expect(page.getByTestId('inspector-search-status')).toHaveText('1 match');
+  const match = page.getByTestId('inspector-search-match');
+  await expect(match).toHaveCount(1);
+  await expect(match).toHaveAttribute('data-path', '1.1.0');
+  await expect(match.locator('.inspector-tag')).toHaveText('<h1#title.hero>');
+  await match.click();
+  await expect(row('1.1.0')).toHaveAttribute('aria-selected', 'true');
+  await expect(details()).toHaveAttribute('data-tag', 'h1');
+  await expect(fact('inspector-seo', 'Heading level')).toHaveText('H1');
+  // Own text, case-insensitive: the link inside the paragraph.
+  await page.getByTestId('inspector-search-mode').selectOption('text');
+  await page.getByTestId('inspector-search-query').fill('A LINK');
+  await page.getByTestId('inspector-search-query').press('Enter');
+  await expect(page.getByTestId('inspector-search-match')).toHaveCount(1);
+  await expect(page.getByTestId('inspector-search-match')).toHaveAttribute('data-tag', 'a');
+  await page.getByTestId('inspector-search-match').click();
+  await expect(details()).toHaveAttribute('data-tag', 'a');
+  await expect(row('1.1.1.0')).toHaveAttribute('aria-selected', 'true');
+  // A selector the page's browser does not understand.
+  await page.getByTestId('inspector-search-mode').selectOption('selector');
+  await page.getByTestId('inspector-search-query').fill('h1[');
+  await page.getByTestId('inspector-search-run').click();
+  await expect(page.getByTestId('inspector-search-status')).toHaveText(INSPECTOR_REFUSAL_MESSAGES['invalid-selector']);
+  await expect(page.getByTestId('inspector-search-match')).toHaveCount(0);
+  await clearOutline();
+});
+
+test('rendered-and-served-source', async () => {
+  const dom = await pageDom();
+  // Rendered: the doctype and the page as it is now (the page's script added an element), all as text.
+  await showView('rendered');
+  await expect(page.getByTestId('inspector-source')).toHaveAttribute('data-state', 'ok');
+  await expect(page.getByTestId('inspector-source')).toContainText(INSPECTOR_SOURCE_NOTES.rendered);
+  await expect(page.getByTestId('inspector-source-row').first()).toHaveText(/^1<!DOCTYPE html>$/);
+  const rendered = await sourceText();
+  expect(rendered).toBe(`<!DOCTYPE html>\n${dom}`);
+  expect(rendered).toContain('<div id="added">Built by the page</div>');
+  // The page's markup is text in the chrome: no element of the page's became one of the chrome's.
+  expect(await page.locator('[data-testid="inspector-source-lines"] script, [data-testid="inspector-source-lines"] iframe, [data-testid="inspector-source-lines"] h1').count()).toBe(0);
+  // Find in source marks a row and moves to it.
+  await page.getByTestId('inspector-find').fill('INSPECT ME');
+  await page.getByTestId('inspector-find').press('Enter');
+  await expect(page.getByTestId('inspector-find-count')).toHaveText(/^1 \/ [1-9]\d*$/);
+  await expect(page.locator('[data-testid="inspector-source-row"][aria-current="true"]')).toContainText('Inspect me');
+  // Copy source: main writes its own reading of the source.
+  await app.evaluate(({ clipboard }) => clipboard.writeText('before'));
+  await page.getByTestId('inspector-copy-source').click();
+  await expect(page.getByTestId('inspector-source-status')).toHaveText(INSPECTOR_LABELS.sourceCopied);
+  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(`<!DOCTYPE html>\n${dom}`);
+
+  // Served: the HTML as the server sent it to the audit's fetch (no element added by the script).
+  await showView('served');
+  await expect(page.getByTestId('inspector-source')).toHaveAttribute('data-state', 'ok', { timeout: 30_000 });
+  await expect(page.getByTestId('inspector-source')).toContainText(INSPECTOR_SOURCE_NOTES.served);
+  const served = await sourceText();
+  expect(served).toBe(PAGE_HTML);
+  expect(served).not.toContain('<div id="added">');
+  await page.getByTestId('inspector-copy-source').click();
+  await expect(page.getByTestId('inspector-source-status')).toHaveText(INSPECTOR_LABELS.sourceCopied);
+  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(PAGE_HTML);
+  // Reading sources changed nothing on the page.
+  expect(await pageDom()).toBe(dom);
+  // An in-page move to another URL: the served view reads again, for that URL; the old URL's source
+  // is no longer shown (the audit fetches the new one, here the same page; Read again shows it).
+  await tabPage.evaluate(() => history.pushState({}, '', '/inspect?pushed=1'));
+  await expect(page.getByTestId('inspector-source')).not.toHaveAttribute('data-state', 'ok');
+  await expect(async () => {
+    if ((await page.getByTestId('inspector-source').getAttribute('data-state')) === 'message') await page.getByTestId('inspector-read-source').click();
+    await expect(page.getByTestId('inspector-source')).toHaveAttribute('data-state', 'ok', { timeout: 1_000 });
+  }).toPass({ timeout: 30_000 });
+  expect(await sourceText()).toBe(PAGE_HTML);
+  await page.getByTestId('inspector-copy-source').click();
+  await expect(page.getByTestId('inspector-source-status')).toHaveText(INSPECTOR_LABELS.sourceCopied);
+  await tabPage.evaluate(() => history.pushState({}, '', '/inspect'));
+  await showView('tree');
+  await expect(row('')).toBeVisible();
 });
 
 test('inspector-stale-after-navigation', async () => {

@@ -41,8 +41,12 @@ export const AGENT_PAGE_WORLD_ID = 1_500;
  */
 export const AGENT_JS_WORLD_ID = 1_501;
 
-/** World ids the agent's tools must never use: the main world, Electron's own, and every other frost world. */
-export const NON_AGENT_WORLD_IDS: readonly number[] = [0, 999, 1_001, 1_207, 1_216, 1_250, 1_301, 1_600];
+/**
+ * World ids the agent's tools must never use: the main world, Electron's own, and every other frost
+ * world (Phase 6's `1_601` screenshot and `1_602` inspector worlds; Phase 11's `1_700` web storage
+ * reader, `DEVTOOLS_STORAGE_WORLD_ID`, and `1_701` CSS off, `TAB_OVERRIDES_WORLD_ID`, Decision 17).
+ */
+export const NON_AGENT_WORLD_IDS: readonly number[] = [0, 999, 1_001, 1_207, 1_216, 1_250, 1_301, 1_600, 1_601, 1_602, 1_700, 1_701];
 
 // ---- Time --------------------------------------------------------------------------------------
 

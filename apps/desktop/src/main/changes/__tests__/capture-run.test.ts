@@ -12,11 +12,13 @@ import { MOBILE_QUERY_PROFILE, PROJECT_RUN_LIMITS, RANK_RUN_QUERY_SPACING_MS, SE
 import type { SerpRunVerdict } from '@app/specs/rankings.spec';
 import { DEFAULT_RENDER_PROFILE, isDefaultRenderProfile, type RenderProfile } from '@app/specs/render-profile.spec';
 import type { TakeScreenshotAnswer } from '@app/specs/screenshot.spec';
+import { DEFAULT_TAB_OVERRIDES } from '@app/specs/render-profile.spec';
 import { serpFiltersOf } from '@app/specs/rankings-url.spec';
 import { SERP_DEVICE_OF_PRESET } from '@app/specs/serp.spec';
 import { createCaptureRuns, queriesAnEngine, runSearchOf, stopRunOnQuit, type CaptureRunDeps, type RunPlan, type RunTab } from '../capture-run';
 import { searchKeyOf } from '../search-key';
 import { searchParamsForUrl } from '../serp-params';
+import { changesTabs } from '../service';
 import { storedPageUrl } from '../snapshot';
 import { readySerpFor } from './fakes';
 
@@ -721,6 +723,32 @@ describe('capture run', () => {
     await expect(polls[0]).resolves.toBe(idle);
     await vi.advanceTimersByTimeAsync(PROJECT_RUN_LIMITS.runStateWatchTimeoutMs);
     await Promise.all(polls);
+  });
+});
+
+describe('capture run and tab overrides (Phase 11 Task 6, Decision 8)', () => {
+  test('project-run-capture-not-refused', async () => {
+    // The user's own tab (1) has CSS off and its document was loaded under overrides; the run opens
+    // its own tabs, which start with every override off, so its captures are never refused.
+    const fake = fakeBrowser();
+    const overridesOf = (id: number) => (id === 1 ? { tabOverrides: { ...DEFAULT_TAB_OVERRIDES, cssDisabled: true }, loadedUnderOverrides: true, overridesRevision: 4 } : { tabOverrides: DEFAULT_TAB_OVERRIDES, loadedUnderOverrides: false, overridesRevision: 0 });
+    const state = () => {
+      const base = fake.browser.getState();
+      return { ...base, tabs: base.tabs.map((tab) => ({ ...tab, ...overridesOf(tab.id) })) };
+    };
+    // The live half of the capture's guard, as `changesTabs` fills it from the browser state.
+    const tabs = changesTabs({ getState: state, seo: { getAudit: () => ({ status: 'pending', url: '' }) } }, () => null, { loadedAt: () => null, watch: () => undefined });
+    expect(tabs.overridesOn!(1)).toBe(true);
+    const capture = vi.fn(async (tabId: number): Promise<CaptureAnswer> => (tabs.overridesOn!(tabId) ? { status: 'refused', reason: 'tab-emulation-on' } : CAPTURED));
+    const screenshot = vi.fn(async (): Promise<TakeScreenshotAnswer> => ({ status: 'saved', id: ID, kind: 'viewport', width: 800, height: 600, bytes: 10, truncated: false }));
+    const runs = createCaptureRuns({ browser: { ...fake.browser, getState: state }, capture, screenshot, uuidv7: () => ID, serpVerdictOf: () => 'ready' });
+    await runs.start(plan(pages(A, B), { screenshot: true }));
+    await run();
+    expect(capture.mock.calls.map(([tabId]) => tabId)).toEqual([10, 10]);
+    expect(outcomes(runs.state())).toEqual(['captured', 'captured']);
+    expect(screenshot).toHaveBeenCalledTimes(2);
+    // The run never sets an override (its browser has no way to).
+    expect(Object.keys(fake.browser)).not.toContain('tabOverrides');
   });
 });
 

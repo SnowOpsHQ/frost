@@ -1,7 +1,19 @@
 import { eq, sql } from 'drizzle-orm';
 import { AI_CHECKS_SETTING_KEY, DEFAULT_AI_CHECK_MODE, isAiCheckMode, type AiCheckMode } from '@app/specs/ai-checks.spec';
-import { DEFAULT_SEARCH_ENGINE, isSearchEngineId, SEARCH_ENGINE_SETTING_KEY, type SearchEngineId } from '@app/specs/browser-polish.spec';
 import { RANK_RUN_DISCLOSURE_SETTING_KEY } from '@app/specs/projects.spec';
+import {
+  DEFAULT_HISTORY_KEEP_PROJECT_PAGES,
+  DEFAULT_HISTORY_RETENTION,
+  DEFAULT_SEARCH_ENGINE,
+  HISTORY_KEEP_PROJECT_PAGES_KEY,
+  HISTORY_RETENTION_SETTING_KEY,
+  isHistoryRetention,
+  isSearchEngineId,
+  SEARCH_ENGINE_SETTING_KEY,
+  type HistoryRetention,
+  type SearchEngineId,
+} from '@app/specs/browser-polish.spec';
+import { isAppVersion, WHATS_NEW_SEEN_SETTING_KEY } from '@app/specs/help.spec';
 import type { SessionDatabase } from './client';
 import { appSettings } from './settings-schema';
 
@@ -25,6 +37,25 @@ export interface SettingsRepository {
   rankRunDisclosureAccepted(): Promise<boolean>;
   /** Remembers that it was (main asked first); `false` (nothing written) for a time that is not finite. */
   setRankRunDisclosureAccepted(at: number): Promise<boolean>;
+  /**
+   * Phase 11 Task 10 (`browser-polish.spec.ts`, Decision 13): how long visits are kept and whether
+   * visits to project pages are kept anyway; a missing or tampered value reads as its default.
+   */
+  historySettings(): Promise<HistorySettings>;
+  /** Stores both; `false` (nothing written) for an unknown retention or a non-boolean. */
+  setHistorySettings(settings: HistorySettings, at: number): Promise<boolean>;
+  /**
+   * Phase 11 Task 11 (`help.spec.ts`, `WHATS_NEW_SEEN_SETTING_KEY`): the app version whose What's New
+   * was last shown; `null` when none is stored (a first run), `''` for a stored value that is not a version.
+   */
+  whatsNewSeenVersion(): Promise<string | null>;
+  /** Stores it; `false` (nothing written) for anything but an app version (`isAppVersion`). */
+  setWhatsNewSeenVersion(version: string, at: number): Promise<boolean>;
+}
+
+export interface HistorySettings {
+  readonly retention: HistoryRetention;
+  readonly keepProjectPages: boolean;
 }
 
 /** The value `RANK_RUN_DISCLOSURE_SETTING_KEY` holds once the disclosure was answered Continue. */
@@ -77,6 +108,32 @@ export function createSettingsRepository(db: SessionDatabase): SettingsRepositor
     async setRankRunDisclosureAccepted(at) {
       if (!Number.isFinite(at)) return false;
       await write(RANK_RUN_DISCLOSURE_SETTING_KEY, DISCLOSURE_ACCEPTED, at);
+      return true;
+    },
+
+    async historySettings() {
+      const [retention, keep] = [await read(HISTORY_RETENTION_SETTING_KEY), await read(HISTORY_KEEP_PROJECT_PAGES_KEY)];
+      return {
+        retention: isHistoryRetention(retention) ? retention : DEFAULT_HISTORY_RETENTION,
+        keepProjectPages: keep === '1' ? true : keep === '0' ? false : DEFAULT_HISTORY_KEEP_PROJECT_PAGES,
+      };
+    },
+
+    async setHistorySettings({ retention, keepProjectPages }, at) {
+      if (!isHistoryRetention(retention) || typeof keepProjectPages !== 'boolean' || !Number.isFinite(at)) return false;
+      await db.batch([write(HISTORY_RETENTION_SETTING_KEY, retention, at), write(HISTORY_KEEP_PROJECT_PAGES_KEY, keepProjectPages ? '1' : '0', at)]);
+      return true;
+    },
+
+    async whatsNewSeenVersion() {
+      const value = await read(WHATS_NEW_SEEN_SETTING_KEY);
+      if (value === undefined || value === null) return null;
+      return isAppVersion(value) ? value : '';
+    },
+
+    async setWhatsNewSeenVersion(version, at) {
+      if (!isAppVersion(version) || !Number.isFinite(at)) return false;
+      await write(WHATS_NEW_SEEN_SETTING_KEY, version, at);
       return true;
     },
   };

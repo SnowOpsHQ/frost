@@ -20,12 +20,14 @@ import { projectsPaletteSources, retentionPaletteSources } from '../projects-pal
 import { inspectorPaletteSources } from '../inspector-palette';
 import { aiReadinessPaletteSources } from '../ai-readiness-palette';
 import { aiChecksPaletteSources } from '../ai-checks-palette';
+import { exportPaletteSources } from '../export-palette';
+import { helpPaletteSources } from '../help-palette';
 
 const URL_A = 'https://www.example.com/a';
 const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, schema: { blocks: [] } } as unknown as SeoAudit };
 
 function tab(changes: Partial<TabState> = {}): TabState {
-  return { id: 3, url: URL_A, title: 'A', loading: false, canGoBack: true, canGoForward: true, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null, ...changes };
+  return { id: 3, url: URL_A, title: 'A', loading: false, canGoBack: true, canGoForward: true, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false, overridesRevision: 0, overridesStatus: 'active', ...changes };
 }
 
 /** Every feature's palette sources, as the chrome registers them (with inert fakes for their procedures). */
@@ -50,6 +52,8 @@ function everySource(): PaletteSource[] {
     ...gscInspectPaletteSources({ status: () => null, inspect: vi.fn() }),
     ...aiReadinessPaletteSources(),
     ...aiChecksPaletteSources({ checkNow: yes, openSettings: vi.fn() }),
+    ...exportPaletteSources({ copySeoCsv: vi.fn(async () => 1) }),
+    ...helpPaletteSources({ openSheet: vi.fn(), openLink: vi.fn(async () => 'opened' as const) }),
   ];
 }
 

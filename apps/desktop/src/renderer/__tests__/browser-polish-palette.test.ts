@@ -9,7 +9,7 @@ import { appendPage, dayLabel, groupByDay, monogram, visitLabel } from '../histo
 import { createPaletteRegistry, type PaletteAction, type PaletteContext } from '../palette/registry';
 
 function tab(changes: Partial<TabState> = {}): TabState {
-  return { id: 4, url: 'https://www.example.com/a', title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', renderProfile: null, ...changes };
+  return { id: 4, url: 'https://www.example.com/a', title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false, overridesRevision: 0, overridesStatus: 'active', ...changes };
 }
 
 function setup(active: TabState | undefined, extra: Partial<BrowserState> = {}, answers: { reopen?: number | null; engine?: boolean } = {}) {

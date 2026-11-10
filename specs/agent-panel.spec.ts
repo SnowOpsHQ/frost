@@ -10,7 +10,7 @@
 import { CHATGPT_UI } from './agent-chatgpt.spec';
 import type { CredentialSlot, KeyProtection } from './agent-proxy.spec';
 import type { ReasoningEffort } from './agent-reasoning.spec';
-import type { AgentAnswerResult, AgentSetKeyResult, AgentToolCardView } from './agent-session.spec';
+import type { AgentAnswerResult, AgentAttachmentState, AgentAttachResult, AgentSetKeyResult, AgentToolCardView } from './agent-session.spec';
 import type { ModelId, ModelProvider, ModelRoute } from './agent-tools.spec';
 
 // ---- Layout ----------------------------------------------------------------------------------
@@ -33,6 +33,24 @@ export const AGENT_RAIL_WIDTH = 40;
  * agent is summoned on demand, so the page gets room by default: `docs/ui-reference/README.md`).
  */
 export const AGENT_PANEL_STORAGE_KEY = 'frost.agent-panel.open' as const;
+
+/**
+ * Phase 11 Task 10 (Decision 12): the open panel's width is the user's, dragged or stepped from the
+ * keyboard on the separator at its edge next to the page (`role="separator"`, as the SEO sidebar's:
+ * `SIDEBAR_PANEL_WIDTH_RANGE` in `seo-sidebar.spec.ts`). The separator moves with the arrow keys
+ * (`keyboardStep`; Left / Up widen this panel, since it grows towards the page on its left; Right /
+ * Down narrow it; Home / End the smallest / largest width). `AGENT_PANEL_WIDTH` is the default. The
+ * width is clamped to the range and so the page keeps `PAGE_MIN_WIDTH`, and is kept in the chrome's
+ * `localStorage` under `AGENT_PANEL_WIDTH_STORAGE_KEY` (decimal CSS px).
+ *
+ * **Shrink order** in a window too narrow for the chosen widths and the page's minimum: this panel
+ * gives way first, down to its `min`; then the SEO sidebar's panel down to its `min`; then both
+ * narrow as before (their content clipped, the page at `PAGE_MIN_WIDTH`). Stored widths are not changed.
+ */
+export const AGENT_PANEL_WIDTH_RANGE = { min: 320, max: 640, keyboardStep: 24 } as const;
+export const AGENT_PANEL_WIDTH_STORAGE_KEY = 'frost.agent-panel.width' as const;
+/** The separator's accessible name. */
+export const AGENT_PANEL_RESIZE_LABEL = 'Resize the AI agent panel' as const;
 
 /** The palette's actions (`command-palette.spec.ts`, Registration API). */
 export const AGENT_PALETTE_TOGGLE_ID = 'agent.toggle' as const;
@@ -149,3 +167,34 @@ export const AGENT_ANSWER_MESSAGES: Readonly<Record<Exclude<AgentAnswerResult, '
 /** Said on every tool card's output and every MCP approval: tool output is untrusted data. */
 export const AGENT_UNTRUSTED_OUTPUT_LABEL = 'Output (untrusted data, shown as text)';
 export const AGENT_MCP_APPROVAL_NOTE = 'This tool comes from an MCP server frost does not vouch for. Its input and output are untrusted.';
+
+// ---- Phase 11 Task 9: @-attached tabs (`agent-attach.feature.md`) -------------------------------
+
+/** The composer's `@` menu and chips, in frost's own words. */
+export const AGENT_ATTACH_WORDS = {
+  /** The composer's button that opens the menu (typing `@` opens it too). */
+  button: 'Attach a tab',
+  menuLabel: 'Attach a tab to this chat',
+  /** No other open web tab to offer. */
+  none: 'No other web pages are open to attach.',
+  /** All `MAX_CHAT_ATTACHMENTS` are used. */
+  full: 'This chat already has three tabs attached. Detach one first.',
+  detach: 'Detach',
+  /** The empty chat's hint. */
+  hint: 'Type @ to let the agent read another open tab too.',
+} as const;
+
+/** A chip's state, said beside it (`ready` says nothing). */
+export const AGENT_ATTACHMENT_STATE_LABELS: Readonly<Record<AgentAttachmentState, string>> = {
+  ready: '',
+  changed: 'Moved on',
+  closed: 'Closed',
+};
+
+/** What a refused attach says (in the menu). */
+export const AGENT_ATTACH_MESSAGES: Readonly<Record<Exclude<AgentAttachResult, 'attached'>, string>> = {
+  'not-attachable': 'That tab can no longer be attached.',
+  'already-attached': 'That tab is already attached.',
+  full: AGENT_ATTACH_WORDS.full,
+  'unknown-chat': 'That chat is no longer available.',
+};

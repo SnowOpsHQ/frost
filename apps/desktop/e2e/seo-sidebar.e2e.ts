@@ -1,5 +1,5 @@
 // Specs: specs/seo-snapshot.spec.ts, specs/seo-limits.spec.ts, specs/seo-sidebar.spec.ts, specs/seo-rules.spec.ts
-// Acceptance: specs/seo-sidebar.feature.md (End to end)
+// Acceptance: specs/seo-sidebar.feature.md (End to end; Resize and pins: drag-resize-moves-page-view, unpin-into-more)
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -8,7 +8,22 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { NOINDEX_SCORE_CAP, NOT_INDEXABLE_LABEL } from '@app/specs/seo-rules.spec';
-import { COMING_SOON_LABEL, PAGE_MIN_WIDTH, RAIL_TOOLTIP_DELAY_MS, SEO_PANELS, SEO_UNAVAILABLE_MESSAGES, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH, SIDEBAR_TOGGLE_MENU_ID } from '@app/specs/seo-sidebar.spec';
+import {
+  COMING_SOON_LABEL,
+  MORE_PANELS_LABEL,
+  PAGE_MIN_WIDTH,
+  RAIL_TOOLTIP_DELAY_MS,
+  SEO_PANELS,
+  SEO_UNAVAILABLE_MESSAGES,
+  SIDEBAR_PANEL_WIDTH,
+  SIDEBAR_PANEL_WIDTH_RANGE,
+  SIDEBAR_PINS_STORAGE_KEY,
+  SIDEBAR_RAIL_WIDTH,
+  SIDEBAR_RESIZE_LABEL,
+  SIDEBAR_TOGGLE_MENU_ID,
+  SIDEBAR_WIDTH_STORAGE_KEY,
+} from '@app/specs/seo-sidebar.spec';
+import { AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -440,4 +455,144 @@ test('sidebar-toggle-resizes-page', async () => {
     await closeApp(app);
     await rm(profile, { recursive: true, force: true });
   }
+});
+
+/** Runs `body` in a fresh app on its own profile (closed and removed afterwards), with the chrome laid out `width` × 800. */
+async function inFreshApp(width: number, body: (profile: string) => Promise<void>): Promise<void> {
+  const profile = await mkdtemp(path.join(tmpdir(), 'frost-e2e-seo-layout-'));
+  try {
+    await closeApp(app);
+    ({ app, page } = await launchApp([], { userDataDir: profile }));
+    // Hyprland tiles the window: the chrome is laid out at a set size instead (as narrow-window does).
+    await page.setViewportSize({ width, height: 800 });
+    await body(profile);
+  } finally {
+    await closeApp(app);
+    await rm(profile, { recursive: true, force: true });
+  }
+}
+
+/** Drags `locator`'s centre by `dx` CSS px with the mouse (in steps, as a hand would). */
+async function dragBy(locator: ReturnType<Page['getByTestId']>, dx: number): Promise<void> {
+  const box = (await locator.boundingBox())!;
+  const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx / 2, y, { steps: 4 });
+  await page.mouse.move(x + dx, y, { steps: 4 });
+  await page.mouse.up();
+}
+
+test('drag-resize-moves-page-view', async () => {
+  await inFreshApp(1_280, async (profile) => {
+    const url = `${site.origin}/guides/cold-brew`;
+    await audit(url);
+    const separator = page.getByTestId('seo-resize');
+    await expect(separator).toHaveAttribute('role', 'separator');
+    await expect(separator).toHaveAttribute('aria-label', SIDEBAR_RESIZE_LABEL);
+    await expect(separator).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH));
+    await expect(separator).toHaveAttribute('aria-valuemin', String(SIDEBAR_PANEL_WIDTH_RANGE.min));
+    await expect(separator).toHaveAttribute('aria-valuemax', String(SIDEBAR_PANEL_WIDTH_RANGE.max));
+    await expect.poll(async () => (await viewBounds()).x).toBeGreaterThanOrEqual(SIDEBAR_RAIL_WIDTH + SIDEBAR_PANEL_WIDTH);
+    const before = await viewBounds();
+
+    // Dragged 100 px towards the page: the tab's view starts 100 px later and is 100 px narrower.
+    await dragBy(separator, 100);
+    await expect(separator).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH + 100));
+    await expect.poll(async () => (await viewBounds()).x).toBe(before.x + 100);
+    expect((await viewBounds()).width).toBe(before.width - 100);
+    expect(await page.evaluate((key) => localStorage.getItem(key), SIDEBAR_WIDTH_STORAGE_KEY)).toBe(String(SIDEBAR_PANEL_WIDTH + 100));
+
+    // The keyboard: Left narrows by one step, and the view follows.
+    await separator.focus();
+    await page.keyboard.press('ArrowLeft');
+    const stepped = SIDEBAR_PANEL_WIDTH + 100 - SIDEBAR_PANEL_WIDTH_RANGE.keyboardStep;
+    await expect(separator).toHaveAttribute('aria-valuenow', String(stepped));
+    await expect.poll(async () => (await viewBounds()).x).toBe(before.x + 100 - SIDEBAR_PANEL_WIDTH_RANGE.keyboardStep);
+
+    // In a narrower chrome, End stops where the page keeps its minimum.
+    await page.setViewportSize({ width: 900, height: 800 });
+    await page.keyboard.press('End');
+    const room = 900 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 2 - AGENT_RAIL_WIDTH;
+    await expect(separator).toHaveAttribute('aria-valuenow', String(room));
+    await expect(separator).toHaveAttribute('aria-valuemax', String(room));
+    // The page keeps its minimum (borders are one device pixel: a fraction of a CSS px on a scaled display).
+    // Wait for the change itself (the view was already wider than the minimum before End).
+    await expect.poll(async () => (await viewBounds()).width).toBeLessThanOrEqual(PAGE_MIN_WIDTH + 2);
+    expect((await viewBounds()).width).toBeGreaterThanOrEqual(PAGE_MIN_WIDTH);
+    const atEnd = await viewBounds();
+    // Dragging further does not take more.
+    await dragBy(separator, 80);
+    await expect(separator).toHaveAttribute('aria-valuenow', String(room));
+    expect(await viewBounds()).toEqual(atEnd);
+    // Home: the smallest width; the view moves left by what the panel gave back.
+    await separator.focus();
+    await page.keyboard.press('Home');
+    await expect(separator).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH_RANGE.min));
+    await expect.poll(async () => (await viewBounds()).x).toBe(atEnd.x - (room - SIDEBAR_PANEL_WIDTH_RANGE.min));
+
+    // The width survives a relaunch on the same profile (the minimum fits any window).
+    await closeApp(app);
+    ({ app, page } = await launchApp([], { userDataDir: profile }));
+    await expect(page.getByTestId('seo-resize')).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH_RANGE.min));
+    await expect.poll(async () => (await page.getByTestId('seo-panel').boundingBox())?.width ?? 0).toBe(SIDEBAR_PANEL_WIDTH_RANGE.min);
+  });
+});
+
+test('unpin-into-more', async () => {
+  await inFreshApp(1_280, async (profile) => {
+    const url = `${site.origin}/guides/cold-brew`;
+    await audit(url);
+    // Nothing unpinned: no "More panels".
+    await expect(page.getByTestId('seo-rail-more')).toHaveCount(0);
+    await railItem('links').click();
+    await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'links');
+    const linksStatus = await railItem('links').getAttribute('data-status');
+    expect(linksStatus).not.toBeNull();
+    const pin = page.getByTestId('seo-pin');
+    await expect(pin).toHaveAttribute('aria-pressed', 'true');
+    await pin.click();
+    await expect(pin).toHaveAttribute('aria-pressed', 'false');
+    // Open, it stays on the rail; "More panels" holds it, with its dot.
+    await expect(railItem('links')).toBeVisible();
+    const more = page.getByTestId('seo-rail-more');
+    await expect(more).toHaveAttribute('aria-label', MORE_PANELS_LABEL);
+    await expect(more).toHaveAttribute('data-status', linksStatus!);
+    // Another panel opens: Links leaves the rail. Overview has no pin toggle.
+    await railItem('overview').click();
+    await expect(railItem('links')).toHaveCount(0);
+    await expect(page.getByTestId('seo-pin')).toHaveCount(0);
+    // The menu lists it, focused, and opens it again (on the rail while open).
+    await more.click();
+    const menu = page.getByTestId('seo-more-menu');
+    await expect(menu).toBeVisible();
+    await expect(more).toHaveAttribute('aria-expanded', 'true');
+    const item = menu.locator('[data-testid="seo-more-item"][data-panel="links"]');
+    await expect(item).toBeFocused();
+    await expect(item).toHaveAttribute('data-status', linksStatus!);
+    // Drawn over the panel, never under the tab's view.
+    expect((await menu.boundingBox())!.x + (await menu.boundingBox())!.width).toBeLessThanOrEqual((await viewBounds()).x);
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(more).toBeFocused();
+    await more.click();
+    await item.click();
+    await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'links');
+    await expect(railItem('links')).toBeFocused();
+    // Collapsed with the menu's panel open: More expands the sidebar first.
+    await page.getByTestId('seo-toggle').click();
+    await expect(sidebar()).toHaveAttribute('data-open', 'false');
+    await expect(railItem('links')).toHaveCount(0);
+    await more.click();
+    await expect(sidebar()).toHaveAttribute('data-open', 'true');
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    // Kept across a relaunch.
+    expect(await page.evaluate((key) => localStorage.getItem(key), SIDEBAR_PINS_STORAGE_KEY)).toBe(JSON.stringify(['links']));
+    await closeApp(app);
+    ({ app, page } = await launchApp([], { userDataDir: profile }));
+    await expect(page.getByTestId('seo-rail-more')).toBeVisible();
+    await expect(railItem('links')).toHaveCount(0);
+  });
 });

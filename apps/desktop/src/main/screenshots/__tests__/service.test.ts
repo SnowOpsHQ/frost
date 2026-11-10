@@ -1,4 +1,4 @@
-// Spec: specs/screenshot.spec.ts (SCREENSHOT_REFUSALS, SCREENSHOT_LIMITS), specs/screenshot.schema.ts
+// Spec: specs/screenshot.spec.ts (SCREENSHOT_REFUSALS incl. tab-emulation-on, SCREENSHOT_LIMITS), specs/screenshot.schema.ts
 // (ScreenshotsAnswerSchema), specs/changes.schema.ts (CHANGES_READ_API.listScreenshots),
 // specs/capture-db.spec.ts (UNFILED_PROJECT_ID, CAPTURES_DIR_NAME)
 // Acceptance: specs/screenshot.feature.md (Taking one, Images, Listing; Scenarios take-records-profile-and-params,
@@ -14,7 +14,7 @@ import { uuidv7, type AppendScreenshotInput, type ChangeIntelRepository } from '
 import { CAPTURES_DIR_NAME, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { CHANGES_READ_API } from '@app/specs/changes.schema';
-import { DEFAULT_RENDER_PROFILE, type RenderProfile } from '@app/specs/render-profile.spec';
+import { DEFAULT_RENDER_PROFILE, DEFAULT_TAB_OVERRIDES, type RenderProfile } from '@app/specs/render-profile.spec';
 import { SCREENSHOT_LIMITS, SCREENSHOTS_DIR_NAME, ScreenshotsAnswerSchema, type TakeScreenshotAnswer } from '@app/specs/screenshot.schema';
 import { fakeEvent } from '../../../test/electron-fake';
 import { lateSearchParams } from '../../changes/serp-params';
@@ -510,5 +510,119 @@ describe('screenshots service', () => {
     };
     await expect(full.service.take(1, { kind: 'full' })).resolves.toEqual({ status: 'refused', reason: 'cancelled' });
     expect(fullTab.scroll).toEqual({ x: 0, y: 30 });
+  });
+});
+
+describe('screenshots refuse with tab overrides (Phase 11 Task 6, Decision 8)', () => {
+  const files = (dir: string) => (existsSync(dir) ? readdirSync(dir) : []);
+  /** The browser state `screenshotTabs` reads: tab 1 (and 2) with their overrides and marker. */
+  const browserState = (tabs: { id: number; css?: boolean; marker?: boolean; revision?: number }[], active = 1) => ({
+    activeTabId: active,
+    tabs: tabs.map((tab) => ({ id: tab.id, renderProfile: null, tabOverrides: { ...DEFAULT_TAB_OVERRIDES, cssDisabled: tab.css === true }, loadedUnderOverrides: tab.marker === true, overridesRevision: tab.revision ?? 0 })),
+  });
+  /** A service whose `ScreenshotTabs` is `screenshotTabs` over `state` (the real mapping from `TabState`). */
+  const overState = (state: { current: ReturnType<typeof browserState> }) => {
+    const shots = start();
+    const tabs = screenshotTabs({ getState: () => state.current as never }, (tabId) => shots.tabs.get(tabId) ?? null);
+    const one = also({ tabs });
+    return { ...one, tabs: shots.tabs, mapped: tabs };
+  };
+
+  test('screenshot-refused-while-emulation-on', async () => {
+    const { service, raw, state, tabs, files: store } = start();
+    state.overrides.set(1, true);
+    for (const kind of ['viewport', 'full', 'area'] as const) expect(await service.take(1, { kind })).toEqual({ status: 'refused', reason: 'tab-emulation-on' });
+    expect(tabs.get(1)!.captures).toBe(0);
+    expect(rows(raw)).toEqual([]);
+    expect(files(store.dir)).toEqual([]);
+    // Another tab without overrides is not affected.
+    state.active = 2;
+    saved(await service.take(2, { kind: 'viewport' }));
+  });
+
+  test('screenshot-allowed-after-emulation-turned-off-with-stale-audit', async () => {
+    // CSS off was turned on after the page loaded, the audit on screen ran with it, then it was
+    // turned off: the document never loaded under it (no marker), and a screenshot reads the live
+    // page, never the audit's stamp. So it is taken.
+    const state = { current: browserState([{ id: 1, css: false, marker: false, revision: 2 }]) };
+    const { service, raw, mapped } = overState(state);
+    expect(mapped.overridesOn!(1)).toBe(false);
+    expect(mapped.overridesRevision!(1)).toBe(2);
+    saved(await service.take(1, { kind: 'viewport' }));
+    expect(rows(raw)).toHaveLength(1);
+  });
+
+  test('screenshot-refused-when-document-loaded-under-overrides', async () => {
+    // cookies off → reload → cookies on: live off, the marker set.
+    const state = { current: browserState([{ id: 1, css: false, marker: true }]) };
+    const { service, raw, mapped } = overState(state);
+    expect(mapped.overridesOn!(1)).toBe(true);
+    expect(await service.take(1, { kind: 'viewport' })).toEqual({ status: 'refused', reason: 'tab-emulation-on' });
+    expect(rows(raw)).toEqual([]);
+    // Reloaded with every override off: the marker is cleared.
+    state.current = browserState([{ id: 1, css: false, marker: false }]);
+    saved(await service.take(1, { kind: 'viewport' }));
+    // A tab no state names: off.
+    expect(mapped.overridesOn!(9)).toBe(false);
+  });
+
+  test('screenshot-refused-when-css-toggled-during-full-page', async () => {
+    const { service, raw, state, tabs, files: store } = start();
+    const tab = tabs.get(1)!;
+    // CSS turned off (or on) while the page is scrolled and stitched: the revision moved.
+    tab.beforeCapture = () => {
+      if (tab.captures === 2) state.revisions.set(1, (state.revisions.get(1) ?? 0) + 1);
+    };
+    expect(await service.take(1, { kind: 'full' })).toEqual({ status: 'refused', reason: 'tab-emulation-on' });
+    expect(rows(raw)).toEqual([]);
+    expect(files(store.dir)).toEqual([]);
+    // The marker set mid-shot (the page reloaded under an override): likewise.
+    const before = tab.captures;
+    tab.beforeCapture = () => {
+      if (tab.captures === before + 2) state.overrides.set(1, true);
+    };
+    expect(await service.take(1, { kind: 'full' })).toEqual({ status: 'refused', reason: 'tab-emulation-on' });
+    expect(rows(raw)).toEqual([]);
+    expect(files(store.dir)).toEqual([]);
+    // Nothing moved: taken.
+    state.overrides.set(1, false);
+    tab.beforeCapture = null;
+    saved(await service.take(1, { kind: 'full' }));
+    expect(rows(raw)).toHaveLength(1);
+  });
+
+  test('screenshot-refused-at-the-last-check-keeps-no-file', async () => {
+    // The revision moves after the PNG was written and before its row: no row, and the file is removed
+    // under the hash's lock (no other row names it).
+    const { service, raw, state, imaging, files: store } = start();
+    const thumbnail = imaging.thumbnail;
+    imaging.thumbnail = (bitmap) => {
+      state.revisions.set(1, (state.revisions.get(1) ?? 0) + 1);
+      return thumbnail(bitmap);
+    };
+    expect(await service.take(1, { kind: 'viewport' })).toEqual({ status: 'refused', reason: 'tab-emulation-on' });
+    expect(rows(raw)).toEqual([]);
+    expect(files(store.dir)).toEqual([]);
+    // A file another row already names stays.
+    imaging.thumbnail = thumbnail;
+    const first = saved(await service.take(1, { kind: 'viewport' }));
+    imaging.thumbnail = (bitmap) => {
+      state.revisions.set(1, (state.revisions.get(1) ?? 0) + 1);
+      return thumbnail(bitmap);
+    };
+    expect(await service.take(1, { kind: 'viewport' })).toEqual({ status: 'refused', reason: 'tab-emulation-on' });
+    expect(rows(raw).map((row) => row['id'])).toEqual([first.id]);
+    expect(files(store.dir)).toHaveLength(1);
+  });
+
+  test('project-run-screenshot-not-refused', async () => {
+    // The user's tab 1 has CSS off; a project run's own tab (2, in front) has every override off.
+    const state = { current: browserState([{ id: 1, css: true, marker: true, revision: 5 }, { id: 2 }], 2) };
+    const { service, raw } = overState(state);
+    saved(await service.take(2, { kind: 'viewport', searchParams: null }));
+    expect(rows(raw)).toHaveLength(1);
+    // The user's own tab, in front, is refused.
+    state.current = browserState([{ id: 1, css: true, marker: true, revision: 5 }, { id: 2 }], 1);
+    expect(await service.take(1, { kind: 'viewport' })).toEqual({ status: 'refused', reason: 'tab-emulation-on' });
   });
 });

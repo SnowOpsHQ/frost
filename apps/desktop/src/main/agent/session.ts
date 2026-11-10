@@ -29,6 +29,8 @@ import {
   TOOL_CARD_OUTPUT_PREVIEW_CHARS,
   type AgentAnswerResult,
   type AgentApprovalView,
+  type AgentAttachableTab,
+  type AgentAttachResult,
   type AgentChatgptView,
   type AgentChatSummary,
   type AgentIsolationView,
@@ -43,16 +45,22 @@ import {
   type AgentToolCardView,
   type AgentUsageView,
 } from '@app/specs/agent-session.spec';
-import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, CHAT_MAX_MESSAGES, isMcpToolName, MAX_TOOL_STEPS, routeModelId, type AgentModelId, type AgentToolName, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { AGENT_TOOL_NAMES, ALLOWED_MODEL_IDS, attachedTabsPrompt, CHAT_MAX_MESSAGES, isMcpToolName, MAX_TOOL_STEPS, routeModelId, type AgentModelId, type AgentToolName, type ModelRoute, type ToolErrorCode } from '@app/specs/agent-tools.spec';
 import { MCP_LIMITS, type AgentMcpView } from '@app/specs/agent-mcp.spec';
 import type { McpToolDefinition } from '@app/specs/agent-mcp.schema';
 import type { ChatgptRoute } from './chatgpt/route';
 import type { ChatgptAuth } from './chatgpt/service';
 import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, isSkillId, SKILL_INPUT_SLOTS, SKILL_SLOT_MAX_CHARS, skillPageUrl as skillPageUrlOf, type BuiltinSkillId, type SkillInputSlot } from '@app/specs/skills.spec';
 import {
+  CHAT_SEARCH_SCAN_MAX_CHARS,
+  chatSearchMatcher,
+  chatSearchSnippet,
+  chatTitleFromUser,
   DEFAULT_CHAT_RETENTION,
   isChatRetention,
   retentionCutoff,
+  type ChatListFilter,
+  type ChatSearchMatch,
   type AgentSetRetentionResult,
   type AgentDeleteAllChatsResult,
   type AgentGrantView,
@@ -77,6 +85,7 @@ import type { SkillFiles } from './skill-files';
 import { AGENT_SYSTEM_PROMPT } from './system-prompt';
 import { skillDetail, type UserSkills } from './user-skills';
 import type { McpManager } from './mcp';
+import type { AttachedTabs } from './tools/attached-tabs';
 
 // The agent's chat session manager (Phase 5 Task 6a; spec `specs/agent-session.spec.ts`; acceptance
 // `specs/agent-session.feature.md`, Session). Main keeps the chats (in memory until Task 9) and runs
@@ -102,6 +111,21 @@ import type { McpManager } from './mcp';
 // retention, "Delete all chats" (after main's own confirmation), export (`exportChat`, through
 // main's save dialog) and the skills editor (`UserSkills`) all go through here, as do skills files
 // (Phase 8 Task 6, `SkillFiles`: export, and import after the user reviewed the file).
+//
+// Phase 11 Task 8 (Decision 10; `agent-data.feature.md`, Chat history): `listChats` filters the chats
+// by `active` / `archived` and searches their titles and display text (the user's and the
+// assistant's, never tool output: a chat in memory from memory, a stored one not yet opened from
+// disk through `ChatHistory.texts`); `renameChat` gives a chat the user's title (never replaced by the
+// automatic one) and `archiveChat` archives it. Neither changes `updatedAt`. A message sent to an
+// archived chat unarchives it (in memory at once, on disk with the turn's save).
+//
+// Phase 11 Task 9 (Decision 11; `agent-attach.feature.md`): the user attaches tabs to a chat (or to
+// the new chat, whose attachments a typed message from the draft composer moves to the chat it
+// starts; selecting another chat drops them) through `attachTab` /
+// `detachTab` (`AttachedTabs`, memory only). `read_attached_tab` is offered like every catalogue tool
+// (the tool list stays the same turn to turn; the broker refuses a ref the chat hasn't attached); a
+// turn of a chat with attachments adds `attachedTabsPrompt` (refs and origins, never titles) after
+// frost's system prompt. `tabsChanged` re-reads the chips' states.
 
 export interface AgentSessionDeps {
   readonly host: Pick<AgentHost, 'send' | 'onChat' | 'onStatus' | 'status' | 'lastFailure' | 'lockdown' | 'activeChats' | 'strike' | 'restart'>;
@@ -158,6 +182,8 @@ export interface AgentSessionDeps {
    * sign-in answers `needs-gesture`).
    */
   readonly consumeGesture?: (windowId: number) => boolean;
+  /** The chats' attached tabs (Phase 11 Task 9, `./tools/attached-tabs`); default: none can be attached. */
+  readonly attachedTabs?: AttachedTabs;
 }
 
 export interface AgentSession extends AgentService {
@@ -182,6 +208,8 @@ export interface AgentSession extends AgentService {
   snapshot(chatId: string): ChatSnapshot | null;
   /** Deletes what the retention no longer keeps, stored and idle in memory (startup, daily). */
   prune(): Promise<void>;
+  /** The tabs changed (main's tab controller): the panel is told if an attachment's state did. */
+  tabsChanged(): void;
   dispose(): void;
 }
 
@@ -216,7 +244,12 @@ interface SkillRun {
 
 interface Chat {
   readonly id: string;
-  readonly title: string;
+  /** The automatic title (the first line of the first message), or the user's once renamed (Phase 11 Task 8). */
+  title: string;
+  /** Whether `title` is the user's: nothing replaces it but another rename. */
+  titleByUser: boolean;
+  /** When the user archived it; `null`: not archived. */
+  archivedAt: number | null;
   /** The tab it works on; `null` for a chat restored from disk until its next message binds one. */
   tabId: number | null;
   readonly createdAt: number;
@@ -265,6 +298,8 @@ interface Turn {
     readonly chatgptError: ChatgptFailure | undefined;
     readonly modelId: AgentModelId | null;
     readonly updatedAt: number;
+    /** Phase 11 Task 8: a message unarchives the chat; a refused send puts it back. */
+    readonly archivedAt: number | null;
     readonly selected: string | null;
     readonly created: boolean;
   } | null;
@@ -469,6 +504,16 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
   const history = deps.history ?? null;
   const userSkills = deps.userSkills ?? null;
   const mcp = deps.mcp ?? null;
+  const attached = deps.attachedTabs ?? null;
+  /** The chips' states as last shown (`tabsChanged` tells the panel when they move). */
+  let attachedSignature = '';
+  const attachmentViews = (key: string | null) => {
+    try {
+      return attached === null ? [] : attached.views(key);
+    } catch {
+      return [];
+    }
+  };
   /** A card's label: the catalogue's, or "Untrusted tool from {server}" for an MCP tool. */
   const labelFor = (toolName: string): string => {
     if (mcp === null || !isMcpToolName(toolName)) return toolLabel(toolName);
@@ -596,6 +641,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
   };
 
   // ---- The state ----
+  const summaryOf = (chat: Chat): AgentChatSummary => ({ id: chat.id, title: chat.title, tabId: chat.tabId, updatedAt: chat.updatedAt, running: turn?.chat === chat, archived: chat.archivedAt !== null });
   const cardView = (card: ToolCard): AgentToolCardView => ({
     callId: card.callId,
     toolName: card.toolName,
@@ -656,7 +702,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     const active = selected === null ? undefined : chats.get(selected);
     const summaries: AgentChatSummary[] = [...chats.values()]
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map((chat) => ({ id: chat.id, title: chat.title, tabId: chat.tabId, updatedAt: chat.updatedAt, running: turn?.chat === chat }));
+      .map(summaryOf);
     const shown = active === undefined ? [] : active.entries.slice(-MAX_DISPLAY_ENTRIES);
     cached = {
       version,
@@ -692,6 +738,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
               contextTokens: active.contextTokens,
               contextWindow: modelContextWindow(active.modelId ?? settings.modelId),
               modelId: active.modelId,
+              attachments: attachmentViews(active.id),
             },
       running: turn !== null,
       approval: pending.length === 0 ? null : { request: approvalView(pending[0]!), queued: pending.length - 1 },
@@ -701,8 +748,21 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       grantsVersion,
       chatRetention: retention(),
       mcp: mcpView(),
+      draftAttachments: attachmentViews(null),
     };
+    attachedSignature = attached?.signature() ?? '';
     return cached;
+  };
+
+  /** The tab a chat works on (a new or restored chat: the active tab, which its next message binds). */
+  const chatTabOf = (chatId: string | null): number | null => {
+    const chat = chatId === null ? undefined : chats.get(chatId);
+    if (chat?.tabId != null) return chat.tabId;
+    try {
+      return deps.activeTabId();
+    } catch {
+      return null;
+    }
   };
 
   // ---- Chats ----
@@ -715,6 +775,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       if (oldest === undefined) return;
       chats.delete(oldest.id);
       deps.approvals.forget(oldest.id);
+      attached?.forget(oldest.id);
     }
   };
 
@@ -770,6 +831,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     usage: chat.usage === null ? null : { ...chat.usage },
     contextTokens: chat.contextTokens,
     truncated: chat.truncated,
+    archivedAt: chat.archivedAt,
+    titleByUser: chat.titleByUser,
     history: structuredClone(chat.history),
     entries: chat.entries.map(entrySnapshot),
   });
@@ -782,6 +845,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     usage: chat.usage === null ? null : { ...chat.usage },
     contextTokens: chat.contextTokens,
     truncated: chat.truncated,
+    archivedAt: chat.archivedAt,
+    titleByUser: chat.titleByUser,
   });
   /**
    * Saves a chat still open (one deleted meanwhile is not written back): its row, and only the
@@ -961,8 +1026,13 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     else chat.chatgptError = before.chatgptError;
     chat.modelId = before.modelId;
     chat.updatedAt = before.updatedAt;
+    chat.archivedAt = before.archivedAt;
     selected = before.selected;
-    if (before.created) chats.delete(chat.id);
+    if (before.created) {
+      chats.delete(chat.id);
+      // The new chat's attachments go back to the composer's draft (merged with any attached meanwhile).
+      attached?.move(chat.id, null);
+    }
   };
 
   const onChat = (event: AgentChatEvent) => {
@@ -1273,6 +1343,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       chat = {
         id: randomId(),
         title: chatTitle(run !== null ? run.skill.name : text),
+        titleByUser: false,
+        archivedAt: null,
         tabId,
         createdAt: now(),
         updatedAt: now(),
@@ -1288,29 +1360,38 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         stored: null,
       };
       chats.set(chat.id, chat);
+      // The draft composer's attachments are this chat's now: only on a typed message (never a
+      // skill run, the palette's included).
+      if (run === null) attached?.move(null, chat.id);
     }
     current.chat = chat;
     chat.tabId = tabId;
-    current.before = { error: chat.error, chatgptError: chat.chatgptError, modelId: chat.modelId, updatedAt: chat.updatedAt, selected, created };
+    current.before = { error: chat.error, chatgptError: chat.chatgptError, modelId: chat.modelId, updatedAt: chat.updatedAt, archivedAt: chat.archivedAt, selected, created };
     current.historyBefore = chat.history.length;
     current.entriesBefore = chat.entries.length;
     chat.history.push({ role: 'user', content });
     chat.entries.push(run !== null ? { ...newEntry('user', skillEntryText(run.inputs, skillPageUrl)), skill: { id: run.skill.id, name: run.skill.name } } : newEntry('user', text));
     chat.error = null;
     delete chat.chatgptError;
+    // A message to an archived chat brings it back to the active list (it is in use again); the
+    // turn's save stores that.
+    chat.archivedAt = null;
     chat.modelId = modelId;
     selected = chat.id;
     touch(chat);
     evict();
 
+    // frost's prompt, then (only with attachments) their refs and origins: never a page title.
+    const attachedPrompt = attached !== null && attached.has(chat.id) ? attachedTabsPrompt(attached.promptTargets(chat.id)) : '';
+    const systemPrompt = attachedPrompt === '' ? AGENT_SYSTEM_PROMPT : `${AGENT_SYSTEM_PROMPT}\n\n${attachedPrompt}`;
     // The broker refuses any tool outside the list, whatever the runtime asks for.
     deps.approvals.register(chat.id, { tabId: chat.tabId, allowedTools: [...allowedTools] });
     const posted = deps.host.send({
       type: 'chat.start',
       chatId: chat.id,
       // Within the model's context too (a long chat of large tool results would otherwise fail every turn).
-      messages: compactHistory(historyWindow(chat.history), historyBudgetChars(modelId, AGENT_SYSTEM_PROMPT.length + JSON.stringify(mcpTools).length)),
-      systemPrompt: AGENT_SYSTEM_PROMPT,
+      messages: compactHistory(historyWindow(chat.history), historyBudgetChars(modelId, systemPrompt.length + JSON.stringify(mcpTools).length)),
+      systemPrompt,
       modelId,
       route,
       allowedTools: [...allowedTools],
@@ -1360,6 +1441,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       stop(chatId);
       chats.delete(chatId);
       deps.approvals.forget(chatId);
+      attached?.forget(chatId);
     }
     if (!restored) clearedBeforeRestore = true;
     selected = null;
@@ -1370,6 +1452,24 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     } catch {
       return false;
     }
+  };
+
+  /**
+   * Where `match` first hits a chat's display text (the user's and the assistant's words, never a
+   * tool card), within `CHAT_SEARCH_SCAN_MAX_CHARS`: from memory, or for a stored chat not yet opened
+   * from disk (its rows are not read). `null`: no hit.
+   */
+  const searchText = async (chat: Chat, match: NonNullable<ReturnType<typeof chatSearchMatcher>>): Promise<ChatSearchMatch | null> => {
+    const texts = chat.loaded ? chat.entries.map((entry) => entry.text) : history === null ? null : await history.texts(chat.id);
+    let left = CHAT_SEARCH_SCAN_MAX_CHARS;
+    for (const whole of texts ?? []) {
+      if (left <= 0) break;
+      const text = whole.slice(0, left);
+      left -= text.length;
+      const hit = match(text);
+      if (hit !== null) return chatSearchSnippet(text, hit.index, hit.length);
+    }
+    return null;
   };
 
   /** Deletes what the retention no longer keeps: on disk, and the idle chats in memory past a finite window. */
@@ -1388,6 +1488,7 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       if (chat.updatedAt >= cutoff || turn?.chat === chat || chat.id === selected) continue;
       chats.delete(chat.id);
       deps.approvals.forget(chat.id);
+      attached?.forget(chat.id);
       dropped = true;
     }
     if (dropped) bump();
@@ -1423,6 +1524,11 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
     selectChat(chatId) {
       const chat = chats.get(chatId);
       if (chat === undefined) return false;
+      // Leaving the draft composer for an existing chat drops the draft's attachments.
+      if (attached?.has(null) === true) {
+        attached.forget(null);
+        bump();
+      }
       if (!chat.loaded) void ensureLoaded(chat);
       if (selected !== chatId) {
         selected = chatId;
@@ -1436,11 +1542,87 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
       stop(chatId);
       chats.delete(chatId);
       deps.approvals.forget(chatId);
+      attached?.forget(chatId);
       if (selected === chatId) selected = null;
       if (!restored) deletedBeforeRestore.add(chatId);
       if (history !== null) void history.remove(chatId).catch(() => log('agent session: a chat could not be deleted from disk'));
       bump();
       return true;
+    },
+    // ---- Phase 11 Task 8: chat history ----
+    async listChats(filter: ChatListFilter, query?: string): Promise<readonly AgentChatSummary[]> {
+      if (filter !== 'active' && filter !== 'archived') return [];
+      const archived = filter === 'archived';
+      const listed = [...chats.values()].filter((chat) => (chat.archivedAt !== null) === archived).sort((a, b) => b.updatedAt - a.updatedAt);
+      const match = chatSearchMatcher(query);
+      if (match === null) return listed.map(summaryOf);
+      const out: AgentChatSummary[] = [];
+      for (const chat of listed) {
+        let hit: ChatSearchMatch | null = null;
+        try {
+          hit = await searchText(chat, match);
+        } catch {
+          hit = null;
+        }
+        // Deleted, or moved to the other list, while the search ran: left out.
+        if (disposed) return [];
+        if (chats.get(chat.id) !== chat || (chat.archivedAt !== null) !== archived) continue;
+        if (hit !== null) out.push({ ...summaryOf(chat), match: hit });
+        else if (match(chat.title) !== null) out.push(summaryOf(chat));
+      }
+      return out;
+    },
+    renameChat(chatId: string, title: string) {
+      const chat = typeof chatId === 'string' ? chats.get(chatId) : undefined;
+      const clean = chatTitleFromUser(title);
+      if (chat === undefined || clean === null) return false;
+      chat.title = clean;
+      chat.titleByUser = true;
+      bump();
+      // The stored row too (nothing under `off`); a chat not stored yet gets it with its next save.
+      if (history !== null) void history.rename(chat.id, clean).then((ok) => (ok ? undefined : log('agent session: a chat could not be renamed on disk')));
+      return true;
+    },
+    archiveChat(chatId: string, archived: boolean) {
+      const chat = typeof chatId === 'string' ? chats.get(chatId) : undefined;
+      if (chat === undefined || typeof archived !== 'boolean') return false;
+      const archivedAt = archived ? (chat.archivedAt ?? now()) : null;
+      if (archivedAt === chat.archivedAt) return true;
+      chat.archivedAt = archivedAt;
+      bump();
+      if (history !== null) void history.setArchived(chat.id, archivedAt).then((ok) => (ok ? undefined : log('agent session: a chat could not be archived on disk')));
+      return true;
+    },
+    // ---- Phase 11 Task 9: @-attached tabs (`agent-attach.feature.md`) ----
+    attachableTabs(chatId: string | null): AgentAttachableTab[] {
+      if (attached === null || (chatId !== null && !chats.has(chatId))) return [];
+      try {
+        return attached.attachable(chatId, chatTabOf(chatId));
+      } catch {
+        return [];
+      }
+    },
+    attachTab(chatId: string | null, tabId: number, origin: string): AgentAttachResult {
+      if (chatId !== null && !chats.has(chatId)) return 'unknown-chat';
+      if (attached === null || !Number.isSafeInteger(tabId) || typeof origin !== 'string') return 'not-attachable';
+      let result: AgentAttachResult = 'not-attachable';
+      try {
+        result = attached.attach(chatId, tabId, chatTabOf(chatId), origin);
+      } catch {
+        result = 'not-attachable';
+      }
+      if (result === 'attached') bump();
+      return result;
+    },
+    detachTab(chatId: string | null, ref: string): boolean {
+      if (attached === null || (chatId !== null && !chats.has(chatId))) return false;
+      const detached = attached.detach(chatId, ref);
+      if (detached) bump();
+      return detached;
+    },
+    tabsChanged() {
+      if (disposed || attached === null) return;
+      if (attached.signature() !== attachedSignature) bump();
     },
     async answerApproval(approvalId: string, decision: ApprovalDecision): Promise<AgentAnswerResult> {
       if (typeof approvalId !== 'string' || !isApprovalDecision(decision)) return 'invalid';
@@ -1514,6 +1696,8 @@ export function createAgentSession(deps: AgentSessionDeps): AgentSession {
         chats.set(head.id, {
           id: head.id,
           title: head.title,
+          titleByUser: head.titleByUser,
+          archivedAt: head.archivedAt,
           tabId: null,
           createdAt: Math.min(head.createdAt, updatedAt),
           updatedAt,

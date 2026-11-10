@@ -21,6 +21,9 @@ import type { TelemetryService } from './telemetry-service';
 import type { GscIpcService } from './gsc-service';
 import type { AiChecksService } from './ai-checks-service';
 import type { RankingsService } from './rankings-service';
+import type { SeoExportService } from './seo-export-service';
+import type { TabOverridesService } from './tab-overrides-router';
+import type { HelpService } from './help-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -124,9 +127,10 @@ export interface SeoService {
   rerun(tabId: number): boolean;
   /**
    * Sets the tab's highlight overlay (`seo-sidebar.spec.ts`, `HIGHLIGHT_MODES`): only the active
-   * tab showing a web page; `false` (a no-op) otherwise.
+   * tab showing a web page; `false` (a no-op) otherwise. `phrase`: `keyphrase`'s phrase (Phase 11
+   * Task 2), boxed only when it is one of the tab's ready audit's n-grams or its stored target query.
    */
-  setHighlight(tabId: number, mode: HighlightMode): boolean;
+  setHighlight(tabId: number, mode: HighlightMode, phrase?: string): boolean;
   /**
    * Writes the links `filter` selects from the tab's ready audit to the system clipboard as CSV
    * (`seo-sidebar.spec.ts`, `LINKS_CSV_COLUMNS`); answers how many rows, or `null` (nothing
@@ -205,4 +209,10 @@ export interface IpcServices {
   readonly aiChecks?: AiChecksService;
   /** Rankings: the rank table, series, comparison and CSV export (Phase 10 Task 5, `rankings-service.ts`). */
   readonly rankings?: RankingsService;
+  /** SEO table exports as CSV (Phase 11 Task 1, `seo-export-service.ts`). */
+  readonly seoExport?: SeoExportService;
+  /** Tab overrides: CSS off, cookies off, geolocation (Phase 11 Task 6, `tab-overrides-router.ts`). */
+  readonly tabOverrides?: TabOverridesService;
+  /** Help, keyboard shortcuts and What's New (Phase 11 Task 11, `help-service.ts`). */
+  readonly help?: HelpService;
 }

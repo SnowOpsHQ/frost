@@ -668,3 +668,56 @@ describe('the URL the model sees (whole-branch review)', () => {
     expect(gscPageUrl('https://user:secret@example.com/a#x')).toBe(modelPageUrl('https://user:secret@example.com/a#x'));
   });
 });
+
+describe('tab overrides (Phase 11 whole-branch review)', () => {
+  const LIVE = { cssDisabled: true, cookiesDisabled: false, geolocation: { latitude: 51.5074, longitude: -0.1278, accuracy: 100 } };
+
+  test('audit-tools-tell-the-model-the-overrides-the-audit-ran-under', async () => {
+    const audit = readyAudit();
+    const stamped = runner({ audit: () => ({ status: 'ready', url: PAGE, audit, renderProfile: null, tabOverrides: LIVE }) });
+    for (const tool of ['page_audit', 'page_data']) {
+      const data = dataOf(await run(stamped.tools, tool, {}, 'read'));
+      // Which overrides were on; never the coordinates.
+      expect(data.tabOverrides).toEqual({ cssDisabled: true, cookiesDisabled: false, geolocation: true });
+      expect(JSON.stringify(data)).not.toContain('51.5074');
+    }
+    // An audit stamped all off (or not stamped) says nothing about overrides.
+    const plain = runner({ audit: () => ({ status: 'ready', url: PAGE, audit, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null } }) });
+    expect(dataOf(await run(plain.tools, 'page_audit', {}, 'read'))).not.toHaveProperty('tabOverrides');
+    expect(dataOf(await run(runner().tools, 'page_data', {}, 'read'))).not.toHaveProperty('tabOverrides');
+  });
+
+  test('page-text-tells-the-model-the-tab-overrides', async () => {
+    const page = domContents('<p>Text</p>');
+    let state: { tabOverrides: typeof LIVE | { cssDisabled: boolean; cookiesDisabled: boolean; geolocation: null }; loadedUnderOverrides: boolean } | null = { tabOverrides: LIVE, loadedUnderOverrides: true };
+    const { tools } = runner({ contentsOf: () => page.contents, overridesOf: (tabId) => (tabId === TAB ? state : null) });
+    const data = dataOf(await run(tools, 'page_text', {}, 'read'));
+    expect(data).toMatchObject({ text: 'Text', tabOverrides: { cssDisabled: true, cookiesDisabled: false, geolocation: true }, loadedUnderOverrides: true });
+    expect(JSON.stringify(data)).not.toContain('51.5074');
+    // Overrides turned off but the document was loaded under them: only the marker.
+    state = { tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: true };
+    const marked = dataOf(await run(tools, 'page_text', {}, 'read'));
+    expect(marked).not.toHaveProperty('tabOverrides');
+    expect(marked.loadedUnderOverrides).toBe(true);
+    // Nothing on, nothing said; the read is never refused.
+    state = null;
+    const clean = dataOf(await run(tools, 'page_text', {}, 'read'));
+    expect(clean).not.toHaveProperty('tabOverrides');
+    expect(clean).not.toHaveProperty('loadedUnderOverrides');
+  });
+
+  test('browser-runner-reads-overrides-from-tab-state', async () => {
+    const page = domContents('<p>Text</p>');
+    const live = { ...page.contents, on: () => undefined, removeListener: () => undefined, getTitle: () => 'Guide' };
+    const browser = {
+      tabIdOf: (contents: unknown) => (contents === live ? TAB : null),
+      getState: () => ({ activeTabId: TAB, tabs: [{ id: TAB, tabOverrides: { cssDisabled: false, cookiesDisabled: true, geolocation: null }, loadedUnderOverrides: false }] }),
+      navigate: vi.fn(() => true),
+      seo: { getAudit: vi.fn((): SeoAuditResponse => ({ status: 'pending', url: PAGE })) },
+    };
+    const tools = createBrowserPageToolRunner({ browser, webContents: { getAllWebContents: () => [live] } });
+    const data = dataOf(await run({ run: tools.run } as never, 'page_text', {}, 'read'));
+    expect(data.tabOverrides).toEqual({ cssDisabled: false, cookiesDisabled: true, geolocation: false });
+    expect(data).not.toHaveProperty('loadedUnderOverrides');
+  });
+});

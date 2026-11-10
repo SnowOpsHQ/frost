@@ -1,11 +1,17 @@
-// Spec: specs/page-commands.spec.ts (CONTEXT_MENU_LABELS, CONTEXT_MENU_SEARCH_LABEL, CONTEXT_MENU_SELECTION_MAX),
+// Spec: specs/page-commands.spec.ts (CONTEXT_MENU_LABELS, CONTEXT_MENU_SEARCH_LABEL, CONTEXT_MENU_SELECTION_MAX,
+// CONTEXT_MENU_COPY_SEO_VALUES, CONTEXT_MENU_COPY_SEO_LABELS), specs/seo-exports.spec.ts (SEO_EXPORT_KINDS),
 // specs/browser.spec.ts (SEARCH_URL_TEMPLATE, ADDRESS_INPUT_MAX_LENGTH)
-// Acceptance: specs/page-commands.feature.md (Context menu template)
+// Acceptance: specs/page-commands.feature.md (Context menu template), specs/seo-exports.feature.md (Context menu)
 import type { MenuItemConstructorOptions } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
 import { ADDRESS_INPUT_MAX_LENGTH, SEARCH_URL_TEMPLATE } from '@app/specs/browser.spec';
-import { CONTEXT_MENU_LABELS, CONTEXT_MENU_SEARCH_LABEL, CONTEXT_MENU_SELECTION_MAX } from '@app/specs/page-commands.spec';
-import { contextMenuTemplate, type ContextMenuCommands, type ContextMenuParamsInput } from '../context-menu';
+import { copyValueOf, exportCsv, runAudit, type SeoAudit, type SeoAuditResponse } from '@app/seo-core';
+import { CONTEXT_MENU_COPY_SEO_LABELS, CONTEXT_MENU_COPY_SEO_VALUES, CONTEXT_MENU_LABELS, CONTEXT_MENU_SEARCH_LABEL, CONTEXT_MENU_SELECTION_MAX } from '@app/specs/page-commands.spec';
+import { SEO_EXPORT_KINDS, SEO_EXPORT_LABELS } from '@app/specs/seo-exports.spec';
+import { NO_PAGE_CONTEXT, PageSnapshotSchema } from '@app/specs/seo-snapshot.spec';
+import { rawSnapshot } from '../../../test/seo-fakes';
+import { createSeoExports } from '../../seo/exports';
+import { contextMenuTemplate, copySeoMenuFor, type ContextMenuCommands, type ContextMenuParamsInput } from '../context-menu';
 
 const NO_EDIT = { canUndo: false, canRedo: false, canCut: false, canCopy: false, canPaste: false, canDelete: false, canSelectAll: false, canEditRichly: false };
 
@@ -179,5 +185,87 @@ describe('context menu template', () => {
         expect(entry.label).not.toMatch(/inspect|save/i);
       }
     }
+  });
+
+  // ---- Copy SEO Data (Phase 11 Task 1, Decision 1) ------------------------------------------
+
+  const PAGE = 'https://example.com/guides/tea';
+  const auditAt = (url: string, takenAt = 1_760_000_000_000, changes: Parameters<typeof rawSnapshot>[1] = {}): SeoAudit => ({
+    ...runAudit({ ...PageSnapshotSchema.parse(rawSnapshot(url, changes)), ...NO_PAGE_CONTEXT }),
+    takenAt,
+  });
+  /** The tab (id 1) and its audit state, the exports service over it, and main's clipboard. */
+  function copySeoSetup(response: SeoAuditResponse) {
+    let current = response;
+    const clipboard = { writeText: vi.fn<(text: string) => void>() };
+    const exports = createSeoExports({ audit: (tabId) => (tabId === 1 ? current : { status: 'unavailable', url: '', reason: 'no-tab' }), clipboard });
+    return { exports, clipboard, set: (next: SeoAuditResponse) => (current = next), menu: () => copySeoMenuFor(1, current, exports) };
+  }
+  const submenu = (template: MenuItemConstructorOptions[]) => item(template, 'context-copy-seo').submenu as MenuItemConstructorOptions[];
+
+  test('context-menu-copy-seo-submenu-on-web-pages-only', () => {
+    const audit = auditAt(PAGE, 1_760_000_000_000, { headings: [], headingTotal: 0 });
+    const { menu, clipboard, set } = copySeoSetup({ status: 'ready', url: PAGE, audit });
+    const run = commands();
+    // Every kind of menu ends with the submenu, after a separator.
+    for (const over of [{}, { linkURL: 'https://example.com/x' }, { selectionText: 'tea' }, { isEditable: true }]) {
+      const template = contextMenuTemplate(params(over), HISTORY, run, undefined, menu());
+      expect(shape(template).slice(-2), JSON.stringify(over)).toEqual(['|', 'context-copy-seo']);
+      expect(item(template, 'context-copy-seo').label).toBe(CONTEXT_MENU_LABELS['copy-seo']);
+    }
+    const template = contextMenuTemplate(params(), HISTORY, run, undefined, menu());
+    const items = submenu(template);
+    // The four values, a separator, the three CSVs; frost's own labels.
+    expect(shape(items)).toEqual([...CONTEXT_MENU_COPY_SEO_VALUES.map((key) => `context-copy-seo-${key}`), '|', ...SEO_EXPORT_KINDS.map((kind) => `context-copy-seo-csv-${kind}`)]);
+    for (const entry of items) if (entry.type !== 'separator') expect(Object.values(CONTEXT_MENU_COPY_SEO_LABELS)).toContain(entry.label);
+    // Enabled only when the audit has the value (this one has a title but no H1; no speed report).
+    for (const key of CONTEXT_MENU_COPY_SEO_VALUES) expect(item(items, `context-copy-seo-${key}`).enabled, key).toBe(copyValueOf(audit, key) !== null);
+    expect(item(items, 'context-copy-seo-h1').enabled).toBe(false);
+    expect(item(items, 'context-copy-seo-csv-images').enabled).toBe(true);
+    expect(item(items, 'context-copy-seo-csv-speed').enabled).toBe(audit.performance !== null);
+    // No images: Images as CSV is disabled (as the panel's button); labels are the exports' own.
+    const noImages = copySeoMenuFor(1, { status: 'ready', url: PAGE, audit: auditAt(PAGE, 1, { images: [], imageTotal: 0 }) }, createSeoExports({ audit: () => ({ status: 'pending', url: PAGE }) }))!;
+    expect(item(submenu(contextMenuTemplate(params(), HISTORY, run, undefined, noImages)), 'context-copy-seo-csv-images').enabled).toBe(false);
+    expect(item(items, 'context-copy-seo-csv-speed').label).toBe(SEO_EXPORT_LABELS.speed);
+    // Clicking writes through main's clipboard, from the tab's ready audit.
+    click(items, 'context-copy-seo-title');
+    expect(clipboard.writeText).toHaveBeenLastCalledWith(copyValueOf(audit, 'title'));
+    click(items, 'context-copy-seo-csv-images');
+    expect(clipboard.writeText).toHaveBeenLastCalledWith(exportCsv(audit, 'images')!.csv);
+    click(items, 'context-copy-seo-csv-headings');
+    expect(clipboard.writeText).toHaveBeenLastCalledWith(exportCsv(audit, 'headings')!.csv);
+    expect(run.copyText).not.toHaveBeenCalled();
+    // No ready audit (pending, unavailable), or not a web page: no submenu at all.
+    for (const next of [
+      { status: 'pending', url: PAGE },
+      { status: 'unavailable', url: PAGE, reason: 'no-page' },
+      { status: 'ready', url: 'app://app/newtab', audit: { ...auditAt(PAGE), url: 'app://app/newtab' } },
+    ] as SeoAuditResponse[]) {
+      set(next);
+      expect(menu(), next.status).toBeNull();
+      expect(shape(contextMenuTemplate(params(), HISTORY, run, undefined, menu()))).toEqual(['context-back', 'context-forward', 'context-reload']);
+    }
+    expect(shape(contextMenuTemplate(params(), HISTORY, run))).toEqual(['context-back', 'context-forward', 'context-reload']);
+  });
+
+  test('context-menu-copy-skips-when-audit-changed-since-the-menu-opened', () => {
+    const first = auditAt(PAGE, 1_000);
+    const { menu, clipboard, set } = copySeoSetup({ status: 'ready', url: PAGE, audit: first });
+    const items = submenu(contextMenuTemplate(params(), HISTORY, commands(), undefined, menu()));
+    // The tab was audited again (another takenAt) while the menu was open: nothing is written.
+    set({ status: 'ready', url: PAGE, audit: { ...first, takenAt: 2_000 } });
+    for (const entry of items) if (entry.type !== 'separator') (entry.click as () => void)();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    // Pending, or navigated elsewhere: nothing either.
+    set({ status: 'pending', url: PAGE });
+    click(items, 'context-copy-seo-title');
+    set({ status: 'ready', url: 'https://example.com/other', audit: auditAt('https://example.com/other', 1_000) });
+    click(items, 'context-copy-seo-title');
+    click(items, 'context-copy-seo-csv-headings');
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    // The same audit again: it writes.
+    set({ status: 'ready', url: PAGE, audit: first });
+    click(items, 'context-copy-seo-title');
+    expect(clipboard.writeText).toHaveBeenCalledExactlyOnceWith(copyValueOf(first, 'title'));
   });
 });

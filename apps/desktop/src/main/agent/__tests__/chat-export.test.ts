@@ -25,6 +25,8 @@ const CHAT: ChatSnapshot = {
   usage: { input: 1200, output: 40 },
   contextTokens: 1240,
   truncated: false,
+  archivedAt: null,
+  titleByUser: false,
   history: [{ role: 'user', content: 'How is this page doing?' }],
   entries: [
     { kind: 'user', text: 'How is this page doing?', tools: [] },

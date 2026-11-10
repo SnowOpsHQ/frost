@@ -33,8 +33,10 @@ import { AI_CHECK_ERROR_CODES, AI_CHECK_LIMITS } from './ai-checks.spec';
  * 8: `chat.start` carries the turn's reasoning level (`reasoningEffort`, `agent-reasoning.spec.ts`).
  * 9: AI checks (Phase 9 Task 9, `ai-checks.spec.ts`): `check.start` and `check.stop` (main →
  *    runtime), `check.finish` and `check.error` (runtime → main), and `fetch.request.checkId`.
+ * 10: the `read_attached_tab` tool (Phase 11 Task 9, `agent-tools.spec.ts`): `ToolNameSchema`
+ *    accepts one more name.
  */
-export const AGENT_PROTOCOL_VERSION = 9;
+export const AGENT_PROTOCOL_VERSION = 10;
 
 /**
  * The runtime's `chat.error` for a `chat.start` whose chat already has a turn running (that turn

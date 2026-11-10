@@ -6,7 +6,7 @@ import { UNFILED_PROJECT_ID, type ScreenshotKind } from '@app/specs/capture-db.s
 import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-params.schema';
 import type { SearchParamsOf } from '../changes/serp-params';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
-import type { AuditRenderProfile, TabRenderProfile } from '@app/specs/render-profile.spec';
+import { isDefaultTabOverrides, type AuditRenderProfile, type TabOverrides, type TabRenderProfile } from '@app/specs/render-profile.spec';
 import {
   SCREENSHOT_LIMITS,
   ScreenshotEntrySchema,
@@ -22,6 +22,7 @@ import type { z } from 'zod';
 import { recordedProfile, tabProfileInEffect } from '../changes/profile-in-effect';
 import { storedPageUrl } from '../changes/snapshot';
 import { captureArea, captureFullPage, captureViewport, ScreenshotFailure, type CaptureOptions, type Captured, type ScreenshotTarget } from './capture';
+import { saveScreenshotEdit } from './edit';
 import type { ScreenshotImaging } from './imaging';
 import type { ScreenshotFiles } from './store';
 
@@ -45,6 +46,13 @@ export interface ScreenshotTabs {
   contentsOf(tabId: number): ScreenshotContents | null;
   /** The render profile set on the tab, `partial` when not all of it is in effect (`tabProfileInEffect`); `null`: none. */
   renderProfileOf(tabId: number): AuditRenderProfile | null;
+  /**
+   * Whether the tab's overrides are on now **or** its document was loaded under overrides (Phase 11
+   * Task 6, `TabState.tabOverrides` / `loadedUnderOverrides`); absent (older fakes): off.
+   */
+  overridesOn?(tabId: number): boolean;
+  /** The tab's override revision (`TabState.overridesRevision`); absent: no revision check. */
+  overridesRevision?(tabId: number): number;
 }
 
 export type ScreenshotCapturers = Readonly<Record<ScreenshotKind, (target: ScreenshotTarget, options: CaptureOptions) => Promise<Captured>>>;
@@ -71,6 +79,8 @@ export interface ScreenshotsServiceDeps {
   readonly activePollMs?: number;
   /** The kinds' capture (tests replace them). */
   readonly capturers?: Partial<ScreenshotCapturers>;
+  /** Phase 11 Task 7: the overlay's cap (tests use a tighter one; default `SCREENSHOT_EDIT_LIMITS`). */
+  readonly editLimits?: { readonly maxOverlayBytes: number };
 }
 
 /** A screenshot's options: the IPC passes `kind` and `projectId`; a project's capture run also its capture and the query's search parameters. */
@@ -130,6 +140,7 @@ function entryOf(row: StoredScreenshot): ScreenshotEntry | null {
     renderProfile,
     searchParams,
     createdAt: row.createdAt,
+    editedFrom: row.editedFrom ?? null,
   });
   return entry.success ? entry.data : null;
 }
@@ -162,6 +173,8 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
   let saved: (projectId: string) => void = () => undefined;
   /** The screenshot each tab is taking (one at a time); its `controller` while the page is being captured (it can be cancelled then). */
   const runs = new Map<number, { readonly kind: ScreenshotKind; controller: AbortController | null }>();
+  /** Whether an edit is being saved (one at a time). */
+  let editing = false;
   const failed = (reason: ScreenshotRefusal, why: string): TakeScreenshotAnswer => {
     log(`screenshot refused (${reason}): ${why}`);
     return refused(reason);
@@ -181,12 +194,34 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
     return { renderProfileJson: profile?.json ?? null, searchParamsJson: params === null ? null : canonicalJson(params.data) };
   };
 
+  /**
+   * Whether the tab's overrides are in the way now, or moved since `start` (the revision changed, or
+   * the marker got set): a screenshot reads the live page, never the audit's stamp (Decision 8).
+   * A failure to tell refuses too.
+   */
+  const overridesInTheWay = (tabId: number, start: number | undefined): boolean => {
+    try {
+      return tabs.overridesOn?.(tabId) === true || (start !== undefined && tabs.overridesRevision?.(tabId) !== start);
+    } catch {
+      return true;
+    }
+  };
+
   async function takeTab(tabId: number, options: TakeOptions, run: { controller: AbortController | null }): Promise<TakeScreenshotAnswer> {
     const contents = tabs.contentsOf(tabId);
     if (!contents || contents.isDestroyed()) return refused('no-tab');
     if (tabs.activeTabId() !== tabId) return refused('not-active');
     const page = storedPageUrl(contents.getURL());
     if (page === null) return refused('no-page');
+    // The tab's overrides (or a document loaded under them): refused; and the revision now, checked
+    // again before anything is stored (CSS toggled during a full page's scroll and stitch).
+    let revision: number | undefined;
+    try {
+      revision = tabs.overridesRevision?.(tabId);
+    } catch {
+      return refused('tab-emulation-on');
+    }
+    if (overridesInTheWay(tabId, revision)) return refused('tab-emulation-on');
     // Taken while the tab stays on this page (any main-frame navigation, an in-page one too, would
     // record it under a URL it no longer shows) and in front; anything else cancels it. Watched from
     // here, before the project lookup: a navigation while that is pending cancels it too.
@@ -237,6 +272,8 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       run.controller = null;
     }
 
+    // An override changed (or the marker got set) while the page was captured: no file, no row.
+    if (overridesInTheWay(tabId, revision)) return refused('tab-emulation-on');
     let png: Buffer;
     try {
       png = imaging.encodePng(captured.bitmap);
@@ -263,6 +300,18 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
     const at = now();
     const id = uuid(at);
     const { width, height } = captured.bitmap;
+    // Once more right before the row: a change meanwhile stores no row, and its file goes too.
+    if (overridesInTheWay(tabId, revision)) {
+      // No row will name the file: removed now (under the hash's lock) unless another row already does.
+      try {
+        if (!(await store.isHashReferenced(file.sha256))) await files.unlink(file.sha256);
+      } catch (error) {
+        log(`the refused screenshot's file could not be removed (${codeOf(error)})`);
+      } finally {
+        release();
+      }
+      return refused('tab-emulation-on');
+    }
     let stored = false;
     try {
       stored = await store.appendScreenshot({
@@ -388,6 +437,37 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
         false,
       ),
 
+    // Phase 11 Task 7 (Decision 9): an edited copy, composited in main (`edit.ts`), one at a time
+    // (each holds decoded bitmaps of up to `maxPixels`): a call meanwhile answers `busy`.
+    saveEdit: async (input) => {
+      if (editing) return { status: 'busy' };
+      editing = true;
+      try {
+        return await guarded(
+        'saveEdit',
+        () =>
+          saveScreenshotEdit(
+            {
+              store,
+              files,
+              imaging,
+              limits,
+              now,
+              uuid,
+              log,
+              thumbnail: (sha256, bitmap) => remember(sha256, dataUrl('image/png', imaging.thumbnail(bitmap))),
+              saved: (projectId) => saved(projectId),
+              ...(deps.editLimits ? { editLimits: deps.editLimits } : {}),
+            },
+            input,
+          ),
+        { status: 'store-failed' },
+        );
+      } finally {
+        editing = false;
+      }
+    },
+
     async cancelArea(tabId) {
       const controller = runs.get(tabId)?.kind === 'area' ? runs.get(tabId)!.controller : null;
       if (!controller || controller.signal.aborted) return false;
@@ -399,12 +479,24 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
 
 /** `ScreenshotTabs` over the browser controller's state and main's map of tab WebContents (`contentsOf`). */
 export function screenshotTabs(
-  browser: { getState(): { readonly activeTabId: number | null; readonly tabs: readonly { readonly id: number; readonly renderProfile: TabRenderProfile | null }[] } },
+  browser: {
+    getState(): {
+      readonly activeTabId: number | null;
+      readonly tabs: readonly { readonly id: number; readonly renderProfile: TabRenderProfile | null; readonly tabOverrides?: TabOverrides; readonly loadedUnderOverrides?: boolean; readonly overridesRevision?: number }[];
+    };
+  },
   contentsOf: (tabId: number) => ScreenshotContents | null,
 ): ScreenshotTabs {
+  const tabOf = (tabId: number) => browser.getState().tabs.find((tab) => tab.id === tabId);
   return {
     activeTabId: () => browser.getState().activeTabId,
     contentsOf,
-    renderProfileOf: (tabId) => tabProfileInEffect(browser.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile ?? null),
+    renderProfileOf: (tabId) => tabProfileInEffect(tabOf(tabId)?.renderProfile ?? null),
+    // The live overrides or the document marker (Phase 11 Task 6), as captures read them; a tab no state names: off.
+    overridesOn: (tabId) => {
+      const tab = tabOf(tabId);
+      return tab !== undefined && ((tab.tabOverrides !== undefined && !isDefaultTabOverrides(tab.tabOverrides)) || tab.loadedUnderOverrides === true);
+    },
+    overridesRevision: (tabId) => tabOf(tabId)?.overridesRevision ?? 0,
   };
 }

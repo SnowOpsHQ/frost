@@ -126,8 +126,10 @@ describe('workspace storage', () => {
     expect(WORKSPACE_MIGRATIONS.map((m) => m.id)).toEqual([...WORKSPACE_MIGRATION_IDS]);
     const ids = MIGRATIONS.map((m) => m.id);
     const start = MIGRATIONS.indexOf(WORKSPACE_MIGRATIONS[0]!);
-    // Spread last, together, after Phase 6's 0041 and Phase 9's 0210.
-    expect(MIGRATIONS.slice(start)).toEqual(WORKSPACE_MIGRATIONS);
+    // Spread together, after Phase 6's 0041 and Phase 9's 0210; later phases' blocks (Phase 11's 0230+) follow.
+    const end = start + WORKSPACE_MIGRATIONS.length;
+    expect(MIGRATIONS.slice(start, end)).toEqual(WORKSPACE_MIGRATIONS);
+    expect(MIGRATIONS.slice(end).every((m) => m.id >= '0230')).toBe(true);
     expect(start).toBeGreaterThan(MIGRATIONS.indexOf(CHANGE_INTEL_MIGRATIONS[1]!));
     expect(start).toBeGreaterThan(MIGRATIONS.indexOf(AI_CHECKS_MIGRATIONS[AI_CHECKS_MIGRATIONS.length - 1]!));
     expect(ids.indexOf('0210_seo_ai_checks')).toBe(start - 1);
@@ -138,7 +140,7 @@ describe('workspace storage', () => {
     // A database at 0210 (every earlier migration) takes exactly 0220–0223, in order.
     const db = new DatabaseSync(':memory:');
     expect(runMigrations(db, MIGRATIONS.slice(0, start))).toHaveLength(start);
-    expect(runMigrations(db)).toEqual([...WORKSPACE_MIGRATION_IDS]);
+    expect(runMigrations(db, MIGRATIONS.slice(0, end))).toEqual([...WORKSPACE_MIGRATION_IDS]);
     for (const table of WORKSPACE_TABLES) expect(named(db, 'table'), table).toContain(table);
 
     // Plain SQL both drivers run (Phase 6's portability rule).

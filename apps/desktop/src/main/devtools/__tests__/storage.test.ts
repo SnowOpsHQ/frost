@@ -27,7 +27,10 @@ describe('site storage', () => {
       status: 'ready',
       origin: 'https://shop.example.com',
       cookieTotal: 2,
+      // Usage, quota and web storage are the web storage reader's (Phase 11 Task 4), filled in by the service.
       usage: null,
+      quota: null,
+      webStorage: null,
       cookies: [
         { name: 'sid', domain: 'shop.example.com', path: '/', hostOnly: true, expires: null, httpOnly: true, secure: true, sameSite: 'lax', value: null, valueTruncated: false },
         { name: 'theme', domain: '.example.com', path: '/', hostOnly: false, expires: 1_900_000_000_500, httpOnly: false, secure: false, sameSite: 'no_restriction', value: null, valueTruncated: false },

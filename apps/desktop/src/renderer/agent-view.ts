@@ -92,7 +92,9 @@ import {
   type AgentSkillDetail,
   type AgentSkillDraft,
   type ChatExportResult,
+  type ChatListFilter,
   type ChatRetention,
+  type ChatSearchMatch,
   type SkillEditorField,
 } from '@app/specs/agent-data.spec';
 
@@ -637,6 +639,26 @@ export function composerKey(event: { readonly key: string; readonly shiftKey: bo
   return event.key === 'Enter' && !event.shiftKey && event.isComposing !== true ? 'send' : null;
 }
 
+/**
+ * Whether typing just made an `@` that opens the attach menu (Phase 11 Task 9): the character before
+ * the caret is `@`, at the start or after whitespace (an e-mail address's `@` does not).
+ */
+export function atMenuTrigger(text: string, caret: number): boolean {
+  if (caret < 1 || caret > text.length || text[caret - 1] !== '@') return false;
+  return caret === 1 || /\s/.test(text[caret - 2]!);
+}
+
+/** `text` with the `@` just before `caret` removed (the menu replaces it), and where the caret goes. */
+export function withoutAtTrigger(text: string, caret: number): { readonly text: string; readonly caret: number } {
+  if (!atMenuTrigger(text, caret)) return { text, caret };
+  return { text: text.slice(0, caret - 1) + text.slice(caret), caret: caret - 1 };
+}
+
+/** A chip's or menu item's name: the tab's (untrusted) title, else its origin. */
+export function attachmentName(item: { readonly title: string; readonly origin: string }): string {
+  return item.title.trim() === '' ? item.origin : item.title;
+}
+
 /** Whether the composer's text can be sent now. */
 export function canSend(text: string, running: boolean, sending: boolean): boolean {
   return !running && !sending && text.trim() !== '';
@@ -655,10 +677,32 @@ export interface ChatListItem {
   readonly title: string;
   readonly selected: boolean;
   readonly running: boolean;
+  /** Phase 11 Task 8: archived (the list offers Unarchive), and a search hit's snippet. */
+  readonly archived: boolean;
+  readonly match?: ChatSearchMatch;
 }
 
 export function chatListItems(chats: readonly AgentChatSummary[], activeId: string | null): readonly ChatListItem[] {
-  return chats.map((chat) => ({ id: chat.id, title: chat.title.trim() === '' ? 'Untitled chat' : chat.title, selected: chat.id === activeId, running: chat.running }));
+  return chats.map((chat) => ({
+    id: chat.id,
+    title: chat.title.trim() === '' ? 'Untitled chat' : chat.title,
+    selected: chat.id === activeId,
+    running: chat.running,
+    archived: chat.archived === true,
+    ...(chat.match !== undefined ? { match: chat.match } : {}),
+  }));
+}
+
+/** The chats one view of the list shows (Phase 11 Task 8): the archived ones under `archived`, the rest under `active`. */
+export function chatsInView(chats: readonly AgentChatSummary[], filter: ChatListFilter): readonly AgentChatSummary[] {
+  return chats.filter((chat) => (chat.archived === true) === (filter === 'archived'));
+}
+
+/** A search hit's snippet in three parts, the match in the middle (offsets kept inside the snippet). */
+export function snippetParts(match: ChatSearchMatch): { readonly before: string; readonly hit: string; readonly after: string } {
+  const start = Math.min(Math.max(0, match.start), match.snippet.length);
+  const end = Math.min(match.snippet.length, start + Math.max(0, match.length));
+  return { before: match.snippet.slice(0, start), hit: match.snippet.slice(start, end), after: match.snippet.slice(end) };
 }
 
 /** The panel header's second line: the selected chat's title, or "New chat". */

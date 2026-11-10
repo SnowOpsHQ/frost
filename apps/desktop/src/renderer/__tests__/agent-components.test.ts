@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 // Spec: specs/agent-panel.spec.ts (AGENT_APPROVAL_BUTTONS, AGENT_SET_KEY_MESSAGES), specs/agent-session.spec.ts
 // (APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE)
-// Acceptance: specs/agent-panel.feature.md (Components: reasoning-select-sends-set-reasoning-effort, reasoning-auto-only-explained), specs/skills.feature.md (composer-skill-picker)
+// Acceptance: specs/agent-panel.feature.md (Components: reasoning-select-sends-set-reasoning-effort, reasoning-auto-only-explained), specs/skills.feature.md (composer-skill-picker),
+// specs/agent-attach.feature.md (composer-at-menu-attaches-a-tab, attachment-chips-render-titles-as-text; specs/agent-panel.spec.ts AGENT_ATTACH_WORDS)
 import { act, createElement, createRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { AGENT_ATTACH_MESSAGES, AGENT_ATTACH_WORDS, AGENT_ATTACHMENT_STATE_LABELS } from '@app/specs/agent-panel.spec';
 import { AGENT_APPROVAL_BUTTONS, AGENT_REASONING_HINT, AGENT_REASONING_LABELS, AGENT_REASONING_UNAVAILABLE, AGENT_SET_KEY_MESSAGES } from '@app/specs/agent-panel.spec';
 import { APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
 import { modelOptionGroups } from '../agent-view';
@@ -18,6 +20,12 @@ const calls = vi.hoisted(() => ({
   setReasoningEffort: vi.fn(async (..._args: unknown[]) => true),
   send: vi.fn(async (..._args: unknown[]) => 'started' as const),
   stop: vi.fn(async (..._args: unknown[]) => true),
+  attachableTabs: vi.fn(async (..._args: unknown[]) => [
+    { tabId: 4, title: '<img src=x onerror="window.__pwned=3">Other page', origin: 'https://other.example' },
+    { tabId: 5, title: '', origin: 'https://blank.example' },
+  ]),
+  attachTab: vi.fn(async (..._args: unknown[]): Promise<string> => 'attached'),
+  detachTab: vi.fn(async (..._args: unknown[]) => true),
 }));
 vi.mock('../agent-actions', () => ({ agentActions: calls }));
 
@@ -324,5 +332,100 @@ describe('agent panel components', () => {
     expect((byTestId('agent-skill-picker') as HTMLSelectElement).disabled).toBe(true);
     expect(byTestId('agent-skill-run')).toBeNull();
     expect(byTestId('agent-stop')).not.toBeNull();
+  });
+
+  // Phase 11 Task 9 (specs/agent-attach.feature.md): the `@` menu and the chips.
+  test('composer-at-menu-attaches-a-tab', async () => {
+    const inputRef = createRef<HTMLTextAreaElement>();
+    render(createElement(AgentComposer, { chatId: null, running: false, stopChatId: null, inputRef }));
+    const field = byTestId('agent-input') as HTMLTextAreaElement;
+    const type = (value: string) =>
+      act(() => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+        setter.call(field, value);
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    // An e-mail address's `@` opens nothing; one at the start of a word does.
+    type('mail me@');
+    expect(byTestId('agent-attach-menu')).toBeNull();
+    type('Compare with @');
+    await flush();
+    expect(calls.attachableTabs).toHaveBeenCalledExactlyOnceWith(null);
+    const options = [...host.querySelectorAll<HTMLElement>('[data-testid="agent-attach-option"]')];
+    expect(options.map((option) => option.dataset['tabId'])).toEqual(['4', '5']);
+    // Titles are text (an untitled tab shows its origin).
+    expect(options[0]!.querySelector('bdi')!.textContent).toBe('<img src=x onerror="window.__pwned=3">Other page');
+    expect(options[1]!.querySelector('bdi')!.textContent).toBe('https://blank.example');
+    expect(host.querySelector('img')).toBeNull();
+    // Escape closes it and keeps the text.
+    act(() => field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(byTestId('agent-attach-menu')).toBeNull();
+    expect(field.value).toBe('Compare with @');
+    // The button opens it again; picking a tab attaches it and drops nothing typed but an `@`.
+    click(byTestId('agent-attach'));
+    await flush();
+    click(host.querySelector('[data-testid="agent-attach-option"]'));
+    await flush();
+    expect(calls.attachTab).toHaveBeenCalledExactlyOnceWith(null, 4, 'https://other.example');
+    expect(byTestId('agent-attach-menu')).toBeNull();
+    expect(field.value).toBe('Compare with @');
+    type('Compare with');
+    type('Compare with @');
+    await flush();
+    click(host.querySelector('[data-testid="agent-attach-option"]'));
+    await flush();
+    expect(field.value).toBe('Compare with ');
+    // A refusal is said in the menu.
+    calls.attachTab.mockResolvedValueOnce('full');
+    click(byTestId('agent-attach'));
+    await flush();
+    click(host.querySelector('[data-testid="agent-attach-option"]'));
+    await flush();
+    expect(byTestId('agent-attach-message')!.textContent).toBe(AGENT_ATTACH_MESSAGES.full);
+    // Three attached: the menu says so and asks main for nothing.
+    calls.attachableTabs.mockClear();
+    const three = (['tab-1', 'tab-2', 'tab-3'] as const).map((ref) => ({ ref, origin: 'https://a.example', title: 'A', state: 'ready' as const }));
+    render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef, attachments: three }));
+    // (Another chat: the open menu closed.)
+    expect(byTestId('agent-attach-menu')).toBeNull();
+    click(byTestId('agent-attach'));
+    await flush();
+    expect(byTestId('agent-attach-message')!.textContent).toBe(AGENT_ATTACH_WORDS.full);
+    expect(calls.attachableTabs).not.toHaveBeenCalled();
+  });
+
+  test('attachment-chips-render-titles-as-text', async () => {
+    const inputRef = createRef<HTMLTextAreaElement>();
+    const title = '<script>window.__pwned=4</script><b>Evil</b> ‮tab';
+    render(
+      createElement(AgentComposer, {
+        chatId: 'c',
+        running: false,
+        stopChatId: null,
+        inputRef,
+        attachments: [
+          { ref: 'tab-1', origin: 'https://other.example', title, state: 'ready' },
+          { ref: 'tab-2', origin: 'https://gone.example', title: '', state: 'closed' },
+        ],
+      }),
+    );
+    const chips = [...host.querySelectorAll<HTMLElement>('[data-testid="agent-attachment"]')];
+    expect(chips.map((chip) => [chip.dataset['ref'], chip.dataset['state']])).toEqual([
+      ['tab-1', 'ready'],
+      ['tab-2', 'closed'],
+    ]);
+    const shown = chips[0]!.querySelector<HTMLElement>('[data-testid="agent-attachment-title"]')!;
+    expect(shown.tagName).toBe('BDI');
+    expect(shown.getAttribute('dir')).toBe('auto');
+    expect(shown.textContent).toBe(title);
+    expect(shown.children).toHaveLength(0);
+    expect(host.querySelector('script, b')).toBeNull();
+    expect((window as { __pwned?: number }).__pwned).toBeUndefined();
+    expect(chips[1]!.querySelector('[data-testid="agent-attachment-title"]')!.textContent).toBe('https://gone.example');
+    expect(chips[1]!.querySelector('[data-testid="agent-attachment-state"]')!.textContent).toBe(AGENT_ATTACHMENT_STATE_LABELS.closed);
+    expect(chips[0]!.querySelector('[data-testid="agent-attachment-state"]')).toBeNull();
+    click(chips[1]!.querySelector('[data-testid="agent-attachment-detach"]'));
+    await flush();
+    expect(calls.detachTab).toHaveBeenCalledExactlyOnceWith('c', 'tab-2');
   });
 });

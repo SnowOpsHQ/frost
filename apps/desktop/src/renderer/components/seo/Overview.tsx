@@ -12,6 +12,7 @@ import { CheckCircleIcon, ChevronIcon } from '../../icons';
 import { intentNote, pageTypeView } from '../../page-type-view';
 import { intentChip } from '../../serp-view';
 import { formatCount } from '../../seo-view';
+import { HighlightToggle } from './actions';
 import { AiChecksCard } from './AiChecksCard';
 import { AiScoreSummary } from './AiReadiness';
 import { PageText, Section, SEVERITY_LABEL, SeverityGlyph } from './parts';
@@ -287,6 +288,10 @@ export function Overview({
             <span className="seo-count-label">{audit.counts[severity] === 1 ? SEVERITY_LABEL[severity][0] : SEVERITY_LABEL[severity][1]}</span>
           </span>
         ))}
+      </div>
+      {/* Links, headings and lazy images outlined on the page at once (Phase 11, `all`). */}
+      <div className="seo-panel-tools">
+        <HighlightToggle tab={tab} mode="all" label="Highlight everything" testId="seo-highlight-all" />
       </div>
       <section className="seo-issues">
         <header className="seo-section-head">

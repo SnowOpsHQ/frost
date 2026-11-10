@@ -1,18 +1,31 @@
-import { useState } from 'react';
-import { measureSnippet, type SeoAudit, type SnippetCut } from '@app/seo-core';
+import { useMemo, useState } from 'react';
+import { measureSnippet, serpPreview, type SeoAudit, type SnippetCut } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
-import { MAX_SNIPPET_VARIANTS, SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS, SNIPPET_VARIANT_TITLE_MAX_CHARS } from '@app/specs/seo-content.spec';
-import { breadcrumb, capDescription, capTitle, widthMeter } from '../../content-view';
-import { copySnippetHtml, type ContentNotesApi } from '../../hooks/useContentNotes';
-import { PlusIcon } from '../../icons';
+import {
+  MAX_SNIPPET_VARIANTS,
+  SERP_PREVIEW_LIMITS,
+  SERP_PREVIEW_NOTE,
+  SERP_PREVIEW_TOGGLE_LABELS,
+  SERP_PREVIEW_TOGGLES,
+  SNIPPET_VARIANT_DESCRIPTION_MAX_CHARS,
+  SNIPPET_VARIANT_TITLE_MAX_CHARS,
+  type SerpPreviewVariant,
+} from '@app/specs/seo-content.spec';
+import { capDescription, capTitle, cleanSiteName, SERP_TOGGLES_ON, siteNameOverride, standardPreview, variantChoices, widthMeter, type SerpToggles, type StandardPreviewView } from '../../content-view';
+import { copyPreviewJsonLd, copySnippetHtml, type ContentNotesApi } from '../../hooks/useContentNotes';
+import { CodeIcon, PlusIcon } from '../../icons';
 import { auditRef } from './actions';
-import { DesktopIcon, MobileIcon, PencilIcon, SiteGlyph, TagsIcon, TrashIcon } from './content-icons';
+import { DesktopIcon, MobileIcon, PencilIcon, TagsIcon, TrashIcon } from './content-icons';
+import { Monogram, SerpPreviewVariants } from './SerpPreviewVariants';
 
 // The snippet editor (spec `seo-content.spec.ts`, Pixel widths and Snippet drafts; acceptance
 // `seo-content.feature.md`): desktop and mobile result previews drawn by frost as text (no favicon,
-// no remote resource: a neutral glyph), cut where a result would cut them. The page's own title and
+// no remote resource: a monogram of the site name), cut where a result would cut them. The page's own title and
 // description come measured from the analysis worker (`audit.content.snippet`); a draft is the
 // user's own text, measured here with the same table (`measureSnippet`). Not to scale.
+// Phase 11 Task 3: the site name, breadcrumb trail, date and rating come from the audit alone
+// (`serpPreview`); Top stories, Video and Recipe are frost's own cards (`SerpPreviewVariants`). The
+// variant, the toggles and the site-name override are this panel's state for the session only.
 
 interface Measured {
   readonly title: SnippetCut | null;
@@ -59,8 +72,7 @@ function Shown({ cut, empty, className, testId }: { readonly cut: SnippetCut | n
   );
 }
 
-function Preview({ device, url, measured }: { readonly device: 'desktop' | 'mobile'; readonly url: string; readonly measured: Measured }) {
-  const { host, path } = breadcrumb(url);
+function Preview({ device, view, measured }: { readonly device: 'desktop' | 'mobile'; readonly view: StandardPreviewView; readonly measured: Measured }) {
   const Device = device === 'desktop' ? DesktopIcon : MobileIcon;
   return (
     <figure className="seo-serp" data-device={device} data-testid={`seo-serp-${device}`}>
@@ -70,19 +82,34 @@ function Preview({ device, url, measured }: { readonly device: 'desktop' | 'mobi
       </figcaption>
       <div className="seo-serp-card">
         <div className="seo-serp-site">
-          <SiteGlyph />
+          <Monogram letter={view.monogram} testId={`seo-serp-${device}-monogram`} />
           <span className="seo-serp-site-text">
-            <bdi className="seo-serp-host" dir="auto">
-              {host}
+            <bdi className="seo-serp-host" dir="auto" data-testid={`seo-serp-${device}-site-name`}>
+              {view.siteName}
             </bdi>
-            <bdi className="seo-serp-path" dir="auto">
-              {host}
-              {path}
+            <bdi className="seo-serp-path" dir="auto" data-testid={`seo-serp-${device}-trail`} data-truncated={view.trailTruncated}>
+              {view.trail}
             </bdi>
           </span>
         </div>
         <Shown cut={measured.title} empty="No title" className="seo-serp-title" testId={`seo-serp-${device}-title`} />
-        <Shown cut={device === 'desktop' ? measured.descriptionDesktop : measured.descriptionMobile} empty="No description: a search engine picks text from the page." className="seo-serp-description" testId={`seo-serp-${device}-description`} />
+        {view.rating ? (
+          <span className="seo-serp-rating" data-testid={`seo-serp-${device}-rating`}>
+            <span className="seo-serp-stars" aria-hidden="true">
+              {view.rating.stars}
+            </span>
+            <span>{view.rating.label}</span>
+          </span>
+        ) : null}
+        <span className="seo-serp-description-row">
+          {view.date ? (
+            <span className="seo-serp-date" data-testid={`seo-serp-${device}-date`}>
+              {view.date}
+              {' — '}
+            </span>
+          ) : null}
+          <Shown cut={device === 'desktop' ? measured.descriptionDesktop : measured.descriptionMobile} empty="No description: a search engine picks text from the page." className="seo-serp-description" testId={`seo-serp-${device}-description`} />
+        </span>
       </div>
     </figure>
   );
@@ -97,11 +124,24 @@ export function SnippetEditor({ audit, tab, notes, flash }: { readonly audit: Se
   const pageTitle = audit.page.title?.text ?? '';
   const pageDescription = audit.page.description?.text ?? '';
   const full = notes.drafts.length >= MAX_SNIPPET_VARIANTS;
+  // Session-only (never stored): the variant shown, the toggles and the site-name override.
+  const [variant, setVariant] = useState<SerpPreviewVariant>('standard');
+  const [toggles, setToggles] = useState<SerpToggles>(SERP_TOGGLES_ON);
+  const [siteNameInput, setSiteNameInput] = useState('');
+  const override = siteNameOverride(siteNameInput);
+  const ownFacts = useMemo(() => serpPreview(audit), [audit]);
+  const facts = useMemo(() => (override === undefined ? ownFacts : serpPreview(audit, { siteName: override })), [audit, ownFacts, override]);
+  const view = standardPreview(facts, toggles);
+  const shownVariant = facts.variants[variant] ? variant : 'standard';
 
   const copy = async () => {
     await notes.flush();
     const ok = await copySnippetHtml(tab.id, auditRef(audit), current ? current.slot : null);
     flash(ok ? 'Copied as HTML' : 'Nothing to copy');
+  };
+  const copyJsonLd = async (source: 'page' | 'suggested') => {
+    const ok = await copyPreviewJsonLd(tab.id, auditRef(audit), source, source === 'suggested' ? { ...(override === undefined ? {} : { siteName: override }), breadcrumb: toggles.breadcrumb, date: toggles.date } : undefined);
+    flash(ok ? (source === 'page' ? 'Copied JSON-LD' : 'Copied suggested JSON-LD') : 'Nothing copied');
   };
 
   return (
@@ -133,9 +173,58 @@ export function SnippetEditor({ audit, tab, notes, flash }: { readonly audit: Se
         </button>
       </div>
 
-      <Preview device="desktop" url={audit.url} measured={measured} />
-      <Preview device="mobile" url={audit.url} measured={measured} />
+      <div className="seo-snippet-sources seo-serp-variants" role="group" aria-label="Result type">
+        {variantChoices(facts).map((choice) => (
+          <button
+            key={choice.variant}
+            type="button"
+            className="seo-chip-button"
+            data-testid="seo-serp-variant"
+            data-variant={choice.variant}
+            aria-pressed={shownVariant === choice.variant}
+            disabled={!choice.available}
+            title={choice.reason ?? undefined}
+            onClick={() => setVariant(choice.variant)}
+          >
+            {choice.label}
+          </button>
+        ))}
+      </div>
+
+      {shownVariant === 'standard' ? (
+        <>
+          <Preview device="desktop" view={view} measured={measured} />
+          <Preview device="mobile" view={view} measured={measured} />
+        </>
+      ) : (
+        <SerpPreviewVariants variant={shownVariant} facts={facts} title={(current ? current.title : pageTitle).trim()} />
+      )}
       <p className="seo-note seo-serp-note">Drawn by frost, not to scale: the text is cut where a result would cut it, by width. Budgets are approximate.</p>
+      <p className="seo-note seo-serp-note" data-testid="seo-serp-preview-note">
+        {SERP_PREVIEW_NOTE}
+      </p>
+
+      <div className="seo-serp-options" data-testid="seo-serp-options">
+        <div className="seo-snippet-sources" role="group" aria-label="Show in the preview">
+          {SERP_PREVIEW_TOGGLES.map((toggle) => (
+            <button key={toggle} type="button" className="seo-chip-button" data-testid="seo-serp-toggle" data-toggle={toggle} aria-pressed={toggles[toggle]} onClick={() => setToggles({ ...toggles, [toggle]: !toggles[toggle] })}>
+              {SERP_PREVIEW_TOGGLE_LABELS[toggle]}
+            </button>
+          ))}
+        </div>
+        <label className="seo-field">
+          <span className="seo-field-label">Site name (this session only)</span>
+          <input
+            className="seo-field-input"
+            data-testid="seo-serp-site-name-input"
+            value={siteNameInput}
+            placeholder={ownFacts.siteName.text}
+            maxLength={SERP_PREVIEW_LIMITS.maxSiteNameChars * 2}
+            spellCheck={false}
+            onChange={(event) => setSiteNameInput(cleanSiteName(event.target.value))}
+          />
+        </label>
+      </div>
 
       <div className="seo-width-meters">
         <Meter label="Title" cut={measured.title} testId="seo-width-title" />
@@ -179,6 +268,21 @@ export function SnippetEditor({ audit, tab, notes, flash }: { readonly audit: Se
         <button type="button" className="seo-toggle" data-testid="seo-snippet-copy-html" onClick={() => void copy()}>
           <TagsIcon />
           <span>Copy as HTML</span>
+        </button>
+        <button
+          type="button"
+          className="seo-toggle"
+          data-testid="seo-snippet-copy-jsonld"
+          disabled={ownFacts.blocks.length === 0}
+          title={ownFacts.blocks.length === 0 ? 'No JSON-LD block on this page fed the preview' : 'Copy the page’s JSON-LD blocks this preview reads'}
+          onClick={() => void copyJsonLd('page')}
+        >
+          <CodeIcon />
+          <span>Copy JSON-LD</span>
+        </button>
+        <button type="button" className="seo-toggle" data-testid="seo-snippet-copy-jsonld-suggested" title="Copy a minimal JSON-LD frost suggests from this preview" onClick={() => void copyJsonLd('suggested')}>
+          <CodeIcon />
+          <span>Copy suggested JSON-LD</span>
         </button>
         {current ? (
           <button

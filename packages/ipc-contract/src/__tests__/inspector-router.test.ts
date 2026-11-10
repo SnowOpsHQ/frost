@@ -1,9 +1,24 @@
 // Spec: specs/inspector.schema.ts (the inspector.* inputs and answers), specs/inspector.spec.ts (INSPECTOR_LIMITS), specs/ipc-sender.spec.ts
 // Acceptance: specs/inspector.feature.md (Router; Scenarios every-inspector-procedure-enforces-sender,
-// inspector-inputs-are-validated, inspector-procedures-call-service)
+// inspector-inputs-are-validated, inspector-procedures-call-service; Phase 11 Task 5: search, source and copySource enforce
+// sender, validate their inputs and check their answers; INSPECTOR_SEARCH_LIMITS, INSPECTOR_SOURCE_MAX_CHARS)
 import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
-import { INSPECTOR_LIMITS, type InspectorAck, type InspectorChildrenAnswer, type InspectorNodeAnswer, type InspectorPickAnswer, type NodePath } from '@app/specs/inspector.spec';
+import {
+  INSPECTOR_LIMITS,
+  INSPECTOR_SEARCH_LIMITS,
+  INSPECTOR_SOURCE_MAX_CHARS,
+  type InspectorAck,
+  type InspectorChildrenAnswer,
+  type InspectorCopySourceAnswer,
+  type InspectorNodeAnswer,
+  type InspectorPickAnswer,
+  type InspectorSearchAnswer,
+  type InspectorSearchMode,
+  type InspectorSourceAnswer,
+  type InspectorSourceKind,
+  type NodePath,
+} from '@app/specs/inspector.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
@@ -31,6 +46,9 @@ const NODE: InspectorNodeAnswer = {
 };
 const PICKED: InspectorPickAnswer = { status: 'picked', docToken: TOKEN, path: [1, 0] };
 const OK: InspectorAck = { status: 'ok' };
+const SEARCH: InspectorSearchAnswer = { status: 'ok', docToken: TOKEN, matches: [{ path: [1, 0], node: { ...ROW, tag: 'h1' } }], more: false };
+const SOURCE: InspectorSourceAnswer = { status: 'ok', kind: 'rendered', docToken: TOKEN, ref: 3, text: '<!DOCTYPE html>\n<html></html>', truncated: false };
+const COPIED: InspectorCopySourceAnswer = { status: 'copied', kind: 'rendered', truncated: false };
 
 function fakeInspector() {
   return {
@@ -40,6 +58,9 @@ function fakeInspector() {
     cancelPick: vi.fn(async (_tabId: number) => true),
     highlight: vi.fn(async (_tabId: number, _node: { path: NodePath; tag: string } | null, _token: string): Promise<InspectorAck> => OK),
     clear: vi.fn(async (_tabId: number): Promise<InspectorAck> => OK),
+    search: vi.fn(async (_tabId: number, _token: string, _mode: InspectorSearchMode, _query: string): Promise<InspectorSearchAnswer> => SEARCH),
+    source: vi.fn(async (_tabId: number, _token: string, _kind: InspectorSourceKind): Promise<InspectorSourceAnswer> => SOURCE),
+    copySource: vi.fn(async (_tabId: number, _token: string, _kind: InspectorSourceKind, _ref: number): Promise<InspectorCopySourceAnswer> => COPIED),
   } satisfies InspectorService;
 }
 
@@ -74,6 +95,9 @@ const VALID_INPUT: Record<string, unknown> = {
   cancelPick: { tabId: 1 },
   highlight: { tabId: 1, node: null, docToken: TOKEN },
   clear: { tabId: 1 },
+  search: { tabId: 1, docToken: TOKEN, mode: 'selector', query: 'main > h1.hero' },
+  source: { tabId: 1, docToken: TOKEN, kind: 'served' },
+  copySource: { tabId: 1, docToken: TOKEN, kind: 'rendered', ref: 3 },
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 const untouched = (inspector: ReturnType<typeof fakeInspector>) => {
@@ -140,6 +164,32 @@ describe('inspector router', () => {
         ...smuggled.map((extra) => ({ tabId: 1, node: null, docToken: TOKEN, ...extra })),
       ],
       clear: [...badTabs, undefined, ...smuggled.map((extra) => ({ tabId: 1, ...extra }))],
+      search: [
+        ...badTabs.map((tab) => ({ docToken: TOKEN, mode: 'text', query: 'x', ...tab, ...('tabId' in tab ? {} : { tabId: undefined }) })),
+        ...badTokens.map((docToken) => ({ tabId: 1, docToken, mode: 'text', query: 'x' })),
+        { tabId: 1, docToken: null, mode: 'text', query: 'x' },
+        ...['', 'regex', 'xpath', 'TEXT', null, undefined].map((mode) => ({ tabId: 1, docToken: TOKEN, mode, query: 'x' })),
+        // A query: 1–maxQueryChars characters, not blank, no control character.
+        ...['', '   ', 'x'.repeat(INSPECTOR_SEARCH_LIMITS.maxQueryChars + 1), 'a\nb', 'a\u0000', 'a\u2028b', '\t', 5, null, undefined, ['h1']].map((query) => ({ tabId: 1, docToken: TOKEN, mode: 'selector', query })),
+        ...smuggled.map((extra) => ({ tabId: 1, docToken: TOKEN, mode: 'text', query: 'x', ...extra })),
+      ],
+      source: [
+        ...badTabs.map((tab) => ({ docToken: TOKEN, kind: 'rendered', ...tab, ...('tabId' in tab ? {} : { tabId: undefined }) })),
+        ...badTokens.map((docToken) => ({ tabId: 1, docToken, kind: 'rendered' })),
+        { tabId: 1, docToken: null, kind: 'rendered' },
+        ...['', 'diff', 'RENDERED', null, undefined].map((kind) => ({ tabId: 1, docToken: TOKEN, kind })),
+        ...smuggled.map((extra) => ({ tabId: 1, docToken: TOKEN, kind: 'rendered', ...extra })),
+      ],
+      // Never the text to copy: main reads it again.
+      copySource: [
+        ...badTokens.map((docToken) => ({ tabId: 1, docToken, kind: 'served', ref: 1 })),
+        ...['', 'diff', null].map((kind) => ({ tabId: 1, docToken: TOKEN, kind, ref: 1 })),
+        // The ref of a source main answered: a non-negative integer, required.
+        ...[-1, 1.5, '1', null, undefined, Number.MAX_SAFE_INTEGER + 2].map((ref) => ({ tabId: 1, docToken: TOKEN, kind: 'rendered', ref })),
+        { tabId: 1, docToken: TOKEN, kind: 'rendered', ref: 1, text: '<p>from the chrome</p>' },
+        { tabId: 1, docToken: TOKEN, kind: 'rendered', ref: 1, value: 'x' },
+        ...smuggled.map((extra) => ({ tabId: 1, docToken: TOKEN, kind: 'rendered', ref: 1, ...extra })),
+      ],
     };
     for (const name of PROCEDURES) {
       for (const input of bad[name]!) {
@@ -182,5 +232,31 @@ describe('inspector router', () => {
     expect((await errorOf(call('pick', VALID_INPUT.pick))).code).toBe(IPC_INTERNAL_ERROR_CODE);
     inspector.cancelPick.mockResolvedValueOnce('yes' as unknown as boolean);
     expect((await errorOf(call('cancelPick', { tabId: 1 }))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    // Search and sources.
+    await expect(call('search', VALID_INPUT.search)).resolves.toEqual(SEARCH);
+    expect(inspector.search).toHaveBeenLastCalledWith(1, TOKEN, 'selector', 'main > h1.hero');
+    await expect(call('search', { tabId: 1, docToken: TOKEN, mode: 'text', query: 'x'.repeat(INSPECTOR_SEARCH_LIMITS.maxQueryChars) })).resolves.toEqual(SEARCH);
+    inspector.search.mockResolvedValueOnce({ status: 'refused', reason: 'invalid-selector' });
+    await expect(call('search', VALID_INPUT.search)).resolves.toEqual({ status: 'refused', reason: 'invalid-selector' });
+    await expect(call('source', VALID_INPUT.source)).resolves.toEqual(SOURCE);
+    expect(inspector.source).toHaveBeenLastCalledWith(1, TOKEN, 'served');
+    inspector.source.mockResolvedValueOnce({ status: 'unavailable', kind: 'served', reason: 'redirected', httpStatus: 200 });
+    await expect(call('source', VALID_INPUT.source)).resolves.toEqual({ status: 'unavailable', kind: 'served', reason: 'redirected', httpStatus: 200 });
+    inspector.source.mockResolvedValueOnce({ status: 'pending', kind: 'served' });
+    await expect(call('source', VALID_INPUT.source)).resolves.toEqual({ status: 'pending', kind: 'served' });
+    await expect(call('copySource', VALID_INPUT.copySource)).resolves.toEqual(COPIED);
+    expect(inspector.copySource).toHaveBeenLastCalledWith(1, TOKEN, 'rendered', 3);
+    inspector.copySource.mockResolvedValueOnce({ status: 'refused', reason: 'stale' });
+    await expect(call('copySource', VALID_INPUT.copySource)).resolves.toEqual({ status: 'refused', reason: 'stale' });
+    inspector.copySource.mockResolvedValueOnce({ status: 'pending', kind: 'served' } as unknown as InspectorCopySourceAnswer);
+    expect((await errorOf(call('copySource', VALID_INPUT.copySource))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    inspector.search.mockResolvedValueOnce({ ...SEARCH, matches: new Array(INSPECTOR_SEARCH_LIMITS.maxResults + 1).fill(SEARCH.status === 'ok' ? SEARCH.matches[0] : null) } as InspectorSearchAnswer);
+    expect((await errorOf(call('search', VALID_INPUT.search))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    inspector.source.mockResolvedValueOnce({ ...SOURCE, text: 'x'.repeat(INSPECTOR_SOURCE_MAX_CHARS + 1) } as InspectorSourceAnswer);
+    expect((await errorOf(call('source', VALID_INPUT.source))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    inspector.source.mockResolvedValueOnce({ status: 'unavailable', kind: 'rendered', reason: 'not-fetched', httpStatus: null } as unknown as InspectorSourceAnswer);
+    expect((await errorOf(call('source', VALID_INPUT.source))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    inspector.copySource.mockResolvedValueOnce({ ...COPIED, text: 'leak' } as unknown as InspectorCopySourceAnswer);
+    expect((await errorOf(call('copySource', VALID_INPUT.copySource))).code).toBe(IPC_INTERNAL_ERROR_CODE);
   });
 });

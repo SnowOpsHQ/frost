@@ -1,19 +1,26 @@
 // Specs: specs/render-profile.spec.ts (DEVICE_PRESETS, USER_AGENT_TEMPLATES, NETWORK_PRESETS, RELOAD_TO_APPLY_LABEL),
 // specs/render-profile.schema.spec.ts
 // Acceptance: specs/render-profile.feature.md (End to end); review focus render-profile-is-tab-scoped,
-// emulation-is-invisible-to-page
-import { mkdtemp, rm } from 'node:fs/promises';
+// emulation-is-invisible-to-page. Phase 11 Task 13: specs/devtools.spec.ts (DEVTOOLS_MENU_ID, MASKED_VALUE),
+// specs/devtools.schema.ts (HarLogSchema) for cookies-off-har-shows-no-cookie-header
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { DEVICE_PRESETS, RELOAD_TO_APPLY_LABEL } from '@app/specs/render-profile.spec';
+import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import { CAPTURE_REFUSAL_MESSAGES } from '@app/specs/changes.spec';
+import { HarLogSchema, type HarLog } from '@app/specs/devtools.schema';
+import { DEVTOOLS_MENU_ID, MASKED_VALUE } from '@app/specs/devtools.spec';
+import { CSS_OFF_BADGE, DEVICE_PRESETS, GEOLOCATION_PRESETS, RELOAD_TO_APPLY_LABEL } from '@app/specs/render-profile.spec';
+import { SCREENSHOT_REFUSAL_MESSAGES } from '@app/specs/screenshot.spec';
+import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import { closeApp, launchApp, launchUndrivenApp } from './harness';
 import { chromeHelpers } from './helpers';
 
-/** What the loopback site received: each request's path and `User-Agent`, in order. */
-const requests: { path: string; userAgent: string }[] = [];
+/** What the loopback site received: each request's path and `User-Agent` (and query, `Cookie`, `Sec-Fetch-Dest`), in order. */
+const requests: { path: string; userAgent: string; query?: string; cookie?: string; dest?: string }[] = [];
 /** What `/probe` pages reported (`POST /report`). */
 const reports: Record<string, unknown>[] = [];
 /** What the cross-site frames reported (`POST /frame-report`): their name and what they saw. */
@@ -63,7 +70,13 @@ if (location.search.includes('report')) {
 
 function route(request: IncomingMessage, response: ServerResponse): void {
   const url = new URL(request.url ?? '/', 'http://x');
-  requests.push({ path: url.pathname === '/frame-img' ? `/frame-img?name=${url.searchParams.get('name') ?? ''}` : url.pathname, userAgent: String(request.headers['user-agent'] ?? '') });
+  requests.push({
+    path: url.pathname === '/frame-img' ? `/frame-img?name=${url.searchParams.get('name') ?? ''}` : url.pathname,
+    userAgent: String(request.headers['user-agent'] ?? ''),
+    query: url.search,
+    cookie: String(request.headers.cookie ?? ''),
+    dest: String(request.headers['sec-fetch-dest'] ?? ''),
+  });
   const html = (body: string): void => void response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(body);
   switch (url.pathname) {
     case '/page':
@@ -98,6 +111,23 @@ function route(request: IncomingMessage, response: ServerResponse): void {
     }
     case '/probe':
       return html(PAGE('<h1>Probe</h1>', `<script>${PROBE_SCRIPT}</script>`));
+    // Tab overrides (Phase 11 Task 6): a cookie, a page that reports it and sets another, styles.
+    case '/cookie-set':
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Set-Cookie': 'first=1; Path=/' }).end(PAGE('<h1>Set</h1>'));
+      return;
+    case '/cookie-page':
+      response
+        .writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Set-Cookie': 'late=1; Path=/' })
+        .end(PAGE(`<h1>Cookies</h1><img src="/cookie-img?${Date.now()}" width="1" height="1" alt="">`));
+      return;
+    case '/cookie-img':
+      response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }).end(Buffer.alloc(64, 1));
+      return;
+    case '/css':
+      return html(PAGE('<p id="t">linked</p><p id="u">inline sheet</p><p id="w" style="color: rgb(1, 2, 3)">attribute</p>', '<link rel="stylesheet" href="/style.css"><style>#u { color: rgb(0, 128, 0) }</style>'));
+    case '/style.css':
+      response.writeHead(200, { 'Content-Type': 'text/css', 'Cache-Control': 'no-store' }).end('#t { color: rgb(255, 0, 0) }');
+      return;
     case '/report': {
       let body = '';
       request.on('data', (chunk: Buffer) => (body += chunk.toString('utf8')));
@@ -478,4 +508,265 @@ test('pin-persists-across-relaunch', async () => {
     await closeApp(app);
     await rm(profile, { recursive: true, force: true });
   }
+});
+
+// ---- Tab overrides (Phase 11 Task 6; render-profile.feature.md, Tab overrides) ----------------------
+
+/** Sets the tab's overrides through the editor bar's "This tab only" row, as the user does, and closes the bar. */
+async function setOverrides(options: { css?: boolean; cookies?: boolean; location?: string }): Promise<void> {
+  if (!(await chrome.getByTestId('render-profile-bar').isVisible())) await chrome.getByTestId('render-profile-toggle').click();
+  const row = chrome.getByTestId('render-tab-overrides');
+  await expect(row).toBeVisible();
+  if (options.css !== undefined) await row.getByTestId('render-css-off').setChecked(options.css);
+  if (options.cookies !== undefined) await row.getByTestId('render-cookies-off').setChecked(options.cookies);
+  if (options.location !== undefined) await row.getByTestId('render-geolocation').selectOption(options.location);
+  await chrome.getByTestId('render-profile-close').click();
+  await expect(chrome.getByTestId('render-profile-bar')).toBeHidden();
+}
+
+const ASK_POSITION = 'new Promise((resolve) => navigator.geolocation.getCurrentPosition((p) => resolve([p.coords.latitude, p.coords.longitude, p.coords.accuracy]), (e) => resolve(`error ${e.code}`), { timeout: 10000 }))';
+
+/** Asks the page for its position, allows frost's prompt, and resolves what the page got. */
+async function askPosition(id: number): Promise<unknown> {
+  const asked = h.run(id, ASK_POSITION);
+  const prompt = chrome.getByTestId('permission-prompt');
+  await expect(prompt).toBeVisible();
+  await expect(prompt).toHaveAttribute('data-permission', 'geolocation');
+  await chrome.getByTestId('permission-allow').click();
+  return asked;
+}
+
+/** The document requests (not frost's own served-source fetch) of `path`, in order. */
+const documents = (path: string) => requests.filter((r) => r.path === path && r.dest === 'document');
+const cookieNames = () => app.evaluate(async ({ session }, partition) => (await session.fromPartition(partition).cookies.get({})).map((c) => c.name).sort(), BROWSE_PARTITION);
+
+test('geolocation-override-after-permission-allow', async () => {
+  const id = await open('/page');
+  const berlin = GEOLOCATION_PRESETS.find((p) => p.id === 'berlin')!;
+  await setOverrides({ location: 'berlin' });
+  await expect(chrome.getByTestId('status-tab-overrides')).toContainText('Location 52.52000, 13.40500');
+  // No render profile: the location alone keeps the tab's debugger.
+  await expect(chrome.getByTestId('render-frame')).toHaveCount(0);
+  await expect.poll(() => isAttached(id)).toBe(true);
+  // The page still asks: after frost's prompt is allowed, it gets the override.
+  expect(await askPosition(id)).toEqual([berlin.geolocation.latitude, berlin.geolocation.longitude, berlin.geolocation.accuracy]);
+  // Back to the user's own: cleared (no location provider in the test: the page gets an error).
+  await setOverrides({ location: 'off' });
+  await expect(chrome.getByTestId('status-tab-overrides')).toHaveCount(0);
+  await expect.poll(() => isAttached(id)).toBe(false);
+  expect(await h.run(id, ASK_POSITION)).toMatch(/^error /);
+});
+
+test('cookies-off-sends-no-cookie-header', async () => {
+  const id = await open('/cookie-set');
+  await open('/cookie-page');
+  expect(documents('/cookie-page').at(-1)!.cookie).toBe('first=1');
+  // (The image goes out after the page's own cookie was stored.)
+  await expect.poll(() => requests.filter((r) => r.path === '/cookie-img').at(-1)?.cookie).toBe('first=1; late=1');
+  expect(await cookieNames()).toEqual(['first', 'late']);
+  await app.evaluate(async ({ session }, partition) => session.fromPartition(partition).cookies.remove('http://127.0.0.1', 'late').catch(() => undefined), BROWSE_PARTITION);
+  await expect.poll(cookieNames).toEqual(['first']);
+
+  await setOverrides({ cookies: true });
+  await expect(chrome.getByTestId('status-tab-overrides')).toContainText('Cookies off');
+  requests.length = 0;
+  await reload(id, '/cookie-page');
+  // Neither the page nor its image sent the cookie; the cookie the page set was never kept; and the
+  // page's script sees none.
+  expect(documents('/cookie-page').at(-1)!.cookie).toBe('');
+  await expect.poll(() => requests.filter((r) => r.path === '/cookie-img').length).toBeGreaterThan(0);
+  expect(requests.filter((r) => r.path === '/cookie-img').every((r) => r.cookie === '')).toBe(true);
+  expect(await cookieNames()).toEqual(['first']);
+  expect(await h.run(id, 'document.cookie')).toBe('');
+  // A known limit, stated in the hint: the Cookie Store API still reads (and writes) the shared jar.
+  expect(await h.run(id, 'cookieStore.getAll().then((all) => all.map((c) => c.name))')).toContain('first');
+
+  // Another tab still sends its cookies.
+  await newTab(2);
+  await open('/cookie-page?other');
+  expect(documents('/cookie-page').at(-1)).toMatchObject({ query: '?other', cookie: 'first=1' });
+  await expect(chrome.getByTestId('status-tab-overrides')).toHaveCount(0);
+
+  // Off again on the first tab: its cookies go out again.
+  await chrome.locator('[data-testid="tab"][data-tab-id]').first().click();
+  await setOverrides({ cookies: false });
+  await reload(id, '/cookie-page');
+  expect(documents('/cookie-page').at(-1)!.cookie).toContain('first=1');
+});
+
+/**
+ * Exports the active tab's network log as HAR through the devtools drawer, main's save dialog stubbed
+ * to answer `file`; resolves the parsed file.
+ */
+async function exportHar(file: string): Promise<HarLog> {
+  await app.evaluate(({ dialog }, filePath) => {
+    dialog.showSaveDialog = (async () => ({ canceled: false, filePath })) as typeof dialog.showSaveDialog;
+  }, file);
+  await chrome.getByTestId('devtools-network-export').click();
+  await chrome.locator('[data-testid="devtools-network-export-format"][data-format="har"]').click();
+  await expect(chrome.getByTestId('devtools-network-export-status')).toHaveText('Saved.');
+  const parsed = HarLogSchema.safeParse(JSON.parse(await readFile(file, 'utf8')));
+  expect(parsed.success, JSON.stringify(parsed.error?.issues?.slice(0, 3))).toBe(true);
+  return parsed.data!;
+}
+
+/** The drawer's row for the newest `/cookie-img` request the server got (its URL is unique per load). */
+const latestImageRow = () => chrome.locator('[data-testid="devtools-network-row"]').filter({ has: chrome.locator(`[title$="/cookie-img${requests.filter((r) => r.path === '/cookie-img').at(-1)?.query ?? ''}"]`) });
+
+/** The `cookie` request headers of the export's `/cookie-page` document and `/cookie-img` entries. */
+const cookieHeaders = (har: HarLog) =>
+  har.log.entries
+    .filter((e) => e.request.url.startsWith(`${origin}/cookie-page`) || e.request.url.startsWith(`${origin}/cookie-img`))
+    .map((e) => ({ path: new URL(e.request.url).pathname, cookie: e.request.headers.filter((h) => h.name.toLowerCase() === 'cookie').map((h) => h.value) }));
+
+test('cookies-off-har-shows-no-cookie-header', async () => {
+  test.slow();
+  const dir = await mkdtemp(path.join(tmpdir(), 'frost-cookies-har-'));
+  let exports = 0;
+  /**
+   * Exports again (a new file each time) until `ready` holds for the export's `/cookie-page` and
+   * `/cookie-img` entries, or the bounded wait ends: a request's headers reach main's log after the
+   * server has answered it.
+   */
+  const exportUntil = async (ready: (entries: ReturnType<typeof cookieHeaders>) => boolean): Promise<HarLog> => {
+    let har: HarLog | undefined;
+    await expect
+      .poll(
+        async () => {
+          har = await exportHar(path.join(dir, `export-${(exports += 1)}.har`));
+          return ready(cookieHeaders(har));
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(true);
+    return har!;
+  };
+  const bothListed = (entries: ReturnType<typeof cookieHeaders>) => entries.map((e) => e.path).sort().join() === '/cookie-img,/cookie-page';
+  try {
+    const id = await open('/cookie-set');
+    // The drawer records requests while it is open.
+    await h.menu(DEVTOOLS_MENU_ID);
+    await expect(chrome.getByTestId('devtools')).toBeVisible();
+    await chrome.locator('[data-testid="devtools-tab"][data-tab="network"]').click();
+    await open('/cookie-page');
+    expect(documents('/cookie-page').at(-1)!.cookie).toBe('first=1');
+
+    // Cookies off for the tab, reload: the server gets no cookie, and the export has no `cookie` header.
+    await setOverrides({ cookies: true });
+    await expect(chrome.getByTestId('status-tab-overrides')).toContainText('Cookies off');
+    requests.length = 0;
+    await reload(id, '/cookie-page');
+    await expect.poll(() => requests.filter((r) => r.path === '/cookie-img').length).toBeGreaterThan(0);
+    expect(requests.filter((r) => r.path === '/cookie-page' || r.path === '/cookie-img').every((r) => r.cookie === '')).toBe(true);
+    await expect(latestImageRow()).toHaveCount(1);
+    const off = cookieHeaders(await exportUntil(bothListed));
+    expect(off.map((e) => e.path).sort()).toEqual(['/cookie-img', '/cookie-page']);
+    for (const entry of off) expect(entry.cookie, entry.path).toEqual([]);
+
+    // The control: another tab, cookies on, while the first one's block is installed. Its requests
+    // carry their cookies, and its export lists the header, masked (never the value). (Electron
+    // reports `Cookie` to `onSendHeaders` only while a blocking `onBeforeSendHeaders` listener is on
+    // the session; with no tab's cookies off, the log has no `cookie` header at all.)
+    await newTab(2);
+    await open('/cookie-page?other');
+    expect(documents('/cookie-page').at(-1)).toMatchObject({ query: '?other', cookie: 'first=1; late=1' });
+    await expect(latestImageRow()).toHaveCount(1);
+    const onHar = await exportUntil((entries) => bothListed(entries) && entries.every((e) => e.cookie.length === 1 && e.cookie[0] === MASKED_VALUE));
+    const on = cookieHeaders(onHar);
+    expect(on.map((e) => e.path).sort()).toEqual(['/cookie-img', '/cookie-page']);
+    for (const entry of on) expect(entry.cookie, entry.path).toEqual([MASKED_VALUE]);
+    expect(JSON.stringify(onHar)).not.toContain('first=1');
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+});
+
+test('css-off-disables-stylesheets', async () => {
+  const id = await open('/css');
+  const colors = () => isolated(id, `JSON.stringify(['t', 'u', 'w'].map((id) => getComputedStyle(document.getElementById(id)).color))`).then((json) => JSON.parse(json as string) as string[]);
+  const styled = ['rgb(255, 0, 0)', 'rgb(0, 128, 0)', 'rgb(1, 2, 3)'];
+  const unstyled = ['rgb(0, 0, 0)', 'rgb(0, 0, 0)', 'rgb(1, 2, 3)'];
+  expect(await colors()).toEqual(styled);
+  await setOverrides({ css: true });
+  // The stylesheets are off (the page can tell); the `style` attribute stays.
+  await expect.poll(colors).toEqual(unstyled);
+  expect(await h.run(id, '[...document.styleSheets].every((sheet) => sheet.disabled)')).toBe(true);
+  await expect(chrome.getByTestId('status-tab-overrides')).toContainText(CSS_OFF_BADGE);
+  // A new document while it is on: off again, also with the page's JavaScript off.
+  await reload(id, '/css');
+  await expect.poll(colors).toEqual(unstyled);
+  await chrome.getByTestId('render-profile-toggle').click();
+  await chrome.getByTestId('render-quick-no-javascript').click();
+  await chrome.getByTestId('render-profile-close').click();
+  await profileActive();
+  await reload(id, '/css');
+  await expect.poll(colors).toEqual(unstyled);
+  // Back on: the page's own styles apply again.
+  await setOverrides({ css: false });
+  await expect.poll(colors).toEqual(styled);
+});
+
+const AUDIT_WAIT = AUDIT_DEBOUNCE_MS + EXTRACT_TIMEOUT_MS + 5_000;
+
+/** Opens the Changes panel and waits for the page's settled audit (Capture now enabled). */
+async function openChanges(): Promise<void> {
+  const sidebar = chrome.getByTestId('seo-sidebar');
+  if ((await sidebar.getAttribute('data-open')) !== 'true' || (await chrome.getByTestId('seo-panel').getAttribute('data-panel')) !== 'changes') {
+    await chrome.locator('[data-testid="seo-rail-item"][data-panel="changes"]').click();
+  }
+  await expect(chrome.getByTestId('changes')).toBeVisible();
+  await expect(chrome.getByTestId('changes')).toHaveAttribute('data-audit', 'ready', { timeout: AUDIT_WAIT });
+  await expect(chrome.getByTestId('changes-capture')).toBeEnabled({ timeout: AUDIT_WAIT });
+}
+
+test('capture-now-refused-with-emulation', async () => {
+  await open('/page');
+  await openChanges();
+  // CSS turned off after a clean audit (no new audit): the live arm refuses the capture.
+  await setOverrides({ css: true });
+  await chrome.getByTestId('changes-capture').click();
+  const status = chrome.getByTestId('changes-capture-status');
+  await expect(status).toHaveAttribute('data-outcome', 'refused');
+  await expect(status).toHaveText(CAPTURE_REFUSAL_MESSAGES['tab-emulation-on']);
+  await expect(chrome.getByTestId('changes-version')).toHaveCount(0);
+});
+
+test('screenshot-refused-with-emulation', async () => {
+  const id = await open('/page');
+  await openChanges();
+  await expect(chrome.getByTestId('screenshots')).toHaveAttribute('data-state', 'ready');
+  await setOverrides({ css: true });
+  await chrome.getByTestId('screenshot-viewport').click();
+  const status = chrome.getByTestId('changes-capture-status');
+  await expect(status).toHaveAttribute('data-outcome', 'refused');
+  await expect(status).toHaveText(SCREENSHOT_REFUSAL_MESSAGES['tab-emulation-on']);
+  await expect(chrome.getByTestId('screenshot')).toHaveCount(0);
+  // Turned off again: the page was shown under it, so it is still refused until a reload.
+  await setOverrides({ css: false });
+  await expect(chrome.getByTestId('status-tab-overrides')).toHaveCount(0);
+  await chrome.getByTestId('screenshot-viewport').click();
+  await expect(status).toHaveAttribute('data-outcome', 'refused');
+  await reload(id, '/page');
+  await chrome.getByTestId('screenshot-viewport').click();
+  await expect(status).toHaveAttribute('data-outcome', 'saved', { timeout: 30_000 });
+});
+
+test('emulation-survives-profile-reset', async () => {
+  const id = await open('/page');
+  const tokyo = GEOLOCATION_PRESETS.find((p) => p.id === 'tokyo')!;
+  await applyProfile({ device: 'phone', userAgent: 'googlebot-smartphone' });
+  await profileActive();
+  await setOverrides({ location: 'tokyo' });
+  await reload(id, '/page');
+  expect((await sees(id)).ua).toContain('Googlebot');
+  // Reset: the profile goes (and the page reloads without it), the location stays with the tab.
+  const reloads = requests.filter((r) => r.path === '/page').length;
+  await chrome.getByTestId('render-frame-reset').click();
+  await expect.poll(() => requests.filter((r) => r.path === '/page').length).toBeGreaterThan(reloads);
+  await waitLoaded(id);
+  await expect(chrome.getByTestId('render-frame')).toHaveCount(0);
+  await expect(chrome.getByTestId('status-tab-overrides')).toContainText('Location');
+  expect(await isAttached(id)).toBe(true);
+  expect((await sees(id)).ua).not.toContain('Googlebot');
+  expect(await askPosition(id)).toEqual([tokyo.geolocation.latitude, tokyo.geolocation.longitude, tokyo.geolocation.accuracy]);
 });

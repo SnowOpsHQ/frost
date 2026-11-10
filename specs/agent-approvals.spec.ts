@@ -154,10 +154,26 @@ export function isTabBound(toolName: string): boolean {
 }
 
 /**
+ * Tools that read a tab the user attached to the chat (Phase 11 Task 9, Decision 11), never the chat
+ * tab: main's broker resolves the call's `ref` to the attached tab and passes **that tab's** attach
+ * URL as `tabUrl` to `grantOriginFor`, `approvalOriginFor` and `runTargetFor`, and checks
+ * `isPublicPage` on it, so grants, the private-page rule and the approval card all use the attached
+ * tab's origin.
+ */
+export const ATTACHED_TAB_TOOLS: readonly string[] = ['read_attached_tab'];
+
+/** Whether `toolName` reads an attached tab (`ATTACHED_TAB_TOOLS`). */
+export function isAttachedTabTool(toolName: string): boolean {
+  return ATTACHED_TAB_TOOLS.includes(toolName);
+}
+
+/**
  * The origin a grant for a call to `toolName` is keyed to (`act` tools only):
  * - `navigate`: the destination's origin (`input.url`), never the tab's, so a grant for one site
  *   doesn't let the agent go to another;
  * - `click` and `run_visibility_probes`: the origin of the page the chat's tab shows (`tabUrl`);
+ * - `read_attached_tab` (a read tool, so no grant is ever stored for it): the attached tab's origin
+ *   (`tabUrl` is the attached tab's attach URL, `ATTACHED_TAB_TOOLS`);
  * - any other tool, or a non-`http(s)` URL: `null` (no grant applies).
  */
 export function grantOriginFor(toolName: string, input: unknown, tabUrl: string | null): string | null {
@@ -165,16 +181,17 @@ export function grantOriginFor(toolName: string, input: unknown, tabUrl: string 
     const url = typeof input === 'object' && input !== null ? (input as { url?: unknown }).url : undefined;
     return webOrigin(url);
   }
-  if (toolName === 'click' || toolName === 'run_visibility_probes') return webOrigin(tabUrl);
+  if (toolName === 'click' || toolName === 'run_visibility_probes' || isAttachedTabTool(toolName)) return webOrigin(tabUrl);
   return null;
 }
 
 /**
- * The origin an approval request names: the grant origin for `navigate` and `click`, the tab page's
+ * The origin an approval request names: the grant origin for `navigate`, `click` and
+ * `read_attached_tab` (the attached tab's origin), the tab page's
  * origin for the other page tools (`PAGE_TOOLS`), else `null` (the call doesn't act on a site).
  */
 export function approvalOriginFor(toolName: string, input: unknown, tabUrl: string | null): string | null {
-  if (toolName === 'navigate' || toolName === 'click' || toolName === 'run_visibility_probes') return grantOriginFor(toolName, input, tabUrl);
+  if (toolName === 'navigate' || toolName === 'click' || toolName === 'run_visibility_probes' || isAttachedTabTool(toolName)) return grantOriginFor(toolName, input, tabUrl);
   return PAGE_TOOLS.includes(toolName) ? webOrigin(tabUrl) : null;
 }
 
@@ -188,6 +205,7 @@ export interface RunTarget {
  * What a call to `toolName` must find when it runs, decided when main decides the call:
  * - `navigate`: the destination's origin and `parseWebUrl(url).href` (the URL the tab loads);
  * - a page tool: the tab page's origin and its URL without the fragment (`pageUrlOf`);
+ * - `read_attached_tab`: the same for the attached tab's attach URL (passed as `tabUrl`);
  * - any other tool: nothing (`null`s).
  */
 export function runTargetFor(toolName: string, input: unknown, tabUrl: string | null): RunTarget {
@@ -196,7 +214,7 @@ export function runTargetFor(toolName: string, input: unknown, tabUrl: string | 
     const parsed = parseWebUrl(url);
     return { expectedOrigin: parsed?.origin ?? null, expectedUrl: parsed?.href ?? null };
   }
-  if (isTabBound(toolName)) return { expectedOrigin: webOrigin(tabUrl), expectedUrl: pageUrlOf(tabUrl) };
+  if (isTabBound(toolName) || isAttachedTabTool(toolName)) return { expectedOrigin: webOrigin(tabUrl), expectedUrl: pageUrlOf(tabUrl) };
   return { expectedOrigin: null, expectedUrl: null };
 }
 

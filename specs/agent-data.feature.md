@@ -276,3 +276,65 @@ Scenarios (`apps/desktop/src/main/agent/__tests__/skill-files.test.ts` unless no
 - **Scenario: agent-chat-export-and-restore** — export cancelled and saved (main's save dialog
   stubbed in main by the test), the Markdown file's text; the chat is listed again after a restart on
   the same profile.
+
+## Chat history: search, rename, archive (Phase 11 Task 8; `docs/plans/phase-11-practitioner-tooling.md`, Decision 10)
+Spec: `specs/agent-data.spec.ts` (`CHAT_LIST_FILTERS`, `CHAT_SEARCH_MAX_CHARS`, `CHAT_SEARCH_SNIPPET_CHARS`,
+`CHAT_SEARCH_SCAN_MAX_CHARS`, `chatTitleFromUser`, `chatSearchMatcher`, `chatSearchSnippet`, `CHAT_HISTORY_WORDS`),
+`specs/agent-ipc.schema.ts` (`AgentListChatsInputSchema`, `AgentRenameChatInputSchema`,
+`AgentArchiveChatInputSchema`), `specs/agent-session.spec.ts` (`AgentChatSummary.archived`, `match`).
+Migration `0230_agent_chat_lifecycle` (`packages/db/src/phase11-migrations.ts`) adds `archived_at`
+(nullable time) and `title_by_user` (0 or 1, default 0) to `agent_chats`.
+
+Decisions:
+- **Search is main's, a bounded scan.** `agent.listChats` filters main's chats (at most
+  `MAX_STORED_CHATS`) by `active` / `archived` and, with a query, keeps those whose title or text
+  holds it: the query's words in order, any whitespace between, case-insensitive (Unicode), literal.
+  The text is the user's and the assistant's (the display entries' `text`), **never tool output**: a
+  chat in memory is read from memory; a stored chat not yet opened is read from disk, the entries'
+  `$.text` only (`json_extract` in SQLite, so no tool card leaves the database), at most
+  `CHAT_SEARCH_SCAN_MAX_CHARS` per chat. Each hit in the text carries a one-line snippet of at most
+  `CHAT_SEARCH_SNIPPET_CHARS` with where the match sits; a title-only hit has none. No FTS table.
+- **Rename** takes one line, trimmed, 1–`STORED_CHAT_TITLE_MAX_CHARS` characters
+  (`chatTitleFromUser`; main cleans it again). A user's title is never overwritten by the automatic
+  one: the session never re-titles a chat, and the database keeps a stored user title (`title_by_user`)
+  when a save carries an automatic one. Renaming does not change `updatedAt` (the order and the
+  retention are unchanged). With the retention `off`, the rename is kept in memory only.
+- **Archive** hides a chat from the default (`active`) list; `archived` lists it; unarchive brings it
+  back. It does not change `updatedAt`: **retention and the 50-chat cap apply to archived chats**
+  as to any other. A stored chat not yet opened is renamed or archived on disk without reading its rows.
+  **Sending a message to an archived chat unarchives it** (it is in use again): in memory at once,
+  on disk with the turn's save; a refused send leaves it archived.
+- The procedures are behind `enforceSender`, their inputs strict and bounded; `listChats`' answer is
+  rebuilt field by field (ids, bounded titles and snippets, match offsets inside the snippet).
+- The panel: a search box (debounced; main answers), an Active / Archived switch, rename inline
+  (Enter saves, Escape cancels), archive / unarchive per chat. Titles and snippets are React text in
+  `<bdi dir="auto">` (the match in a `<mark>`), never markup.
+
+Scenarios:
+- **Scenario: migration-0230-keeps-rows** (`packages/db/src/__tests__/agent-chats.test.ts`) — a
+  database at `0229` with a stored chat gains the two columns; the chat reads back unarchived with its
+  automatic title.
+- **Scenario: user-title-survives-auto-title** — a renamed chat's next save with the automatic title
+  keeps the user's.
+- **Scenario: archived-pruned-by-retention** — an archived chat older than the window is deleted.
+- **Scenario: cap-counts-archived** — archived chats count toward `MAX_STORED_CHATS`.
+- **Scenario: migrations-are-forward-only** (`migrations.test.ts`) — `0230` then `0231`, contiguous and
+  in order, every id before them below `0230` (a later phase's block may follow); the test-only ids
+  are `9000_` / `9001_`.
+- **Scenario: search-title-and-text** (`apps/desktop/src/main/agent/__tests__/session-data.test.ts`) —
+  a title hit, a text hit with its snippet (in memory and in a stored chat not yet opened), the
+  `active` / `archived` filters.
+- **Scenario: search-excludes-tool-output** — a word only in a tool's output finds nothing.
+- **Scenario: retention-off-rename-in-memory** — under `off` the rename shows and nothing is stored.
+- **Scenario: rename-and-archive-stored** — a stored, unopened chat renamed and archived on disk;
+  restored with its title and archived; a message unarchives it (in memory, then on disk with the
+  save) and keeps the user's title.
+- **Scenario: chat-history-procedures** (`agent-router.test.ts`) — sender-guarded, strict inputs, the
+  answers rebuilt and bounded.
+- **Scenario: chat-history-helpers** (`agent-view.test.ts`) — `chatTitleFromUser`, the matcher, the
+  snippet, the list's filter and the snippet's parts.
+- **Scenario: chat-list-search-rename-archive** (`agent-data-components.test.ts`) — the switch, the
+  search call, rename (Enter / Escape), archive.
+- **Scenario: chat-rename-archive-search** (`apps/desktop/e2e/agent.e2e.ts`, scripted model) — two
+  chats; one renamed and archived; it leaves the Active list and shows under Archived; a search finds
+  it by its assistant text with a snippet, and a word only a tool read finds nothing.

@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { AgentActiveChatView, AgentMessageView, AgentNoticeView, AgentSetupView } from '@app/specs/agent-session.spec';
+import { AGENT_ATTACH_WORDS } from '@app/specs/agent-panel.spec';
 import { isAtBottom, setupChecklist, userMessageSkillLabel, visibleNotice } from '../../agent-view';
 import { CloseIcon } from '../../icons';
 import { AgentToolCard } from './AgentToolCard';
@@ -95,6 +96,9 @@ export function AgentChat({
           <div className="agent-hint" data-testid="agent-empty">
             <p className="agent-hint-title">Ask about this page</p>
             <p className="agent-hint-text">The agent reads the page's audit, facts and text. It asks you before it opens a page, clicks or runs code.</p>
+            <p className="agent-hint-text" data-testid="agent-attach-hint">
+              {AGENT_ATTACH_WORDS.hint}
+            </p>
           </div>
         ) : (
           <SetupHint setup={setup} onOpenSettings={onOpenSettings} />

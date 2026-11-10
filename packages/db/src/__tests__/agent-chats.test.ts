@@ -1,13 +1,14 @@
 // Spec: specs/agent-data.spec.ts (AGENT_CHAT_TABLES, MAX_STORED_CHATS, MAX_STORED_ROWS_PER_CHAT,
 // STORED_CHAT_ROW_MAX_CHARS, CHAT_RETENTION_PREFERENCE_KEY, DEFAULT_CHAT_RETENTION, retentionCutoff)
-// Acceptance: specs/agent-data.feature.md (Stored chats)
+// Phase 11 Task 8: specs/agent-data.spec.ts (chatTitleFromUser, MAX_STORED_CHATS with archived chats), migration 0230
+// Acceptance: specs/agent-data.feature.md (Stored chats; Chat history)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { beforeEach, describe, expect, test } from 'vitest';
-import { CHAT_RETENTION_PREFERENCE_KEY, DEFAULT_CHAT_RETENTION, MAX_STORED_CHATS, MAX_STORED_ROWS_PER_CHAT, retentionCutoff, STORED_CHAT_ROW_MAX_CHARS } from '@app/specs/agent-data.spec';
+import { CHAT_RETENTION_PREFERENCE_KEY, CHAT_SEARCH_SCAN_MAX_CHARS, DEFAULT_CHAT_RETENTION, MAX_STORED_CHATS, MAX_STORED_ROWS_PER_CHAT, retentionCutoff, STORED_CHAT_ROW_MAX_CHARS } from '@app/specs/agent-data.spec';
 import { createAgentChatsRepository, type AgentChatRowsUpdate, type AgentChatsRepository, type StoredAgentChatHead } from '../agent-chats';
 import { agentChatEntries, agentChatMessages, agentChats } from '../agent-chats-schema';
 import { createDrizzle } from '../client';
@@ -25,8 +26,8 @@ beforeEach(() => {
 
 const count = (table: string) => Number(raw.prepare(`SELECT count(*) AS n FROM ${table}`).get()!['n']);
 
-function columns(table: string) {
-  return raw
+function columns(table: string, db: DatabaseSync = raw) {
+  return db
     .prepare(`PRAGMA table_info(${table})`)
     .all()
     .map((row) => ({ name: String(row['name']), type: String(row['type']).toLowerCase(), notNull: row['notnull'] === 1 || row['pk'] !== 0, primaryKey: row['pk'] !== 0 }))
@@ -56,6 +57,8 @@ const head = (id: string, updatedAt: number, changes: Partial<StoredAgentChatHea
   outputTokens: 2,
   contextTokens: 12,
   truncated: false,
+  archivedAt: null,
+  titleByUser: false,
   ...changes,
 });
 const MESSAGES = ['{"role":"user","content":"hi"}', '{"role":"assistant","content":"hello","toolCalls":[]}'];
@@ -239,5 +242,97 @@ describe('agent chats (db)', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test('migration-0230-keeps-rows', async () => {
+    const old = new DatabaseSync(':memory:');
+    runMigrations(old, MIGRATIONS.filter((m) => m.id < '0230'));
+    old.prepare("INSERT INTO agent_chats (id, title, created_at, updated_at) VALUES ('kept', 'How is this page?', 1, 2)").run();
+    old.prepare(`INSERT INTO agent_chat_entries (chat_id, seq, entry) VALUES ('kept', 0, '{"kind":"user","text":"How is this page?","tools":[]}')`).run();
+    expect(runMigrations(old)).toContain('0230_agent_chat_lifecycle');
+    expect(columns('agent_chats', old)).toEqual(drizzleColumns(agentChats));
+    const again = createAgentChatsRepository(createDrizzle(old));
+    expect(await again.chatHeads()).toEqual([{ ...head('kept', 2, { createdAt: 1, title: 'How is this page?', modelId: null, inputTokens: null, outputTokens: null, contextTokens: null }) }]);
+    expect(await again.chatRows('kept')).toEqual({ messages: [], entries: ['{"kind":"user","text":"How is this page?","tools":[]}'] });
+  });
+
+  test('user-title-survives-auto-title', async () => {
+    expect(await repo.saveChat(head('a', 10, { title: 'Auto title' }), full())).toBe(true);
+    // Renamed: the row only (no rows touched, the time unchanged).
+    expect(await repo.renameChat('a', 'My title')).toBe(true);
+    expect((await repo.chatHeads())[0]).toMatchObject({ title: 'My title', titleByUser: true, updatedAt: 10 });
+    expect(await repo.chatRows('a')).toEqual({ messages: MESSAGES, entries: ENTRIES });
+    // The next save carries the automatic title: the user's stays.
+    expect(await repo.saveChat(head('a', 20, { title: 'Auto title' }), { messagesFrom: 2, messages: [], entriesFrom: 2, entries: [] })).toBe(true);
+    expect((await repo.chatHeads())[0]).toMatchObject({ title: 'My title', titleByUser: true, updatedAt: 20 });
+    // A save with a user title replaces it; a rename can change it again.
+    expect(await repo.saveChat(head('a', 30, { title: 'Newer', titleByUser: true }), full())).toBe(true);
+    expect((await repo.chatHeads())[0]).toMatchObject({ title: 'Newer', titleByUser: true });
+    expect(await repo.renameChat('a', '  Trimmed  ')).toBe(true);
+    expect((await repo.chatHeads())[0]!.title).toBe('Trimmed');
+    // Not a title (blank, two lines, too long) or not an id: refused, nothing written.
+    for (const bad of ['', '   ', 'two\nlines', 't'.repeat(201)]) expect(await repo.renameChat('a', bad), bad.slice(0, 20)).toBe(false);
+    expect(await repo.renameChat('bad id', 'x')).toBe(false);
+    expect((await repo.chatHeads())[0]!.title).toBe('Trimmed');
+    // An unknown chat: nothing to rename.
+    expect(await repo.renameChat('nope', 'x')).toBe(true);
+    expect(count('agent_chats')).toBe(1);
+  });
+
+  test('archived-pruned-by-retention', async () => {
+    const day = 86_400_000;
+    const now = 100 * day;
+    await repo.saveChat(head('old', now - 31 * day), full());
+    await repo.saveChat(head('new', now - day), full());
+    expect(await repo.setChatArchived('old', now)).toBe(true);
+    expect(await repo.setChatArchived('new', now)).toBe(true);
+    // Archiving changes no time: the window still counts from the last message.
+    expect((await repo.chatHeads()).map((c) => [c.id, c.archivedAt, c.updatedAt])).toEqual([
+      ['new', now, now - day],
+      ['old', now, now - 31 * day],
+    ]);
+    expect(await repo.countChatsUpdatedBefore(retentionCutoff('30d', now)!)).toBe(1);
+    await repo.deleteChatsUpdatedBefore(retentionCutoff('30d', now)!);
+    expect((await repo.chatHeads()).map((c) => c.id)).toEqual(['new']);
+    expect(count('agent_chat_messages')).toBe(2);
+    // Unarchived again; a bad time is refused.
+    expect(await repo.setChatArchived('new', null)).toBe(true);
+    expect((await repo.chatHeads())[0]!.archivedAt).toBeNull();
+    expect(await repo.setChatArchived('new', -1)).toBe(false);
+    expect(await repo.setChatArchived('new', Number.NaN)).toBe(false);
+    // A tampered archive time reads as not archived.
+    raw.prepare("UPDATE agent_chats SET archived_at = 'soon' WHERE id = 'new'").run();
+    expect((await repo.chatHeads())[0]!.archivedAt).toBeNull();
+  });
+
+  test('cap-counts-archived', async () => {
+    for (let i = 0; i < MAX_STORED_CHATS; i += 1) expect(await repo.saveChat(head(`c${i}`, 1000 + i, { archivedAt: i % 2 === 0 ? 5000 : null }), full())).toBe(true);
+    expect(count('agent_chats')).toBe(MAX_STORED_CHATS);
+    // One more: the least recently updated goes, archived or not.
+    expect(await repo.saveChat(head('extra', 9000), full())).toBe(true);
+    const ids = (await repo.chatHeads()).map((c) => c.id);
+    expect(ids).toHaveLength(MAX_STORED_CHATS);
+    expect(ids).not.toContain('c0');
+    expect((await repo.chatHeads()).filter((c) => c.archivedAt !== null)).toHaveLength(MAX_STORED_CHATS / 2 - 1);
+  });
+
+  test('chat-texts-read-text-only', async () => {
+    const entries = [
+      '{"kind":"user","text":"Find the tea","tools":[]}',
+      '{"kind":"assistant","text":"Reading.","tools":[{"callId":"c1","toolName":"page_text","status":"done","code":null,"inputPreview":"{}","outputPreview":"{\\"text\\":\\"secret oolong\\"}"}]}',
+      'not json',
+      '{"kind":"assistant","text":5,"tools":[]}',
+    ];
+    expect(await repo.saveChat(head('a', 1), full(MESSAGES, entries))).toBe(true);
+    expect(await repo.chatTexts('a')).toEqual(['Find the tea', 'Reading.']);
+    expect(await repo.chatTexts('nope')).toBeNull();
+    // Bounded in SQLite: past CHAT_SEARCH_SCAN_MAX_CHARS in all, the rest of the chat isn't read.
+    const big = (n: number) => `{"kind":"assistant","text":"${'w'.repeat(n)}","tools":[]}`;
+    const third = Math.floor(CHAT_SEARCH_SCAN_MAX_CHARS / 3);
+    expect(await repo.saveChat(head('b', 2), full(MESSAGES, [big(third), big(third), big(third), big(third), big(third)]))).toBe(true);
+    const texts = (await repo.chatTexts('b'))!;
+    expect(texts.map((text) => text.length)).toEqual([third, third, third, CHAT_SEARCH_SCAN_MAX_CHARS - 3 * third]);
+    expect(texts.join('').length).toBe(CHAT_SEARCH_SCAN_MAX_CHARS);
+    expect(await repo.chatTexts('bad id')).toBeNull();
   });
 });

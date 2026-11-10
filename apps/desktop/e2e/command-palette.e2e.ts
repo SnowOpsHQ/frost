@@ -200,6 +200,12 @@ test('palette-sits-above-the-page-view', async () => {
     await chrome(cssWidth / 700);
     await expect.poll(() => page.evaluate(() => innerWidth)).toBeLessThanOrEqual(702);
     await expect(sidebar()).toHaveAttribute('data-open', 'true');
+    // The panes' widths follow the row through a ResizeObserver (Phase 11 Task 10, sidebar-layout.ts),
+    // which runs in the next rendering update, and React commits the new widths before that frame
+    // paints: a frame is never painted in between, but a box read right after the zoom (a forced
+    // layout runs no observer) can still see CSS's narrowing alone. Let one rendering update pass
+    // (an animation frame, then a task after it) so the split measured below is the one on screen.
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))));
     const split = async () => ({ area: (await area.boundingBox())!.width, sidebar: (await sidebar().boundingBox())!.width });
     const closed = await split();
     await press('chrome', 'K', ['mod']);

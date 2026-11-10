@@ -123,7 +123,7 @@
    Editor toggles and a site-name override are **session-only**; drafts still store title and
    description only (no migration). "Copy JSON-LD" writes either the page's own blocks that fed the
    preview or a **suggested** minimal JSON-LD main builds from validated fields (`<` written as
-   `<`). *Rejected:* storing preview extras per draft (a new column for a cosmetic choice; deferred).
+   `\u003c`). *Rejected:* storing preview extras per draft (a new column for a cosmetic choice; deferred).
 5. **Network export is HAR 1.2 or CSV, saved by main** in its own save dialog (the
    `agent/dialogs.ts` pattern), active tab only (`DEVTOOLS_TAB_SCOPE`). Built from the log as kept:
    rows and headers exactly as stored (allowlisted, `SECRET_HEADERS` masked `•••`), **never a body**
@@ -482,7 +482,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 1: Copy values and CSV exports (SL-013, SL-130)
 **Purpose:** Decisions 1–2.
-- [ ] **Spec:**
+- [x] **Spec:**
   - `specs/command-palette.spec.ts`: append the 17 keys of Decision 2 to `COPY_VALUE_KEYS`, a label
     each in `COPY_VALUE_LABELS`, `COPY_VALUE_MAX_CHARS` (1 000 000), and the format of each
     multi-line value (outline indented by level, `name: value` lines, one URL per line).
@@ -497,7 +497,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
     holding the four most used values and the three CSVs.
   - `specs/command-palette.spec.ts`: append the backlink entries to `OPEN_IN_TEMPLATES` (Decision 2;
     `OPEN_IN_TEMPLATE_IDS` grows with them); `specs/command-palette.feature.md`: one scenario.
-- [ ] **Red:**
+- [x] **Red:**
   - `packages/seo-core/src/__tests__/copy-values.test.ts`: `copy-value-<key>` for each new key,
     `copy-value-absent-is-null`, `canonical-html-escaped`, `response-headers-masked`.
   - New `packages/seo-core/src/__tests__/exports.test.ts`: `images-csv-columns-and-filter`,
@@ -513,7 +513,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
     `open-in-backlink-entries-are-fixed-https-templates` (each new entry's origin is `https://` plus
     a fixed host, the page URL goes only in its `urlParam`, and the first use asks consent for its
     host like the existing entries).
-- [ ] **Green:** `packages/seo-core/src/copy-values.ts`, new `exports.ts` (reusing `csvCell`),
+- [x] **Green:** `packages/seo-core/src/copy-values.ts`, new `exports.ts` (reusing `csvCell`),
   `index.ts`; new `main/seo/audit-ref.ts` (`sameAudit` moved out of `controller.ts`), new
   `main/seo/exports.ts` (service over `audits.response`); `context-menu.ts` submenu; new
   `seo-export-router.ts` / `seo-export-service.ts`; `router.ts`, `services.ts` one line; renderer
@@ -524,7 +524,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 2: Highlights — internal, external, lazy images, keyphrase, all (SL-011, SL-022)
 **Purpose:** Decision 3. **Needs Phase 8 Task 2 merged.**
-- [ ] **Spec:** `specs/seo-sidebar.spec.ts` (append): `HIGHLIGHT_MODES` += `internal`, `external`,
+- [x] **Spec:** `specs/seo-sidebar.spec.ts` (append): `HIGHLIGHT_MODES` += `internal`, `external`,
   `lazy-images`, `keyphrase`, `all`; `HIGHLIGHT_PANELS`: `internal`/`external` → `links`,
   `lazy-images` → `images`, `keyphrase` → `content`, `all` → `overview`; `HIGHLIGHT_STYLES` +=
   `lazy`, `lazy-first-viewport`, `keyphrase` (`internal`/`external`/`nofollow` reused).
@@ -532,14 +532,14 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `keyphrase`, 1–100 chars, one line). `specs/seo-limits.spec.ts`: `MAX_KEYPHRASE_MATCHES` (500).
   `specs/browser.spec.ts`: `TabState.highlightPhrase: string | null`. `specs/seo-panels.feature.md`,
   `seo-content.feature.md`: scenarios.
-- [ ] **Red:** `main/seo/__tests__/highlight.test.ts`: `plan-internal-external-only`,
+- [x] **Red:** `main/seo/__tests__/highlight.test.ts`: `plan-internal-external-only`,
   `plan-internal-shows-nofollow-as-nofollow`, `plan-lazy-images-marks-first-viewport`,
   `plan-all-combines`, `plan-text-highlight-every-occurrence-capped` (Phase 8's planner with the new
   option), `keyphrase-whole-words-only`; `main/seo/__tests__/panels.test.ts`:
   `keyphrase-must-be-an-audit-ngram` (other phrase → `false`), `keyphrase-resets-on-navigation`;
   `main/seo/__tests__/extract-dom.test.ts`: `keyphrase-highlight-leaves-page-untouched`; renderer
   `content-view.test.ts`: n-gram row toggle.
-- [ ] **Green:** `main/seo/highlight.ts` (modes; `planTextHighlight` option), `highlights.ts`
+- [x] **Green:** `main/seo/highlight.ts` (modes; `planTextHighlight` option), `highlights.ts`
   (phrase check against the ready audit), `controller.ts` `setHighlight(tabId, mode, phrase)`,
   `router.ts` one-argument change; renderer `Links.tsx`, `Images.tsx`, `Content.tsx` (n-gram rows),
   `Overview.tsx`.
@@ -550,7 +550,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 3: SERP preview completeness (SL-053, SL-054)
 **Purpose:** Decision 4.
-- [ ] **Spec:** `specs/seo-limits.spec.ts`: `SOCIAL_TAGS` += `article:published_time`,
+- [x] **Spec:** `specs/seo-limits.spec.ts`: `SOCIAL_TAGS` += `article:published_time`,
   `article:modified_time` (the extractor, `seo-snapshot.spec.ts` snapshot schema and seo-core read
   them like the other social tags; `changes/snapshot.ts` picks named keys, so capture identity is
   unchanged). `specs/seo-content.spec.ts` (append): `SERP_PREVIEW_VARIANTS = ['standard',
@@ -561,7 +561,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   widths use the existing table at `SNIPPET_FONT.descriptionPx` with approximate budgets documented
   like `SNIPPET_BUDGETS_PX`. `specs/seo-content.schema.ts`: `CopyPreviewJsonLdInputSchema`
   (`tabId`, `audit`, `source`, `fields?` bounded). `seo-content.feature.md`: scenarios.
-- [ ] **Red:** new `packages/seo-core/src/__tests__/serp-preview.test.ts`:
+- [x] **Red:** new `packages/seo-core/src/__tests__/serp-preview.test.ts`:
   `site-name-prefers-website-schema`, `site-name-falls-back-to-og-then-host`,
   `breadcrumb-from-breadcrumblist`, `breadcrumb-falls-back-to-url`, `date-from-article-schema`,
   `date-falls-back-to-article-published-time`, `rating-from-aggregate`, `video-and-recipe-facts`,
@@ -569,7 +569,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   tests: `article-time-tags-read`; `main/seo/__tests__/content-service.test.ts`:
   `copy-jsonld-page-blocks`, `copy-jsonld-stale-audit-writes-nothing`; renderer
   `content-view.test.ts`: `preview-variant-cards`.
-- [ ] **Green:** `specs/seo-limits.spec.ts` follow-through in `main/seo/extract.ts` and the snapshot
+- [x] **Green:** `specs/seo-limits.spec.ts` follow-through in `main/seo/extract.ts` and the snapshot
   schema; new `seo-core/src/content/serp-preview.ts`; `main/seo/content-notes.ts`
   (`copyPreviewJsonLd`); `content-router.ts`, `content-service.ts`; renderer `SnippetEditor.tsx`
   (site name, monogram placeholder, crumbs, date, rating, toggles), new `SerpPreviewVariants.tsx`,
@@ -579,13 +579,13 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 4: Devtools — network export and web storage (SL-048, SL-051) — security review
 **Purpose:** Decisions 5–6.
-- [ ] **Spec (invariant rewording, under this task's security review):** `devtools.spec.ts` header
+- [x] **Spec (invariant rewording, under this task's security review):** `devtools.spec.ts` header
   ("read-only by design: it never runs script in a page and never edits a page's DOM") and
   `devtools.feature.md` "Read-only by design. No script runs in the page for the drawer …" become:
   the drawer never edits a page's DOM, and runs one script only, the read-only storage reader in
   `DEVTOOLS_STORAGE_WORLD_ID`, only when the Storage tab is opened or refreshed and for a Reveal.
   `STORAGE_USAGE_NOTE` is reworded (usage now comes from `navigator.storage.estimate()`).
-- [ ] **Spec (new):** `specs/devtools.spec.ts`: `NETWORK_EXPORT_FORMATS = ['har', 'csv']`,
+- [x] **Spec (new):** `specs/devtools.spec.ts`: `NETWORK_EXPORT_FORMATS = ['har', 'csv']`,
   `NETWORK_CSV_COLUMNS`, `HAR_NO_BODY_COMMENT`, `EXPORT_URLS_REDACTED_NOTE` (HAR `log.comment`, the
   CSV's first line and the Export menu: "best effort", never "contains no secrets"),
   `EXPORT_URL_PLACES` (`request.url`, `request.queryString`, `response.redirectURL` / `redirectTo`,
@@ -604,7 +604,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `ExportNetworkInputSchema`, `RevealStorageItemInputSchema` (`tabId`, `area`, `key`),
   `WebStorageKeysAnswerSchema`, `WebStorageValueAnswerSchema`, `HarLogSchema` (the subset frost
   writes). `devtools.feature.md`: scenarios.
-- [ ] **Red:** new `main/devtools/__tests__/network-export.test.ts`: `har-has-no-bodies-and-says-so`,
+- [x] **Red:** new `main/devtools/__tests__/network-export.test.ts`: `har-has-no-bodies-and-says-so`,
   `har-masks-secret-headers`, `har-redacts-sensitive-query-params`, `har-querystring-array-redacted`,
   `har-redirect-url-redacted`, `har-redacts-referer-and-location-headers`, `har-redacts-link-header-urls`,
   `har-page-url-redacted`,
@@ -624,7 +624,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   (existing, unchanged) passes with `1_601`, `1_602` and `1_700` in `NON_AGENT_WORLD_IDS`;
   `packages/ipc-contract/src/__tests__/devtools-router.test.ts`:
   `exportNetwork` and `revealStorageItem` enforce sender.
-- [ ] **Green:** new `main/devtools/network-export.ts`, `url-redact.ts`, `web-storage.ts`;
+- [x] **Green:** new `main/devtools/network-export.ts`, `url-redact.ts`, `web-storage.ts`;
   `devtools/service.ts`, `storage.ts`; `devtools-router.ts`, `devtools-service.ts`; renderer
   `NetworkPanel.tsx` (Export menu; the menu says URLs are redacted), `StoragePanel.tsx`
   (Local/Session sections with key and size, Reveal, Refresh, usage).
@@ -636,7 +636,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 5: Inspector search and source views (SL-047) — security review
 **Purpose:** Decision 7.
-- [ ] **Spec:** `specs/inspector.spec.ts`: `INSPECTOR_SEARCH_MODES = ['text', 'selector']`,
+- [x] **Spec:** `specs/inspector.spec.ts`: `INSPECTOR_SEARCH_MODES = ['text', 'selector']`,
   `INSPECTOR_SEARCH_LIMITS = { maxQueryChars: 200, maxResults: 200, maxNodesVisited: 50_000 }`,
   `INSPECTOR_SOURCE_KINDS = ['rendered', 'served']`, `INSPECTOR_SOURCE_MAX_CHARS` (2 000 000),
   `INSPECTOR_REFUSALS` += `invalid-selector`; answers `InspectorSearchAnswer`,
@@ -644,14 +644,14 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `specs/inspector.schema.ts`: input/answer schemas incl. `InspectorCopySourceInputSchema`.
   `specs/seo-javascript.spec.ts`: `SERVED_SOURCE_MAX_CHARS`, `SERVED_SOURCE_KEEP` (4 documents,
   most recent); `seo-javascript.schema.ts`: the parse result's `sourceText`. Feature scenarios.
-- [ ] **Red:** `main/inspector/__tests__/page-script.test.ts`: `search-text-finds-paths`,
+- [x] **Red:** `main/inspector/__tests__/page-script.test.ts`: `search-text-finds-paths`,
   `search-selector-invalid-refused`, `search-capped`, `serialize-capped-and-truncated-flag`,
   `scripts-never-write-dom`; `service.test.ts`: `search-stale-doc-refused`,
   `served-source-unavailable-reason`, `copy-source-from-main`; `main/seo/__tests__/served.test.ts` (existing):
   `served-source-decoded-in-worker-and-capped`, `served-source-kept-for-four-documents`;
   renderer `inspector-view.test.ts`: `source-lines-are-text`;
   `packages/ipc-contract/src/__tests__/inspector-router.test.ts`: new procedures enforce sender.
-- [ ] **Green:** `main/inspector/page-script.ts`, `service.ts`; `main/seo/served.ts`,
+- [x] **Green:** `main/inspector/page-script.ts`, `service.ts`; `main/seo/served.ts`,
   `served-parse.ts`, `analysis-worker.ts`; `inspector-router.ts`; renderer
   `components/changes/Inspector.tsx` (search box, Tree / Rendered / Served toggle, line list with
   in-view find), `inspector-view.ts`.
@@ -660,17 +660,17 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 6: Tab overrides — CSS off, cookies off, geolocation (SL-007) — security review
 **Purpose:** Decision 8 (tab-local; not in `RenderProfile`).
-- [ ] **Spike first** (Open questions 1–3 and 10), recorded in `render-profile.feature.md` Known
+- [x] **Spike first** (Open questions 1–3 and 10), recorded in `render-profile.feature.md` Known
   limits. It must show: `StyleSheet.disabled` from world `1_701` takes effect (also under JavaScript
   off); `Cookie` / `Set-Cookie` removal by the blocking pair actually takes effect, and the
   `onSendHeaders` observer (`web-request.ts` hub) sees the request **after** the edit (the Task 13
   e2e relies on it); `details.webContentsId` coverage; the geolocation override reaching
   `getCurrentPosition`. Each feature that fails its spike is dropped per Decision 8's fallbacks.
-- [ ] **Spec (invariant wording, under this task's security review):** `render-profile.feature.md`
+- [x] **Spec (invariant wording, under this task's security review):** `render-profile.feature.md`
   gains a "Page writes" paragraph: CSS off is the one emulation that writes to the page (stylesheet
   `disabled`, top frame, observable by the page), on the user's request only; and the cookie-block
   exception to `web-request.ts`'s "no blocking listener on the browse session".
-- [ ] **Spec (new):** `specs/render-profile.spec.ts`: `TabOverrides` (`cssDisabled`,
+- [x] **Spec (new):** `specs/render-profile.spec.ts`: `TabOverrides` (`cssDisabled`,
   `cookiesDisabled`, `geolocation: { latitude; longitude; accuracy } | null`),
   `DEFAULT_TAB_OVERRIDES`, `GEOLOCATION_LIMITS` (±90, ±180, accuracy 1–100 000 m, 5 decimals),
   `GEOLOCATION_PRESETS` (a few cities, frost-chosen rounded coordinates); `RENDER_PROFILE_CDP_METHODS`
@@ -712,7 +712,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   (root-config one-liner each): `security:semgrep:test` gains
   `&& uvx semgrep@1.182.1 --test --metrics off --config semgrep/webrequest-blocking-allowlist.yml semgrep/__fixtures__/webrequest-blocking-allowlist.ts`,
   and `security:semgrep:scan` gains `--config semgrep/webrequest-blocking-allowlist.yml` (four rules in all).
-- [ ] **Red:** `main/browser/__tests__/render-profile.test.ts`: `geolocation-to-tab-and-frames`,
+- [x] **Red:** `main/browser/__tests__/render-profile.test.ts`: `geolocation-to-tab-and-frames`,
   `cookies-off-sends-document-cookie-disabled`, `unlisted-method-still-refused`; new
   `main/browser/__tests__/tab-overrides.test.ts`: `emulation-is-tab-local-and-not-pinned`,
   `emulation-ends-with-the-tab`, `marker-set-when-a-document-loads-under-overrides` (any override
@@ -774,7 +774,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `agent-worlds-distinct` (existing, unchanged) passes with `1_701` in `NON_AGENT_WORLD_IDS`;
   `pnpm security:semgrep:test`: the new fixture's
   `ruleid` lines fail the rule (a violation in a non-allowlisted module is reported) and `ok` lines pass.
-- [ ] **Green:** new `browser/tab-overrides.ts` (per-tab state, the per-tab override revision, and
+- [x] **Green:** new `browser/tab-overrides.ts` (per-tab state, the per-tab override revision, and
   the per-document `loadedUnderOverrides` marker from the tab's main-frame navigation events —
   whether any override was on at any point from a navigation's start to its completion; asks
   `render-profile.ts` to re-apply), `cookie-block.ts` (each listener body is `try`/`catch`/`finally`: the `catch` logs one
@@ -818,14 +818,14 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 7: Screenshot annotation editor (SL-100) — security review
 **Purpose:** Decision 9.
-- [ ] **Spec:** `specs/screenshot.spec.ts`: `SCREENSHOT_EDIT_TOOLS = ['arrow', 'box', 'text', 'crop']`,
+- [x] **Spec:** `specs/screenshot.spec.ts`: `SCREENSHOT_EDIT_TOOLS = ['arrow', 'box', 'text', 'crop']`,
   `ScreenshotEditOp` (arrow, box `filled`, text ≤ 200 chars), `SCREENSHOT_EDIT_COLORS` (6),
   `SCREENSHOT_EDIT_LIMITS = { maxOps: 200, maxOverlayBytes: 8 MiB }`, `SCREENSHOT_EDIT_RESULTS =
   ['saved', 'no-source', 'invalid', 'too-large', 'store-failed']`, `ScreenshotEntry.editedFrom:
   string | null`. `specs/screenshot.schema.ts`: `SaveScreenshotEditInputSchema` (`sourceId`, `crop`
   in source px or `null`, `overlay` PNG `data:` URL, `ops`). `specs/capture-db.spec.ts`: the local
   `screenshot_edits` table (not in `SYNC_TABLES`). Feature scenarios in `screenshot.feature.md`.
-- [ ] **Red:** new `main/screenshots/__tests__/edit.test.ts`: `overlay-must-match-crop-size`,
+- [x] **Red:** new `main/screenshots/__tests__/edit.test.ts`: `overlay-must-match-crop-size`,
   `composite-alpha-over-source` (pure, no Electron), `source-unchanged-new-hash-and-row`,
   `oversize-overlay-refused`, `missing-or-changed-source-no-source`, `crop-outside-source-invalid`,
   `edit-row-links-source`; `packages/db/src/__tests__/migrations.test.ts`:
@@ -836,7 +836,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `packages/db/src/__tests__/repository.test.ts`: `migration-0231`, `purge-removes-edit-rows`;
   `packages/ipc-contract/src/__tests__/screenshots-router.test.ts`: `saveEdit` enforces sender and
   bounds input; renderer new `screenshot-editor.test.ts`: undo/redo, ops bounded, overlay sized to crop.
-- [ ] **Green:** new `main/screenshots/edit.ts`, `composite.ts`; `screenshots/service.ts`,
+- [x] **Green:** new `main/screenshots/edit.ts`, `composite.ts`; `screenshots/service.ts`,
   `imaging.ts` (decode to bitmap); new `packages/db/src/phase11-migrations.ts` with
   `0231_screenshot_edits`, spread last in `migrations.ts` (Decision 18); `change-intel/purge.ts`
   cleanup; `changes-router.ts` (`screenshotsRouter.saveEdit`), `changes-service.ts`; renderer new
@@ -847,19 +847,19 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 8: Chat history — search, rename, archive (SL-056, SL-057)
 **Purpose:** Decision 10.
-- [ ] **Spec:** `specs/agent-data.spec.ts`: `CHAT_LIST_FILTERS = ['active', 'archived']`,
+- [x] **Spec:** `specs/agent-data.spec.ts`: `CHAT_LIST_FILTERS = ['active', 'archived']`,
   `CHAT_SEARCH_MAX_CHARS` (200), `CHAT_SEARCH_SNIPPET_CHARS` (120), rename rules (reuse
   `STORED_CHAT_TITLE_MAX_CHARS`, one line, trimmed); `specs/agent-ipc.schema.ts`:
   `AgentListChatsInputSchema`, `AgentRenameChatInputSchema`, `AgentArchiveChatInputSchema`;
   `specs/agent-session.spec.ts`: `AgentChatSummary.archived`, `match?`; `agent-data.feature.md`.
-- [ ] **Red:** `packages/db/src/__tests__/agent-chats.test.ts`: `migration-0230-keeps-rows`,
+- [x] **Red:** `packages/db/src/__tests__/agent-chats.test.ts`: `migration-0230-keeps-rows`,
   `user-title-survives-auto-title`, `archived-pruned-by-retention`, `cap-counts-archived`;
   `packages/db/src/__tests__/migrations.test.ts`: `migrations-are-forward-only` with `0230` last;
   **fixture-id check** (Decision 18): the test-only ids are already `9000_`/`9001_` (Phase 8 Task
   5);
   `main/agent/__tests__/session-data.test.ts`: `search-title-and-text`, `search-excludes-tool-output`,
   `retention-off-rename-in-memory`; `agent-router` tests; renderer `agent-view.test.ts`.
-- [ ] **Green:** `packages/db/src/phase11-migrations.ts` (`0230_agent_chat_lifecycle`:
+- [x] **Green:** `packages/db/src/phase11-migrations.ts` (`0230_agent_chat_lifecycle`:
   `archived_at INTEGER`, `title_by_user INTEGER NOT NULL DEFAULT 0`; whichever of Tasks 7 and 8
   lands first creates the file and the `migrations.ts` spread), `agent-chats.ts`;
   `main/agent/chat-history.ts`, `session.ts`, `service.ts`; `agent-router.ts`, `agent-service.ts`;
@@ -868,7 +868,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 9: @-attach other tabs (SL-058) — security review
 **Purpose:** Decision 11.
-- [ ] **Spec:** `specs/agent-tools.spec.ts` (append): `read_attached_tab` (`read`, grantable), input
+- [x] **Spec:** `specs/agent-tools.spec.ts` (append): `read_attached_tab` (`read`, grantable), input
   `{ ref: 'tab-1' | 'tab-2' | 'tab-3', part: 'audit' | 'text' }`, `MAX_CHAT_ATTACHMENTS = 3`,
   `MAX_ATTACHED_READS_PER_TURN = 2` (per attachment), the `not-ready` answer text;
   `specs/agent-protocol.schema.ts`: `AGENT_PROTOCOL_VERSION` = **current + 1 at merge time**
@@ -877,7 +877,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `specs/agent-session.spec.ts`: `AgentActiveChatView.attachments` (`ref`, `origin`, `title`,
   `state: 'ready' | 'changed' | 'closed'`); new `specs/agent-attach.feature.md`; the system-prompt
   sentence (refs and origins only).
-- [ ] **Red:** new `main/agent/__tests__/attached-tabs.test.ts`: `ref-not-attached-refused`,
+- [x] **Red:** new `main/agent/__tests__/attached-tabs.test.ts`: `ref-not-attached-refused`,
   `navigated-tab-expired`, `closed-tab-expired`, `attached-background-tab-audit-not-ready` (no ready
   audit, or one for another URL → `not-ready` data, no card), `attached-background-tab-audit-served-when-url-matches`,
   `attached-text-reads-the-attached-tab-with-expected-page-check`, `grant-origin-is-attached-tabs-origin`,
@@ -887,7 +887,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   (an attached page asking to navigate still needs approval); `agent-cannot-approve.test.ts`
   unchanged and passing; `provider-capture` on the `chatgpt` route: the new tool is inside the
   `frost` namespace; renderer composer `@` menu tests.
-- [ ] **Green:** new `main/agent/tools/attached-tabs.ts`; `tools/runner.ts`, `tools/index.ts`
+- [x] **Green:** new `main/agent/tools/attached-tabs.ts`; `tools/runner.ts`, `tools/index.ts`
   (readers take a resolved tab), `session.ts`, `system-prompt.ts`, `approvals.ts` (origin from the
   attached tab); `packages/ai-skills/src/tools.ts`; `agent-router.ts`; renderer `AgentComposer.tsx`
   (`@` menu, chips), `AgentChat.tsx`.
@@ -896,7 +896,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 10: Workspace polish — resizable panes, panel pins, history (SL-001, SL-014, SL-106, SL-116)
 **Purpose:** Decisions 12–13.
-- [ ] **Spec:** `specs/seo-sidebar.spec.ts`: `SIDEBAR_PANEL_WIDTH_RANGE = { min: 300, max: 560,
+- [x] **Spec:** `specs/seo-sidebar.spec.ts`: `SIDEBAR_PANEL_WIDTH_RANGE = { min: 300, max: 560,
   keyboardStep: 24 }`, `SIDEBAR_WIDTH_STORAGE_KEY`, `SIDEBAR_PINS_STORAGE_KEY`,
   `ALWAYS_PINNED_PANELS = ['overview']`, `MORE_PANELS_LABEL`; `seo-sidebar.feature.md` rewords
   "The rail lists `SEO_PANELS` in order" to the pinned ones. `specs/agent-panel.spec.ts`:
@@ -907,14 +907,14 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `HISTORY_RETENTION_SETTING_KEY`, `HISTORY_KEEP_PROJECT_PAGES_KEY`, `HISTORY_CLEAR_RANGES`,
   `CLEAR_HISTORY_RANGE` dialog (states one row per URL), history list input += `projectId`, answer
   += `changeCount`. `account-settings.spec.ts`: `SETTINGS_SECTIONS` += `history`.
-- [ ] **Red:** new `renderer/__tests__/sidebar-layout.test.ts`: `width-clamped-to-page-min`,
+- [x] **Red:** new `renderer/__tests__/sidebar-layout.test.ts`: `width-clamped-to-page-min`,
   `narrow-window-shrinks-agent-pane-first`, `keyboard-resize-steps`, `pins-persist-overview-stays`,
   `more-shows-worst-status`, `jump-to-unpinned-panel-shows-it`; `packages/db/src/__tests__/history.test.ts`:
   `prune-keeps-project-pages`, `clear-range-on-last-visit`, `project-filter`, `change-count-from-versions`;
   `main/browser/__tests__/browser-polish.test.ts`: `retention-applied-at-start-and-daily`,
   `clear-range-confirms-in-main`; router tests; `renderer/__tests__/use-history-view.test.ts`
   (existing): project filter and change counts; new `renderer/__tests__/settings-history.test.ts`.
-- [ ] **Green:** renderer `SeoSidebar.tsx`, `AgentPanel.tsx`, new `sidebar-layout.ts`, `styles.css`;
+- [x] **Green:** renderer `SeoSidebar.tsx`, `AgentPanel.tsx`, new `sidebar-layout.ts`, `styles.css`;
   `packages/db/src/history.ts`; `main/browser/history-service.ts`; `polish-router.ts`,
   `polish-services.ts`; `HistoryView.tsx`, `useHistoryView.ts`, new `settings-history.tsx`, `settings-view.tsx`.
 - **E2E:** `seo-sidebar.e2e.ts` `drag-resize-moves-page-view`, `unpin-into-more`;
@@ -923,20 +923,20 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 11: Help, shortcuts, What's New and setup checklist (SL-005, SL-117, SL-118, SL-126)
 **Purpose:** Decisions 14 (without diagnostics) and 15.
-- [ ] **Spec:** new `specs/help.spec.ts`: `HELP_MENU` (ids, labels, `role: 'help'`), `HELP_URLS`
+- [x] **Spec:** new `specs/help.spec.ts`: `HELP_MENU` (ids, labels, `role: 'help'`), `HELP_URLS`
   (README and new-issue URLs, fixed `https:`, opened through `resolveExternalOpen`),
   `KEYBOARD_SHORTCUTS` (groups built from existing shortcut constants, per-platform display),
   `SHORTCUTS_SHORTCUT = 'Mod+/'`, `SETUP_CHECKLIST_ITEMS`, `SETUP_CHECKLIST_STORAGE_KEY`,
   `WHATS_NEW_SEEN_SETTING_KEY`. New `specs/whats-new.schema.ts`: `ReleaseNotesSchema` (≤ 50
   releases; version, date, title, ≤ 10 items of ≤ 200 chars, optional release URL on
   `github.com/SnowOpsHQ/frost`). `help.feature.md`.
-- [ ] **Red:** `main/__tests__/menu.test.ts`: `help-menu-items`, `every-menu-accelerator-is-listed`,
+- [x] **Red:** `main/__tests__/menu.test.ts`: `help-menu-items`, `every-menu-accelerator-is-listed`,
   `every-listed-shortcut-exists`; new `main/help/__tests__/help-links.test.ts`:
   `help-links-go-through-resolve-external-open` (allowlisted, gesture required, nothing opened
   otherwise); new `main/help/__tests__/release-notes.test.ts`:
   `release-notes-valid-and-current-version-present`, `release-notes-bundled-not-read-from-disk`;
   `help-router` tests; new `renderer/__tests__/start-view.test.ts` (checklist done states, dismiss).
-- [ ] **Green:** `menu.ts` (Help submenu from new `main/help/menu.ts`), new `main/help/*`;
+- [x] **Green:** `menu.ts` (Help submenu from new `main/help/menu.ts`), new `main/help/*`;
   `apps/desktop/release-notes.json`, imported as JSON into the main bundle (Vite) and validated with
   `ReleaseNotesSchema` at startup and in the test, so the packaged build needs no file on disk; new
   `help-router.ts` / `help-service.ts`; renderer `ShortcutsView.tsx`, `WhatsNewView.tsx`,
@@ -946,30 +946,30 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 
 ### Task 12: Export Diagnostics (SL-125) — security review
 **Purpose:** Decision 14 (diagnostics).
-- [ ] **Spec:** new `specs/diagnostics.spec.ts`: `DIAGNOSTICS_LOG_RING = { maxLines: 500,
+- [x] **Spec:** new `specs/diagnostics.spec.ts`: `DIAGNOSTICS_LOG_RING = { maxLines: 500,
   maxLineChars: 500 }`, `DIAGNOSTICS_FIELDS` (versions, platform, packaged, applied migration ids,
   feature booleans), the forbidden contents (URLs, page text, emails, keys, tokens, file paths, host
   or user names), `DIAGNOSTICS_RESULTS`; `HELP_MENU` += Export Diagnostics…; `diagnostics.feature.md`.
-- [ ] **Red:** new `main/diagnostics/__tests__/report.test.ts`: `report-has-no-urls-emails-paths-or-keys`,
+- [x] **Red:** new `main/diagnostics/__tests__/report.test.ts`: `report-has-no-urls-emails-paths-or-keys`,
   `ring-capped-and-scrubbed` (telemetry's `createScrubber` + `machineLiterals`),
   `ring-keeps-warn-and-error-only`, `save-writes-what-main-built`, `cancelled-writes-nothing`;
   `help-router` tests for `diagnostics` / `saveDiagnostics`.
-- [ ] **Green:** new `main/diagnostics/{log-ring,report}.ts` (ring installed at startup from
+- [x] **Green:** new `main/diagnostics/{log-ring,report}.ts` (ring installed at startup from
   `index.ts`, one line); `help-router.ts`; renderer `DiagnosticsView.tsx` (the report as text for
   review, then Save… in main's dialog).
 - **E2E** (`settings.e2e.ts`, save dialog stubbed): `export-diagnostics-saves-reviewed-report`.
 - **Risks:** a main log line carrying page data (scrubber + review of the ring's sources).
 
 ### Task 13: Phase e2e sweep, docs and gates
-- [ ] Run every e2e file touched above together; add `render-profile.e2e.ts`
+- [x] Run every e2e file touched above together; add `render-profile.e2e.ts`
   `cookies-off-har-shows-no-cookie-header` (Tasks 4 + 6; relies on the Task 6 spike result that
   `onSendHeaders` sees post-edit headers) and `seo-panels.e2e.ts` `context-menu-copy-seo-data`
   (Tasks 1 + 2).
-- [ ] Docs: `apps/desktop/README.md` (copy/export procedures and best-effort URL redaction;
+- [x] Docs: `apps/desktop/README.md` (copy/export procedures and best-effort URL redaction;
   line 203's "no script runs in the page" reworded for the storage reader; CSS-off and cookie-block
   exceptions in the Security model), root `README.md` feature list;
   `ci-gates.feature.md`.
-- [ ] Gates: `pnpm security:electronegativity` (baseline unchanged), `pnpm security:semgrep` (all
+- [x] Gates: `pnpm security:electronegativity` (baseline unchanged), `pnpm security:semgrep` (all
   four rules with their fixtures: `ipc-sender-guard`, `webcontents-factory`, `debugger-allowlist`,
   `webrequest-blocking-allowlist`), `pnpm test`, `pnpm test:e2e`.
 
@@ -988,3 +988,238 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 | 8 | Which Help URL (README or a docs site)? | Owner decision; constant in `help.spec.ts`. |
 | 9 | Canvas/OffscreenCanvas size limits for overlays of tall full-page crops. | Task 7 spike; fall back to overlay tiles if needed. |
 | 10 | Verify the tab-local route: emulation never reaches `RenderProfileSchema`, pins, captures, screenshots or sync, and never silently drops. | Task 6 tests `render-profile-schema-rejects-emulation-fields`, `audit-stamps-emulation-with-no-profile`, `get-audit-carries-the-stamp`, `capture-refused-when-the-stamp-shows-an-override`, `capture-refused-when-overrides-turned-on-after-audit`, `capture-allowed-when-stamp-and-live-both-off`, `capture-lane-unchanged-by-emulation-stamp`, `capture-refused-when-document-loaded-under-overrides`, `screenshot-refused-while-emulation-on`, `screenshot-allowed-after-emulation-turned-off-with-stale-audit`, `screenshot-refused-when-document-loaded-under-overrides`, `capture-refused-when-overrides-revision-changes-before-persist`, `screenshot-refused-when-css-toggled-during-full-page`, `marker-kept-when-override-on-at-navigation-start`, `emulation-survives-profile-reset`, `reattach-restores-emulation` (`lane-key-unchanged-by-emulation` is only a trivially true regression guard). |
+
+---
+
+## As-built notes
+- **Lead cross-plan check (Open question 7), against main `ec046eb`:** Phases 8 and 9 merged; no
+  world id in `1_700`–`1_709` is used, Phase 10's plan adds no page script or world id, Phase 12
+  reserves only `1_302`; `read_attached_tab` is new. `AGENT_PROTOCOL_VERSION` is `9` on main, so
+  Task 9 sets it to `10`.
+- **Task 1:** backlink "Open in" entries ship for Ahrefs (`/backlink-checker/?input=`) and Majestic
+  (`/reports/site-explorer?q=`), both checked by fetching the public pages on 2026-11-09; Semrush is
+  left out (its backlink report needs a sign-in). "Copy SEO Data" is the last group of every page
+  context menu (link, selection or plain spot); a value the audit lacks shows disabled, not hidden,
+  and "Images as CSV" is disabled when the audit has no images. `actions.copySeoCsv` answers
+  `'failed'` on an IPC failure so the chrome tells "Couldn't copy" apart from "Nothing copied: the
+  audit changed". `audit-ref.ts` also exports `shownAudit` (used by exports and `content-notes.ts`).
+  The `seo-core` purity allowlist gains `seo-exports.spec` and `devtools.spec` (Zod-free) so copy
+  values reuse `SECRET_HEADERS`/`MASKED_VALUE`.
+- **Task 2:** `all` draws links (by kind), headings (by level) and lazy images (`lazy` /
+  `lazy-first-viewport`), each part with its own cap; no style for eager images. `TextHighlightTarget`
+  gains optional `terms` and `lang`: main sends the n-gram's terms (or `wordsOf(query)` for the target
+  query) and the declared language, and the painter segments with `Intl.Segmenter` and normalises as
+  the audit does. Matching happens while splitting and stops at `MAX_KEYPHRASE_MATCHES` or at an
+  `until` deadline (what is left of `HIGHLIGHT_BUDGET_MS` after the walk). Keyphrase mode also breaks
+  words on leaving a block. Main reads the stored target query synchronously through
+  `MainContentService.targetQueryOf(url)` (keyed by `noteUrl`, ≤ 64 URLs, filled on read and on a
+  successful write); the chrome's "Highlight on page" waits for every pending or in-flight save
+  first, so `setHighlight` stays synchronous. `KEYPHRASE_UNMATCHED_NOTE` shows only when nothing is
+  drawn. Box modes skip non-finite or sub-pixel boxes while measuring (so each cap in `all` holds).
+  The phrase refuses every line separator. No palette commands for the new modes.
+- **Task 3:** `article:modified_time` is a fourth date source after `article:published_time`; a
+  date from a modified source is written as `dateModified` in the suggested graph. The suggested
+  JSON-LD is bare JSON (no `<script>`), takes `fields` (a session-only `siteName` override ≤ 60
+  chars, one line, Zod-checked in main; `breadcrumb` and `date` toggles), names the WebSite with the
+  uncut site name, lists every breadcrumb step (only 5 are drawn), and uses the effective canonical
+  (absolute `http(s)`, fragment dropped) for the WebPage, else the page URL. "Copy JSON-LD" (page) is
+  disabled when no block fed the preview; a block whose pretty-print would be cut is written as on
+  the page; `copyPreviewJsonLd` never rejects. The favicon placeholder is a site-name monogram;
+  `SiteGlyph` and the URL `breadcrumb()` helper are removed. Article times are not in `og-tags`. The
+  agent's audit summary carries 14 social fields (was 12), since `maxSocialFields = SOCIAL_TAGS.length`.
+- **Task 4:** the storage reader is triggered by an optional `readWebStorage` flag on
+  `devtools.storage` (no new procedure); without it main answers the last read's keys and sizes
+  (per tab per document, never values). The chrome sends it once per tab and Refresh; main runs one
+  script at a time per tab, shares reads in flight, and discards a read that a clear or commit
+  overtook. `revealStorageItem` only marks one uncut, listed key per tab; each Storage answer then
+  reads that key alone (the reworded invariant says so). Unavailable reasons: `opaque-origin`,
+  `denied`, `timeout`, `invalid`, `failed`; sizes in UTF-16 units. Redaction beyond Decision 5 (lead
+  rulings after the security review): nested `name=value` pieces inside a value (≤ 4 levels),
+  bracketed names (`code[]`, `data[sid]`), `sess` as a name fragment and `pwd`, `pw`, `sessid`,
+  `phpsessid`, `jsessionid` on the denylist, ≤ 5 decode rounds, `;` parameters, unparsable or
+  non-http(s)/ws(s) URLs written as `REDACTED`, relative `location`/`link`/`referer` written
+  absolute, and `link` tails after a stray `>` or an unclosed `<` redacted. HAR: empty
+  `httpVersion`/`statusText`, status 0 for failed/pending, `_resourceType`, per-entry comments;
+  `bodySize`/`content.size` `-1` (HAR 1.2 "unknown"; Open question 5 not tried in a viewer). CSV has
+  request rows only. A second export while the dialog is open answers `cancelled`. Electron's
+  `onSendHeaders` does not report `Referer` here, so the log never holds one; the reader with
+  JavaScript off is covered by a fake-tab unit test only.
+- **Task 5:** search text mode matches an element's own text (child text nodes, whitespace
+  collapsed, case-insensitive), not attributes; every node walked counts toward `maxNodesVisited`;
+  selector mode skips matches deeper than `maxPathDepth`. Rendered source is the doctype, a line
+  break, then `outerHTML` (nodes outside `<html>` omitted); while the outline overlay is in the page,
+  `<html>` is serialised child by child with its start tag built from its attributes (nothing is
+  cloned, so no page constructor runs). Served entries carry a serial `ref` and each tab document a
+  generation bumped on `forget`; a source answer carries `ref`, and `copySource` takes `ref` (never
+  text) and writes only main's kept text for the same document, else `stale` (security-review fix,
+  same pattern as Decision 1). Source views re-read on a `tab.url` change. The source view renders at
+  most 1,000 rows of 500 characters at once (windowed around a find jump). `skipExtraText` is
+  Phase 12's and was not added.
+- **Task 6:** all three spikes passed (Known limits in `render-profile.feature.md`): CSS off works
+  from world 1_701 with JavaScript on or off (shadow-root styles stay); the cookie pair's edits take
+  effect and the hub's `onSendHeaders` sees the edited request; `webContentsId` is set for frames,
+  subresources and dedicated workers but not service workers; the geolocation override reaches
+  `getCurrentPosition` after frost's Allow, cross-site frames included. CSS off has no CDP part, so on
+  its own it never attaches the debugger; the override commands go last in the merged list. The
+  security review kept CSS off. Lead rulings from that review: the **document marker is also set
+  when an override turns on over a committed document** (stricter than Decision 8: an override used
+  after load, e.g. location then a "near me" click, otherwise left a dirty page capturable); cookies
+  off does not cover the Cookie Store API (stated in the hint and Known limits, pinned in e2e); a
+  response cached while cookies were off can be reused later (Known limits); a screenshot refused
+  at its last check deletes its file under the hash lock. The revision rises on every
+  `tabOverrides.set` and every marker set. Capture checks live overrides and the marker right after
+  `not-active`, the stamp after the ready-audit checks, and the revision inside the write queue.
+  The Semgrep rule carries the debugger rule's full pattern set. Overrides are not inherited by
+  popups. UI: a "This tab only" row in the render-profile bar (CSS off, Cookies off, Location with
+  six presets or custom, Back to normal) and a status-bar chip. `router.ts` got two lines (import +
+  entry) plus one each in `services.ts`, ipc-contract `index.ts` and `StatusBar.tsx`.
+- **Task 7:** Open question 9 measured in Electron 45: a 2D canvas encodes up to 16,384² pixels
+  (sides up to 32,767), so `maxOverlaySide: 32_767`, `maxOverlayPixels: 16_384²`; no screenshot frost
+  takes reaches them, so no tiling (a larger crop is refused with `SCREENSHOT_EDIT_TOO_BIG_NOTE`).
+  Blending is premultiplied BGRA "source over" (what `nativeImage` gives); main checks the PNG
+  header size before any decode. Ops are in source pixels with a `size`; the crop is a step, not an
+  op; `screenshot_edits` stores the crop and main's canonical ops JSON (≤ 512 KiB). Edit rows are
+  removed by an `AFTER DELETE ON ci_screenshots` trigger (so a synced tombstone removes them too), not
+  by `purge.ts` (the link goes with its copy, not with its source: see Council round 1). Security-review rulings: an edited copy has its **own retention lane** (the lane
+  key gains an "is a copy" flag), so saving an edit never purges its source or a taken screenshot;
+  main saves **one edit at a time** (`busy`, appended to `SCREENSHOT_EDIT_RESULTS`); the overlay's
+  Zod length cap aborts before the base64 check. An area copy keeps the original selection
+  rectangle. The editor is a page-column sheet like Projects; a lost race with a purge answers
+  `no-source` (file left to the orphan sweep).
+- **Task 8:** chat history lives in main and the agent protocol is unchanged (no version bump for
+  this task). `agent.listChats({ filter, query? })` is called only to search (150 ms debounce); the
+  panel filters `AgentState.chats` (which carries `archived`) itself. Search matches the query's
+  words in order, any whitespace between, case-insensitive and literal, over the title and
+  user/assistant `text`; stored chats are read through `json_extract(entry, '$.text')` with the
+  per-chat cap applied inside SQLite, so tool cards never leave the database. Rename refuses control
+  characters rather than joining lines and writes in `secure_delete` mode; neither rename nor
+  archive changes `updatedAt`. Lead ruling: **sending a message to an archived chat unarchives
+  it**. `migrations-are-forward-only` checks that Phase 11's block is contiguous and above every
+  earlier id, not that it is last (so Phase 12's `0240` can follow).
+- **Task 9:** `AGENT_PROTOCOL_VERSION` is `10`. `read_attached_tab` is offered on every typed turn
+  (a stable tool list); the broker refuses refs the chat has not attached, and only a chat with
+  attachments gets the refs-and-origins prompt. Security-review rulings: `agent.attachTab` carries
+  the origin the menu showed and main refuses `not-attachable` unless the live page still shows it;
+  `changed` / `closed` are sticky until the user attaches the tab again (an approved call runs only
+  for the same, still-ready attachment); draft attachments (`chatId: null`) move only with a typed
+  send from the draft composer, never into a skill run, and are dropped when another chat is
+  selected. The per-turn cap counts every resolved call. With read tools on, an attached public page
+  (signed-in or not) is read without a card; acting still needs approval. The tab controller gained
+  `onStateChange` (append-only); `tools/index.ts` is unchanged (the broker passes the attached tab's
+  id as `context.tabId`). Known wording gap: an `expired` result reaches the model as the existing
+  "approval expired" message.
+- **Task 10:** pane widths go to CSS as `--seo-panel-width` / `--agent-panel-width` through a small
+  layout store in `sidebar-layout.ts` shared by both panes (App.tsx unchanged); `PageArea`'s
+  ResizeObserver carries them to main. The separator is a 6 px strip inside each pane with pointer
+  capture and full keyboard support; a drag ends on pointerup/cancel, lost capture, a move with the
+  button up, or the pane closing. Pins are a JSON list of unpinned ids; each panel header has a
+  "Keep on the rail" toggle (none on Overview); "More panels" opens the sidebar first when collapsed.
+  History: `history.retention` / `history.setRetention` / `history.clearRange`. Lead ruling after
+  review: a retention change that would delete visits (shorter, or keep-project-pages turned off)
+  **asks in main's own dialog first** (`stored | cancelled | failed`), like clear-range. Main prunes
+  at start, daily and after a stored change. Clear-range also forgets the recently-closed-tabs list
+  (stated in the dialog). `changeCount` = the page's `ci_versions` at that URL minus its capture
+  lanes. The project filter lists every live project, Unfiled included.
+- **Task 11:** Help URLs are the README (`#readme`) and `/issues/new` (Open question 8). `openLink`
+  takes `help`, `issue` or a release version, never a URL; menu clicks are the gesture, and from the
+  palette or a What's New button main spends the window's live gesture only after the request
+  resolves. `KEYBOARD_SHORTCUTS` is built from the existing constants; `WINDOW_SHORTCUTS` (Close
+  Window, Quit) is the only new shortcut spec; `Mod+/` is a menu accelerator only. The `help.*`
+  procedure schemas live in `specs/whats-new.schema.ts` (`help.spec.ts` stays Zod-free). What's New:
+  a first run records the version silently; a version change (or a stored value that is not a
+  version) shows it once, for the first chrome to ask, after the active tab stops loading; an
+  invalid running version turns it off. Help sheets, Settings, Projects and History show one at a
+  time and close on a page change. The release-notes entry covers Phases 8, 9 and 11; **the Phase 10
+  line is for the lead who merges Phase 10 to add**.
+- **Task 12:** the ring is installed by a side-effect import on the first line of `main/index.ts`
+  and wraps only main's `console.warn`/`console.error` (500 lines × 500 chars; each call cut to
+  4,000 chars at a separator; objects via a capped `util.inspect`, dropping any token a cut went
+  through; an Error argument is written as `name: message`, stack frames and an Error cause, never
+  its own properties). The agent utility process and SEO workers write to their own streams; Node
+  process warnings (including telemetry's re-emitted unhandled rejections) do reach the ring.
+  Scrubbing per line, on entry and again at build: NFKC, a side decode of percent-escaped tokens,
+  telemetry's `createScrubber` with `machineLiterals` plus the home, temp and app folders, then
+  `DIAGNOSTICS_SCRUB_RULES` (security-review additions: whole-line `authorization`/`cookie`/
+  `set-cookie` values, flag-style secrets, percent-encoded paths and addresses). A report holds no
+  `/`, `\` or `@` (`DiagnosticsReportSchema` refuses one that does); shapeless free text is the
+  known limit, and the review sheet is the safeguard. `help.diagnostics` answers `{ reportId, text }`
+  (≤ 4 kept); `help.saveDiagnostics({ reportId })` writes main's copy (mode 0600), one dialog at a
+  time, no gesture required (as the network export). `@app/telemetry` exports `machineLiterals`;
+  `SessionStore.migrationIds()` is new.
+- **Task 13:** Electron 45 reports `Cookie` to the hub's `onSendHeaders` only while a blocking
+  `onBeforeSendHeaders` listener is on the session (i.e. while some tab has cookies off); otherwise
+  the devtools log and HAR carry no `cookie` request header at all, as with `Referer`. The
+  `cookies-off-har-shows-no-cookie-header` e2e therefore uses a second, cookies-on tab as its
+  positive control. `seo-sidebar.e2e.ts` `deep-nested-anchors-is-bounded-not-timeout` is load-flaky
+  on this machine at the branch point too.
+- **Whole-branch review:** the agent's audit reads (`page_audit`, `page_data`, attached `audit`)
+  carry the audit's override stamp, and `page_text` / attached `text` carry the tab's live
+  overrides and `loadedUnderOverrides`, as on/off booleans (no coordinates, left out when off,
+  never a refusal; protocol schema unchanged). The Inspector drops its kept rendered source on
+  `clear` of its tab, on WebContents destroy and on Clear Browsing Data. The overrides' CDP part has
+  its own `TabState.overridesStatus`, so a failure shows even with no profile. The network export is
+  written mode 0600 (shared `writePrivateFile`) with its dialog parented to the sender's window.
+  The screenshot editor joins the one-sheet rule (Projects now announces every open, the first
+  included). A navigation that ends without committing forgets what it saw. Lead ruling:
+  edited-copy retention lanes rely on the local-only `screenshot_edits` link, so a device that syncs
+  the copy without the link treats it as a taken screenshot of that lane; latent until `ci_*` sync
+  ships (issue #15), and fixing it needs a synced marker column and a sync schema bump.
+- **Merge of main with Phase 10 (562716e):** `MIGRATIONS` ends `...WORKSPACE_MIGRATIONS` (0220–0223),
+  then `...PHASE11_MIGRATIONS` (0230, 0231); Phase 10's `workspace-migrations-apply-in-order` now
+  checks its block is contiguous with only `0230`+ after it, and the tables test lists both
+  `WORKSPACE_TABLES` and `SCREENSHOT_EDIT_TABLES`. `changes/service.ts` keeps Phase 11's
+  `stampedOn`/`overridesMoved` beside Phase 10's `readingFor`; `purge.ts` keeps both the
+  `screenshot_edits` lane flag and the SERP-reading purge. Main's `AGENT_PROTOCOL_VERSION` is still
+  `9`, so Phase 11's `10` stands. The release notes gain the Phase 10 line.
+- **Council round 1: an edited copy keeps its lane when its source is purged.** `0231`'s trigger
+  (edited in place; not on main) now deletes a `screenshot_edits` row only when its copy's row goes
+  (`screenshot_id = OLD.id`), so the link outlives its source: the copy stays in the copy lane and
+  labelled "Edited", and `editedFrom` may name a source that no longer exists (documented in
+  `capture-db.spec.ts`, `screenshot.spec.ts`, `screenshot.feature.md` Retention). Before, with keep 1,
+  taking S1 and S2 and editing S1 into E1, purge 1 took S1 (and E1's link), and purge 2 took S2, a
+  real capture. The gallery chip's tooltip no longer claims the original is kept. Regression:
+  `purged-source-keeps-copy-lane` (`packages/db/src/__tests__/repository.test.ts`).
+- **Council round 1: Inspector find no longer misses a match across a row boundary.** `findRows`
+  takes the source and searches it whole (a literal, case-insensitive `gi` RegExp, offsets in code
+  units), mapping each match back to the rows it covers through a new `SourceRow.start` (the row's
+  offset in the source); each covered row is marked and is a jump target, the `maxFindMatches` row
+  cap holds, and matches past the listed rows (`cut`) mark nothing. Before, `'x'.repeat(495) +
+  'canonical'` found nothing. Regression: `find-across-row-boundary`
+  (`apps/desktop/src/renderer/__tests__/inspector-view.test.ts`).
+- **Council round 1: a failed clear-range keeps the recently closed tabs.** `clearRange` now calls
+  `forgetClosedTabs` only after `clearSince` resolves (order: flush, clear, forget); before, a
+  throwing `clearSince` answered `false` with Reopen Closed Tab already emptied. Regression:
+  `clear-range-failure-keeps-closed-tabs` (`apps/desktop/src/main/browser/__tests__/browser-polish.test.ts`).
+- **Council round 1: another range during a clear is refused.** `clearRange` keeps the in-flight
+  range beside its answer: a request for the same range still shares the run (one dialog), and a
+  request for a different range answers `false` at once instead of the first range's answer.
+  Regression: `clear-range-other-range-while-clearing-refused`
+  (`apps/desktop/src/main/browser/__tests__/browser-polish.test.ts`).
+- **Merge of main with the visual baseline and design tokens (57f93ec):** Phase 11's `help.css`
+  tokens were dropped for existing ones (`--setup-check-edge` → `--settings-switch-off`, same
+  light/dark values; the sheet width is a literal), and the screenshot editor's swatches draw their
+  colour as an SVG `fill` from `SCREENSHOT_EDIT_COLORS`, so no `:root` property lives outside
+  `tokens.css` and the hex ratchet stays at 53. 25 visual baselines were re-adopted from CI run
+  42750958646 (ubuntu/xvfb), each reviewed: the setup checklist (new tab, jump back in, update bar),
+  panel pin buttons, Overview's "Highlight everything", the CSV buttons (Headings, Page Speed), the
+  agent composer's `@` button and 30 px search field, the "This tab only" row, History's filter and
+  clear row, Settings' History section and the status bar no longer clipped under a sheet.
+- **Council round 2:** Inspector find resumes one unit past each match's start, so a match that
+  overlaps an earlier one and crosses a row boundary still marks both rows (`--` in `x…x---y…`,
+  `aba` in `x…xababa`; `find-across-row-boundary`).
+- **Council round 2:** the screenshot editor's swatch paints no button background (`background:
+  none`, so no grey ButtonFace ring) and its outline is the SVG circle's `stroke="currentColor"` in
+  `--border-field`, so light swatches stay visible; no literal colour added
+  (`screenshot-swatch-has-no-button-face-and-keeps-its-outline`).
+- **PR #23 CI (`palette-sits-above-the-page-view`):** the panes' widths follow the row through a
+  `ResizeObserver`, which runs in the next rendering update; React commits the new widths before
+  that frame paints (measured: a frame's `requestAnimationFrame` read shows CSS's narrowing alone,
+  345.4 px, and the read after it the settled 340.2 px, which every later frame keeps), so no user
+  sees the settle, but the test's forced-layout read right after `setZoomFactor` could. The test
+  now lets one rendering update pass before measuring the split; its assertion is unchanged.
+- **PR #23 macOS CI (`text-highlight-walk-budgeted`):** Task 2's block-break tracking ran in every
+  text mode: each element the walk accepted paid a `config.blocks.includes(…)` scan and each text
+  node a `breaks` push, though only `keyphrase` uses them. Measured on this machine, 80 runs each:
+  the `sentences` walk took a median 216.8 ms (p95 244.9) against main's 194.4 ms (p95 220.6). The
+  tracking now runs in `keyphrase` only; after it, 214.2 ms against main's 212.4 ms in an interleaved
+  run (equal minimums, 188.9 ms). The test and its bound are unchanged.
