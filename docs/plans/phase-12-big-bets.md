@@ -1454,3 +1454,25 @@ Where the build differs from the plan above, or settles what it left open. **Lea
     synced tombstones have not arrived yet (a pull cut at `SYNC_MAX_PAGES_PER_PASS`): a second
     `project-deleted` purge record, no data kept that should go.
   - README and `apps/desktop/README.md` describe the gated data sources, AI answers and crawl.
+- Task 11: two e2e parts (`data-sources`, `ai-answers`; `crawl`, `location`), every gated surface
+  run with `--frost-e2e-open-gates` and also shown off without it. On Linux, Playwright's Electron
+  loader forces `--password-store=basic` (`weak` protection), so key-storing e2e tests load a
+  Linux-only stand-in keychain in main (`e2e/fake-keychain.cjs`, `launchApp(…, { mainPreload })`).
+  **K-D passes:** the tripwire saw only the disclosed audit fetches (robots.txt, served HTML), every
+  origin request carried the proxy's marker (the WebSocket through its tunnel), WebRTC gathered no
+  candidates, and the NetLog showed every location-tab connection going to the proxy. Proxy
+  locations ship. K-B1 measured 999–1002 ms between fetch-call starts at `Crawl-delay: 1`.
+- Merge of main (PR #24, `b55e087`): conflicts in `agent/ports/index.ts`, `clear-browsing-data.ts`
+  (comments), `serp/setup.ts` (main dropped the unused `watchContents`; `analyseApi` kept) and
+  `sync/engine.ts` (main dropped push-side `lost`; the device-local row filter kept). Turbo now has no
+  `typecheck` task (`lint` runs tsc).
+- UI pass (lead, screenshots with the gates opened by the test seam): screen-reader text moved to
+  `.visually-hidden` inside positioned scroll boxes (opening Settings › Data sources had scrolled the
+  whole window); the Check via API confirm got real buttons; the crawl sheet's status line clears as
+  the run moves on and its run card names the page count once; the AI answers engine select uses the
+  short "OpenAI web search" label with the ChatGPT-app caveat beside it. The rank table's position
+  number has its own element (`rankings-position-value`) beside its source label. Visual baselines
+  `settings*` and `projects*` were re-adopted from CI.
+- Follow-ups (not in this phase): the three new workers (crawl, SERP `api`, AI parse) are never
+  ended when idle; crawl robots/sitemap fetches during a location tab's crawl go from the user's own
+  connection (disclosed); the Rankings empty state still names "Capture now" (Phase 10 wording).
