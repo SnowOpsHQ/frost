@@ -3,7 +3,7 @@ import { CRAWL_FETCHER_LIMITS, type BoundedFetcher, type BoundedFetchResult, typ
 import { RESPONSE_LIMITS, ROBOTS_ALLOW_ALL_OUTCOMES, ROBOTS_FETCH_LIMITS, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
 import { SERVED_ACCEPT, SERVED_FETCH_LIMITS } from '@app/specs/seo-javascript.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
-import { CRAWL_KEEP_HEADERS, CRAWL_LIMITS, CRAWL_ROBOTS_HOOK_MARGIN_MS, CRAWL_ROBOTS_TOKEN, CRAWL_SEPARATE_HEADERS, CRAWL_USER_AGENT_TOKEN, type CrawlPageOutcome, type CrawlRobotsVerdict } from '@app/specs/site-crawl.spec';
+import { CRAWL_KEEP_HEADERS, CRAWL_LIMITS, CRAWL_ROBOTS_HOOK_MARGIN_MS, CRAWL_ROBOTS_PARSE_WAIT_MS, CRAWL_ROBOTS_TOKEN, CRAWL_SEPARATE_HEADERS, CRAWL_USER_AGENT_TOKEN, type CrawlPageOutcome, type CrawlRobotsVerdict } from '@app/specs/site-crawl.spec';
 import { createBoundedFetcher, type Hop, type Resolve } from '../seo/fetcher';
 import type { RobotsLookupOptions } from '../seo/robots-fetch';
 import { CrawlAbortedError, CrawlSlowDownError, createPacing, pacingKey, systemClock, type CrawlClock, type Politeness } from './politeness';
@@ -26,8 +26,10 @@ import { createCrawlScope, normaliseCrawlUrl, type CrawlScopeRule, type CrawlSco
 //
 // Task 6a parses robots.txt through an injected `parseRobots` (default: seo-core's pure
 // `crawlRobotsRules`, on main's thread); Task 6b moves that call into the crawl's worker
-// (`crawl/index.ts`). A fetched robots.txt whose parse fails is read as blocked (`blocked-by-robots`),
-// never unknown, and the failed parse is not cached. Task 6b also fetches sitemap files through
+// (`crawl/index.ts`). The lookup's wait covers the lookup only; the parse has its own
+// (`CRAWL_ROBOTS_PARSE_WAIT_MS`), so a parse queued behind other worker jobs is never cut short into
+// "unknown". A fetched robots.txt whose parse fails or runs out of that wait is read as blocked
+// (`blocked-by-robots`), never unknown, and the failed parse is not cached. Task 6b also fetches sitemap files through
 // `fetchPage` (per-call caps and `Accept`), so they pass the same scope, robots.txt, pacing and
 // redirect policy as pages, and asks `beforeRequest` inside the paced slot.
 
@@ -73,7 +75,7 @@ export interface CrawlRobotsState {
   /** The site's `Crawl-delay` for the crawl (ms, capped); `null`: none. */
   readonly crawlDelayMs: number | null;
   /**
-   * robots.txt was fetched (`ok`) but could not be parsed (the crawl worker failed or timed out): read
+   * robots.txt was fetched (`ok`) but could not be parsed (the crawl worker failed, or no parse came within `CRAWL_ROBOTS_PARSE_WAIT_MS`): read
    * as **blocked** (`crawl: 'blocked'`, the page recorded `blocked-by-robots`), never as unknown; the
    * failed parse is not cached, so a later page asks again.
    */
@@ -182,16 +184,36 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
     return rules;
   };
 
-  /** The crawl's reading of `fetch` for `url`. */
-  async function readRobots(fetch: RobotsFetch | null, url: string): Promise<CrawlRobotsState> {
+  /**
+   * `fetch`'s rules, waited for at most `CRAWL_ROBOTS_PARSE_WAIT_MS` (its own wait, apart from the
+   * lookup's) or until `signal` aborts; `null`: the parse failed or did not answer in time.
+   */
+  const parseWithin = (fetch: RobotsFetch, signal: AbortSignal | undefined): Promise<CrawlRobotsRules | null> =>
+    new Promise((resolve) => {
+      let settled = false;
+      const finish = (rules: CrawlRobotsRules | null) => {
+        if (settled) return;
+        settled = true;
+        cancel();
+        signal?.removeEventListener('abort', onAbort);
+        resolve(rules);
+      };
+      const onAbort = () => finish(null);
+      const cancel = clock.setTimeout(() => finish(null), CRAWL_ROBOTS_PARSE_WAIT_MS);
+      if (signal?.aborted) {
+        finish(null);
+        return;
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+      rulesOf(fetch).then(finish, () => finish(null));
+    });
+
+  /** The crawl's reading of `fetch` for `url`: an `ok` file whose parse fails or runs out of time is blocked, never unknown. */
+  async function readRobots(fetch: RobotsFetch | null, url: string, signal: AbortSignal | undefined): Promise<CrawlRobotsState> {
     if (fetch === null) return unknownRobots(null);
     if (fetch.outcome === 'ok') {
-      let rules: CrawlRobotsRules;
-      try {
-        rules = await rulesOf(fetch);
-      } catch {
-        return unparsedRobots(fetch);
-      }
+      const rules = await parseWithin(fetch, signal);
+      if (rules === null) return unparsedRobots(fetch);
       // Always the bare product token (and Googlebot's for the second verdict), never the header sent.
       const verdict = (token: string): CrawlRobotsVerdict => (rules.allowed(url, token) ? 'allowed' : 'blocked');
       return { fetch, crawl: verdict(CRAWL_ROBOTS_TOKEN), googlebot: verdict('googlebot'), unreachable: false, crawlDelayMs: rules.crawlDelayMs };
@@ -218,11 +240,14 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
       };
       const lookupOptions: RobotsLookupOptions | undefined = scope.privateStart ? { exactOrigin: true } : undefined;
 
-      /** `url`'s robots.txt read for the crawl, or `no-answer` when nothing (lookup and parse) came within `ROBOTS_WAIT_MS` or `signal` aborted. */
-      const robotsFor = (url: string, signal: AbortSignal | undefined): Promise<CrawlRobotsState | 'no-answer'> =>
+      /**
+       * `url`'s robots.txt as main's robots fetcher answered, or `no-answer` when the lookup gave none within
+       * `ROBOTS_WAIT_MS` or `signal` aborted. The wait covers the lookup only: the parse has its own (`readRobots`).
+       */
+      const lookup = (url: string, signal: AbortSignal | undefined): Promise<RobotsFetch | null | 'no-answer'> =>
         new Promise((resolve) => {
           let settled = false;
-          const finish = (value: CrawlRobotsState | 'no-answer') => {
+          const finish = (value: RobotsFetch | null | 'no-answer') => {
             if (settled) return;
             settled = true;
             cancel();
@@ -236,12 +261,14 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
             return;
           }
           signal?.addEventListener('abort', onAbort, { once: true });
-          void deps.robots
-            .get(url, lookupOptions)
-            .catch(() => synthesized(url, 'unreachable'))
-            .then((fetch) => readRobots(fetch, url))
-            .then(finish, () => finish(unknownRobots(synthesized(url, 'unreachable'))));
+          void deps.robots.get(url, lookupOptions).then(finish, () => finish(synthesized(url, 'unreachable')));
         });
+
+      /** `url`'s robots.txt read for the crawl (the lookup, then the parse, each within its own wait), or `no-answer` from the lookup. */
+      const robotsFor = async (url: string, signal: AbortSignal | undefined): Promise<CrawlRobotsState | 'no-answer'> => {
+        const fetch = await lookup(url, signal);
+        return fetch === 'no-answer' ? fetch : readRobots(fetch, url, signal);
+      };
 
       async function fetchPage(rawUrl: string, signal?: AbortSignal, options: CrawlFetchOptions = {}): Promise<CrawlPageFetch> {
         const url = normaliseCrawlUrl(rawUrl) ?? rawUrl.slice(0, CRAWL_LIMITS.maxUrlChars);
@@ -271,12 +298,14 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
             refusal = { outcome: 'redirected', url: next };
             return false;
           }
-          // 2. Only then robots.txt for the new URL, bounded: `timeout` or no answer refuses the hop.
-          const state = await robotsFor(next, options.signal);
-          if (state === 'no-answer' || state.fetch?.outcome === 'timeout') {
-            refusal = { outcome: 'robots-timeout', url: next };
-            return false;
-          }
+          // 2. Only then robots.txt for the new URL, bounded: `timeout` or no answer refuses the hop. Each wait
+          // names its refusal before it starts, so a hop the fetcher's own cap ends is recorded for what it waited on.
+          refusal = { outcome: 'robots-timeout', url: next };
+          const fetch = await lookup(next, options.signal);
+          if (fetch === 'no-answer' || fetch?.outcome === 'timeout') return false;
+          // 3. A fetched file is parsed within its own wait: no rules in time (or a failed parse) refuses the hop as blocked.
+          if (fetch?.outcome === 'ok') refusal = { outcome: 'blocked-by-robots', url: next };
+          const state = await readRobots(fetch, next, options.signal);
           if (state.crawl === 'blocked') {
             refusal = { outcome: 'blocked-by-robots', url: next };
             return false;

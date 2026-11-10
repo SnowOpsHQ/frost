@@ -1,5 +1,5 @@
 // Spec: specs/site-crawl.spec.ts (CRAWL_KEEP_HEADERS, CRAWL_SEPARATE_HEADERS, CRAWL_USER_AGENT_TOKEN, CRAWL_ROBOTS_TOKEN,
-// CRAWL_ROBOTS_HOOK_MARGIN_MS, CRAWL_LIMITS, CRAWL_PAGE_OUTCOMES); specs/fetcher.spec.ts (CRAWL_FETCHER_LIMITS, the crawl lane,
+// CRAWL_ROBOTS_HOOK_MARGIN_MS, CRAWL_ROBOTS_PARSE_WAIT_MS, CRAWL_LIMITS, CRAWL_PAGE_OUTCOMES); specs/fetcher.spec.ts (CRAWL_FETCHER_LIMITS, the crawl lane,
 // BoundedFetchRequest.allowRedirect); specs/seo-indexability.spec.ts (ROBOTS_FETCH_LIMITS, ROBOTS_UNKNOWN_OUTCOMES)
 // Acceptance: specs/site-crawl.feature.md (Fetching, politeness and robots); plan docs/plans/phase-12-big-bets.md
 // Decision 3 (K-B1), Decision 6, Threat model (crawl row) and Task 6a
@@ -11,7 +11,7 @@ import { CRAWL_FETCHER_LIMITS, type BoundedFetcher, type BoundedFetchRequest } f
 import { SERVED_ACCEPT } from '@app/specs/seo-javascript.spec';
 import { ROBOTS_FETCH_LIMITS, ROBOTS_UNKNOWN_OUTCOMES, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
-import { CRAWL_KEEP_HEADERS, CRAWL_LIMITS, CRAWL_ROBOTS_HOOK_MARGIN_MS, CRAWL_ROBOTS_TOKEN, CRAWL_SEPARATE_HEADERS, CRAWL_USER_AGENT_TOKEN } from '@app/specs/site-crawl.spec';
+import { CRAWL_KEEP_HEADERS, CRAWL_LIMITS, CRAWL_ROBOTS_HOOK_MARGIN_MS, CRAWL_ROBOTS_PARSE_WAIT_MS, CRAWL_ROBOTS_TOKEN, CRAWL_SEPARATE_HEADERS, CRAWL_USER_AGENT_TOKEN } from '@app/specs/site-crawl.spec';
 import { createBoundedFetcher, type Hop, type HopResult, type Resolve } from '../../seo/fetcher';
 import { createRobotsFetcher } from '../../seo/robots-fetch';
 import { createCrawlFetcher, createCrawlLane, type CrawlRobotsSource } from '../fetch';
@@ -126,7 +126,7 @@ async function settle<T>(promise: Promise<T>): Promise<T> {
 
 const settings = (startUrl: string, extra: Partial<{ scope: 'host' | 'site' | 'path'; include: string[]; exclude: string[]; intervalMs: number }> = {}) => ({ startUrl, scope: 'host' as const, include: [], exclude: [], intervalMs: 1_000, ...extra });
 
-function crawler(routes: Record<string, Route>, robots: CrawlRobotsSource, parseRobots?: (text: string) => CrawlRobotsRules) {
+function crawler(routes: Record<string, Route>, robots: CrawlRobotsSource, parseRobots?: (text: string) => CrawlRobotsRules | Promise<CrawlRobotsRules>) {
   const net = fakeNet();
   const lanes = lane(net.hop(routes));
   const crawl = createCrawlFetcher({ fetcher: lanes.fetcher, robots, userAgent: () => BROWSE_UA, ...(parseRobots ? { parseRobots } : {}) });
@@ -312,6 +312,50 @@ describe('crawl fetching', () => {
     expect(net.urls()).toEqual(['https://example.com/public', 'https://down.example.com/a', 'https://none.example.com/a']);
     // A public start's lookups are the shared ones (no exact-origin rule).
     expect(robots.lookups.every((lookup) => !lookup.exactOrigin)).toBe(true);
+  });
+
+  test('crawl-robots-parse-has-its-own-wait', async () => {
+    // Council review, item 1: the robots lookup's wait (ROBOTS_FETCH_LIMITS.timeoutMs + margin) covers the lookup only. A
+    // robots.txt fetched `ok` whose parse stalls past the lookup's wait, or is merely queued behind other worker jobs, still
+    // refuses the page (`blocked-by-robots`); it is never read as unknown, and the page is never requested.
+    const lookupWait = ROBOTS_FETCH_LIMITS.timeoutMs + CRAWL_ROBOTS_HOOK_MARGIN_MS;
+    const routes: Record<string, Route> = { 'https://stall.example.com/a': html(), 'https://queued.example.com/a': html() };
+    const robots = fakeRobots({ 'https://stall.example.com': 'User-agent: *\nDisallow: /\n# stall\n', 'https://queued.example.com': 'User-agent: *\nDisallow: /\n' });
+    // The crawl worker as a serial queue: a page job ahead of the robots parse holds it past the lookup's wait.
+    let tail: Promise<unknown> = Promise.resolve();
+    const inWorker = <T,>(job: () => Promise<T>): Promise<T> => {
+      const run = tail.then(job);
+      tail = run.catch(() => undefined);
+      return run;
+    };
+    const parse = (text: string): Promise<CrawlRobotsRules> => {
+      if (text.includes('stall')) return new Promise(() => undefined);
+      return inWorker(async () => crawlRobotsRules(text));
+    };
+    const { net, crawl } = crawler(routes, robots.source, parse);
+    const run = crawl.forRun(settings('https://www.example.com/', { scope: 'site' }));
+    // A parse that never answers: refused once the parse's own wait is up, not at the lookup's.
+    const started = Date.now();
+    expect(await settle(run.fetchPage('https://stall.example.com/a'))).toMatchObject({ outcome: 'blocked-by-robots', status: null, robots: { crawl: 'blocked', unparsed: true, unreachable: false } });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(CRAWL_ROBOTS_PARSE_WAIT_MS);
+    expect(CRAWL_ROBOTS_PARSE_WAIT_MS).toBeGreaterThan(lookupWait);
+    // A parse queued behind a page job longer than the lookup's wait: its answer (Disallow: /) is honoured.
+    void inWorker(() => new Promise((resolve) => setTimeout(resolve, lookupWait + 1_000)));
+    expect(await settle(run.fetchPage('https://queued.example.com/a'))).toMatchObject({ outcome: 'blocked-by-robots', status: null, robots: { crawl: 'blocked' } });
+    expect(net.urls()).toEqual([]);
+  });
+
+  test('crawl-redirect-robots-parse-stall-refuses-the-hop', async () => {
+    // Council review, item 1, the redirect hook: a same-host hop (http → https, another robots.txt) whose robots.txt is
+    // fetched `ok` but whose parse stalls is refused (`blocked-by-robots`, the fetcher's own hook cap ending the wait);
+    // the target is never requested.
+    const routes: Record<string, Route> = { 'http://h.example.com/a': redirect('https://h.example.com/a', 302), 'https://h.example.com/a': html() };
+    const robots = fakeRobots({ 'http://h.example.com': 'User-agent: *\nAllow: /\n', 'https://h.example.com': 'User-agent: *\nDisallow: /\n# stall\n' });
+    const parse = (text: string): CrawlRobotsRules | Promise<CrawlRobotsRules> => (text.includes('stall') ? new Promise(() => undefined) : crawlRobotsRules(text));
+    const { net, crawl } = crawler(routes, robots.source, parse);
+    const run = crawl.forRun(settings('https://h.example.com/'));
+    expect(await settle(run.fetchPage('http://h.example.com/a'))).toMatchObject({ outcome: 'blocked-by-robots', status: 302, refusedUrl: 'https://h.example.com/a' });
+    expect(net.urls()).toEqual(['http://h.example.com/a']);
   });
 
   test('crawl-robots-matches-the-bare-token', async () => {

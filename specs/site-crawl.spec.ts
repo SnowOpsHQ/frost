@@ -151,6 +151,17 @@ export const CRAWL_PACING_LIMITS = {
  */
 export const CRAWL_ROBOTS_HOOK_MARGIN_MS = 1_000;
 
+/**
+ * The longest the crawl waits for a fetched robots.txt's parse in the crawl worker (ms; council review,
+ * item 1): the worker's own deadline per job plus the margin. It is a wait of its own, never part of the
+ * robots lookup's (`ROBOTS_FETCH_LIMITS.timeoutMs` + `CRAWL_ROBOTS_HOOK_MARGIN_MS`), which covers the
+ * lookup only: a parse queued behind other worker jobs is not cut by the lookup's clock. A robots.txt
+ * fetched `ok` whose parse fails, or has not answered by then, **refuses** the page (`blocked-by-robots`,
+ * its verdict `blocked`), never reads as unknown and never allows it. Inside the redirect hook the
+ * fetcher's own cap (`FETCHER_LIMITS.maxRedirectHookMs`) may end the wait first, with the same refusal.
+ */
+export const CRAWL_ROBOTS_PARSE_WAIT_MS = CRAWL_ANALYSIS_TIMEOUT_MS + CRAWL_ROBOTS_HOOK_MARGIN_MS;
+
 /** Response headers every crawl fetch keeps (`BoundedFetchRequest.keepHeaders`): the audit context's and the back-off's. */
 export const CRAWL_KEEP_HEADERS = ['content-type', 'x-robots-tag', 'link', 'retry-after'] as const;
 

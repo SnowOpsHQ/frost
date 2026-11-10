@@ -1,7 +1,7 @@
 # Feature: Site crawl
 
 Spec: `specs/site-crawl.spec.ts` (`CRAWL_AVAILABLE`, `CRAWL_LIMITS`, `CRAWL_INTERVAL_MS`,
-`MAX_CRAWL_DELAY_MS`, `CRAWL_ROBOTS_HOOK_MARGIN_MS`, `CRAWL_KEEP_HEADERS`, `CRAWL_SEPARATE_HEADERS`,
+`MAX_CRAWL_DELAY_MS`, `CRAWL_ROBOTS_HOOK_MARGIN_MS`, `CRAWL_ROBOTS_PARSE_WAIT_MS`, `CRAWL_KEEP_HEADERS`, `CRAWL_SEPARATE_HEADERS`,
 `CRAWL_SCOPES`, `CRAWL_PRIVATE_START_SCOPES`, `CRAWL_TRACKING_PARAMS`, `CRAWL_USER_AGENT_TOKEN`,
 `CRAWL_ROBOTS_TOKEN`, `CRAWL_SCORE_LABEL`, `CRAWL_RUN_STATES`, `CRAWL_RUN_REASONS`,
 `CRAWL_PAGE_OUTCOMES`, `CRAWL_ROBOTS_VERDICTS`, `CRAWL_FRONTIER_STATES`, `SITE_CRAWL_TABLES`,
@@ -182,6 +182,13 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   crawl cannot read (an unknown outcome) lets the page be crawled at the default interval with the
   `robots-txt-unreachable` flag (the start-origin rule); "no robots.txt" outcomes allow everything.
   Each page carries the crawl's verdict and Googlebot's, from the same file.
+- `crawl-robots-parse-has-its-own-wait` — (council review, item 1) the robots lookup's wait
+  (`ROBOTS_FETCH_LIMITS.timeoutMs` + `CRAWL_ROBOTS_HOOK_MARGIN_MS`) covers the lookup only; a
+  robots.txt fetched `ok` is parsed within a wait of its own, `CRAWL_ROBOTS_PARSE_WAIT_MS`. A
+  `Disallow: /` file whose parse never answers is refused `blocked-by-robots` (verdict `blocked`,
+  `unparsed`) once that wait is up, and one whose parse is queued behind a worker job longer than the
+  lookup's wait is refused by its own rules when it answers: in both the page is never requested, and a
+  late or stalled parse is never read as "unknown".
 - `crawl-robots-matches-the-bare-token` — requests carry the browse user agent with ` frost-crawl/1`
   appended; robots.txt `User-agent: frost-crawl` / `Disallow: /` refuses the crawl; a
   `User-agent: mozilla` / `Disallow: /` group is **not** applied (the header starts with `Mozilla`);
@@ -222,6 +229,10 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   page fetch `timeout` (the hook's wait is not the page's deadline); a target whose robots answer is
   `server-error`, `unreachable`, `bad-redirect` or `no-location` (each its own case) follows the
   start-origin rule: the hop is followed and the page carries the `robots-txt-unreachable` flag.
+- `crawl-redirect-robots-parse-stall-refuses-the-hop` — (council review, item 1) a same-host hop whose
+  robots.txt is fetched `ok` but whose parse never answers is refused `blocked-by-robots` (the
+  fetcher's own hook cap may end the wait first; the refusal is named before the wait starts), and the
+  target is never requested.
 - `crawl-keeps-the-headers-it-needs` — every page request asks for `CRAWL_KEEP_HEADERS` and only
   those come back (`set-cookie`, `server` never); repeated `X-Robots-Tag` values stay apart
   (`CRAWL_SEPARATE_HEADERS`); the body is read up to `CRAWL_LIMITS.maxBodyBytes` (`truncated` past
@@ -354,6 +365,9 @@ the crawl worker and its URLs handed out `sitemapUrlsPerJob` at a time, then rel
 - `crawl-robots-unparsed-is-blocked` — robots.txt fetched `ok` whose parse fails (the worker failed or
   timed out) is read as blocked: the page is recorded `blocked-by-robots` and not requested (never
   "unknown"); the failed parse is not cached, so the next page asks the worker again.
+- `crawl-sitemap-robots-parse-stall-is-blocked` — (council review, item 1) robots.txt fetched `ok`
+  (`Disallow: /`, a `Sitemap:` line) whose crawl-worker parse never answers: the sitemap request is
+  refused like any page; nothing but robots.txt is requested and nothing is seeded.
 - `crawl-worker-is-separate` — the crawl's jobs go to a worker instance of its own (the same bundle,
   its own deadline `CRAWL_ANALYSIS_TIMEOUT_MS`): a crawl job that has not answered never delays a
   sidebar audit; a crawl job past its deadline is `parse-failed`.

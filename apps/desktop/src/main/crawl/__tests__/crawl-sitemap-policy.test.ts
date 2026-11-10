@@ -195,6 +195,39 @@ describe('robots.txt the worker cannot parse', () => {
   });
 });
 
+describe('robots.txt the worker parses late', () => {
+  test('crawl-sitemap-robots-parse-stall-is-blocked', async () => {
+    // Council review, item 1, the sitemap path: robots.txt is fetched `ok` (Disallow: /, a Sitemap: line) but the crawl
+    // worker's parse never answers. The seeder reads its Sitemap: line, yet the sitemap request (a crawl request) is
+    // refused: nothing but robots.txt is ever requested, nothing seeded.
+    const net = fakeNet({
+      'https://example.com/robots.txt': robotsTxt('User-agent: *\nDisallow: /\nSitemap: https://example.com/s.xml\n'),
+      'https://example.com/s.xml': answer(urlset(['https://example.com/a'])),
+      'https://example.com/sitemap.xml': answer(urlset(['https://example.com/b'])),
+    });
+    const robots = createRobotsFetcher({ hop: net.hop, fetcher: createBoundedFetcher({ hop: net.hop, resolve }) });
+    const crawl = createCrawlFetcher({ fetcher: createCrawlLane({ hop: net.hop, resolve }), robots, userAgent: () => UA, parseRobots: () => new Promise(() => undefined) });
+    const settings = settingsFor('https://example.com/', { sitemaps: true });
+    const run = crawl.forRun(settings);
+    const controller = new AbortController();
+    const seeded: string[] = [];
+    const seeder = createSitemapSeeder({ robots, parseRobots: inProcessRobots, analyse: async (input) => parseCrawlSitemap(input) });
+    const result = await settle(
+      seeder.seed({
+        runId: '01900000-0000-7000-8000-000000000001',
+        settings,
+        scope: run.scope,
+        fetch: (url, options) => run.fetchPage(url, controller.signal, options),
+        signal: controller.signal,
+        seed: async (urls) => (seeded.push(...urls), urls.length),
+      }),
+    );
+    expect(result).toEqual({ seeded: 0, note: null });
+    expect(seeded).toEqual([]);
+    expect(net.urls()).toEqual(['https://example.com/robots.txt']);
+  });
+});
+
 describe('the last check before a request', () => {
   test('crawl-before-request-is-asked-in-the-paced-slot', async () => {
     const net = fakeNet({ 'https://example.com/a': answer('<title>a</title>', 200, { 'content-type': 'text/html' }), 'https://example.com/b': answer('<title>b</title>', 200, { 'content-type': 'text/html' }) });
