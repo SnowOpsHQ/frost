@@ -13,6 +13,9 @@ import {
   PROFILE_FAILED_NOTE,
   RELOAD_TO_APPLY_LABEL,
   renderProfileSummary,
+  TAB_OVERRIDES_FAILED_NOTE,
+  TAB_OVERRIDES_NOT_APPLIED,
+  type RenderProfileStatus,
   type DevicePresetId,
   type NetworkPresetId,
   type Rect,
@@ -100,9 +103,19 @@ export function profileOfDraft(draft: ProfileDraft): { readonly ok: true; readon
 
 // ---- Tab overrides (Phase 11 Task 6, `render-profile.feature.md`, Tab overrides: Visible state) ----
 
-/** The status bar's overrides chip, or `null` when every override is off. */
-export function overridesChipText(overrides: TabOverrides): string | null {
-  return isDefaultTabOverrides(overrides) ? null : tabOverridesSummary(overrides);
+/**
+ * The status bar's overrides chip, or `null` when every override is off; `· not applied` when their
+ * CDP part failed (`TabState.overridesStatus`), as a failed profile's chip says.
+ */
+export function overridesChipText(overrides: TabOverrides, status: RenderProfileStatus = 'active'): string | null {
+  if (isDefaultTabOverrides(overrides)) return null;
+  const summary = tabOverridesSummary(overrides);
+  return status === 'failed' ? `${summary} · ${TAB_OVERRIDES_NOT_APPLIED}` : summary;
+}
+
+/** The "This tab only" row's note when the overrides' CDP part failed (`null` otherwise, or when all are off). */
+export function overridesFailedNote(overrides: TabOverrides, status: RenderProfileStatus): string | null {
+  return status === 'failed' && !isDefaultTabOverrides(overrides) ? TAB_OVERRIDES_FAILED_NOTE : null;
 }
 
 /** The location menu's choice: off, a preset's id, or a custom location. */

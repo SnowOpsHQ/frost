@@ -234,7 +234,7 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
       return tab ? webStorage.reveal(tab, item.area, item.key) : false;
     },
 
-    async exportNetwork(tabId, format) {
+    async exportNetwork(tabId, format, windowId = null) {
       const tab = contents(tabId);
       // Only the active tab (`DEVTOOLS_TAB_SCOPE`): any other has nothing to export, and no dialog is shown.
       if (!tab) return 'empty';
@@ -243,7 +243,7 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
       if (exporting) return 'cancelled';
       exporting = true;
       try {
-        return await exportNetworkLog(network.exportSnapshot(tab.id), format, { ...options.networkExport, log: options.log });
+        return await exportNetworkLog(network.exportSnapshot(tab.id), format, { ...options.networkExport, log: options.log }, windowId);
       } finally {
         exporting = false;
       }

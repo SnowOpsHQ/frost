@@ -95,7 +95,9 @@ Spec: `INSPECTOR_SEARCH_MODES`, `INSPECTOR_SEARCH_LIMITS`, `INSPECTOR_SOURCE_KIN
   source it shows, never its text. Rendered: main writes the text it kept under that `ref`, if it is
   the last one it answered, for that tab and document, and the page still shows that document.
   Served: main writes the served entry that `ref` names, if it is still the tab's for its current
-  document and URL (checked as above). Anything else is `stale` and nothing is written.
+  document and URL (checked as above). Anything else is `stale` and nothing is written. Main keeps
+  one rendered text at a time and drops it on `clear` of its tab, when its tab's WebContents is
+  destroyed, and on Clear Browsing Data (whole-branch review).
 
 ## The service
 `createInspectorService(deps)` (main):
@@ -228,6 +230,9 @@ An Inspector rail item after Changes (`SEO_PANELS`, no rules, no status dot).
 - `copy-source-from-main`: Copy source writes the rendered text main kept under the `ref` (not a
   newer reading of the page), or the served entry the `ref` names; another `ref`, document, tab,
   generation or URL, or a served source no longer ready is `stale` and writes nothing.
+- `rendered-source-dropped-on-clear-close-and-clear-browsing-data`: the kept rendered text goes on
+  `clear` of its tab (not another's), when its WebContents is destroyed (the listener goes too), and
+  on Clear Browsing Data (`forget`).
 
 ### Router (`packages/ipc-contract/src/__tests__/inspector-router.test.ts`)
 - `every-inspector-procedure-enforces-sender` (the new `search`, `source` and `copySource` too),

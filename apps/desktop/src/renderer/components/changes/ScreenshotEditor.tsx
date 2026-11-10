@@ -15,7 +15,10 @@ import {
   type ScreenshotEntry,
 } from '@app/specs/screenshot.spec';
 import { screenshotAlt } from '../../changes-view';
+import { useSeqChange } from '../../hooks/useSeqChange';
 import { ipc } from '../../ipc';
+import { onSettingsOpened } from '../../settings-open';
+import { onProjectsOpened } from './projects-sheet';
 import {
   addStep,
   canRedo,
@@ -25,6 +28,7 @@ import {
   editOf,
   EMPTY_HISTORY,
   notifyScreenshotEdited,
+  onScreenshotEditorOpened,
   opSizeFor,
   overlayFits,
   overlaySize,
@@ -47,9 +51,20 @@ import {
 // size in the screenshot's pixels (`renderOverlay`) and main composites the copy. No inline styles
 // (strict CSP): the canvas is sized by its own attributes, colours come from the stylesheet.
 
-/** The sheet, when a screenshot is open in the editor (`App.tsx` mounts it in the page column). */
-export function ScreenshotEditorSheet() {
+/**
+ * The sheet, when a screenshot is open in the editor (`App.tsx` mounts it in the page column). One
+ * sheet at a time (`help.feature.md`; whole-branch review): Settings, Projects or History opening
+ * (`historySeq`: History's open requests) closes it, and its opening closes History (`onOpen`); the
+ * Help sheets, Settings and Projects are handled where the editor opens (`openScreenshotEditor`).
+ */
+export function ScreenshotEditorSheet({ historySeq, onOpen }: { readonly historySeq?: number | undefined; readonly onOpen?: () => void } = {}) {
   const entry = useScreenshotEditor();
+  const latestOnOpen = useRef(onOpen);
+  latestOnOpen.current = onOpen;
+  useEffect(() => onScreenshotEditorOpened(() => latestOnOpen.current?.()), []);
+  useEffect(() => onSettingsOpened(closeScreenshotEditor), []);
+  useEffect(() => onProjectsOpened(closeScreenshotEditor), []);
+  useSeqChange(historySeq, closeScreenshotEditor);
   return entry === null ? null : <ScreenshotEditor key={entry.id} entry={entry} />;
 }
 

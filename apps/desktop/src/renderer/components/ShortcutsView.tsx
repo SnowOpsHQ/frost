@@ -11,7 +11,8 @@ import { shortcutLabel } from '../palette/keys';
 import { registerPaletteActions } from '../palette/registry';
 import { askSettingsToClose, onSettingsOpened } from '../settings-open';
 import { useSeqChange } from '../hooks/useSeqChange';
-import { closeProjects, useProjectsRequest } from './changes/projects-sheet';
+import { closeProjects, onProjectsOpened } from './changes/projects-sheet';
+import { closeScreenshotEditor, onScreenshotEditorOpened } from '../screenshot-editor';
 import { createWatchStore } from '../settings-store';
 import { markSetupStep } from './SetupChecklist';
 import '../help.css';
@@ -20,7 +21,7 @@ import '../help.css';
 // two Help sheets share. A sheet fills the page column while open (the page area below is laid out
 // zero-high by `help.css`, so the tab's view never covers it). It opens from Help › Keyboard Shortcuts
 // (Mod+/; main's `help.watch` counter), the palette and the setup checklist; it closes on Close, Esc,
-// a page change, and another sheet opening (Help, Settings, History, Projects: one at a time). The table is `KEYBOARD_SHORTCUTS` as
+// a page change, and another sheet opening (Help, Settings, History, Projects, the screenshot editor: one at a time). The table is `KEYBOARD_SHORTCUTS` as
 // this platform shows it (⌘ on macOS, Ctrl elsewhere). Every string is frost's own.
 
 const MAC = /\bMac/.test(navigator.userAgent);
@@ -58,8 +59,8 @@ export interface HelpSheetProps {
 /**
  * Whether Help sheet `sheet` shows, `show` and `close`. One sheet at a time: opening it closes
  * Settings (unless a sign-in waits for its confirmation there; then it stays shut and `show` answers
- * `false`), Projects and History; it closes when the other Help sheet, Settings, Projects or History
- * opens, and when another tab shows or a new document commits in this one. It opens on a request for
+ * `false`), Projects, the screenshot editor and History; it closes when the other Help sheet,
+ * Settings, Projects, the screenshot editor or History opens, and when another tab shows or a new document commits in this one. It opens on a request for
  * it (the palette, the checklist, the menu's counter: its first value is history). `focusSeq` rises
  * with every request, so the sheet moves focus to its heading again.
  */
@@ -71,6 +72,7 @@ export function useHelpSheet(sheet: HelpSheet, { tab, historySeq, onOpen }: Help
   const show = useCallback(() => {
     if (!askSettingsToClose()) return false;
     closeProjects();
+    closeScreenshotEditor();
     latestOnOpen.current();
     setState((was) => ({ open: true, focusSeq: was.focusSeq + 1 }));
     return true;
@@ -84,7 +86,9 @@ export function useHelpSheet(sheet: HelpSheet, { tab, historySeq, onOpen }: Help
     [sheet, show, close],
   );
   useEffect(() => onSettingsOpened(close), [close]);
-  useSeqChange(useProjectsRequest()?.seq, close);
+  useEffect(() => onScreenshotEditorOpened(close), [close]);
+  // Every open request, the first one included (a request counter's first value is not history here).
+  useEffect(() => onProjectsOpened(close), [close]);
   const menu = useSyncExternalStore(helpMenuStore.subscribe, helpMenuStore.current);
   const seenMenu = useRef<number | undefined>(undefined);
   useEffect(() => {

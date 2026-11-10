@@ -40,6 +40,7 @@ const tabAt = (documentSeq: number): TabState => ({
   tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null },
   loadedUnderOverrides: false,
   overridesRevision: 0,
+  overridesStatus: 'active',
 });
 const pending = (url: string): SpeedResponse => ({ status: 'pending', url });
 

@@ -139,7 +139,7 @@ the procedures' inputs, `TabRenderProfileSchema`). Phase 2.5 Task 1. Each line m
 Spec: `render-profile.spec.ts` (`TabOverrides`, `DEFAULT_TAB_OVERRIDES`, `GEOLOCATION_LIMITS`,
 `GEOLOCATION_PRESETS`, `TAB_OVERRIDES_WORLD_ID`, `COOKIE_BLOCK`, labels and hints),
 `render-profile.schema.spec.ts` (`TabOverridesSchema`, `SetTabOverridesInputSchema`), `browser.spec.ts`
-(`TabState.tabOverrides`, `loadedUnderOverrides`, `overridesRevision`).
+(`TabState.tabOverrides`, `loadedUnderOverrides`, `overridesRevision`, `overridesStatus`).
 - **Tab-local, not a profile.** CSS off, cookies off and a browser geolocation are a separate per-tab
   value, `TabOverrides`, held by main (`browser/tab-overrides.ts`) and shown in `TabState`. They are
   not in `RenderProfile` / `RenderProfileSchema`, so they never reach pins, project profiles, lane
@@ -201,7 +201,10 @@ Spec: `render-profile.spec.ts` (`TabOverrides`, `DEFAULT_TAB_OVERRIDES`, `GEOLOC
   sent); cleared only by a later main-frame navigation to a
   new document during which no override was on at any point from its start to its completion (its
   load finishing). An override on at a navigation's start and turned off before it completes keeps
-  it set; setting wins. Same-document navigations and turning overrides off never clear it.
+  it set; setting wins. Same-document navigations and turning overrides off never clear it. A
+  main-frame navigation that ends without committing (it fails, or the tab stops loading with no new
+  document: a download, a 204) leaves the marker as it was and forgets what it saw, so it never
+  taints the next navigation (whole-branch review; `navigation-ending-without-a-commit-forgets-what-it-saw`).
   (`marker-set-when-a-document-loads-under-overrides`, `marker-set-when-an-override-turns-on-after-load`,
   `marker-kept-when-overrides-turned-off`,
   `marker-cleared-only-by-a-clean-navigation`, `marker-kept-when-override-on-at-navigation-start`)
@@ -215,9 +218,18 @@ Spec: `render-profile.spec.ts` (`TabOverrides`, `DEFAULT_TAB_OVERRIDES`, `GEOLOC
 - **Procedure:** `tabOverrides.set({ tabId, overrides })`: `enforceSender` first, then Zod
   (`SetTabOverridesInputSchema`); an id that names no open tab answers `false`.
   (`set-tab-overrides-validates`)
+- **Whether they are in effect** (`TabState.overridesStatus`, whole-branch review): tracked apart from
+  the profile's status, so it shows with no profile too. `applying` while the list that carries the
+  overrides' commands is unanswered, `failed` when the debugger could not be attached (or a
+  re-attach after a detach failed) or refused one, else `active` (also when no override has a CDP
+  part: CSS off is a page script). Only the latest list's answer settles it.
+  (`override-cdp-failure-shown-without-a-profile`)
 - **Visible state:** the render-profile toggle is marked while a tab has overrides; the status bar
   shows them (`tabOverridesSummary`), the editor bar holds the three switches with their hints, and
-  the Overview's profile note names the overrides an audit ran under.
+  the Overview's profile note names the overrides an audit ran under. A `failed` status adds
+  "· not applied" to the chip and the toggle's name, and the "This tab only" row shows
+  `TAB_OVERRIDES_FAILED_NOTE`. (`tab-overrides-failure-shown`,
+  `overrides-failure-shown-in-bar-chip-and-toggle-without-a-profile`)
 
 ## The page cannot see or defeat it
 - No domain that observes the page is ever enabled (resuming a paused cross-site frame with

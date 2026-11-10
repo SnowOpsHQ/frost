@@ -16,6 +16,7 @@ import { HIGHLIGHT_MODES } from './seo-sidebar.spec';
 import { HIGHLIGHT_PHRASE_MAX_CHARS } from './seo-limits.spec';
 import { PALETTE_RETURN_FOCUS } from './command-palette.spec';
 import { TabOverridesSchema, TabRenderProfileSchema } from './render-profile.schema.spec';
+import { RENDER_PROFILE_STATUSES } from './render-profile.spec';
 import { BrowserPolishStateShape } from './browser-polish.schema';
 import { DEFAULT_SEARCH_ENGINE, searchEngine } from './browser-polish.spec';
 
@@ -213,6 +214,14 @@ export const TabStateSchema = z.strictObject({
    * default; they end with the tab and are never pinned or inherited.
    */
   tabOverrides: TabOverridesSchema,
+  /**
+   * Whether the overrides' CDP part (cookies off, a location) is in effect (`RenderProfileStatus`,
+   * whole-branch review): `applying` while their commands are unanswered, `failed` when the debugger
+   * could not be attached or refused one (the page then runs without them, and the render-profile
+   * bar and the status-bar chip say so, with or without a profile), else `active` (also when no
+   * override has a CDP part: CSS off is a page script).
+   */
+  overridesStatus: z.enum(RENDER_PROFILE_STATUSES),
   /**
    * The document marker (Decision 8): the tab's current main-frame document **loaded** under an
    * override. Set when a main-frame document commits, or is still loading, while any override is on

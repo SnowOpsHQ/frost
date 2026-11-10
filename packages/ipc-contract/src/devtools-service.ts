@@ -40,9 +40,10 @@ export interface DevtoolsService {
   setPreserveLog(tabId: number, preserve: boolean): boolean;
   /**
    * Exports the (active) tab's network log as `format`, built by main from its own log and written
-   * where the user chose in main's save dialog (`NETWORK_EXPORT_RESULTS`). Never rejects.
+   * where the user chose in main's save dialog (`NETWORK_EXPORT_RESULTS`), parented to `windowId`
+   * (the sender's app window; `null` or absent: app-modal). Never rejects.
    */
-  exportNetwork(tabId: number, format: NetworkExportFormat): Promise<NetworkExportResult>;
+  exportNetwork(tabId: number, format: NetworkExportFormat, windowId?: number | null): Promise<NetworkExportResult>;
   /** Reveals one listed web storage key for the tab's current document; `false` otherwise. Never rejects. */
   revealStorageItem(tabId: number, item: { readonly area: WebStorageArea; readonly key: string }): Promise<boolean>;
 }

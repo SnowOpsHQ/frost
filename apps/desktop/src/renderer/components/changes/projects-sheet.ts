@@ -37,9 +37,21 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+/** Told on every open request (the other page-column sheets close: one sheet at a time). */
+const openedListeners = new Set<() => void>();
+
 /** Opens the sheet (on `projectId`, or to add `addUrl` to a project). */
 export function openProjects(options: { readonly projectId?: string | null; readonly addUrl?: string | null } = {}): void {
   set({ open: true, request: { seq: (snapshot.request?.seq ?? 0) + 1, projectId: options.projectId ?? null, addUrl: options.addUrl ?? null } });
+  for (const listener of [...openedListeners]) listener();
+}
+
+/** Subscribes to the sheet's open requests, the first one included; answers the unsubscribe. */
+export function onProjectsOpened(listener: () => void): () => void {
+  openedListeners.add(listener);
+  return () => {
+    openedListeners.delete(listener);
+  };
 }
 
 export function closeProjects(): void {

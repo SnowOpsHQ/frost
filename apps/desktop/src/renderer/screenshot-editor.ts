@@ -8,6 +8,8 @@ import {
   type ScreenshotEntry,
   type ScreenshotRect,
 } from '@app/specs/screenshot.spec';
+import { closeProjects } from './components/changes/projects-sheet';
+import { askSettingsToClose } from './settings-open';
 
 // The screenshot editor's logic (Phase 11 Task 7, Decision 9; spec `screenshot.spec.ts`, Editing;
 // acceptance `screenshot.feature.md`, Editing): its undo history, the conversion from the preview's
@@ -200,6 +202,8 @@ let open: ScreenshotEntry | null = null;
 /** Bumped after an edit is saved (the gallery reads again). */
 let saves = 0;
 const listeners = new Set<() => void>();
+/** Told when the editor opens (the Help sheets and, through `ScreenshotEditorSheet`, History close). */
+const openedListeners = new Set<() => void>();
 const notify = (): void => {
   for (const listener of [...listeners]) listener();
 };
@@ -210,10 +214,28 @@ const subscribe = (listener: () => void): (() => void) => {
   };
 };
 
-/** Opens the editor on `entry` (one at a time: another entry replaces it). */
-export function openScreenshotEditor(entry: ScreenshotEntry): void {
+/**
+ * Opens the editor on `entry` (one at a time: another entry replaces it). It is a page-column sheet,
+ * one at a time with the Help sheets, Settings, Projects and History (`help.feature.md`; whole-branch
+ * review): Settings closes (unless a sign-in waits for its confirmation there: the editor then stays
+ * shut and this answers `false`), Projects closes, and the Help sheets and History close (they listen
+ * with `onScreenshotEditorOpened`).
+ */
+export function openScreenshotEditor(entry: ScreenshotEntry): boolean {
+  if (!askSettingsToClose()) return false;
+  closeProjects();
   open = entry;
   notify();
+  for (const listener of [...openedListeners]) listener();
+  return true;
+}
+
+/** Subscribes to the editor opening; answers the unsubscribe. */
+export function onScreenshotEditorOpened(listener: () => void): () => void {
+  openedListeners.add(listener);
+  return () => {
+    openedListeners.delete(listener);
+  };
 }
 
 export function closeScreenshotEditor(): void {

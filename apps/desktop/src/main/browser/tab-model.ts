@@ -19,7 +19,7 @@ export type HostWindow = Pick<
  * auditor, its `highlight` from `Tab.highlight` and its `renderProfile` from the render profiles
  * (`render-profile.ts`) when the state is read.
  */
-export type PageState = Omit<TabState, 'permissionPrompt' | 'auditVersion' | 'highlight' | 'highlightPhrase' | 'renderProfile' | 'tabOverrides' | 'loadedUnderOverrides' | 'overridesRevision'>;
+export type PageState = Omit<TabState, 'permissionPrompt' | 'auditVersion' | 'highlight' | 'highlightPhrase' | 'renderProfile' | 'tabOverrides' | 'loadedUnderOverrides' | 'overridesRevision' | 'overridesStatus'>;
 export type FullscreenMode = NonNullable<TabState['fullscreen']>;
 
 export interface Tab {

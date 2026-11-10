@@ -1152,3 +1152,15 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `cookies-off-har-shows-no-cookie-header` e2e therefore uses a second, cookies-on tab as its
   positive control. `seo-sidebar.e2e.ts` `deep-nested-anchors-is-bounded-not-timeout` is load-flaky
   on this machine at the branch point too.
+- **Whole-branch review:** the agent's audit reads (`page_audit`, `page_data`, attached `audit`)
+  carry the audit's override stamp, and `page_text` / attached `text` carry the tab's live
+  overrides and `loadedUnderOverrides`, as on/off booleans (no coordinates, left out when off,
+  never a refusal; protocol schema unchanged). The Inspector drops its kept rendered source on
+  `clear` of its tab, on WebContents destroy and on Clear Browsing Data. The overrides' CDP part has
+  its own `TabState.overridesStatus`, so a failure shows even with no profile. The network export is
+  written mode 0600 (shared `writePrivateFile`) with its dialog parented to the sender's window.
+  The screenshot editor joins the one-sheet rule (Projects now announces every open, the first
+  included). A navigation that ends without committing forgets what it saw. Lead ruling:
+  edited-copy retention lanes rely on the local-only `screenshot_edits` link, so a device that syncs
+  the copy without the link treats it as a taken screenshot of that lane; latent until `ci_*` sync
+  ships (issue #15), and fixing it needs a synced marker column and a sync schema bump.

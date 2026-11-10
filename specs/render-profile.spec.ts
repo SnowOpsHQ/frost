@@ -538,6 +538,15 @@ export const CSS_OFF_HINT = 'Turns off this page’s stylesheets in this tab: th
 export const COOKIES_OFF_HINT =
   'Sends no cookies from this tab and keeps none it is sent, as a crawler would. Slightly slows loading in all tabs while on. The page’s script can still read and write cookies through the Cookie Store API, service-worker requests keep their cookies, and if frost cannot apply it to a request, that request is sent as normal.' as const;
 
+/**
+ * Shown in the render-profile bar's "This tab only" row and in the status-bar chip's title when the
+ * overrides' CDP part could not be applied (`TabState.overridesStatus` `failed`; whole-branch review).
+ */
+export const TAB_OVERRIDES_FAILED_NOTE = 'Cookies off or the location could not be applied in this tab: the page may get its cookies or your real location.' as const;
+
+/** The chip and badge suffix of overrides that were not applied (as a failed profile's `· not applied`). */
+export const TAB_OVERRIDES_NOT_APPLIED = 'not applied' as const;
+
 export const GEOLOCATION_HINT = 'What this tab’s pages get from the browser’s location API, once you allow it. Search results, your IP address, time zone and language are unchanged.' as const;
 
 /** Where a value names the location (`48.85660, 2.35220`): five decimals, as entered. */

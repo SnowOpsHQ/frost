@@ -532,6 +532,8 @@ function start(): void {
         robots?.clear();
         responses.clear();
         served?.clear();
+        // The Inspector's kept rendered source (inspector.feature.md).
+        inspector.forget();
         devtools.clear();
         checks?.clearCache();
         // Running checks go too: nothing they fetch afterwards is kept (seo-checks.feature.md).

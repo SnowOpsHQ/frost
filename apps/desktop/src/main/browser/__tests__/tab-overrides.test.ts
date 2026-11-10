@@ -1,6 +1,6 @@
 // Spec: specs/render-profile.spec.ts (TabOverrides, DEFAULT_TAB_OVERRIDES, GEOLOCATION_PRESETS, TAB_OVERRIDES_WORLD_ID),
 // specs/render-profile.schema.spec.ts (TabOverridesSchema), specs/browser.spec.ts (TabState.tabOverrides,
-// TabState.loadedUnderOverrides, TabState.overridesRevision)
+// TabState.loadedUnderOverrides, TabState.overridesRevision, TabState.overridesStatus)
 // Acceptance: specs/render-profile.feature.md (Tab overrides: tab-local, the document marker, the override revision)
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { BrowserStateSchema } from '@app/specs/browser.spec';
@@ -32,8 +32,11 @@ let debuggers: Map<FakeTabContents, ProfileDebugger & { dispose: ReturnType<type
 let blocked: Map<number, unknown>;
 let cookieBlock: CookieBlock & { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> };
 let nextId: number;
+/** What every debugger `send` answers (tests replace it to fail or hold a list). */
+let sendAnswer: () => Promise<void>;
 
 beforeEach(() => {
+  sendAnswer = async () => undefined;
   views = [];
   debuggers = new Map();
   blocked = new Map();
@@ -57,7 +60,7 @@ beforeEach(() => {
       pins,
       chromeVersion: '140.0.0.0',
       debuggerFor: (contents) => {
-        const dbg = { send: vi.fn(async () => undefined), sendTopLevel: vi.fn(async () => undefined), detach: vi.fn(), isAttached: () => true, dispose: vi.fn() };
+        const dbg = { send: vi.fn(() => sendAnswer()), sendTopLevel: vi.fn(async () => undefined), detach: vi.fn(), isAttached: () => true, dispose: vi.fn() };
         debuggers.set(contents as unknown as FakeTabContents, dbg);
         return dbg;
       },
@@ -260,6 +263,29 @@ describe('tab overrides', () => {
     expect(marker(id)).toBe(false);
   });
 
+  test('navigation-ending-without-a-commit-forgets-what-it-saw', async () => {
+    const { id, contents } = await openAt('https://a.example/');
+    // On over the committed document: marked.
+    controller.tabOverrides.set(id, COOKIES_OFF);
+    expect(marker(id)).toBe(true);
+    // A navigation started while it was on ends without a new document (a download, a 204): the tab
+    // just stops loading. Then the override goes off.
+    start(contents, 'https://a.example/report.zip');
+    finish(contents);
+    controller.tabOverrides.set(id, DEFAULT_TAB_OVERRIDES);
+    expect(marker(id)).toBe(true);
+    // The next navigation, clean from start to finish, clears the marker (the ended one's "saw" is gone).
+    navigateTo(contents, 'https://a.example/clean');
+    expect(marker(id)).toBe(false);
+    // The same after a failed one (`did-fail-load`).
+    controller.tabOverrides.set(id, PARIS);
+    start(contents, 'https://a.example/broken');
+    contents.emit('did-fail-load', fakeEvent(), -105, 'ERR_NAME_NOT_RESOLVED', 'https://a.example/broken', true);
+    controller.tabOverrides.set(id, DEFAULT_TAB_OVERRIDES);
+    navigateTo(contents, 'https://a.example/clean-again');
+    expect(marker(id)).toBe(false);
+  });
+
   test('marker-kept-when-override-on-at-navigation-start', async () => {
     // A tab with no document yet (an override set on it marks nothing until a document loads).
     const fresh = async () => {
@@ -324,5 +350,42 @@ describe('tab overrides', () => {
     // A profile change is not an override change.
     controller.setRenderProfile(id, PHONE_BOT, false);
     expect(revision(id)).toBe(8);
+  });
+
+  test('override-cdp-failure-shown-without-a-profile', async () => {
+    const { id } = await openAt('https://a.example/');
+    expect(tabState(id).overridesStatus).toBe('active');
+    // CSS off has no CDP part: nothing to apply.
+    controller.tabOverrides.set(id, CSS_OFF);
+    expect(tabState(id).overridesStatus).toBe('active');
+    // Cookies off with no profile: applying until the debugger answers, then failed when it refuses.
+    let refuse: (error: Error) => void = () => undefined;
+    sendAnswer = () => new Promise<void>((_resolve, reject) => (refuse = reject));
+    controller.tabOverrides.set(id, COOKIES_OFF);
+    expect(tabState(id).overridesStatus).toBe('applying');
+    const version = controller.getState().version;
+    refuse(new Error('refused'));
+    await settle();
+    expect(tabState(id)).toMatchObject({ overridesStatus: 'failed', renderProfile: null });
+    expect(controller.getState().version).toBeGreaterThan(version);
+    expect(BrowserStateSchema.parse(controller.getState())).toEqual(controller.getState());
+    // A later list that is answered puts it right; an older list's late refusal does not undo it.
+    let refuseOld: (error: Error) => void = () => undefined;
+    sendAnswer = () => new Promise<void>((_resolve, reject) => (refuseOld = reject));
+    controller.tabOverrides.set(id, PARIS);
+    sendAnswer = async () => undefined;
+    controller.tabOverrides.set(id, { ...PARIS, cookiesDisabled: true });
+    await settle();
+    expect(tabState(id).overridesStatus).toBe('active');
+    refuseOld(new Error('late'));
+    await settle();
+    expect(tabState(id).overridesStatus).toBe('active');
+    // Back to normal: nothing to apply.
+    sendAnswer = () => Promise.reject(new Error('refused'));
+    controller.tabOverrides.set(id, { ...PARIS, cookiesDisabled: true, geolocation: { latitude: 1, longitude: 1, accuracy: 10 } });
+    await settle();
+    expect(tabState(id).overridesStatus).toBe('failed');
+    controller.tabOverrides.set(id, DEFAULT_TAB_OVERRIDES);
+    expect(tabState(id).overridesStatus).toBe('active');
   });
 });

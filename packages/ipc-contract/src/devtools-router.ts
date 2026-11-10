@@ -112,7 +112,8 @@ export const devtoolsRouter = router({
     .use(enforceSender)
     .use(requireDevtools)
     .input(ExportNetworkInputSchema)
-    .mutation(({ ctx, input }) => ctx.devtools.exportNetwork(input.tabId, input.format)),
+    // Main's save dialog is parented to the window that asked (`null`: app-modal).
+    .mutation(({ ctx, input }) => ctx.devtools.exportNetwork(input.tabId, input.format, ctx.sender?.windowId ?? null)),
   // Phase 11 Task 4 (Decision 6): one web storage key shown until the tab's next navigation.
   revealStorageItem: publicProcedure
     .use(enforceSender)

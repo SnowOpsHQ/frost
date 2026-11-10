@@ -3,8 +3,8 @@
 // Acceptance: specs/render-profile.feature.md (Visible state)
 import { describe, expect, test } from 'vitest';
 import { DEFAULT_RENDER_PROFILE, fitRenderViewport, MAX_CUSTOM_USER_AGENT_LENGTH, PROFILE_FAILED_NOTE, type TabRenderProfile } from '@app/specs/render-profile.spec';
-import { DEFAULT_TAB_OVERRIDES, GEOLOCATION_PRESETS } from '@app/specs/render-profile.spec';
-import { badgeLabel, chipText, draftOf, frameNotes, geolocationChoiceOf, geolocationDraftOf, geolocationOfDraft, outlineRect, overridesChipText, profileOfDraft } from '../render-profile-view';
+import { DEFAULT_TAB_OVERRIDES, GEOLOCATION_PRESETS, TAB_OVERRIDES_FAILED_NOTE } from '@app/specs/render-profile.spec';
+import { badgeLabel, chipText, draftOf, frameNotes, geolocationChoiceOf, geolocationDraftOf, geolocationOfDraft, outlineRect, overridesChipText, overridesFailedNote, profileOfDraft } from '../render-profile-view';
 
 const state = (over: Partial<TabRenderProfile> = {}): TabRenderProfile => ({
   profile: { ...DEFAULT_RENDER_PROFILE, device: 'phone', userAgent: 'googlebot-smartphone' },
@@ -67,5 +67,18 @@ describe('tab overrides view', () => {
       { latitude: '0', longitude: '0', accuracy: '1.5' },
       { latitude: '0', longitude: '0', accuracy: '100001' },
     ]) expect(geolocationOfDraft(bad).ok, JSON.stringify(bad)).toBe(false);
+  });
+});
+
+// Whole-branch review: a failed CDP part of the overrides shows with or without a profile.
+describe('tab overrides failure', () => {
+  test('tab-overrides-failure-shown', () => {
+    const cookies = { ...DEFAULT_TAB_OVERRIDES, cookiesDisabled: true };
+    expect(overridesChipText(cookies, 'applying')).toBe('Cookies off');
+    expect(overridesChipText(cookies, 'failed')).toBe('Cookies off · not applied');
+    expect(overridesChipText(DEFAULT_TAB_OVERRIDES, 'failed')).toBeNull();
+    expect(overridesFailedNote(cookies, 'failed')).toBe(TAB_OVERRIDES_FAILED_NOTE);
+    expect(overridesFailedNote(cookies, 'active')).toBeNull();
+    expect(overridesFailedNote(DEFAULT_TAB_OVERRIDES, 'failed')).toBeNull();
   });
 });

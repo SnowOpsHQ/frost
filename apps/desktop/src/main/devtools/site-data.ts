@@ -1,8 +1,8 @@
-import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, session, type BaseWindow } from 'electron';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { CLEAR_SITE_DATA, NETWORK_EXPORT_DIALOG, type NetworkExportFormat } from '@app/specs/devtools.spec';
+import { writePrivateFile } from '../private-file';
 import type { NetworkExportIo } from './network-export';
 
 // "Clear this site's data" (spec `devtools.spec.ts`, `CLEAR_SITE_DATA`; acceptance
@@ -33,10 +33,10 @@ export function browseCookies(url: string): Promise<Electron.Cookie[]> {
 /**
  * The network export's save dialog (Phase 11 Task 4, Decision 5; the `agent/dialogs.ts` pattern):
  * offered in the Downloads folder, one filter for the format, overwrite confirmed; parented to the
- * focused window (else any open one; with none, app-modal). `null` when the user cancelled. The
- * chrome never names a path.
+ * window that asked (`windowId`, the IPC sender's; else app-modal), as Export Diagnostics' is.
+ * `null` when the user cancelled. The chrome never names a path.
  */
-export async function chooseNetworkExportPath(defaultName: string, format: NetworkExportFormat): Promise<string | null> {
+export async function chooseNetworkExportPath(defaultName: string, format: NetworkExportFormat, windowId: number | null): Promise<string | null> {
   let defaultPath = defaultName;
   try {
     defaultPath = path.join(app.getPath('downloads'), defaultName);
@@ -49,13 +49,14 @@ export async function chooseNetworkExportPath(defaultName: string, format: Netwo
     filters: [{ name: NETWORK_EXPORT_DIALOG.filterNames[format], extensions: [NETWORK_EXPORT_DIALOG.extensions[format]] }],
     properties: ['createDirectory' as const, 'showOverwriteConfirmation' as const],
   };
-  const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null;
+  const window = windowId === null ? null : BrowserWindow.fromId(windowId);
+  const parent = window && !window.isDestroyed() ? window : null;
   const { canceled, filePath } = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options);
   return canceled || typeof filePath !== 'string' || filePath === '' ? null : filePath;
 }
 
-/** The network export's dialog and file write, for the devtools service. */
+/** The network export's dialog and file write (mode 0600: the log can hold what the user would not share), for the devtools service. */
 export const networkExportIo: Omit<NetworkExportIo, 'log' | 'appVersion'> = {
   chooseSavePath: chooseNetworkExportPath,
-  writeFile: (file, data) => writeFile(file, data, 'utf8'),
+  writeFile: writePrivateFile,
 };

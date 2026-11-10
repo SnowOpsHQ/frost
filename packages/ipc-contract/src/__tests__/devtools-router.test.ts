@@ -25,7 +25,7 @@ function fakeDevtools() {
     clearSiteData: vi.fn(async (_tabId: number) => 'cancelled' as const),
     setOpen: vi.fn((_windowId: number | null, _open: boolean) => undefined),
     setPreserveLog: vi.fn((tabId: number, _preserve: boolean) => tabId === 1),
-    exportNetwork: vi.fn(async (_tabId: number, _format: NetworkExportFormat) => 'cancelled' as const),
+    exportNetwork: vi.fn(async (_tabId: number, _format: NetworkExportFormat, _windowId?: number | null) => 'cancelled' as const),
     revealStorageItem: vi.fn(async (tabId: number, _item: { area: WebStorageArea; key: string }) => tabId === 1),
   } satisfies DevtoolsService;
 }
@@ -178,7 +178,8 @@ describe('devtools router', () => {
     await procedure(ctxFor(devtools), 'storage')({ tabId: 1, readWebStorage: true });
     expect(devtools.storage).toHaveBeenLastCalledWith(1, { readWebStorage: true });
     await expect(call('exportNetwork')).resolves.toBe('cancelled');
-    expect(devtools.exportNetwork).toHaveBeenCalledExactlyOnceWith(1, 'har');
+    // Main's dialog goes to the sender's window.
+    expect(devtools.exportNetwork).toHaveBeenCalledExactlyOnceWith(1, 'har', WINDOW_ID);
     await expect(call('revealStorageItem')).resolves.toBe(true);
     expect(devtools.revealStorageItem).toHaveBeenCalledExactlyOnceWith(1, { area: 'local', key: 'token' });
     await expect(procedure(ctxFor(devtools), 'revealStorageItem')({ tabId: 2, area: 'session', key: '' })).resolves.toBe(false);

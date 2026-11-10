@@ -83,7 +83,10 @@ line maps to one named test.
 - **Network export: HAR or CSV, written by main, URLs redacted best effort** (Phase 11 Decision 5).
   The chrome sends only the tab and the format (`ExportNetworkInputSchema`); the active tab only.
   Main builds the file from its log as kept (rows and headers as stored, secret headers `•••`),
-  asks where in its own save dialog (`NETWORK_EXPORT_DIALOG`), and writes it; Cancel writes nothing.
+  asks where in its own save dialog (`NETWORK_EXPORT_DIALOG`), parented to the window that asked
+  (the IPC sender's; none or closed: app-modal), and writes it with mode 0600 (narrowed after the
+  write when the file existed; not on Windows; a failed narrowing never fails the save), as Export
+  Diagnostics does; Cancel writes nothing.
   One export at a time: another asked while the dialog is open answers `cancelled` (no second
   dialog).
   Never a body: each HAR entry has `bodySize: -1`, `content.size: -1`, no `content.text`, and
@@ -245,6 +248,11 @@ line maps to one named test.
   answers `cancelled` without a second dialog; the next one after it asks again.
 - **Scenario: cancelled-writes-nothing** — the save dialog cancelled: `cancelled`, nothing written;
   an empty log is `empty` without a dialog; a write error is `failed`.
+- **Scenario: network-export-dialog-parented-to-the-sender-window** (`site-data.test.ts`) — the
+  dialog goes to the sender's window even when another has focus; no, an unknown or a closed window:
+  app-modal.
+- **Scenario: network-export-file-is-private-even-when-overwritten** (`site-data.test.ts`) — the
+  HAR / CSV is mode 0600, also over an existing 0644 file (POSIX only).
 
 ## Web storage (`main/devtools/__tests__/web-storage.test.ts`)
 - **Scenario: reads-in-storage-world-only** — every script runs with

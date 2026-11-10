@@ -5856,6 +5856,17 @@ input {
   margin-left: 6px;
 }
 
+/* The overrides' cookie or location part could not be applied (whole-branch review). */
+.status-tab-overrides[data-status='failed'] {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.render-overrides-failed {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--text);
+}
+
 .render-geo-custom {
   display: flex;
   align-items: center;

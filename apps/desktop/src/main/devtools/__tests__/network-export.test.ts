@@ -214,7 +214,7 @@ class FakeContents extends EventEmitter {
 function serviceWith(over: Partial<NonNullable<DevtoolsServiceOptions['networkExport']>> = {}) {
   const tabs = new Map<number, FakeContents>([[1, new FakeContents(TAB)], [2, new FakeContents(8)]]);
   const writes: { path: string; data: string }[] = [];
-  const chooseSavePath = vi.fn(async (_name: string, _format: string): Promise<string | null> => '/downloads/net.har');
+  const chooseSavePath = vi.fn(async (_name: string, _format: string, _windowId: number | null): Promise<string | null> => '/downloads/net.har');
   const service = createDevtoolsService({
     activeTabId: () => 1,
     contentsOf: (tabId) => (tabs.get(tabId) as unknown as DevtoolsContents) ?? null,
@@ -250,8 +250,9 @@ describe('network export through the service', () => {
     expect(chooseSavePath).not.toHaveBeenCalled();
     expect(writes).toEqual([]);
     recorded(service.parts.network, TAB);
-    await expect(service.exportNetwork(1, 'har')).resolves.toBe('saved');
-    expect(chooseSavePath).toHaveBeenCalledExactlyOnceWith('frost-network-www.example.com-20261109-080706.har', 'har');
+    await expect(service.exportNetwork(1, 'har', 3)).resolves.toBe('saved');
+    // Main's dialog is parented to the window that asked (whole-branch review).
+    expect(chooseSavePath).toHaveBeenCalledExactlyOnceWith('frost-network-www.example.com-20261109-080706.har', 'har', 3);
     expect(writes).toHaveLength(1);
     const har = JSON.parse(writes[0]!.data) as HarLog;
     expect(HarLogSchema.safeParse(har).success).toBe(true);

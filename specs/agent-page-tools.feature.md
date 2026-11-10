@@ -78,6 +78,11 @@ named test.
   while ours is pending; a fragment-only navigation settles at its in-page move;
   an approved navigate follows redirects and reports where it ended. It waits for the load to settle
   or `NAVIGATE_SETTLE_TIMEOUT_MS`.
+- **Tab overrides are said, not refused** (Phase 11 whole-branch review). When the audit's stamp
+  (`seo.getAudit`'s `tabOverrides`) has any override on, `page_audit` and `page_data` carry
+  `tabOverrides: { cssDisabled, cookiesDisabled, geolocation }` (booleans: no coordinates);
+  `page_text` carries the tab's live overrides the same way and `loadedUnderOverrides: true` when its
+  document was loaded under one (`TabState`). Each is absent when off; no read is refused for them.
 - **No cookies, storage or main world.** No tool reads them; `click` clicks without a user gesture.
 
 ## Scenarios: reads
@@ -102,6 +107,10 @@ named test.
   `null` expectation (`expired`) → `audit-tools-refuse-other-page`
 - `page_text` runs its script in the agent page world, answers the text cut at `maxChars` (default
   `PAGE_TEXT_DEFAULT_CHARS`) and fitted to the tool cap → `page-text-capped`
+- The audit tools say which overrides the audit ran under (absent when all off) →
+  `audit-tools-tell-the-model-the-overrides-the-audit-ran-under`; `page_text` says the tab's live
+  overrides and its loaded-under-overrides marker → `page-text-tells-the-model-the-tab-overrides`,
+  read from the controller's `TabState` → `browser-runner-reads-overrides-from-tab-state`
 
 ## Scenarios: click
 - `click` runs in the agent page world and reports what it clicked; not found and a bad selector are

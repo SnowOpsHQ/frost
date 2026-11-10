@@ -1,6 +1,6 @@
 import type { Finding, SeoAudit, SeoAuditResponse } from '@app/seo-core';
 import { modelPageUrl, PAGE_AUDIT_LIMITS as L, PAGE_TITLE_MAX_CHARS } from '@app/specs/agent-page-tools.spec';
-import { renderProfileSummary, type AuditRenderProfile } from '@app/specs/render-profile.spec';
+import { isDefaultTabOverrides, renderProfileSummary, type AuditRenderProfile, type TabOverrides } from '@app/specs/render-profile.spec';
 import { READABILITY_FORMULAS, READABILITY_UNAVAILABLE_MESSAGES } from '@app/specs/seo-content.spec';
 import { JS_VERDICT_LABELS, SERVED_UNAVAILABLE_MESSAGES } from '@app/specs/seo-javascript.spec';
 import { SOCIAL_TAGS } from '@app/specs/seo-limits.spec';
@@ -49,6 +49,25 @@ function profileName(profile: AuditRenderProfile | null | undefined): string | n
   return profile ? renderProfileSummary(profile.profile) : null;
 }
 
+/** Which tab overrides are on, as the model reads them (Phase 11 Task 6): no coordinates. */
+export interface ModelTabOverrides {
+  readonly cssDisabled: boolean;
+  readonly cookiesDisabled: boolean;
+  readonly geolocation: boolean;
+}
+
+/** `overrides` as the model reads them, or `null` when absent or all off (then the data says nothing about them). */
+export function modelTabOverrides(overrides: TabOverrides | null | undefined): ModelTabOverrides | null {
+  if (!overrides || isDefaultTabOverrides(overrides)) return null;
+  return { cssDisabled: overrides.cssDisabled, cookiesDisabled: overrides.cookiesDisabled, geolocation: overrides.geolocation !== null };
+}
+
+/** The `tabOverrides` field of an audit summary: the overrides the audit ran under (its stamp), when any was on. */
+function overridesField(overrides: TabOverrides | null | undefined): { tabOverrides?: ModelTabOverrides } {
+  const model = modelTabOverrides(overrides);
+  return model ? { tabOverrides: model } : {};
+}
+
 /**
  * Shortens lists until `build(kept)`'s JSON fits `budget`. `kept[i]` is how many entries list `i`
  * keeps (a list is cut from its end); the lists are cut in order, each until the output fits or it
@@ -80,7 +99,7 @@ function trimToBudget<T, R>(list: readonly T[], build: (kept: readonly T[], omit
  * (most severe first, as the audit ranks them; at most `maxFindings`, then trimmed to the budget,
  * `findingsOmitted` saying how many were left out) and the page's key facts.
  */
-export function summariseAudit(audit: SeoAudit, renderProfile?: AuditRenderProfile | null): Record<string, unknown> {
+export function summariseAudit(audit: SeoAudit, renderProfile?: AuditRenderProfile | null, tabOverrides?: TabOverrides): Record<string, unknown> {
   const page = audit.page;
   const base = {
     status: 'ready',
@@ -102,6 +121,7 @@ export function summariseAudit(audit: SeoAudit, renderProfile?: AuditRenderProfi
       httpStatus: audit.indexability.http?.status ?? null,
     },
     renderProfile: profileName(renderProfile),
+    ...overridesField(tabOverrides),
     auditedAt: audit.takenAt,
   };
   const findings = audit.findings.slice(0, L.maxFindings).map(findingSummary);
@@ -158,9 +178,10 @@ function javascriptSummary(report: SeoAudit['javascript']): Record<string, unkno
  * robots, language, headings outline, link and image counts, its internal links with their anchor
  * text, structured-data types, hreflang, social sharing tags, a content summary and the
  * served-versus-rendered JavaScript verdict),
- * the indexability verdict and its reasons, and the render profile the audit ran under.
+ * the indexability verdict and its reasons, and the render profile (and, when any was on, the tab
+ * overrides: `tabOverrides`) the audit ran under.
  */
-export function summarisePageData(audit: SeoAudit, renderProfile?: AuditRenderProfile | null): Record<string, unknown> {
+export function summarisePageData(audit: SeoAudit, renderProfile?: AuditRenderProfile | null, tabOverrides?: TabOverrides): Record<string, unknown> {
   const page = audit.page;
   const types: string[] = [];
   for (const entity of audit.schema.entities) {
@@ -205,6 +226,7 @@ export function summarisePageData(audit: SeoAudit, renderProfile?: AuditRenderPr
         content: contentSummary(audit.content, keepDifficult!),
         javascript: javascriptSummary(audit.javascript),
         renderProfile: profileName(renderProfile),
+        ...overridesField(tabOverrides),
         partial: page.partial,
         internalLinks: { ...links, list: links.list.slice(0, keepLinks), omitted: links.omitted + (links.list.length - keepLinks!) },
         headings: { total: page.headingTotal, outline: outline.slice(0, keepOutline), omitted: outline.length - keepOutline! + (page.headings.length - outline.length) },

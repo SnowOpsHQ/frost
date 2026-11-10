@@ -81,7 +81,7 @@ export function App() {
             <CommandPalette state={state} tab={tab} audit={empty ? null : audit} sidebarOpen={sidebarOpen} onSidebarOpenChange={setSidebarOpen} onPanelJump={setPanelJump} />
             {historyOpen ? <HistoryView onClose={closeHistory} /> : null}
             {projectsOpen ? <Projects tab={tab} onClose={closeProjects} /> : null}
-            <ScreenshotEditorSheet />
+            <ScreenshotEditorSheet historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <ShortcutsSheet tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <WhatsNewSheet tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <DiagnosticsSheet tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />

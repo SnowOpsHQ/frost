@@ -43,6 +43,10 @@ named test.
   `{ status: 'not-ready', ref, note: ATTACHED_TAB_NOT_READY_NOTE }` at once, with no approval card.
   `part: 'text'` runs the page-text reader on the attached tab's own page (`AGENT_PAGE_WORLD_ID`),
   which checks it still shows the attach URL before it reads.
+- **Tab overrides are said, not refused.** An attached `audit` carries `tabOverrides` (which of CSS
+  off, cookies off and a location were on when it ran: booleans, no coordinates) and an attached
+  `text` the attached tab's live `tabOverrides` and `loadedUnderOverrides: true`, each only when set
+  (as `page_audit` / `page_text`, `agent-page-tools.feature.md`).
 - **Bounded.** At most `MAX_ATTACHED_READS_PER_TURN` (2) calls per attachment per turn.
 
 ## Scenarios (main: `apps/desktop/src/main/agent/__tests__/attached-tabs.test.ts`)
@@ -52,6 +56,7 @@ named test.
 - Scenario: no ready audit of the attach URL answers not-ready, no card — `attached-background-tab-audit-not-ready`
 - Scenario: a ready audit of the attach URL is served — `attached-background-tab-audit-served-when-url-matches`
 - Scenario: text is read from the attached tab's page with the exact-page check — `attached-text-reads-the-attached-tab-with-expected-page-check`
+- Scenario: an attached audit or text says which tab overrides were on (no coordinates) — `attached-tab-reads-say-which-overrides-are-on`
 - Scenario: the grant origin is the attached tab's — `grant-origin-is-attached-tabs-origin`
 - Scenario: the private-page rule uses the attached tab — `private-origin-check-uses-attached-tab`
 - Scenario: reads are capped per attachment per turn — `reads-capped-per-turn`

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, dialog } from 'electron';
 import { DIAGNOSTICS_SAVE_DIALOG, type DiagnosticsFeatureId } from '@app/specs/diagnostics.spec';
+import { writePrivateFile } from '../private-file';
 import { createLogRing, installLogRing, type LogRing } from './log-ring';
 import { createDiagnostics, type Diagnostics, type DiagnosticsFacts } from './report';
 import { createDiagnosticsScrubber, diagnosticsLiterals } from './scrub';
@@ -128,13 +128,7 @@ async function chooseSavePath(windowId: number, defaultName: string): Promise<st
  * no such modes, and a failed narrowing never fails the save).
  */
 export async function writeReport(file: string, text: string): Promise<void> {
-  await writeFile(file, text, { encoding: 'utf8', mode: 0o600 });
-  if (process.platform === 'win32') return;
-  try {
-    await chmod(file, 0o600);
-  } catch {
-    // Written; the mode stays as it was.
-  }
+  await writePrivateFile(file, text);
 }
 
 /** The `help.diagnostics` / `help.saveDiagnostics` back end. */

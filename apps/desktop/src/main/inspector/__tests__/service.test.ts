@@ -407,4 +407,34 @@ describe('search and sources', () => {
     const noneShown = await none.service.source(1, TOKEN, 'rendered');
     expect(noneShown.status === 'ok' && (await none.service.copySource(1, TOKEN, 'rendered', noneShown.ref))).toEqual({ status: 'refused', reason: 'failed' });
   });
+  test('rendered-source-dropped-on-clear-close-and-clear-browsing-data', async () => {
+    const written: string[] = [];
+    const { service, contents } = setup(pageAnswers(), {}, { clipboard: { writeText: (text) => void written.push(text) } });
+    const read = async () => {
+      const shown = await service.source(1, TOKEN, 'rendered');
+      if (shown.status !== 'ok') throw new Error('not ok');
+      return shown.ref;
+    };
+    // clear(tabId) of the tab drops it; clear of another tab does not.
+    let ref = await read();
+    await service.clear(2);
+    expect((await service.copySource(1, TOKEN, 'rendered', ref)).status).toBe('copied');
+    await service.clear(1);
+    expect(await service.copySource(1, TOKEN, 'rendered', ref)).toEqual({ status: 'refused', reason: 'stale' });
+    // The tab's WebContents destroyed: dropped, and the listener goes with it.
+    ref = await read();
+    expect(contents.listenerCount('destroyed')).toBe(1);
+    contents.emit('destroyed');
+    expect(contents.listenerCount('destroyed')).toBe(0);
+    // (The fake is still live, so a copy reaches the kept text if there is any: there is none.)
+    expect(await service.copySource(1, TOKEN, 'rendered', ref)).toEqual({ status: 'refused', reason: 'stale' });
+    // Clear Browsing Data (`forget`) drops it too.
+    ref = await read();
+    await read();
+    expect(contents.listenerCount('destroyed')).toBe(1);
+    service.forget();
+    expect(contents.listenerCount('destroyed')).toBe(0);
+    expect(await service.copySource(1, TOKEN, 'rendered', ref + 1)).toEqual({ status: 'refused', reason: 'stale' });
+    expect(written).toHaveLength(1);
+  });
 });

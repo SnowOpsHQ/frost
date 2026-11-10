@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { HISTORY_MENU_ID } from '@app/specs/browser-polish.spec';
 import { CAPTURES_DIR_NAME, SHA256_HEX_PATTERN } from '@app/specs/capture-db.spec';
 import { AREA_SELECT_HINT, FULL_PAGE_SCROLL_NOTE, SCREENSHOT_EDIT_RESULT_MESSAGES, SCREENSHOT_REFUSAL_MESSAGES, SCREENSHOTS_DIR_NAME } from '@app/specs/screenshot.spec';
 import { closeApp, launchApp, pageAt } from './harness';
@@ -42,7 +43,7 @@ let tabPage: Page;
 let site: Awaited<ReturnType<typeof startSite>>;
 let url: string;
 let shotsDir: string;
-const { go } = chromeHelpers(
+const { go, menu } = chromeHelpers(
   () => app,
   () => page,
 );
@@ -368,4 +369,31 @@ test('annotate-crop-and-save-a-copy', async () => {
   await expect(gallery().first().getByTestId('screenshot-size')).toContainText(`${size.width.toLocaleString('en-US')} × ${size.height.toLocaleString('en-US')} px`);
   await expect.poll(async () => (await page.getByTestId('page-area').boundingBox())?.height ?? 0).toBeGreaterThan(100);
   expect(await page.getByTestId('changes').evaluate((root) => root.querySelectorAll('[style]').length)).toBe(0);
+});
+
+test('screenshot-editor-one-sheet-at-a-time', async () => {
+  // A screenshot to open (any: the gallery lists at least one by now, or this one).
+  if ((await gallery().count()) === 0) await shoot('viewport');
+  const editor = page.getByTestId('screenshot-editor');
+  const openEditor = async () => {
+    await gallery().first().getByTestId('screenshot-edit').click();
+    await expect(editor).toBeVisible();
+  };
+  // Each sheet opening closes the editor, and the editor opening closes it.
+  const sheets: { name: string; open: () => Promise<void>; testId: string }[] = [
+    { name: 'Settings', open: () => menu('settings'), testId: 'settings-view' },
+    { name: 'History', open: () => menu(HISTORY_MENU_ID), testId: 'history-view' },
+    { name: 'Keyboard shortcuts', open: () => menu('help-shortcuts'), testId: 'shortcuts-view' },
+    { name: 'Projects', open: () => page.getByTestId('changes-open-projects').click(), testId: 'projects-view' },
+  ];
+  for (const sheet of sheets) {
+    await openEditor();
+    await sheet.open();
+    await expect(page.getByTestId(sheet.testId), sheet.name).toBeVisible();
+    await expect(editor, `${sheet.name} closes the editor`).toHaveCount(0);
+    await openEditor();
+    await expect(page.getByTestId(sheet.testId), `the editor closes ${sheet.name}`).toHaveCount(0);
+    await page.getByTestId('screenshot-editor-close').click();
+    await expect(editor).toHaveCount(0);
+  }
 });

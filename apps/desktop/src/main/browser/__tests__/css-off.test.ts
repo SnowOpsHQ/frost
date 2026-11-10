@@ -24,7 +24,7 @@ function page(html = PAGE) {
   return { dom, document, sheets, run };
 }
 
-const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('css off', () => {
   test('world-1701-only', async () => {
@@ -94,8 +94,8 @@ describe('css off', () => {
     const store: Record<string, unknown> = {};
     expect(cssOffPage(doc, store, CSS_OFF_STATE_KEY, true, 5)).toBe(2);
     doc.adoptedStyleSheets = [adopted];
-    await tick(30);
-    expect(adopted.disabled).toBe(true);
+    // (The sweep runs every 5 ms: wait for it, never a fixed sleep.)
+    await vi.waitFor(() => expect(adopted.disabled).toBe(true));
     // Running again on the same document adds no second observer or timer.
     const state = store[CSS_OFF_STATE_KEY];
     expect(cssOffPage(doc, store, CSS_OFF_STATE_KEY, true, 5)).toBe(3);

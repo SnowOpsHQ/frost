@@ -156,7 +156,9 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
 
 ## Editing (Phase 11 Task 7, Decision 9)
 - **Edit** on a gallery entry opens the editor over the page area (the tab's view is hidden while it
-  is open, as with the Projects sheet). It shows the entry's preview and draws on it: **Arrow**,
+  is open, as with the Projects sheet). It is one of the page-column sheets, one at a time with the
+  Help sheets, Settings, Projects and History (`help.feature.md`): its opening closes them (Settings
+  stays, and the editor shut, while a sign-in waits there) and theirs closes it. It shows the entry's preview and draws on it: **Arrow**,
   **Box** (outline or filled), **Text** (one line of at most `maxTextChars`, typed in the toolbar and
   placed with a click) and **Crop**, in one of six colours (`SCREENSHOT_EDIT_COLORS`). **Undo** and
   **Redo** (also Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z) step through the drawings and crops; the editor holds
@@ -183,6 +185,11 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
   the captured screenshots of its page, kind, profile and search parameters, so saving an edit (which
   runs the project's retention) never purges its source or any taken screenshot; copies are kept
   among copies. A copy whose source has been purged has lost its link and counts as taken again.
+  **Known limit (lead ruling, whole-branch review):** the copy's lane rests on the `screenshot_edits`
+  link, which is local-only (never synced). A device that receives the copy's `ci_screenshots` row by
+  sync without the link treats it as a taken screenshot of that lane, so its retention can count it
+  among (and purge it with) the taken ones. Latent until `ci_*` sync ships (issue #15); fixing it
+  needs a synced marker column on `ci_screenshots` and a sync schema bump.
 - **One at a time:** main saves one edit at a time (each holds decoded bitmaps); a save while one is
   running answers `busy`.
 

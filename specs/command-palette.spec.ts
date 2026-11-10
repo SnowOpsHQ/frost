@@ -337,7 +337,7 @@ export const OPEN_IN_TEMPLATES = [
   {
     id: 'backlinks-majestic',
     label: 'Backlinks to this page (Majestic)',
-    keywords: ['backlinks', 'links', 'referring domains', 'inbound', 'majestic', 'trust flow'],
+    keywords: ['backlinks', 'links', 'referring domains', 'inbound', 'majestic'],
     origin: 'https://majestic.com',
     path: '/reports/site-explorer',
     urlParam: 'q',

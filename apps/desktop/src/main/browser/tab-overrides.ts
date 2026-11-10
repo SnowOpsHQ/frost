@@ -202,8 +202,11 @@ export function createTabOverrides(options: TabOverridesOptions): TabOverridesSt
         [
           'did-stop-loading',
           () => {
-            // (A navigation still to commit keeps what it saw: only its commit or failure ends it.)
             if (!owns()) return;
+            // The tab stopped loading with a main-frame navigation started and not committed: it ended
+            // without a new document (a download, a 204), so what it saw goes with it. (A navigation
+            // still to commit keeps the tab loading: Chromium counts it until it commits or ends.)
+            entry.nav = null;
             const loading = entry.loading;
             entry.loading = null;
             // The navigation completed with no override on from its start to now: cleared.

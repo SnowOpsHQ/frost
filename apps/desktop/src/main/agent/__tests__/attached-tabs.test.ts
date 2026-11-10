@@ -16,7 +16,7 @@ import { webOrigin } from '@app/specs/web-url.spec';
 import { rawSnapshot } from '../../../test/seo-fakes';
 import type { ToolRunner } from '../approvals';
 import { AGENT_SYSTEM_PROMPT } from '../system-prompt';
-import { createPageToolRunner, type PageContents } from '../tools';
+import { createPageToolRunner, type PageContents, type PageToolDeps } from '../tools';
 import { createAttachedTabs } from '../tools/attached-tabs';
 import { flush, setupBroker } from './approval-fakes';
 import { setupSession, TAB as SESSION_TAB } from './session-fakes';
@@ -92,11 +92,12 @@ function domContents(body: string, url: string, shownUrl = url) {
 }
 
 /** The real page tools over fake pages for tabs 7 and 9, and `fake`'s audits. */
-function pageRunner(fake: ReturnType<typeof fakeTabs>, pages: Record<number, PageContents>): ToolRunner {
+function pageRunner(fake: ReturnType<typeof fakeTabs>, pages: Record<number, PageContents>, overridesOf?: PageToolDeps['overridesOf']): ToolRunner {
   return createPageToolRunner({
     contentsOf: (tabId) => pages[tabId] ?? null,
     audit: (tabId) => fake.audits.get(tabId) ?? { status: 'unavailable', url: '', reason: 'no-tab' },
     navigate: async () => ({ status: 'refused' }),
+    ...(overridesOf ? { overridesOf } : {}),
   });
 }
 
@@ -243,6 +244,30 @@ describe('attached tabs: the broker resolves refs', () => {
     host.invoke('c2', 'read_attached_tab', { ref: 'tab-1', part: 'text' });
     await vi.waitFor(() => expect(host.results('c2')).toHaveLength(1));
     expect(errorCode(host.results('c2'))).toBe('expired');
+  });
+});
+
+describe('attached tabs: tab overrides (whole-branch review)', () => {
+  test('attached-tab-reads-say-which-overrides-are-on', async () => {
+    const fake = fakeTabs();
+    fake.attached.attach('chat-1', OTHER, CHAT_TAB, fake.originOf(OTHER));
+    // The attached tab's audit ran with cookies off; the chat tab has CSS off (never reported for the other tab).
+    fake.audits.set(OTHER, { ...readyAudit(OTHER_URL), tabOverrides: { cssDisabled: false, cookiesDisabled: true, geolocation: null } } as SeoAuditResponse);
+    const other = domContents('<p>Attached text.</p>', OTHER_URL);
+    const chat = domContents('<p>Chat</p>', CHAT_URL);
+    const overridesOf = (tabId: number) =>
+      tabId === OTHER
+        ? { tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: { latitude: 35.6762, longitude: 139.6503, accuracy: 100 } }, loadedUnderOverrides: true }
+        : { tabOverrides: { cssDisabled: true, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false };
+    const { fake: host } = await brokerWith(fake, { overrides: { runner: pageRunner(fake, { [CHAT_TAB]: chat.contents, [OTHER]: other.contents }, overridesOf) } });
+    host.invoke('c1', 'read_attached_tab', { ref: 'tab-1', part: 'audit' });
+    await flush();
+    expect(okOutput(host.results('c1')).data).toMatchObject({ ref: 'tab-1', status: 'ready', tabOverrides: { cssDisabled: false, cookiesDisabled: true, geolocation: false } });
+    host.invoke('c2', 'read_attached_tab', { ref: 'tab-1', part: 'text' });
+    await vi.waitFor(() => expect(host.results('c2')).toHaveLength(1));
+    const text = okOutput(host.results('c2')).data;
+    expect(text).toMatchObject({ ref: 'tab-1', text: expect.stringContaining('Attached text.'), tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: true }, loadedUnderOverrides: true });
+    expect(JSON.stringify(text)).not.toContain('35.6762');
   });
 });
 

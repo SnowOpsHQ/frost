@@ -41,6 +41,8 @@ import { INSPECTOR_SCRIPT_LIMITS, runInspector, type InspectorRequest, type Insp
 // source" names it and main writes, with the clipboard it holds, only the text it answered under that
 // `ref` (rendered: the text it kept from that read; served: the served entry that `ref` names, still
 // the tab's for its current document and URL), else `stale`. The chrome never sends the text.
+// The kept rendered text is dropped on `clear` of its tab, when its tab's WebContents is destroyed,
+// and on Clear Browsing Data (`forget`).
 
 /** A tab's WebContents as the inspector uses it (its `did-start-navigation`, `destroyed` and `before-input-event` events while picking). */
 export interface InspectorContents extends InspectorScriptTarget, Pick<NodeJS.EventEmitter, 'on' | 'removeListener'> {
@@ -101,7 +103,13 @@ const PAGE_SOURCE = InspectorSourceAnswerSchema.options[0].omit({ kind: true, re
 const OK_SOURCE = InspectorSourceAnswerSchema.options[0];
 const TOKEN_ANSWER = z.strictObject({ docToken: DocTokenSchema });
 
-export function createInspectorService(deps: InspectorServiceDeps): InspectorService {
+/** The inspector as main holds it: the IPC service, plus `forget` for Clear Browsing Data. */
+export interface MainInspectorService extends InspectorService {
+  /** Drops the kept rendered source (Clear Browsing Data). */
+  forget(): void;
+}
+
+export function createInspectorService(deps: InspectorServiceDeps): MainInspectorService {
   const { tabs } = deps;
   const limits = deps.limits ?? INSPECTOR_SCRIPT_LIMITS;
   const run = deps.run ?? runInspector;
@@ -252,7 +260,28 @@ export function createInspectorService(deps: InspectorServiceDeps): InspectorSer
 
   /** The last rendered source answered (one, over all tabs): what Copy source writes for its `ref`. */
   let held: { readonly tabId: number; readonly docToken: string; readonly ref: number; readonly text: string; readonly truncated: boolean } | null = null;
+  /** Stops watching the held source's WebContents for `destroyed`. */
+  let unwatchHeld: (() => void) | null = null;
   let refs = 0;
+
+  /** Drops the kept rendered source (all of it, or only `tabId`'s). */
+  const dropHeld = (tabId?: number): void => {
+    if (held === null || (tabId !== undefined && held.tabId !== tabId)) return;
+    unwatchHeld?.();
+    unwatchHeld = null;
+    held = null;
+  };
+
+  /** Keeps `next` (replacing what was kept) until it is replaced or dropped; its tab's WebContents going away drops it. */
+  const hold = (contents: InspectorContents, next: NonNullable<typeof held>): void => {
+    dropHeld();
+    held = next;
+    const onDestroyed = (): void => {
+      if (held?.ref === next.ref) dropHeld();
+    };
+    contents.on('destroyed', onDestroyed);
+    unwatchHeld = () => contents.removeListener('destroyed', onDestroyed);
+  };
 
   /** Whether the page still shows the document `docToken` (`stale` if not; `failed` on no answer). */
   async function sameDocument(contents: InspectorContents, docToken: string): Promise<true | InspectorRefusal> {
@@ -285,7 +314,7 @@ export function createInspectorService(deps: InspectorServiceDeps): InspectorSer
       if (typeof answer === 'string') return refused(answer);
       if (answer.docToken !== docToken) return refused('stale');
       const ref = ++refs;
-      held = { tabId, docToken, ref, text: answer.text, truncated: answer.truncated };
+      hold(contents, { tabId, docToken, ref, text: answer.text, truncated: answer.truncated });
       return { ...answer, kind, ref };
     }
     const served = await servedFor(contents, docToken);
@@ -409,6 +438,7 @@ export function createInspectorService(deps: InspectorServiceDeps): InspectorSer
         'clear',
         async () => {
           picks.get(tabId)?.cancel();
+          dropHeld(tabId);
           const contents = targetOf(tabId, false);
           if (typeof contents === 'string') return refused(contents);
           const answer = parse(await script(contents, { op: 'clear' }, limits.scriptTimeoutMs), ACK, 'clear');
@@ -416,6 +446,8 @@ export function createInspectorService(deps: InspectorServiceDeps): InspectorSer
         },
         refused('failed'),
       ),
+
+    forget: () => dropHeld(),
   };
 }
 
@@ -438,7 +470,7 @@ export function createMainInspector({
   /** The tab's served HTML (`ServedHtml.generation`, and `.source` for its URL, user agent and scripting); read lazily, so the served cache may be set up later. */
   readonly served?: { document(contents: WebContents): { readonly generation: number; readonly url: string }; source(contents: WebContents): ServedSourceState | null | undefined };
   readonly clipboard?: { writeText(text: string): void };
-}): InspectorService {
+}): MainInspectorService {
   const contentsOf = (tabId: number): WebContents | null => [...tabContents.values()].find((contents) => !contents.isDestroyed() && browser.tabIdOf(contents) === tabId) ?? null;
   return createInspectorService({
     tabs: inspectorTabs(browser, contentsOf),

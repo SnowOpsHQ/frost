@@ -77,8 +77,14 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
   stopped loading (a restored tab's new document never closes it before it was seen); a later new
   document closes it like the other sheets; a later mount does not show it again.
 - **Help sheets, one at a time** (e2e `help-shortcuts-sheet`) — opening a Help sheet closes Settings
-  (unless a sign-in waits for its confirmation there: the Help sheet then stays shut), Projects and
-  History; any of those opening closes it; another tab or a new document in this one closes it.
+  (unless a sign-in waits for its confirmation there: the Help sheet then stays shut), Projects, the
+  screenshot editor and History; any of those opening closes it; another tab or a new document in
+  this one closes it.
+- **The screenshot editor is one of the sheets** (whole-branch review; `screenshot-editor-one-sheet-at-a-time`
+  in `renderer/__tests__/screenshot-editor-sheets.test.ts` and `e2e/screenshots.e2e.ts`) — opening it
+  closes Settings (unless a sign-in waits there: the editor then stays shut), Projects, History and
+  the Help sheets; any of those opening closes it. Projects tells the others on every open request,
+  the first one after start included (`onProjectsOpened`; `projects-open-requests-are-told-from-the-first`).
 - **Scenario: setup-checklist-done-states** (`renderer/__tests__/start-view.test.ts`) — the new-tab page
   lists `SETUP_CHECKLIST_ITEMS`; agent ready, Search Console connected, a project besides Unfiled, and
   the stored privacy / shortcuts marks show as done; each item's button opens where it is done.

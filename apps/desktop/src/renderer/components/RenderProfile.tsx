@@ -43,6 +43,7 @@ import {
   geolocationOfDraft,
   outlineRect,
   overridesChipText,
+  overridesFailedNote,
   profileOfDraft,
   type GeolocationChoice,
   type GeolocationDraft,
@@ -84,7 +85,7 @@ export function RenderProfileIcon({ className }: { readonly className?: string }
 export function RenderProfileToggle({ tab, open, onToggle }: { readonly tab: TabState | undefined; readonly open: boolean; readonly onToggle: () => void }) {
   const state = tab?.renderProfile ?? null;
   // Tab overrides (Phase 11 Task 6) mark the toggle too: they are edited in the same bar.
-  const overrides = tab ? overridesChipText(tab.tabOverrides) : null;
+  const overrides = tab ? overridesChipText(tab.tabOverrides, tab.overridesStatus) : null;
   const label = [state ? badgeLabel(state) : null, overrides].filter((part) => part !== null).join(' · ');
   return (
     <button
@@ -93,6 +94,7 @@ export function RenderProfileToggle({ tab, open, onToggle }: { readonly tab: Tab
       data-testid="render-profile-toggle"
       data-active={state !== null || overrides !== null}
       data-overrides={overrides !== null}
+      data-overrides-status={tab?.overridesStatus ?? 'active'}
       aria-pressed={open}
       aria-label={label !== '' ? label : 'Render profile'}
       title={label !== '' ? `${label} — edit` : 'Render as another device, user agent or network'}
@@ -126,10 +128,17 @@ export function StatusProfileChip({ state }: { readonly state: TabRenderProfile 
 
 /** The status bar's chip for a tab's overrides (Phase 11 Task 6): absent while every override is off. */
 export function StatusOverridesChip({ tab }: { readonly tab: TabState }) {
-  const text = overridesChipText(tab.tabOverrides);
+  const text = overridesChipText(tab.tabOverrides, tab.overridesStatus);
   if (text === null) return null;
+  const failed = overridesFailedNote(tab.tabOverrides, tab.overridesStatus);
   return (
-    <span className="status-render-profile status-tab-overrides" data-testid="status-tab-overrides" data-loaded-under-overrides={tab.loadedUnderOverrides} title={`This tab only: ${text}`}>
+    <span
+      className="status-render-profile status-tab-overrides"
+      data-testid="status-tab-overrides"
+      data-loaded-under-overrides={tab.loadedUnderOverrides}
+      data-status={tab.overridesStatus}
+      title={failed ? `This tab only: ${text}. ${failed}` : `This tab only: ${text}`}
+    >
       <RenderProfileIcon className="status-render-profile-icon" />
       <span>{text}</span>
     </span>
@@ -363,6 +372,8 @@ function TabOverridesRow({ tab }: { readonly tab: TabState }) {
     void actions.setTabOverrides(tab.id, next);
   };
   const custom = geolocationOfDraft(geo);
+  // Main's state, not the local choice: whether what main put into effect failed.
+  const failedNote = overridesFailedNote(tab.tabOverrides, tab.overridesStatus);
   const choose = (next: GeolocationChoice): void => {
     setChoice(next);
     if (next === 'custom') return;
@@ -433,6 +444,11 @@ function TabOverridesRow({ tab }: { readonly tab: TabState }) {
       {overrides.cookiesDisabled ? (
         <p className="render-bar-note" data-testid="render-cookies-off-note">
           {COOKIES_OFF_HINT}
+        </p>
+      ) : null}
+      {failedNote ? (
+        <p className="render-bar-note render-overrides-failed" data-testid="render-overrides-failed" role="status">
+          {failedNote}
         </p>
       ) : null}
     </div>

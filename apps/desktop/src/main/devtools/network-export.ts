@@ -25,8 +25,8 @@ import { queryStringOf, redactExportUrl, redactLinkHeader } from './url-redact';
 
 /** Where the file is written: main's own save dialog and file write (Electron in `index.ts`, fakes in tests). */
 export interface NetworkExportIo {
-  /** Main's save dialog, offering `defaultName`; `null` when the user cancelled. */
-  readonly chooseSavePath: (defaultName: string, format: NetworkExportFormat) => Promise<string | null>;
+  /** Main's save dialog, offering `defaultName`, parented to app window `windowId` (`null`: app-modal); `null` when the user cancelled. */
+  readonly chooseSavePath: (defaultName: string, format: NetworkExportFormat, windowId: number | null) => Promise<string | null>;
   readonly writeFile: (path: string, data: string) => Promise<void>;
   /** The app's version (`log.creator.version`). */
   readonly appVersion: string;
@@ -159,14 +159,15 @@ export function buildCsv(snapshot: NetworkExportSnapshot): string {
 }
 
 /**
- * Exports `snapshot` (the active tab's log; `null`: not the active tab or never recorded) as `format`:
+ * Exports `snapshot` (the active tab's log; `null`: not the active tab or never recorded) as `format`,
+ * main's dialog parented to app window `windowId` (the window that asked):
  * `empty` without a request (no dialog), `cancelled` when the user closes main's dialog (nothing
  * written), `saved`, or `failed` (the dialog or the write failed). Never rejects.
  */
-export async function exportNetworkLog(snapshot: NetworkExportSnapshot | null, format: NetworkExportFormat, io: NetworkExportIo): Promise<NetworkExportResult> {
+export async function exportNetworkLog(snapshot: NetworkExportSnapshot | null, format: NetworkExportFormat, io: NetworkExportIo, windowId: number | null = null): Promise<NetworkExportResult> {
   if (!snapshot || snapshot.entries.length === 0) return 'empty';
   try {
-    const path = await io.chooseSavePath(networkExportFileName(snapshot.pageUrl, format, (io.now ?? (() => new Date()))()), format);
+    const path = await io.chooseSavePath(networkExportFileName(snapshot.pageUrl, format, (io.now ?? (() => new Date()))()), format, windowId);
     if (path === null) return 'cancelled';
     const data = format === 'har' ? `${JSON.stringify(buildHar(snapshot, io.appVersion), null, 2)}\n` : buildCsv(snapshot);
     await io.writeFile(path, data);

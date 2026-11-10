@@ -44,7 +44,7 @@ vi.mock('../ipc', () => {
 });
 
 const URL_A = 'https://www.example.com/a';
-const TAB = { id: 1, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false, overridesRevision: 0 } as TabState;
+const TAB = { id: 1, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false, overridesRevision: 0, overridesStatus: 'active' } as TabState;
 
 const gsc = (changes: Partial<GscStatus>): GscStatus => ({ configured: true, entitled: true, connected: true, connecting: false, keychain: 'persistent', error: null, version: 1, ...changes });
 

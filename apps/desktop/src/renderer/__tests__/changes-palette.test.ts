@@ -16,7 +16,7 @@ const SHOTS = ['changes.screenshot-viewport', 'changes.screenshot-full', 'change
 const ID = '0190a000-0000-7000-8000-000000000001';
 
 function tab(changes: Partial<TabState> = {}): TabState {
-  return { id: 3, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false, overridesRevision: 0, ...changes };
+  return { id: 3, url: URL_A, title: 'A', loading: false, canGoBack: false, canGoForward: false, error: null, crashed: false, unresponsive: false, permissionPrompt: null, fullscreen: null, zoom: 1, auditVersion: 1, documentSeq: 1, highlight: 'off', highlightPhrase: null, renderProfile: null, tabOverrides: { cssDisabled: false, cookiesDisabled: false, geolocation: null }, loadedUnderOverrides: false, overridesRevision: 0, overridesStatus: 'active', ...changes };
 }
 
 const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, indexability: { robots: { outcome: 'ok' } } } as unknown as SeoAudit };
