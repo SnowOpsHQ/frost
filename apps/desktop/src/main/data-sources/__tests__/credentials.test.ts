@@ -67,6 +67,26 @@ describe('data credentials', () => {
     expect(normalizeDataSecret('dataforseo-password', 'a@b.io')).toBeNull();
   });
 
+  test('dataforseo-login-refuses-a-colon', async () => {
+    // Council review (item 10): RFC 7617 forbids `:` in a Basic user-id (the header joins login and
+    // password with it), so a login with one is refused. A password may hold one.
+    for (const bad of ['owner:admin@frost.example', ':owner@frost.example', 'owner@frost.example:']) expect(normalizeDataSecret('dataforseo-login', bad), bad).toBeNull();
+    expect(normalizeDataSecret('dataforseo-password', `${DFS_PASSWORD}:with-a-colon`)).toBe(`${DFS_PASSWORD}:with-a-colon`);
+    // Through `setKey`: refused `invalid`, and neither half is stored.
+    const { store, memory } = dataStore();
+    const service = createDataSourcesService({ store, isOpen: allOpen });
+    expect(await service.setKey({ provider: 'dataforseo', login: 'owner:admin@frost.example', password: DFS_PASSWORD })).toBe('invalid');
+    expect(await service.setKey({ provider: 'dataforseo', login: 'owner:admin@frost.example' })).toBe('invalid');
+    expect(await store.setKey('dataforseo-login', 'owner:admin@frost.example')).toBe('invalid');
+    expect(await store.hasKey('dataforseo-login')).toBe(false);
+    expect(await store.hasKey('dataforseo-password')).toBe(false);
+    expect(memory.files.size).toBe(0);
+    expect((await service.status()).providers.dataforseo).toMatchObject({ hasKey: false, partial: false });
+    // A login without one, and a password with one, are stored.
+    expect(await service.setKey({ provider: 'dataforseo', login: DFS_LOGIN, password: `${DFS_PASSWORD}:with-a-colon` })).toBe('stored');
+    expect((await service.status()).providers.dataforseo).toMatchObject({ hasKey: true });
+  });
+
   test('dataforseo-needs-both-slots', async () => {
     const { store } = dataStore();
     const service = createDataSourcesService({ store, isOpen: allOpen });

@@ -24,6 +24,11 @@ Scenario: dataforseo-needs-both-slots
   When the password is set on its own
   Then the login is still set and DataForSEO `hasKey` is true
 
+Scenario: dataforseo-login-refuses-a-colon (council review)
+  When a DataForSEO login holding `:` is set (RFC 7617 forbids it in a Basic user-id)
+  Then `normalizeDataSecret` refuses it, `setKey` answers `invalid`, and neither half is stored
+  And a password may hold `:`
+
 Scenario: data-key-never-leaves-main
   Given a key is stored
   Then no view (`DataSourcesView`), IPC answer, log line or thrown error contains it

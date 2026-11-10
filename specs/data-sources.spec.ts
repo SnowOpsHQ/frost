@@ -110,14 +110,16 @@ export const DATA_CREDENTIAL_LIMITS = {
  * A secret as stored in `slot`: trimmed, printable ASCII with no space or line break. API keys and
  * the DataForSEO password follow the agent's key rule (`normalizeKey`,
  * `CREDENTIAL_LIMITS.minKeyChars`–`maxKeyChars`); the DataForSEO login may be shorter
- * (`DATA_CREDENTIAL_LIMITS`). `null` when refused.
+ * (`DATA_CREDENTIAL_LIMITS`) and never holds `:` (council review: RFC 7617 forbids it in a Basic
+ * user-id, since the header joins login and password with it; the password may hold one). `null`
+ * when refused.
  */
 export function normalizeDataSecret(slot: DataCredentialSlot, value: unknown): string | null {
   if (slot !== 'dataforseo-login') return normalizeKey(value);
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (trimmed.length < DATA_CREDENTIAL_LIMITS.minLoginChars || trimmed.length > DATA_CREDENTIAL_LIMITS.maxLoginChars) return null;
-  return /^[\x21-\x7e]+$/.test(trimmed) ? trimmed : null;
+  return /^[\x21-\x7e]+$/.test(trimmed) && !trimmed.includes(':') ? trimmed : null;
 }
 
 /** The longest secret any slot holds (the IPC input's bound is twice this, for whitespace). */
