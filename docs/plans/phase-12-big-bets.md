@@ -1542,3 +1542,12 @@ Where the build differs from the plan above, or settles what it left open. **Lea
   - The migration check: `site-crawl-migrations-create-schema` already inserts every run state, run
     reason (`robots-unreachable` included), page outcome and frontier state on a fresh database;
     `0240`'s `CHECK`s are generated from the spec arrays and edited in place while unreleased.
+- **Council round 4 (crawl fixes, one commit each).**
+  - N1: the run pauses `robots-unreachable` on any of the start origins: the typed start origin
+    plus each origin the start landed on (its same-host hop target, the start row's `finalUrl`; its
+    `redirected` target and where that lands, a chain of at most `MAX_START_CHAIN` = 5 URLs), learned
+    as the chain's rows are written and rebuilt from `repo.getPage` on Resume (no new column). Only
+    the pause rule changes, not scope.
+  - N2: on Resume, a run paused `slow-down` whose start URL never completed paused while seeding: it
+    skips reseeding and goes straight to the pages (the stored reason tells it; no new column). A
+    Resume after a `robots-unreachable` pause still reseeds (J).
