@@ -107,12 +107,13 @@ Task 11's leak test is the check.
   `[::1]`, `127.0.0.1/8`, `169.254/16`, `[FE80::]/10`, `0.0.0.0/32`, `[::]/128` and
   `[::ffff:0.0.0.0]/128`, and IP-range bypass rules apply to URL **literals** only (a name is never
   resolved to decide). So a public-looking name is proxied even if it would resolve to loopback.
-- **Not verified from documents** (Task 11's spike decides): whether DNS-over-HTTPS or the host
-  resolver issues any lookup for a proxied name (the docs above say resolution is deferred to the
-  proxy, which implies none); whether `--host-resolver-rules` touches the proxy's own name
-  resolution (the e2e uses a loopback literal for the proxy, so it does not matter there); whether
-  `disable_non_proxied_udp` leaves any host candidate (Chromium's policy name says only proxied UDP,
-  and neither proxy scheme relays UDP, so WebRTC should gather no UDP candidate at all).
+- **Not verified from documents** (Task 11's spike decided; results under "Observed (Q6)" in End to
+  end below): whether DNS-over-HTTPS or the host resolver issues any lookup for a proxied name (the
+  docs above say resolution is deferred to the proxy, which implies none); whether
+  `--host-resolver-rules` touches the proxy's own name resolution (the e2e uses a loopback literal
+  for the proxy, so it does not matter there); whether `disable_non_proxied_udp` leaves any host
+  candidate (Chromium's policy name says only proxied UDP, and neither proxy scheme relays UDP, so
+  WebRTC should gather no UDP candidate at all).
 
 ## Tests (unit, `apps/desktop/src/main/location/__tests__/` unless noted)
 - **location-session-is-browse-class** — before a profile's first tab its partition's session is
@@ -160,7 +161,7 @@ Task 11's leak test is the check.
 - **location-forget-failures-change-nothing** / **location-create-failed-sign-in-leaves-nothing** —
   the credential ordering above, each failure path.
 
-## End to end (Task 11; design only, run by the lead)
+## End to end (Task 11)
 `apps/desktop/e2e/location.e2e.ts`, against loopback fakes only (K-D). The design below is meant to
 give a clean yes/no: the disclosed direct traffic is made visible and accounted for, not avoided.
 - **Names.** The fake site is served on a loopback port under a public-looking name (e.g.
@@ -218,3 +219,78 @@ give a clean yes/no: the disclosed direct traffic is made visible and accounted 
   dependent resolver job, followed by source id), which the Task 11 spike confirms.
 - Also: the badge shows; a result-page capture records the location; Capture on an ordinary article
   in the same tab is refused `location-tab`; geolocation in the tab is denied.
+
+### As built (`apps/desktop/e2e/location.e2e.ts`, Electron 45, Linux, 2026-11-10)
+One app, one in-memory profile; the scenarios run in order. The site and the synthetic engine
+(`serp-fixtures.ts`, `SEARCH_HOST`) share one loopback origin; the proxy (`startFakeProxy`, Basic auth)
+maps both names to it; `--host-resolver-rules` maps `site.frost-e2e.test` (port included) to the
+tripwire and `SEARCH_HOST` to the origin (main fetches the test pack from it directly). The proxy
+sign-in is stored through Settings with the shared test-only keychain stand-in (`fake-keychain.cjs`,
+Linux only: Playwright's `--password-store=basic` would leave frost `weak` protection).
+- **location-profile-opens-a-badged-tab** — a profile (HTTP proxy, sign-in) is added in Settings ›
+  Locations, the page never shows the password; New tab opens an active tab whose strip badge reads
+  `LOCATION_BADGE.text(label)` with `LOCATION_BADGE.title(label)`.
+- **location-leak-test-k-d** — the tab loads `http://site.frost-e2e.test:<port>/page` (an image, a
+  script, a `fetch` and a WebSocket, all under `/leak-probe/`), a NetLog of the location partition
+  runs meanwhile (`session.netLog.startLogging`, from the test through `app.evaluate`), the audit's
+  disclosed fetches are awaited on the tripwire, and a WebRTC probe runs in the tab. Pass (1)–(5)
+  above, as asserted:
+  1. every tripwire request is classified (`classifyTripwireRequest`); none is a leak, and both
+     disclosed kinds are there (`GET /robots.txt`, and `GET /page` with `SERVED_ACCEPT`, the browse
+     user agent, no cookie, no `upgrade-insecure-requests`, no `sec-fetch-*`). No marker header on
+     the bounded fetcher was needed: path, `Accept`, user agent and the absent navigation headers tell
+     the two apart;
+  2. every request the origin logged for the site carries `x-frost-e2e-via: proxy`, except the
+     WebSocket upgrade, which arrived inside a `CONNECT` tunnel: the proxy records the local port of
+     its own connection to the origin (`FakeProxyRecord.upstreamPort`), and the origin matches it;
+  3. the proxy's first answer for the site was 407, then the page came through signed in;
+  4. the location tab's ICE gathering completed with no candidate at all and no datagram reached the
+     loopback STUN fake;
+  5. NetLog: every `HTTP_STREAM_JOB_CONTROLLER` for the site's name in the location tab resolved to
+     `PROXY 127.0.0.1:<proxy port>` (the page, each `/leak-probe/` resource and the `ws://` socket); the
+     only `DIRECT` ones are the disclosed audit fetches (`/robots.txt`, `/page`, privacy mode
+     `enabled`: the bounded fetcher omits credentials, a renderer request does not); no
+     `HOST_RESOLVER_*` event names the site.
+- **location-webrtc-probe-is-not-vacuous** — the same probe in a home tab (a loopback-literal page)
+  yields a candidate or a STUN datagram (here: an mDNS `.local` host candidate and STUN binding
+  requests), so the location tab's empty answer is the policy's doing.
+- **location-result-page-capture-records-the-location** — with the test pack installed, the result
+  page loads in the location tab (its own request carried the proxy's marker), the SERP panel reads
+  it, Capture now stores the first version, and that `ci_versions` row's `search_params` carry
+  `location: { via: 'proxy', label }` (read from the session database).
+- **location-capture-refuses-an-ordinary-article** — an article on the site in the same tab: Capture
+  now answers `LOCATION_TAB_REFUSAL_MESSAGE` (`refused`), no version is stored, the article came only
+  through the proxy and the tripwire still holds no leak.
+- **location-tripwire-catches-a-direct-load** — the control: the site's page loaded in a home tab
+  goes direct, reaches the tripwire as a navigation (`upgrade-insecure-requests: 1`) and is
+  classified a leak, so the tripwire and the classifier can fail.
+- Not run end to end: geolocation (the fixture is plain HTTP, an insecure context where Chromium
+  denies geolocation anyway, so the e2e could not tell frost's denial apart; the unit tests
+  `location-geolocation-denied` cover it).
+
+### Observed (Q6, K-D)
+**K-D verdict: pass.** No leak: the tripwire saw only the disclosed audit fetches, every origin
+request came through the proxy, WebRTC gathered nothing, and no stream for the name went direct
+from the location tab.
+- **DNS.** With an HTTP proxy the location tab never resolved the site's name: its streams went to
+  the proxy, whose connect jobs resolve only the proxy's IP literal, and no host resolver event in the
+  NetLog names the site; no DNS-over-HTTPS or DNS task for the name appeared. Caveat: under
+  `--host-resolver-rules` Chromium rewrites a mapped name before the resolver sees it, so even the
+  browse session's direct audit fetches log no resolver event naming the site; the no-resolver check is
+  weak alone, and the per-stream proxy decision (`PROXY` vs `DIRECT`) with the tripwire is the evidence.
+- **The NetLog is global.** `session.netLog` on the location partition captured the whole network
+  service (the browse session's audit fetches are in it too), so the assertion is narrowed by stream:
+  URL, proxy decision and privacy mode, as the design's caveat foresaw.
+- **WebSocket.** A `ws://` socket from the location tab goes to the proxy as a `CONNECT` tunnel, signed
+  in from the session's cached proxy sign-in (no second 407), and its NetLog stream is `PROXY`.
+- **WebRTC.** `disable_non_proxied_udp` with an HTTP proxy: no candidate at all (no host, mDNS, srflx
+  or relay) and no STUN traffic; a home tab gathers an mDNS host candidate and sends STUN requests.
+- **Loopback bypass and host rules.** A public-looking name mapped to loopback is proxied (the implicit
+  bypass matches literals and `localhost` names only), and `--host-resolver-rules` did not affect the
+  proxy itself (a loopback literal).
+- **Seen in passing, not a leak.** On some runs the proxy log also held a `CONNECT
+  redirector.gvt1.com:443` from the location partition, most likely the spellchecker's dictionary
+  download for the new session (Electron's default dictionary URL is on that host; frost sets none). It went to the profile's proxy (never direct), got the 407, and frost's `login`
+  listener cancelled it (no WebContents). Follow-up for the owner: whether frost should download
+  spellchecker dictionaries at all (the browse session likely does the same, directly, on Linux and
+  Windows; not checked here).

@@ -119,3 +119,19 @@ job (`serp/serp-worker.ts`).
 ## Settings (`packages/db/src/__tests__/settings.test.ts`)
 - **Scenario: ai-search-settings-read-from-app-settings** — unset reads `null`; stored values read
   back; a tampered value (`tab`, an unknown engine) reads as unset.
+
+## End to end (`apps/desktop/e2e/ai-answers.e2e.ts`; plan Task 11)
+Over the built app: the agent is the scripted model (`--frost-e2e-agent-script=<file>`), Perplexity and
+OpenAI web search are `apps/desktop/e2e/fake-data-api.ts` (answers from
+`apps/desktop/e2e/ai-answer-fixtures.ts`) through the data API seam, their gates opened with
+`--frost-e2e-open-gates=perplexity,openai-search`, keys pasted in Settings › Data sources (on Linux
+the stand-in keychain `apps/desktop/e2e/fake-keychain.cjs`; see `data-sources.feature.md`, End to end).
+The gated-off case runs in `data-sources.e2e.ts` (data-sources-gated-off-in-the-real-app).
+- **Scenario: ai-search-agent-call-approved-end-to-end** — the model calls `run_ai_search` with a query
+  and no engine: the card's exact input is `{ query, engine: 'perplexity', via: 'api' }` (the default
+  resolved), its note `runAiSearchApprovalNote('perplexity', 'api')`, no "Always allow", nothing sent
+  yet; after "Allow once" one `POST /v1/sonar` carries `aiSearchRequestBody` for the query and the
+  user's Bearer key; the tool card is done with the answer and its citations shown as text (no
+  element made from the answer's markup). The untrusted wrapper the model reads (`search:ai-answer`)
+  is unit-tested (ai-search-result-is-untrusted): the card previews the data only, and its untrusted
+  chip is for MCP tools.

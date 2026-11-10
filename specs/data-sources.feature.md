@@ -239,3 +239,50 @@ Scenario: api-check-palette-command
   Given main's view says a vendor is available with a key (`dataSources.serpProvider`)
   Then the palette offers "Check searches via <provider>" (the project last opened), and it opens that
   project's Rankings view on the same confirm; otherwise it is not offered
+
+## End to end (`apps/desktop/e2e/data-sources.e2e.ts`; plan Task 11)
+
+Over the built app, loopback only. `apps/desktop/e2e/fake-data-api.ts` stands in for every provider
+(SerpApi, DataForSEO, Serper, Perplexity, OpenAI web search) on `127.0.0.1`, reached through the
+unpackaged-only seam (`--frost-e2e-data-api=<file>`, every provider named); it answers synthetic JSON
+(SerpApi from the unit fixture `serp/__tests__/fixtures/serp-api/serpapi.json` with per-query organic
+results) and records every request as it arrived. Gates are opened only with the unpackaged-only
+`--frost-e2e-open-gates=serpapi,serper`. Playwright's Electron loader always appends
+`--password-store=basic`, so on Linux a stand-in keychain (`apps/desktop/e2e/fake-keychain.cjs`,
+required in main before the app through `launchApp`'s `mainPreload`) makes `safeStorage` report a
+secret service (`v11` blobs, the text masked); macOS and Windows use their own. Saved searches are
+never visited: the check asks the fake SerpApi.
+
+Scenario: data-sources-gated-off-in-the-real-app
+  Given the app launched with no gates switch, no seam and no stand-in keychain (as shipped)
+  Then every Settings › Data sources row is disabled with `LEGAL_GATE_NOTE` (fields, Save), and
+  `dataSources.status` says no provider is available
+  And for a project with a saved search `dataSources.checkPlan` answers `unavailable`, the Rankings
+  view has no "Check via API" (nor its reason), and the palette offers no "Check searches via …"
+  And the AI answers view's Ask is disabled with `LEGAL_GATE_NOTE`, each API engine says it, and
+  `aiAnswers.run` answers `unavailable`
+
+Scenario: data-sources-key-set-never-shown
+  Given the SerpApi and Serper gates open
+  When the user pastes a key in each row and presses Save
+  Then the field is emptied, the row says "Key set", and main reports `os` protection and `hasKey`
+  And no key is in the page, in any field or in main's view, and nothing was sent
+  When two vendors are offered and none is chosen, the user chooses SerpApi in "Check via API uses"
+  Then main's `serpProvider` is SerpApi, and its usage reads 0 this month
+
+Scenario: data-sources-check-via-api-joins-the-series
+  Given a project (site set) with three saved searches (Google, us/en, desktop) and no readings
+  When the user presses "Check via API"
+  Then it asks first ("This sends 3 requests to SerpApi." and `DATA_SPEND_NOTE`) and nothing is sent
+  When the user sends
+  Then the fake SerpApi gets exactly three `GET /search.json`, one per search, each with the key
+  once in `api_key` and the search's own `engine`, `q`, `gl`, `hl`, `google_domain` and `device`
+  And the view says "Checked 3 searches via SerpApi."
+  And each reading lands in its saved search's row (same search key, no new row), ranked where the
+  vendor put the site, marked "SerpApi API", and the search's series shows that point and source
+
+Scenario: data-sources-usage-counts-each-search
+  Then Settings shows SerpApi "This month: 3" (one per search) and Serper 0, as `dataSources.usage` says
+  And the app's log names the key-less URL only (`data api: serpapi GET https://serpapi.com/search.json 200`),
+  never a key or `api_key`
+  And no key is in the page, main's answers, or any file of the profile (database and WAL included)

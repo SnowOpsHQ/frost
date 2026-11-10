@@ -535,3 +535,44 @@ SL-096/097. Spec: `CRAWL_WATCH`, `CRAWL_STATUS_CLASSES`, `CRAWL_INDEXABLE_FILTER
   line in `App.tsx`, a Help-sheet frame over the page column: opening it closes Settings, Projects, the
   screenshot editor, History and the Help sheets (`useHelpSheet` subscribes `onCrawlOpened`); any of
   those opening closes it (a Help sheet's `show()` calls `closeCrawl()`, the menu's path included).
+
+## End to end (Task 11: `apps/desktop/e2e/crawl.e2e.ts`)
+Against `apps/desktop/e2e/crawl-fixtures.ts`: 50 pages served on loopback under the public-looking name
+`crawl.frost-e2e.test` (`--host-resolver-rules` maps it, port included, so start URLs are on port 80;
+`--frost-e2e-public-hosts` exempts it from the fetcher's private-address check, so it is crawled as a
+public site with the `host` scope, not as a private start). robots.txt for `*`: `Disallow: /private/`,
+`Crawl-delay: 1`, a `Sitemap:` line; four sections of nine articles, `/old` (301 to `/new`, same host),
+`/missing` (404), `/noindex` (meta robots), `/private/secret` (disallowed), a PDF, and `/orphan` (only
+in the sitemap). The site logs every request's arrival and end. One profile, apps relaunched on it; the
+scenarios run in order. No network: every name maps to loopback.
+- **crawl-gate-closed-as-shipped** — without `--frost-e2e-open-gates`: the sheet's Start is disabled
+  with `LEGAL_GATE_NOTE` beside it, and a `crawl.start` sent straight through the IPC bridge answers
+  `{ status: 'refused', reason: 'unavailable', note: LEGAL_GATE_NOTE }`; nothing is fetched.
+- **crawl-runs-pauses-across-a-restart-and-resumes** — with `--frost-e2e-open-gates=crawl`: started
+  from the sheet (opened from the palette's "Show site crawl") at the sheet's fastest interval (500 ms)
+  with sitemaps on; paused after a dozen fetch calls; the app quits and a new one starts on the same
+  profile: the run is still `Paused` and nothing was fetched meanwhile; Resume runs it to `Done`. Every
+  page but the disallowed one was fetched, and once only, except that the call still in flight when
+  Pause was pressed may be fetched again (its answer is dropped by design: "Once stopped, nothing more is
+  … written"); `/private/` was never requested.
+- **crawl-pages-and-structure-show-the-site** — Pages lists all 50 rows on one page ("1–50 of 50"):
+  `/missing` 404; `/noindex` 200, not indexable; `/private/secret` `blocked-by-robots` with both robots
+  verdicts `blocked`; the PDF 200 with no audit; `/old` one row (its same-host hop followed in its call,
+  so `/new` has no row of its own). The "Indexable: No" filter keeps the noindex page and drops the home
+  page. Site structure shows the origin at the root, opens it to the sections, draws the depth histogram
+  and lists `/orphan` among the orphans.
+- **crawl-exports-csv-through-mains-dialog** — main's save dialog is answered in main (test-only,
+  `dialog.showSaveDialog` replaced through `app.evaluate`, as `agent.e2e.ts` does), so main's own export
+  runs: the file's header is `CRAWL_CSV_COLUMNS`, one CRLF line per page (50), each page once.
+- **crawl-is-polite-on-the-wire** (K-B1) — from the site's log: the crawl's fetch calls are the
+  requests whose user agent carries `frost-crawl/1` (pages and the sitemap; robots.txt comes from main's
+  robots fetcher on the audit lane, with the browse user agent, and is not a crawl-lane call), with the
+  redirect's second hop folded into its call. Never two calls in flight (each starts after the previous
+  one's answer ended); `/old`'s hop to `/new` follows at once (well under the interval); consecutive call
+  starts at least the effective interval apart, robots.txt's `Crawl-delay` (1 s) above the sheet's
+  500 ms, less 200 ms for the arrival lag the site sees (the median within 50 ms of it). One host name,
+  so per-host pacing is per origin here.
+- **Observed** (Linux, 2026-11-10): 50 fetch calls, consecutive starts 999–1 002 ms apart (median
+  1 000 ms) at the site; the gap across the quit and relaunch about 1.6 s; never two in flight. A fresh
+  crawl fetcher after a restart has no pacing state, so the first call after Resume is not held by the
+  last one before the quit; the restart itself took longer than the interval.

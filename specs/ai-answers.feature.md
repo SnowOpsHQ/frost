@@ -109,3 +109,13 @@ the composition), Task 8's `main/ai-search/service.ts` (`answer`: the view's run
   `main/ai-search/` or `main/data-sources/`, and not the shared `serp-worker.ts` (not a seed; why is in
   the test), and none of
   them names the `ai_answers` table.
+
+## End to end (`apps/desktop/e2e/ai-answers.e2e.ts`; plan Task 11)
+After `ai-search.feature.md`'s ai-search-agent-call-approved-end-to-end, in the same app.
+- **Scenario: ai-answers-agent-and-view-end-to-end** — "Show AI answers" lists the agent's answer
+  (Perplexity, "Asked by the agent"): its text inert (markup shown as text, no anchor), its three
+  citations, the cited domains grouped (`leafhouse.example · 2`, `example.org · 1`) and the watched
+  domain marked. The view then asks OpenAI web search itself: the cost note and a confirm first, Send,
+  no approval card; one `POST /v1/responses` with `aiSearchRequestBody` and the user's key; the answer
+  shown ("Asked here") and `aiAnswers.list` holds both, newest first. No key is in the log, the page or
+  main's answers.

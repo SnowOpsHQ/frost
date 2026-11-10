@@ -110,6 +110,8 @@ describe('fake proxy (e2e helper)', () => {
       ['connect', `${NAME}:${site.port}`, 407],
       ['connect', `${NAME}:${site.port}`, 200],
     ]);
+    // The tunnel's own connection to the origin is named, so the origin can tell it from a direct one.
+    expect(p.log[1]!.upstreamPort).toEqual(expect.any(Number));
   });
 
   test('fake-proxy-tripwire-counts-direct-connections', async () => {
@@ -122,6 +124,33 @@ describe('fake proxy (e2e helper)', () => {
       socket.on('close', () => resolve());
     });
     await expect.poll(() => wire.connections()).toBe(1);
+  });
+
+  test('fake-proxy-tripwire-records-requests', async () => {
+    const wire: Tripwire = await startTripwire();
+    closers.push(() => wire.close());
+    const answer = await new Promise<string>((resolve) => {
+      let text = '';
+      const socket = connect(wire.port, '127.0.0.1', () => socket.write(`GET /leak-probe/img.png?x=1 HTTP/1.1\r\nHost: ${NAME}:81\r\nUser-Agent: probe\r\nAccept: image/*\r\nCookie: a=1\r\nCookie: b=2\r\nX-Other: kept-out\r\n\r\n`));
+      socket.setEncoding('utf8');
+      socket.on('data', (chunk: string) => (text += chunk));
+      socket.on('error', () => resolve(text));
+      socket.on('close', () => resolve(text));
+    });
+    expect(answer).toMatch(/^HTTP\/1\.1 404 /);
+    expect(wire.requests()).toHaveLength(1);
+    expect(wire.requests()[0]).toMatchObject({ method: 'GET', path: '/leak-probe/img.png?x=1', headers: { host: `${NAME}:81`, 'user-agent': 'probe', accept: 'image/*', cookie: 'a=1, b=2' } });
+    expect(Object.keys(wire.requests()[0]!.headers)).not.toContain('x-other');
+    // Bytes that are no HTTP request (a TLS hello, say) are recorded with an empty method.
+    await new Promise<void>((resolve) => {
+      const socket = connect(wire.port, '127.0.0.1', () => socket.write(Buffer.from([0x16, 0x03, 0x01, 0x00, 0x05])));
+      socket.resume();
+      socket.on('error', () => resolve());
+      socket.on('close', () => resolve());
+    });
+    await expect.poll(() => wire.requests().length).toBe(2);
+    expect(wire.requests()[1]).toMatchObject({ method: '', path: '' });
+    expect(wire.connections()).toBe(2);
   });
 
   test('fake-proxy-is-loopback-only', async () => {

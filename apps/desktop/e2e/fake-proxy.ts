@@ -28,6 +28,11 @@ export interface FakeProxyRecord {
   readonly status: 200 | 407 | 502;
   /** Whether the request carried the right sign-in (always `true` without `auth`). */
   readonly authorized: boolean;
+  /**
+   * For a tunnel that opened (`connect`, 200): the local port of the proxy's own connection to the
+   * origin, so the origin can tell a tunnelled request (which carries no marker) from a direct one.
+   */
+  readonly upstreamPort?: number;
 }
 
 export interface FakeProxyOptions {
@@ -142,8 +147,10 @@ export async function startFakeProxy(options: FakeProxyOptions): Promise<FakePro
       client.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    log.push({ kind: 'connect', target, status: 200, authorized: true });
+    const record: { -readonly [K in keyof FakeProxyRecord]: FakeProxyRecord[K] } = { kind: 'connect', target, status: 200, authorized: true };
+    log.push(record);
     const upstream = connect(parsed.port, address, () => {
+      record.upstreamPort = upstream.localPort;
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if (head.length > 0) upstream.write(head);
       upstream.pipe(client);
@@ -164,29 +171,85 @@ export async function startFakeProxy(options: FakeProxyOptions): Promise<FakePro
   return { port: bound.port, url: urlOf(bound), log, close: closer(server, sockets) };
 }
 
+/** The request headers the tripwire keeps (`location-profiles.feature.md`, The tripwire), lower case. */
+export const TRIPWIRE_HEADERS = ['host', 'user-agent', 'accept', 'upgrade-insecure-requests', 'sec-fetch-mode', 'sec-fetch-dest', 'sec-fetch-site', 'cookie', 'upgrade'] as const;
+export type TripwireHeader = (typeof TRIPWIRE_HEADERS)[number];
+
+/** One request that reached the tripwire (a direct connection that sent an HTTP request head). */
+export interface TripwireRequest {
+  /** When its head was complete (`Date.now()`). */
+  readonly at: number;
+  /** The method, or `''` when the connection's first bytes were not an HTTP request (TLS, say). */
+  readonly method: string;
+  /** The request target as sent (origin form: path and query). */
+  readonly path: string;
+  /** The kept headers (`TRIPWIRE_HEADERS`) it carried, repeated values joined with `, `. */
+  readonly headers: Readonly<Partial<Record<TripwireHeader, string>>>;
+}
+
 export interface Tripwire {
   readonly port: number;
   /** How many connections reached it (each one a direct connection that should have gone through the proxy). */
   connections(): number;
+  /** Every request head that reached it, in order (Task 11's recorder: the leak test classifies them). */
+  requests(): readonly TripwireRequest[];
   close(): Promise<void>;
 }
 
+/** How long the tripwire keeps a connection that sends nothing. */
+const TRIPWIRE_IDLE_MS = 1_000;
+/** The biggest request head the tripwire reads before it records what it has and hangs up. */
+const MAX_HEAD_BYTES = 16 * 1024;
+
+/** A request head (`METHOD target HTTP/1.x` and header lines), or `null` when the bytes are not one. */
+function parseHead(head: string, at: number): TripwireRequest | null {
+  const [requestLine = '', ...lines] = head.split('\r\n');
+  const match = /^([A-Z]{1,16}) (\S+) HTTP\/1\.[01]$/.exec(requestLine);
+  if (!match) return null;
+  const headers: Partial<Record<TripwireHeader, string>> = {};
+  for (const line of lines) {
+    const colon = line.indexOf(':');
+    if (colon <= 0) continue;
+    const name = line.slice(0, colon).trim().toLowerCase() as TripwireHeader;
+    if (!(TRIPWIRE_HEADERS as readonly string[]).includes(name)) continue;
+    const value = line.slice(colon + 1).trim();
+    headers[name] = headers[name] === undefined ? value : `${headers[name]}, ${value}`;
+  }
+  return { at, method: match[1]!, path: match[2]!, headers };
+}
+
 /**
- * A listener that records every connection and answers nothing: `--host-resolver-rules` maps the
- * public-looking name here, so only a direct connection (one that bypassed the proxy) can reach it.
+ * A listener that records every connection and every HTTP request head on it, and answers each
+ * request `404` with no body (then hangs up): `--host-resolver-rules` maps the public-looking name
+ * here, so only a direct connection (one that did not go through the proxy) can reach it. Bytes that
+ * are not an HTTP request (TLS, say) are recorded as one request with an empty method.
  */
 export async function startTripwire(host = '127.0.0.1'): Promise<Tripwire> {
   if (!isLoopbackLiteral(host)) throw new Error('tripwire: listen on a loopback address only');
   let count = 0;
+  const recorded: TripwireRequest[] = [];
   const sockets = new Set<Socket>();
   const server = createNetServer((socket) => {
     count += 1;
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
     socket.on('error', () => undefined);
-    socket.destroy();
+    // A connection that sends nothing (a preconnect, a bare TCP probe) is counted, then dropped.
+    socket.setTimeout(TRIPWIRE_IDLE_MS, () => socket.destroy());
+    let buffered = Buffer.alloc(0);
+    socket.on('data', (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      const end = buffered.indexOf('\r\n\r\n');
+      if (end < 0 && buffered.length < MAX_HEAD_BYTES && /^[A-Z]{0,16}( |$)/.test(buffered.toString('latin1', 0, Math.min(buffered.length, 17)))) return;
+      const at = Date.now();
+      const parsed = end < 0 ? null : parseHead(buffered.toString('latin1', 0, end), at);
+      recorded.push(parsed ?? { at, method: '', path: '', headers: {} });
+      socket.end('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+      socket.removeAllListeners('data');
+      socket.resume();
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, host, resolve));
   const { port } = server.address() as AddressInfo;
-  return { port, connections: () => count, close: closer(server, sockets) };
+  return { port, connections: () => count, requests: () => recorded, close: closer(server, sockets) };
 }

@@ -53,17 +53,21 @@ export function childEnv(extra: Readonly<Record<string, string>> = {}): Record<s
  * `FROST_PUBLIC_*` run-time configuration (`specs/account-state.schema.ts`, `ACCOUNT_CONFIG_ENV`).
  * Inherited `FROST_PUBLIC_*`, `FROST_GSC_*` and `FROST_TELEMETRY_*` variables are stripped first
  * (`childEnv`), so a suite runs with exactly the configuration it sets.
+ *
+ * `mainPreload` (absolute paths of CommonJS test files) are required in main before the app's own
+ * code (Electron's `-r`, as Playwright loads its own loader), e.g. `fake-keychain.cjs`.
  */
 export async function launchApp(
   extraArgs: readonly string[] = [],
-  options: { userDataDir?: string; env?: Readonly<Record<string, string>> } = {},
+  options: { userDataDir?: string; env?: Readonly<Record<string, string>>; mainPreload?: readonly string[] } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const env = childEnv(options.env);
   const ownProfile = options.userDataDir === undefined ? await mkdtemp(path.join(tmpdir(), 'frost-e2e-profile-')) : null;
   const userDataDir = options.userDataDir ?? ownProfile!;
+  const preload = (options.mainPreload ?? []).flatMap((file) => ['-r', file]);
   let app: ElectronApplication;
   try {
-    app = await _electron.launch({ args: [APP_DIR, `--user-data-dir=${userDataDir}`, ...extraArgs], env, cwd: APP_DIR });
+    app = await _electron.launch({ args: [...preload, APP_DIR, `--user-data-dir=${userDataDir}`, ...extraArgs], env, cwd: APP_DIR });
   } catch (error) {
     if (ownProfile !== null) await rm(ownProfile, { recursive: true, force: true });
     throw error;
