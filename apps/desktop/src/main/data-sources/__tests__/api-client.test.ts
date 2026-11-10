@@ -345,11 +345,18 @@ describe('data API client', () => {
 
   test('data-api-busy-when-too-many-wait', async () => {
     const { store } = await keyedStore();
-    const clock = 50_000;
+    let clock = 50_000;
     const pending: (() => void)[] = [];
+    // Waits are held until released below; after that a wait passes its time at once.
+    let hold = true;
     const { fetch, calls } = recordingFetch();
     const withKey = vi.spyOn(store, 'withKey');
-    const api = createDataApiClient({ store, isOpen: allOpen, fetch, now: () => clock, sleep: () => new Promise<void>((resolve) => pending.push(resolve)) });
+    const sleep = (ms: number): Promise<void> => {
+      if (hold) return new Promise<void>((resolve) => pending.push(resolve));
+      clock += ms;
+      return Promise.resolve();
+    };
+    const api = createDataApiClient({ store, isOpen: allOpen, fetch, now: () => clock, sleep });
     const first = await api.dataApiRequest('serpapi', 'serp', serpapiBuild);
     expect(first.ok).toBe(true);
     // The next `maxWaitingPerProvider` wait without holding a key; one more is `busy`.
@@ -359,6 +366,7 @@ describe('data API client', () => {
     expect(await api.dataApiRequest('serpapi', 'serp', serpapiBuild)).toEqual({ ok: false, refusal: 'busy', message: DATA_API_REFUSAL_MESSAGES.busy });
     // Another provider is not held up.
     expect((await api.dataApiRequest('perplexity', 'ai-search', (s) => ({ method: 'POST', url: 'https://api.perplexity.ai/v1/sonar', headers: { authorization: `Bearer ${s.perplexity}` }, body: '{}' }))).ok).toBe(true);
+    hold = false;
     for (const resolve of pending.splice(0)) resolve();
     expect((await Promise.all(waiting)).every((outcome) => outcome.ok)).toBe(true);
     expect(calls).toHaveLength(2 + DATA_API_LIMITS.maxWaitingPerProvider);
@@ -374,10 +382,15 @@ describe('data API client', () => {
       isOpen: allOpen,
       fetch,
       now: () => clock,
-      sleep: async (ms) => {
-        sleeps.push(ms);
-        clock += ms;
-      },
+      // A wait's time passes when it ends (on a later task), as a real timer's does.
+      sleep: (ms) =>
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            sleeps.push(ms);
+            clock += ms;
+            resolve();
+          }, 0),
+        ),
     });
     const serper: DataApiBuild = (s) => ({ method: 'POST', url: 'https://google.serper.dev/search', headers: { 'x-api-key': s.serper!, 'content-type': 'application/json' }, body: '{"q":"x"}' });
     await api.dataApiRequest('serpapi', 'serp', serpapiBuild);
@@ -393,6 +406,40 @@ describe('data API client', () => {
     sleeps.length = 0;
     await Promise.all([api.dataApiRequest('serper', 'serp', serper), api.dataApiRequest('serper', 'serp', serper)]);
     expect(sleeps).toEqual([DATA_API_LIMITS.minIntervalMs.serper]);
+  });
+
+  test('data-api-spaced-by-actual-send-times', async () => {
+    const { store } = await keyedStore();
+    let clock = 20_000;
+    const { fetch: recording } = recordingFetch();
+    const starts: number[] = [];
+    const fetch = vi.fn<(url: string, init: RequestInit) => Promise<Response>>((input, init) => {
+      starts.push(clock);
+      return recording(input, init);
+    });
+    // Opening the first request's key takes longer than the provider's interval.
+    const withKey = store.withKey.bind(store);
+    let slowOnce = true;
+    vi.spyOn(store, 'withKey').mockImplementation(async (slot, fn) => {
+      if (slowOnce) {
+        slowOnce = false;
+        clock += 1_500;
+      }
+      return withKey(slot, fn);
+    });
+    const api = createDataApiClient({
+      store,
+      isOpen: allOpen,
+      fetch,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    });
+    await api.dataApiRequest('serpapi', 'serp', serpapiBuild);
+    await api.dataApiRequest('serpapi', 'serp', serpapiBuild);
+    expect(starts).toHaveLength(2);
+    expect(starts[1]! - starts[0]!).toBeGreaterThanOrEqual(DATA_API_LIMITS.minIntervalMs.serpapi);
   });
 
   test('data-api-e2e-seam-only-unpackaged', async () => {

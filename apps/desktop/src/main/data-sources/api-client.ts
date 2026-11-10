@@ -210,6 +210,15 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
   const nextStart = new Map<DataProvider, number>();
   /** Requests per provider waiting for their turn (none holds a key). */
   const waiting = new Map<DataProvider, number>();
+  /** When each provider's last request was actually handed to the transport. */
+  const lastSent = new Map<DataProvider, number>();
+  /** Each provider's latest send turn: settles once that request is handed over (or gives up). */
+  const sendTurns = new Map<DataProvider, Promise<void>>();
+  /** How long `provider` must still wait so its next transport start keeps `minIntervalMs`. */
+  const sendGap = (provider: DataProvider): number => {
+    const last = lastSent.get(provider);
+    return last === undefined ? 0 : last + DATA_API_LIMITS.minIntervalMs[provider] - now();
+  };
 
   /**
    * Reserves the provider's next turn (synchronously, so requests made at once are spaced too) and
@@ -278,10 +287,23 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
     const onAbort = (): void => controller.abort();
     signal?.addEventListener('abort', onAbort, { once: true });
     let counted: Promise<void> = Promise.resolve();
+    let handOver!: () => void;
+    const handedOver = new Promise<void>((resolve) => {
+      handOver = resolve;
+    });
     try {
+      // The turn was reserved before the key was opened, and a slow key (or `beforeSend`) can outlast
+      // it: the provider's gap is kept again here, between actual transport starts. Requests take
+      // this step one at a time per provider, each after the one before it was handed over.
+      const previous = sendTurns.get(provider) ?? Promise.resolve();
+      sendTurns.set(provider, handedOver);
+      await previous;
+      const wait = sendGap(provider);
+      if (wait > 0) await sleepUnlessAborted(wait, signal);
       // Asked again with nothing awaited between here and the fetch: a Stop at any earlier await
-      // (the turn, the key, the build) sends nothing and counts nothing.
+      // (the turn, the key, the build, the gap) sends nothing and counts nothing.
       if (signal?.aborted) return refused('aborted', { url });
+      lastSent.set(provider, now());
       const sent = deps.fetch(target, {
         method: request.method,
         headers,
@@ -291,6 +313,7 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
         cache: 'no-store',
         signal: controller.signal,
       });
+      handOver();
       // Counted once it is handed to the transport, whatever it answers: only what is sent counts.
       counted = count(provider);
       const response = await sent;
@@ -313,6 +336,8 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
       if (isRedirectError(error)) return refused('redirect', { url });
       return refused('network', { url });
     } finally {
+      // The next request's turn never waits on one that gave up.
+      handOver();
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
       await counted;

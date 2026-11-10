@@ -74,6 +74,13 @@ Scenario: data-api-spaced-per-provider
   When two requests to one provider follow each other
   Then the second starts at least `minIntervalMs` after the first
 
+Scenario: data-api-spaced-by-actual-send-times
+  Given opening the first request's key takes longer than `minIntervalMs`
+  When a second request to that provider follows it
+  Then the gap is measured between the two transport starts, not between the reserved turns: requests
+  take the send step one at a time per provider, and each waits until `minIntervalMs` after the one
+  before it was handed to the transport (PR review)
+
 Scenario: data-api-e2e-seam-only-unpackaged
   Given `--frost-e2e-data-api=<file>` maps a provider to `http://127.0.0.1:<port>`
   When the build is unpackaged
