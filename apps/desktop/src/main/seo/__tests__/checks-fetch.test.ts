@@ -119,7 +119,7 @@ describe('check fetch', () => {
     const answer = await fetch('https://a.example.org/', { ...OPTIONS, method: 'HEAD', userAgent: 'Mozilla/5.0 (compatible; Test)' });
     expect(asked[0]).toEqual({ url: 'https://a.example.org/', method: 'HEAD', userAgent: 'Mozilla/5.0 (compatible; Test)' });
     // Every Link header is read (joined), past the fetcher's default header cap.
-    expect(answer.headers).toEqual({ contentType: 'text/html', contentEncoding: 'gzip', link: link.join(', ') });
+    expect(answer.headers).toEqual({ contentType: 'text/html', link: link.join(', ') });
     // A user agent with a line break (or none) is never sent: frost's own instead.
     await fetch('https://a.example.org/', { ...OPTIONS, userAgent: 'evil\r\nCookie: x' });
     await fetch('https://a.example.org/', { ...OPTIONS, userAgent: null });

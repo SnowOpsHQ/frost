@@ -216,7 +216,7 @@ is no separate notes procedure.
   is built in the background (`disabled` at version 0 until then), and a throw or rejection while
   building it is one log line and a service that stays `disabled` (steps answer that state, `install`
   `false`, `watch` waits for its signal). Startup goes on to the IPC handler and the window either way.
-- **Scenario: no-feed-no-prefs** — without a feed the prefs file is never read or created (no
+- **Scenario: no-feed-no-prefs** (in the test `no-feed-no-requests`) — without a feed the prefs file is never read or created (no
   install ID exists): `setChecks` is a no-op and `checkNow` makes no request.
 - **Scenario: test-cert-pins-one-certificate** — with `UPDATE_TEST_CERT_SWITCH` (unpackaged) the
   update session's certificate check accepts (`0`) only a certificate whose DER SHA-256 is the

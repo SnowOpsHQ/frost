@@ -169,6 +169,18 @@ describe('migrations', () => {
     expect(runMigrations(db, [...MIGRATIONS, { id: '9000_broken', sql: 'CREATE TABLE half (x INTEGER)' }])).toEqual(['9000_broken']);
   });
 
+  test('failed-migration-keeps-its-own-error', () => {
+    // SQLite rolls a transaction back by itself on some failures (disk full, I/O error). Stood in for
+    // here by a migration that ends its transaction and then fails: the runner must not answer with
+    // "cannot rollback - no transaction is active" in place of the real error.
+    const db = memory();
+    runMigrations(db);
+    const broken: Migration = { id: '9001_ended', sql: 'ROLLBACK; SELECT * FROM no_such_table;' };
+    expect(() => runMigrations(db, [...MIGRATIONS, broken])).toThrow(/no_such_table/);
+    expect(db.isTransaction).toBe(false);
+    expect(recordedIds(db)).toEqual(MIGRATIONS.map((m) => m.id));
+  });
+
   // Phase 11 Task 12 (specs/diagnostics.spec.ts, DIAGNOSTICS_FIELDS `migrations`): the store lists the applied ids.
   test('store-lists-applied-migration-ids', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'frost-db-ids-'));

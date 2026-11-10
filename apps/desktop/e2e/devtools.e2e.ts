@@ -8,7 +8,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { CLEAR_SITE_DATA, DEVTOOLS_MENU_ID, DEVTOOLS_STORAGE_KEYS, EXPORT_REDACTION_HINT, EXPORT_URLS_REDACTED_NOTE, HAR_NO_BODY_COMMENT, MASKED_VALUE, REDACTED_VALUE } from '@app/specs/devtools.spec';
+import { CLEAR_SITE_DATA, DEVTOOLS_HEIGHT, DEVTOOLS_MENU_ID, DEVTOOLS_STORAGE_KEYS, EXPORT_REDACTION_HINT, EXPORT_URLS_REDACTED_NOTE, HAR_NO_BODY_COMMENT, MASKED_VALUE, REDACTED_VALUE } from '@app/specs/devtools.spec';
 import { HarLogSchema } from '@app/specs/devtools.schema';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
@@ -210,6 +210,11 @@ test('drawer-toggles-and-page-shrinks', async () => {
   await page.getByTestId('devtools-resize').focus();
   await page.keyboard.press('ArrowUp');
   await expect.poll(async () => (await viewBounds())!.height).toBeLessThan(before);
+  // The separator states its range: the most the drawer may take of its column (without a maximum the
+  // range would default to 0–100, below any drawer height).
+  const column = await drawer().evaluate((el) => el.parentElement!.clientHeight);
+  await expect(page.getByTestId('devtools-resize')).toHaveAttribute('aria-valuemax', String(Math.max(DEVTOOLS_HEIGHT.min, Math.floor(column - DEVTOOLS_HEIGHT.pageMinVisible))));
+  await expect(page.getByTestId('devtools-resize')).toHaveAttribute('aria-valuemin', String(DEVTOOLS_HEIGHT.min));
   await page.getByTestId('devtools-close').click();
   await expect(drawer()).toHaveCount(0);
   await expect.poll(async () => (await viewBounds())!.height).toBe(full.height);

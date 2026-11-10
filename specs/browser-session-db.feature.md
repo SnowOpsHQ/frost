@@ -130,6 +130,8 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
   recorded is not run again even if its SQL would now fail; an unknown recorded id is left alone.
 - **Scenario: failed-migration-rolls-back** — a migration that fails part-way leaves neither its
   tables nor its id behind, and the runner throws.
+- **Scenario: failed-migration-keeps-its-own-error** — when the transaction is already over (SQLite
+  rolled it back itself), the runner throws the migration's error, not a failed `ROLLBACK`'s.
 - **Scenario: migration-0002-drops-stored-allows** — a database migrated to `0001` holding Allow
   and Block rows keeps only the Block rows after the migrations run (`0002` recorded once).
 

@@ -6,7 +6,9 @@ import { browseClassSessions } from './browser/browse-class';
 // application menu's item asks first, in a native message box main shows, then clears the visits,
 // every permission decision (stored and in memory) with the prompt back-off, the render profiles
 // pinned to sites (stored and in memory), every browse-class session's storage and cache, and the SEO
-// auditor's robots.txt answers and recorded responses, and the AI checks' answers. It keeps the Content panel's target queries
+// auditor's robots.txt answers and recorded responses, and the AI checks' answers; main adds the rest
+// of what a visit left behind (`ClearBrowsingDataParts`, and `index.ts`'s wiring: agent grants, closed
+// tabs, the devtools logs, the Inspector's kept source, the served HTML, running and cached checks, SERP readings). It keeps the Content panel's target queries
 // and snippet drafts (the user's own work; the dialog says so) unless its checkbox is ticked. It closes no tab and leaves the app
 // UI's session alone. The command palette's Clear Browsing Data runs this same action.
 

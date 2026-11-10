@@ -7,9 +7,9 @@ import { createAgentServiceFrom, type AgentServiceDeps } from './service';
 import type { AgentSessionWithChecks } from './check-port';
 
 // The agent panel's service, wired to Electron (Phase 5 Task 6a). Main adds it to the IPC services
-// with one line: `agent: createAgentService({ app, browser, webContents, sessionStore, log: logSession })`.
-// It also takes `ports` (Task 8: the search tools' data, `./ports`) and `entitlements`; the plan's
-// Task 8 as-built note has the lines the lead adds once Phases 3 and 4 merge. Task 9 adds main's own
+// with `createAgentService({ app, browser, webContents, sessionStore, log, ports, … })` (`index.ts`).
+// `ports` is the search tools' data (Task 8, `./ports`: Phase 3's SERP, intent and probes, Phase 4's
+// Search Console); `entitlements` stays a seam for tests. Task 9 adds main's own
 // dialogs (`./dialogs`: "Delete all chats" and the export's save dialog); `sessionStore` already
 // carries the chats' and skills' tables.
 

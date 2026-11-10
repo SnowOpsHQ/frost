@@ -1,6 +1,7 @@
 // Spec: specs/agent-mcp.spec.ts (MCP_SANDBOX_MODES, MACOS_SANDBOX_EXEC, BUBBLEWRAP_PATHS, mcpSandboxSentence)
 // Acceptance: specs/agent-mcp.feature.md (Sandboxes, Command servers)
 import { describe, expect, test } from 'vitest';
+import { runProbe, SANDBOX_PROBE_MAX_BUFFER } from '../mcp/node';
 import { bubblewrapArgs, detectSandbox, launchPlan, MACOS_HIDDEN_FOLDERS, macosSandboxProfile, resolveCommand, sbplString, serverEnv, type LaunchInput } from '../mcp/sandbox';
 
 const input: LaunchInput = {
@@ -166,6 +167,19 @@ describe('sandbox detection', () => {
       disableUserns: false,
     });
   });
+
+  test('mcp-sandbox-probe-reads-a-long-help', async () => {
+    // bubblewrap 0.13.1 prints 5.5 kB of `--help`: the real probe must read all of it, or `--disable-userns` is never seen.
+    // (Generous timeouts, the test's too: this starts Node three times, slow on a loaded runner.)
+    const probe = (bytes: number) => runProbe(process.execPath, ['-e', `process.stdout.write('x'.repeat(${bytes - 17}) + ' --disable-userns')`], process.env['PATH'] ?? '', 30_000);
+    const answer = await probe(8 * 1024);
+    expect(answer?.code).toBe(0);
+    expect(answer?.stdout).toHaveLength(8 * 1024);
+    const real = async (_command: string, args: readonly string[]) => (args[0] === '--version' ? { code: 0, stdout: 'bubblewrap 0.13.1\n' } : probe(8 * 1024));
+    expect(await detectSandbox({ platform: 'linux', exists: at('/usr/bin/bwrap'), run: real })).toMatchObject({ mode: 'bubblewrap', disableUserns: true });
+    // More than the bound is still no answer.
+    expect(await probe(SANDBOX_PROBE_MAX_BUFFER + 1024)).toBeNull();
+  }, 100_000);
 
   test('mcp-sandbox-fallback-reported-as-none', async () => {
     const ok = { '--version': { code: 0, stdout: 'bubblewrap 0.13.1' } };

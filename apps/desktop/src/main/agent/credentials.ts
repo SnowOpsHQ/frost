@@ -56,7 +56,7 @@ export interface CredentialStoreDeps<S extends string = CredentialSlot> {
   /**
    * The store's slots and how a value is normalised before it is stored (default: the model keys'
    * `isCredentialSlot` and `normalizeKey`). Task 10's MCP store keeps a token and the environment
-   * values per server (`mcp-credentials.ts`). A slot never holds a line break (it is sealed in the blob).
+   * values per server (`mcp/secrets.ts`). A slot never holds a line break (it is sealed in the blob).
    */
   readonly isSlot?: (value: unknown) => value is S;
   readonly normalize?: (slot: S, value: unknown) => string | null;

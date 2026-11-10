@@ -6,8 +6,8 @@ import { INTENT_DOWNLOAD_LIMITS, INTENT_MODEL, INTENT_MODEL_DIR, type IntentEnab
 
 // The intent model on disk (spec `intent-classifier.spec.ts`, The model; acceptance
 // `intent-classifier.feature.md`, Model download). The model and its vocabulary are downloaded only
-// by `download()` (the user's "Enable on-device intent"), each through the bounded fetcher's `checks`
-// lane, capped at its pinned size plus slack; a file is written (atomically, to
+// by `download()` (the user's "Enable on-device intent"), each through the bounded fetcher's SERP
+// lane (`SERP_FETCHER_LIMITS`), capped at its pinned size plus slack; a file is written (atomically, to
 // `userData/models/<model id>/`) only once its length and sha256 are the pinned ones, so a mismatch
 // is never kept. `load()` reads both again, no further than one byte past their pins, and hashes them
 // every time: a file that reads but no longer matches is removed and the model is `model-missing`; a

@@ -107,8 +107,6 @@ export interface SerpSetup {
   onClearBrowsingData(): void;
   /** Maps a data API's answer in the SERP worker (job kind `api`; `checkSearchViaApi`'s `parse`). Never rejects. */
   analyseApi(job: SerpApiJob): Promise<SerpApiJobAnswer>;
-  /** Watches a browse-session tab's page (anything else is ignored; done for every new WebContents already). */
-  watchContents(contents: WebContents): void;
   /** Stops the service, the probes, the analysis and probe workers and the intent process (run on `will-quit`). */
   dispose(): void;
 }
@@ -250,5 +248,5 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
     probes.cancelAll();
     probes.clearCache();
   };
-  return { service, readApi, onClearBrowsingData, analyseApi: (job) => apiAnalyzer.analyseApi(job), watchContents, dispose };
+  return { service, readApi, onClearBrowsingData, analyseApi: (job) => apiAnalyzer.analyseApi(job), dispose };
 }

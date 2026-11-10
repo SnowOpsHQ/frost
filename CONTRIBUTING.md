@@ -27,7 +27,7 @@ task, a fresh reviewer before the next starts, and a whole-branch review at the 
   `packages/ipc-contract`, and every procedure passes `enforceSender`.
 - App pages load from the `app://` scheme, never `file://`.
 - `shell.openExternal` only for the scheme allowlist, and only on a real user gesture.
-- CI must stay green: Electronegativity, the Semgrep `ipc-sender-guard` rule, and the
+- CI must stay green: Electronegativity, the Semgrep rules in `semgrep/`, and the
   `openExternal`-deny e2e (`.github/workflows/ci.yml`; gates listed in `specs/ci-gates.feature.md`).
   Run them locally with `pnpm security:electronegativity`, `pnpm security:semgrep` (needs `uv`) and
   `pnpm test:e2e` (needs a display). Accepting an Electronegativity finding means adding it, with a
@@ -42,4 +42,4 @@ task, a fresh reviewer before the next starts, and a whole-branch review at the 
 - `docs/plans/` — executable phase plans.
 - `docs/ui-reference/` — UI direction notes (frost's own design).
 - `specs/` — machine-checkable spec artifacts.
-- `apps/`, `packages/` — created during Phase 0.
+- `apps/`, `packages/` — the app, the backend, the agent runtime and the shared packages (see the README's Layout).

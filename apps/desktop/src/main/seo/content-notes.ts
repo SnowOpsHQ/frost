@@ -85,8 +85,10 @@ export function createContentService(options: ContentServiceOptions): MainConten
     async notes(url) {
       // The generation the notes are read in (taken first: a deletion while reading is a newer one).
       const readIn = generation;
-      const notes = await guarded('read', () => options.notes.notes(url), NONE);
-      remember(url, notes.query, readIn);
+      const read = await guarded<Awaited<ReturnType<typeof options.notes.notes>> | null>('read', () => options.notes.notes(url), null);
+      // A failed read answers nothing stored, and leaves what is known of the page as it was.
+      if (read !== null) remember(url, read.query, readIn);
+      const notes = read ?? NONE;
       return { query: notes.query, variants: notes.variants, generation: readIn };
     },
     setTargetQuery: (url, query, from) =>

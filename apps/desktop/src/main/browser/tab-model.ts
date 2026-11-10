@@ -26,8 +26,9 @@ export type FullscreenMode = NonNullable<TabState['fullscreen']>;
 export interface Tab {
   readonly id: number;
   /**
-   * Created on the first navigation; an empty tab has none (nothing to show or guard). Dropped
-   * again when its WebContents is destroyed (the page called `window.close()`).
+   * Created on the first navigation; an empty tab has none (nothing to show or guard). A page that
+   * closes itself (`window.close()`) closes its tab; a view whose WebContents died unnoticed is
+   * dropped by `liveView`.
    */
   view: TabView | null;
   /** Removes this controller's listeners from `view`'s WebContents (a no-op without a view). */

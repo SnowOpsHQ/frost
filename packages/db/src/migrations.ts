@@ -136,7 +136,8 @@ export function runMigrations(db: DatabaseSync, migrations: readonly Migration[]
       record.run(migration.id, now());
       db.exec('COMMIT');
     } catch (error) {
-      db.exec('ROLLBACK');
+      // SQLite may already have rolled back (disk full, I/O error): a second ROLLBACK would throw and hide `error`.
+      if (db.isTransaction) db.exec('ROLLBACK');
       throw error;
     }
     applied.push(migration.id);

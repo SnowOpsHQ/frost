@@ -4,7 +4,7 @@
   "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
-  "description": "Local browser-session database for the main process: Drizzle schema, forward-only migrations and a small repository over node:sqlite.",
+  "description": "Local database for the main process: Drizzle schema, forward-only migrations and repositories (browser session, history, settings, agent data, change intelligence) over node:sqlite, with a libSQL driver seam for sync.",
   "exports": {
     ".": "./src/index.ts",
     "./driver-libsql": "./src/driver-libsql.ts",

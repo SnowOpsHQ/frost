@@ -17,7 +17,6 @@ import { HREFLANG_CHECK_LIMITS, type CheckFetchOutcome } from '@app/specs/seo-ch
 /** The response headers the checks read (lowercased names; `null`: not sent). */
 export interface CheckFetchHeaders {
   readonly contentType: string | null;
-  readonly contentEncoding: string | null;
   readonly link: string | null;
 }
 
@@ -51,7 +50,7 @@ export interface CheckFetchResult {
 export type CheckFetch = (url: string, options: CheckFetchOptions) => Promise<CheckFetchResult>;
 
 /** Characters kept of each header the checks read. */
-const HEADER_CHARS = { contentType: 256, contentEncoding: 64, link: HREFLANG_CHECK_LIMITS.maxHeaderChars } as const;
+const HEADER_CHARS = { contentType: 256, link: HREFLANG_CHECK_LIMITS.maxHeaderChars } as const;
 
 /**
  * The fetcher's outcomes as the checks name them (`CHECK_FETCH_OUTCOMES`). The checks never ask for
@@ -96,7 +95,7 @@ export function createCheckFetch(fetcher: BoundedFetcher): CheckFetch {
       timeoutMs: options.timeoutMs,
       // A HEAD never has a body; a GET with no byte budget reads none.
       readBody: () => options.maxBytes > 0,
-      keepHeaders: ['content-type', 'content-encoding', 'link'],
+      keepHeaders: ['content-type', 'link'],
       maxHeaderChars: HEADER_CHARS.link,
       signal: options.signal,
     });
@@ -110,7 +109,6 @@ export function createCheckFetch(fetcher: BoundedFetcher): CheckFetch {
       truncated: fetched.truncated,
       headers: {
         contentType: header(fetched.headers, 'content-type', HEADER_CHARS.contentType),
-        contentEncoding: header(fetched.headers, 'content-encoding', HEADER_CHARS.contentEncoding),
         link: header(fetched.headers, 'link', HEADER_CHARS.link),
       },
     };

@@ -394,14 +394,13 @@ async function withoutDeviceLocalRows(source: SqlDriver, table: Table, rows: rea
   return rows.filter((row) => !local.has(String(row[to])));
 }
 
-async function pushPages(options: SyncPassOptions): Promise<{ report: SyncDirectionReport; lost: Map<SyncTableName, string[]> }> {
+async function pushPages(options: SyncPassOptions): Promise<SyncDirectionReport> {
   const { source, replica, deviceId } = options;
   const now = options.now ?? Date.now;
   const pageRows = options.pageRows ?? SYNC_PAGE_ROWS;
   const maxPages = options.maxPages ?? SYNC_MAX_PAGES_PER_PASS;
   const problems = await tableProblems(source, replica);
   const report = emptyReport('push', problems);
-  const lost = new Map<SyncTableName, string[]>();
   const usable = (name: SyncTableName) => problems.get(name) === null;
   // Where this pass has read each table up to: pages go on from here, apart from the stored mark,
   // which `now − settle` caps. More than a page of rows dated past that cap would otherwise hold the
@@ -460,15 +459,14 @@ async function pushPages(options: SyncPassOptions): Promise<{ report: SyncDirect
     if (batch.length > 0) await replica.batch(batch);
     report.pages += 1;
     tally(report, plan);
-    for (const [table, ids] of plan.lost) for (const id of ids) push(lost, table, id);
     if (!more) break;
   }
-  return { report, lost };
+  return report;
 }
 
 /** Copies the session database's new `SYNC_TABLES` rows into the replica (see the top of this file). */
 export async function pushPass(options: SyncPassOptions): Promise<SyncDirectionReport> {
-  return (await pushPages(options)).report;
+  return pushPages(options);
 }
 
 // ---- Pull ----------------------------------------------------------------------------------
@@ -551,7 +549,7 @@ export async function pullPass(options: SyncPassOptions): Promise<SyncDirectionR
  * version is fetched back by the pull, so this device ends with the winner.
  */
 export async function runSyncPass(options: SyncPassOptions & { readonly sync?: () => Promise<unknown> }): Promise<SyncPassReport> {
-  const { report: pushed } = await pushPages(options);
+  const pushed = await pushPages(options);
   let synced = false;
   let syncError: unknown;
   if (options.sync !== undefined) {

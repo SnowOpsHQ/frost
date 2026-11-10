@@ -43,7 +43,7 @@ export const AiCheckInputSchema = z.strictObject({
 export type AiCheckInput = z.infer<typeof AiCheckInputSchema>;
 
 /** A model's text field as shown: plain text, no control or bidi-control character, capped. */
-const shownText = (max: number) => z.string().max(max).refine((value) => !/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/.test(value), { message: 'control character' });
+const shownText = (max: number) => z.string().max(max).refine((value) => !/[\u0000-\u001f\u007f-\u009f\u061c‎‏‪-‮⁦-⁩]/.test(value), { message: 'control character' });
 
 /**
  * The model's answer (strict: any other key, or a value of another type, is `invalid-output`). Main

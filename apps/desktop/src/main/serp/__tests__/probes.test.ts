@@ -317,6 +317,23 @@ describe('visibility probes', () => {
     expect(h.probes.stop(2)).toBe(false);
   });
 
+  test('probes-stop-drops-a-pending-robots-file', async () => {
+    const h = harness();
+    let answer!: (file: RobotsFetch) => void;
+    h.robots.mockImplementationOnce(() => new Promise<RobotsFetch>((resolve) => (answer = resolve)));
+    h.probes.run(1);
+    await vi.waitFor(() => expect(h.calls).toHaveLength(2));
+    h.calls[0]!.answer();
+    await vi.waitFor(() => expect(h.probes.state(1).robotsTxt).toEqual([{ url: 'https://www.example.com/robots.txt', outcome: 'pending', readAt: null }]));
+    expect(h.probes.stop(1)).toBe(true);
+    // A stopped run lists no file as still being read, and the late answer changes nothing.
+    const stopped = valid(h.probes.state(1));
+    expect(stopped.robotsTxt).toEqual([]);
+    answer(ROBOTS);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(h.probes.state(1)).toEqual(stopped);
+  });
+
   test('probes-cancel-on-new-document', async () => {
     const cancels: [string, (h: ReturnType<typeof harness>) => void][] = [
       ['new document', (h) => h.probes.dropped(11)],
