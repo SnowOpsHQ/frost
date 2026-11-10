@@ -1347,3 +1347,22 @@ Where the build differs from the plan above, or settles what it left open. **Lea
 - Task 5: the plan's `CRAWL_RULE_IDS` list is kept exactly; the catalogue rules it leaves out
   (`title-too-wide`, `meta-description-too-wide`, the link, sitemap and hreflang check rules) are
   recorded with reasons in `CRAWL_EXCLUDED_RULES`.
+- Task 2: `0243` writes the provider list and the request cap as literal `CHECK` text (a test pins
+  them to `DATA_PROVIDERS`); `DATA_USAGE_LIMITS = { monthsKept: 12, maxRequests: 2^31-1 }`. The
+  client counts a request inside the `withKey` closure after every check, just before it is sent;
+  refused requests never count. Each provider view also carries `partial` (some but not all slots
+  set: DataForSEO only), so a half-saved login can be cleared. The SERP vendor choice is its own view
+  (`serpProvider` → `{ provider, choices }`); `resolveDataSerpProvider` answers the stored vendor
+  while offered, else the only one offered, else `null` (never written back). Renderer IPC calls
+  live in `settings-data-sources-actions.ts`; styles in `settings-data-sources.css` (tokens only).
+- Task 6a (security review): pacing is per **host name** (lowercased, trailing dot dropped), not
+  per origin — stricter than K-B1's "per origin"; a redirect to another host name ends the call
+  with the new outcome `redirected` (`redirectTarget`), which 6b queues at depth + 1 under that
+  host's pacing; same-host hops follow at once after the hook. Pacing state (last start, back-off,
+  `Retry-After`, Crawl-delay) lives per crawl fetcher, so it survives pause and resume; the map is
+  capped (`CRAWL_LIMITS.maxPacedHosts` 256) and a host past the cap is `deferred` (the run pauses).
+  The fetcher re-resolves a hop's name after the hook and caps the hook at
+  `FETCHER_LIMITS.maxRedirectHookMs` (8 000 ms). Public scopes allow either scheme but only the
+  start's port or 80/443. Several `Crawl-delay` values: the largest wins (Q13); a later robots
+  lookup without an answer keeps a learned delay. Robots parsing runs behind an injected
+  `parseRobots` (6b moves it into the crawl worker); robots lookups stay on the audit lane.
