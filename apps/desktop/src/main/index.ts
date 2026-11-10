@@ -1,3 +1,5 @@
+// Export Diagnostics (specs/diagnostics.feature.md): main's own warnings and errors, scrubbed into a bounded ring, from the first import on.
+import './diagnostics/install';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, ipcMain, net, safeStorage, session, shell, webContents, type WebContents } from 'electron';
@@ -64,6 +66,7 @@ import { lateSearchParams } from './changes/serp-params';
 import { createMainInspector } from './inspector/service';
 import { createAiChecksMain } from './ai-checks/main';
 import { createHelpMain } from './help/main';
+import { createDiagnosticsMain } from './diagnostics/main';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -456,7 +459,7 @@ function start(): void {
     // entitlements port is passed (it must not be wired to the account; specs/entitlements-client.feature.md).
     const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, consumeGesture: (windowId) => account.gestures.consume(windowId), ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) } });
     // Help, keyboard shortcuts and What's New (specs/help.feature.md): bundled notes, fixed pages opened on a gesture only.
-    const help = createHelpMain({ app, settings: sessionStore.settings, consumeGesture: (windowId) => account.gestures.consume(windowId), log: logSession });
+    const help = createHelpMain({ app, settings: sessionStore.settings, consumeGesture: (windowId) => account.gestures.consume(windowId), log: logSession, diagnostics: createDiagnosticsMain({ app, sessionStore, telemetry: telemetryMain.service, agent, gsc: gsc.service, sync, log: logSession }) });
     // AI checks (specs/ai-checks.feature.md): off by default; only the audit's cookieless served HTML (peeked), on the agent's own route and model.
     const aiChecks = createAiChecksMain({ browser, isBrowseContents, served: () => served, tabUserAgent, tabScripting, agent: agent.checks, sessionStore, log: logSession });
     attachIpcHandler({

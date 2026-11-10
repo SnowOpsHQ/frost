@@ -1,9 +1,11 @@
 // Spec: specs/whats-new.schema.ts (HelpWatchInputSchema, HelpViewStateSchema, WhatsNewAnswerSchema, HelpOpenLinkInputSchema,
-// HelpOpenResultSchema), specs/help.spec.ts (HELP_OPEN_RESULTS, HELP_SHEETS), specs/ipc-sender.spec.ts
-// Acceptance: specs/help.feature.md (Router: help-router-enforces-sender, help-router-validates)
+// HelpOpenResultSchema, DiagnosticsReportSchema, SaveDiagnosticsInputSchema, DiagnosticsResultSchema), specs/help.spec.ts
+// (HELP_OPEN_RESULTS, HELP_SHEETS), specs/diagnostics.spec.ts (DIAGNOSTICS_RESULTS, DIAGNOSTICS_LIMITS), specs/ipc-sender.spec.ts
+// Acceptance: specs/help.feature.md (Router: help-router-enforces-sender, help-router-validates), specs/diagnostics.feature.md (Router)
 import { TRPCError } from '@trpc/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
+import { DIAGNOSTICS_LIMITS, type DiagnosticsResult } from '@app/specs/diagnostics.spec';
 import { HELP_URLS } from '@app/specs/help.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
@@ -12,6 +14,8 @@ import type { HelpViewState, WhatsNewAnswer } from '@app/specs/whats-new.schema'
 import { appRouter, createSenderPolicy, type HelpService, type IpcContext } from '../index';
 
 const WINDOW_ID = 7;
+const REPORT_ID = '0b5e1f7a-1b2c-4d3e-8f90-123456789abc';
+const REPORT = { reportId: REPORT_ID, text: 'frost diagnostics report\nfrost: 1.2.0\n' };
 const ANSWER: WhatsNewAnswer = { currentVersion: '1.2.0', releases: [{ version: '1.2.0', date: '2026-11-01', title: 'New', items: ['A thing'] }] };
 
 function fakeHelp() {
@@ -21,6 +25,8 @@ function fakeHelp() {
     whatsNew: vi.fn(() => ANSWER),
     takeWhatsNew: vi.fn(async () => true),
     openLink: vi.fn(() => 'opened' as const),
+    diagnostics: vi.fn(async () => REPORT),
+    saveDiagnostics: vi.fn(async (_windowId: number, _input: { reportId: string }): Promise<DiagnosticsResult> => 'saved'),
   } satisfies HelpService;
 }
 
@@ -51,6 +57,8 @@ const VALID: Record<string, unknown> = {
   whatsNew: undefined,
   takeWhatsNew: undefined,
   openLink: { link: 'help' },
+  diagnostics: undefined,
+  saveDiagnostics: { reportId: REPORT_ID },
 };
 
 afterEach(() => vi.useRealTimers());
@@ -118,6 +126,54 @@ describe('help router', () => {
     odd.whatsNew.mockReturnValue({ currentVersion: '1.2.0', releases: [{ ...ANSWER.releases[0]!, url: 'https://evil.example/x' }] });
     odd.takeWhatsNew.mockResolvedValue('yes' as never);
     odd.watch.mockResolvedValue({ seq: 1, sheet: 'settings' } as never);
+    odd.diagnostics.mockResolvedValue({ reportId: REPORT_ID, text: 'fetch https://example.com/x failed' });
+    odd.saveDiagnostics.mockResolvedValue('written' as never);
     for (const [name, input] of Object.entries(VALID)) expect((await errorOf(call(ctxFor(odd), name, input))).code, name).toBe(IPC_INTERNAL_ERROR_CODE);
+  });
+
+  // Phase 11 Task 12 (specs/diagnostics.feature.md, Router).
+  test('help-router-diagnostics', async () => {
+    const help = fakeHelp();
+    const ctx = ctxFor(help);
+    // diagnostics: no input; the report main built passes through.
+    await expect(call(ctx, 'diagnostics')).resolves.toEqual(REPORT);
+    expect(help.diagnostics).toHaveBeenCalledExactlyOnceWith();
+    // saveDiagnostics: the id only, with the sender's window; main's answer passes through.
+    await expect(call(ctx, 'saveDiagnostics', { reportId: REPORT_ID })).resolves.toBe('saved');
+    expect(help.saveDiagnostics).toHaveBeenCalledExactlyOnceWith(WINDOW_ID, { reportId: REPORT_ID });
+    for (const result of ['cancelled', 'stale', 'busy', 'failed'] as const) {
+      help.saveDiagnostics.mockResolvedValueOnce(result);
+      await expect(call(ctx, 'saveDiagnostics', { reportId: REPORT_ID })).resolves.toBe(result);
+    }
+    help.diagnostics.mockClear();
+    help.saveDiagnostics.mockClear();
+    // Never text, a path or anything else from the chrome.
+    const bad: [string, unknown][] = [
+      ['diagnostics', { reportId: REPORT_ID }],
+      ['diagnostics', 'text'],
+      ['saveDiagnostics', undefined],
+      ['saveDiagnostics', {}],
+      ['saveDiagnostics', { reportId: 'not-a-uuid' }],
+      ['saveDiagnostics', { reportId: REPORT_ID, text: 'frost diagnostics report' }],
+      ['saveDiagnostics', { reportId: REPORT_ID, path: '/tmp/x.txt' }],
+      ['saveDiagnostics', { text: 'frost diagnostics report' }],
+    ];
+    for (const [name, input] of bad) expect((await errorOf(call(ctx, name, input))).code, `${name} ${JSON.stringify(input)}`).toBe('BAD_REQUEST');
+    expect(help.diagnostics).not.toHaveBeenCalled();
+    expect(help.saveDiagnostics).not.toHaveBeenCalled();
+    // The answer is checked again: bounded, a UUID, no slash, backslash or at sign.
+    const odd = (report: unknown) => {
+      const service = fakeHelp();
+      service.diagnostics.mockResolvedValue(report as never);
+      return call(ctxFor(service), 'diagnostics');
+    };
+    for (const report of [
+      { reportId: REPORT_ID, text: 'C:\\Users\\bob' },
+      { reportId: REPORT_ID, text: 'from bob@example.com' },
+      { reportId: REPORT_ID, text: '' },
+      { reportId: REPORT_ID, text: 'x'.repeat(DIAGNOSTICS_LIMITS.maxReportChars + 1) },
+      { reportId: 'r1', text: 'ok' },
+      { ...REPORT, extra: true },
+    ]) expect((await errorOf(odd(report))).code, JSON.stringify(report).slice(0, 80)).toBe(IPC_INTERNAL_ERROR_CODE);
   });
 });

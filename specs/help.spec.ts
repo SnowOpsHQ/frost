@@ -216,8 +216,8 @@ export type HelpLink = keyof typeof HELP_URLS;
 /** frost's repository: a release note's link must be a page under it (`whats-new.schema.ts`). */
 export const FROST_REPOSITORY_URL = 'https://github.com/SnowOpsHQ/frost' as const;
 
-/** What a Help menu item does (Task 12 adds `diagnostics`). */
-export type HelpMenuAction = 'shortcuts' | 'whats-new' | 'link';
+/** What a Help menu item does (`diagnostics`: Task 12's Export Diagnostics… sheet). */
+export type HelpMenuAction = 'shortcuts' | 'whats-new' | 'link' | 'diagnostics';
 
 export interface HelpMenuItem {
   readonly id: string;
@@ -243,11 +243,13 @@ export const HELP_MENU = {
     { id: 'help-whats-new', label: 'What’s New', action: 'whats-new', group: 0 },
     { id: 'help-frost', label: 'frost Help', action: 'link', link: 'help', group: 1 },
     { id: 'help-report-issue', label: 'Report an Issue', action: 'link', link: 'issue', group: 1 },
+    // Phase 11 Task 12 (`diagnostics.spec.ts`): the report for review, then main's own save dialog.
+    { id: 'help-diagnostics', label: 'Export Diagnostics…', action: 'diagnostics', group: 2 },
   ] as readonly HelpMenuItem[],
 } as const;
 
-/** The two sheets Help opens in the chrome. */
-export const HELP_SHEETS = ['shortcuts', 'whats-new'] as const;
+/** The sheets Help opens in the chrome (`diagnostics`: Task 12's Export Diagnostics…). */
+export const HELP_SHEETS = ['shortcuts', 'whats-new', 'diagnostics'] as const;
 export type HelpSheet = (typeof HELP_SHEETS)[number];
 
 /**
@@ -267,6 +269,7 @@ export const HELP_PALETTE_ACTIONS = [
   { id: 'help.whats-new', label: 'What’s new in frost', keywords: ['release notes', 'changes', 'version', 'help'] },
   { id: 'help.open-help', label: 'frost Help', keywords: ['docs', 'documentation', 'readme', 'support'] },
   { id: 'help.report-issue', label: 'Report an issue', keywords: ['bug', 'feedback', 'support', 'github'] },
+  { id: 'help.diagnostics', label: 'Export diagnostics…', keywords: ['bug report', 'logs', 'support', 'debug', 'report'] },
 ] as const;
 
 /** Status lines a palette Help link answers (`HelpOpenResult` other than `opened`). */

@@ -7,6 +7,7 @@
  * file is read at runtime) and checked with `ReleaseNotesSchema` when main starts and in a test.
  */
 import { z } from 'zod';
+import { DIAGNOSTICS_FORBIDDEN_CHARS, DIAGNOSTICS_LIMITS, DIAGNOSTICS_RESULTS } from './diagnostics.spec';
 import { APP_VERSION_MAX_CHARS, FROST_REPOSITORY_URL, HELP_OPEN_RESULTS, HELP_SHEETS, isAppVersion } from './help.spec';
 
 export const RELEASE_NOTES_LIMITS = {
@@ -89,3 +90,29 @@ export const HelpOpenLinkInputSchema = z.discriminatedUnion('link', [
 export type HelpOpenLinkInput = z.infer<typeof HelpOpenLinkInputSchema>;
 
 export const HelpOpenResultSchema = z.enum(HELP_OPEN_RESULTS);
+
+// ---- Export Diagnostics (Phase 11 Task 12; `diagnostics.spec.ts`, `diagnostics.feature.md`) --------
+
+/** `help.diagnostics` takes nothing: main builds the report from what it holds. */
+export const DiagnosticsInputSchema = z.undefined();
+
+/**
+ * `help.diagnostics`'s answer: the id main keeps the report under and its text, for review. The text
+ * is checked once more on the way out: bounded, and no `/`, `\` or `@` at all (every path, address
+ * and URL went with its token).
+ */
+export const DiagnosticsReportSchema = z.strictObject({
+  reportId: z.uuid(),
+  text: z
+    .string()
+    .min(1)
+    .max(DIAGNOSTICS_LIMITS.maxReportChars)
+    .refine((text) => !DIAGNOSTICS_FORBIDDEN_CHARS.test(text), { message: 'a report holds no slash, backslash or at sign' }),
+});
+export type DiagnosticsReport = z.infer<typeof DiagnosticsReportSchema>;
+
+/** `help.saveDiagnostics`: which kept report to save. Never its text: main writes its own copy. */
+export const SaveDiagnosticsInputSchema = z.strictObject({ reportId: z.uuid() });
+export type SaveDiagnosticsInput = z.infer<typeof SaveDiagnosticsInputSchema>;
+
+export const DiagnosticsResultSchema = z.enum(DIAGNOSTICS_RESULTS);

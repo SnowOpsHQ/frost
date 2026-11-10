@@ -1131,3 +1131,18 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   invalid running version turns it off. Help sheets, Settings, Projects and History show one at a
   time and close on a page change. The release-notes entry covers Phases 8, 9 and 11; **the Phase 10
   line is for the lead who merges Phase 10 to add**.
+- **Task 12:** the ring is installed by a side-effect import on the first line of `main/index.ts`
+  and wraps only main's `console.warn`/`console.error` (500 lines × 500 chars; each call cut to
+  4,000 chars at a separator; objects via a capped `util.inspect`, dropping any token a cut went
+  through; an Error argument is written as `name: message`, stack frames and an Error cause, never
+  its own properties). The agent utility process and SEO workers write to their own streams; Node
+  process warnings (including telemetry's re-emitted unhandled rejections) do reach the ring.
+  Scrubbing per line, on entry and again at build: NFKC, a side decode of percent-escaped tokens,
+  telemetry's `createScrubber` with `machineLiterals` plus the home, temp and app folders, then
+  `DIAGNOSTICS_SCRUB_RULES` (security-review additions: whole-line `authorization`/`cookie`/
+  `set-cookie` values, flag-style secrets, percent-encoded paths and addresses). A report holds no
+  `/`, `\` or `@` (`DiagnosticsReportSchema` refuses one that does); shapeless free text is the
+  known limit, and the review sheet is the safeguard. `help.diagnostics` answers `{ reportId, text }`
+  (≤ 4 kept); `help.saveDiagnostics({ reportId })` writes main's copy (mode 0600), one dialog at a
+  time, no gesture required (as the network export). `@app/telemetry` exports `machineLiterals`;
+  `SessionStore.migrationIds()` is new.

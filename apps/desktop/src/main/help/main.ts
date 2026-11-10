@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron';
 import type { HelpService } from '@app/ipc-contract';
+import type { Diagnostics } from '../diagnostics/report';
 import { isAppVersion } from '@app/specs/help.spec';
 import { openExternalIfAllowed } from '../security/gesture';
 import { openHelpLink } from './links';
@@ -21,6 +22,8 @@ export interface HelpMainDeps {
   /** Whether app window `windowId` has a live, unspent activation (the account's `gestures.consume`). */
   readonly consumeGesture: (windowId: number) => boolean;
   readonly log: (message: string) => void;
+  /** Export Diagnostics (Phase 11 Task 12, `diagnostics/main.ts`): the report and its save. */
+  readonly diagnostics: Diagnostics;
 }
 
 export interface HelpMain {
@@ -50,12 +53,15 @@ export function createHelpMain(deps: HelpMainDeps): HelpMain {
       takeWhatsNew: whatsNew.take,
       // The gesture is spent only once the request names something to open.
       openLink: (windowId, link) => openHelpLink(link, () => deps.consumeGesture(windowId), links),
+      diagnostics: () => deps.diagnostics.report(),
+      saveDiagnostics: (windowId, input) => deps.diagnostics.save(windowId, input),
     },
     menu: {
       showShortcuts: (windowId) => requests.show('shortcuts', windowId),
       showWhatsNew: (windowId) => requests.show('whats-new', windowId),
       // A menu click is a user gesture.
       openHelpLink: (link) => void openHelpLink({ link }, true, links),
+      showDiagnostics: (windowId) => requests.show('diagnostics', windowId),
     },
   };
 }

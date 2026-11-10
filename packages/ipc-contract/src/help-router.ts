@@ -2,10 +2,14 @@ import { TRPCError } from '@trpc/server';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import {
+  DiagnosticsInputSchema,
+  DiagnosticsReportSchema,
+  DiagnosticsResultSchema,
   HelpOpenLinkInputSchema,
   HelpOpenResultSchema,
   HelpViewStateSchema,
   HelpWatchInputSchema,
+  SaveDiagnosticsInputSchema,
   WhatsNewAnswerSchema,
   WhatsNewTakeAnswerSchema,
   type HelpViewState,
@@ -52,6 +56,10 @@ async function watchHelp(help: HelpService, windowId: number, sinceSeq: number):
  * - `watch`: the sender window's Help menu requests (`HelpViewStateSchema`, long-polled on `sinceSeq`).
  * - `whatsNew`: the running version and the bundled notes; `takeWhatsNew`: whether to show them now.
  * - `openLink`: `help`, `issue` or a release's page by version (`HelpOpenResultSchema`).
+ * - `diagnostics` (Task 12): a fresh scrubbed report and the id main keeps it under, for review
+ *   (`DiagnosticsReportSchema`: bounded, no slash, backslash or at sign).
+ * - `saveDiagnostics` (Task 12): the kept report by id (never text) through main's save dialog in the
+ *   sender's window (`DiagnosticsResultSchema`).
  */
 export const helpRouter = router({
   watch: publicProcedure
@@ -76,4 +84,16 @@ export const helpRouter = router({
     .input(HelpOpenLinkInputSchema)
     .output(HelpOpenResultSchema)
     .mutation(({ ctx, input }) => ctx.help.openLink(senderWindow(ctx.sender?.windowId), input)),
+  diagnostics: publicProcedure
+    .use(enforceSender)
+    .use(requireHelp)
+    .input(DiagnosticsInputSchema)
+    .output(DiagnosticsReportSchema)
+    .mutation(({ ctx }) => ctx.help.diagnostics()),
+  saveDiagnostics: publicProcedure
+    .use(enforceSender)
+    .use(requireHelp)
+    .input(SaveDiagnosticsInputSchema)
+    .output(DiagnosticsResultSchema)
+    .mutation(({ ctx, input }) => ctx.help.saveDiagnostics(senderWindow(ctx.sender?.windowId), input)),
 });

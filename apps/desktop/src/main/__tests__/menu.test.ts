@@ -33,6 +33,7 @@ function fakeCommands() {
     showShortcuts: vi.fn(),
     showWhatsNew: vi.fn(),
     openHelpLink: vi.fn(),
+    showDiagnostics: vi.fn(),
   } satisfies AppMenuCommands;
 }
 
@@ -288,7 +289,13 @@ describe('application menu', () => {
     clickIn('help-report-issue');
     expect(commands.openHelpLink).toHaveBeenLastCalledWith('issue');
     expect(commands.openHelpLink).toHaveBeenCalledTimes(2);
-    for (const [name, fn] of Object.entries(commands)) if (!['showShortcuts', 'showWhatsNew', 'openHelpLink'].includes(name)) expect(fn, name).not.toHaveBeenCalled();
+    // Export Diagnostics… (Phase 11 Task 12, specs/diagnostics.feature.md): last, in its own group, opens its sheet there.
+    expect(submenu.at(-1)!.id).toBe('help-diagnostics');
+    expect(submenu.at(-2)!.type).toBe('separator');
+    expect(itemById(template, 'help-diagnostics').label).toBe('Export Diagnostics…');
+    clickIn('help-diagnostics');
+    expect(commands.showDiagnostics).toHaveBeenCalledExactlyOnceWith(41);
+    for (const [name, fn] of Object.entries(commands)) if (!['showShortcuts', 'showWhatsNew', 'openHelpLink', 'showDiagnostics'].includes(name)) expect(fn, name).not.toHaveBeenCalled();
     // No other item takes Mod+/ (nor any key the shortcuts screen lists twice: see every-listed-shortcut-exists).
     expect(allItems(template).filter((item) => item.accelerator === 'CmdOrCtrl+/')).toHaveLength(1);
   });

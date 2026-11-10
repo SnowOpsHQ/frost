@@ -2,6 +2,9 @@
 // specs/seo-content.spec.ts (CONTENT_TABLES), specs/ai-checks.spec.ts (AI_CHECKS_TABLES),
 // specs/capture-db.spec.ts (SCREENSHOT_EDIT_TABLES; Phase 11 Decision 18: PHASE11_MIGRATIONS spread last, 0230 then 0231)
 // Acceptance: specs/browser-session-db.feature.md (Migrations)
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, test } from 'vitest';
@@ -17,6 +20,7 @@ import { MIGRATIONS, runMigrations, type Migration } from '../migrations';
 import { PHASE11_MIGRATIONS } from '../phase11-migrations';
 import { AGENT_TABLES } from '../agent-tables';
 import { browserTabs, recentVisits, renderProfilePins, schemaMigrations, sitePermissions } from '../schema';
+import { openSessionStore } from '../store';
 
 const memory = () => new DatabaseSync(':memory:');
 
@@ -150,5 +154,19 @@ describe('migrations', () => {
     expect(recordedIds(db)).toEqual(MIGRATIONS.map((m) => m.id));
     // The database is still usable and the migration can be retried once fixed.
     expect(runMigrations(db, [...MIGRATIONS, { id: '9000_broken', sql: 'CREATE TABLE half (x INTEGER)' }])).toEqual(['9000_broken']);
+  });
+
+  // Phase 11 Task 12 (specs/diagnostics.spec.ts, DIAGNOSTICS_FIELDS `migrations`): the store lists the applied ids.
+  test('store-lists-applied-migration-ids', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'frost-db-ids-'));
+    try {
+      const store = openSessionStore({ dir });
+      expect(store.migrationIds()).toEqual(MIGRATIONS.map((m) => m.id).sort());
+      await store.close();
+      // Closed: nothing to read, and no throw.
+      expect(store.migrationIds()).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    }
   });
 });

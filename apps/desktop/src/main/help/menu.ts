@@ -4,8 +4,8 @@ import { HELP_MENU, shortcutToAccelerator, type HelpLink, type HelpMenuItem } fr
 // The Help menu (Phase 11 Task 11, Decision 14; acceptance `help.feature.md`, Menu): `HELP_MENU`'s
 // items in order, a separator between groups, last in the menu bar with the `help` role. Each item
 // only calls a command; main's commands (`help/main.ts`) open the sheets in the window the menu acted
-// on and the fixed pages in the system browser (a menu click is a user gesture). Task 12 adds its
-// action here, beside the others.
+// on and the fixed pages in the system browser (a menu click is a user gesture). Task 12's Export
+// Diagnostics… opens its sheet the same way (`diagnostics.feature.md`).
 
 /** What the Help menu runs; optional so other fakes need not grow. */
 export interface HelpMenuCommands {
@@ -15,6 +15,8 @@ export interface HelpMenuCommands {
   showWhatsNew?(windowId?: number): void;
   /** A `HELP_URLS` page in the system browser. */
   openHelpLink?(link: HelpLink): void;
+  /** The Export Diagnostics sheet, in window `windowId` (Phase 11 Task 12). */
+  showDiagnostics?(windowId?: number): void;
 }
 
 function itemFor(item: HelpMenuItem, commands: HelpMenuCommands): MenuItemConstructorOptions {
@@ -24,6 +26,8 @@ function itemFor(item: HelpMenuItem, commands: HelpMenuCommands): MenuItemConstr
       return { ...base, click: (_item, win) => commands.showShortcuts?.(win?.id) };
     case 'whats-new':
       return { ...base, click: (_item, win) => commands.showWhatsNew?.(win?.id) };
+    case 'diagnostics':
+      return { ...base, click: (_item, win) => commands.showDiagnostics?.(win?.id) };
     case 'link': {
       const link = item.link;
       return { ...base, click: () => (link === undefined ? undefined : commands.openHelpLink?.(link)) };

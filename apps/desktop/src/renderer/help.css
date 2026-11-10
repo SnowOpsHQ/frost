@@ -308,3 +308,47 @@
 .setup-action:hover {
   border-color: var(--accent);
 }
+
+/* ---- Export Diagnostics (Phase 11 Task 12, specs/diagnostics.feature.md) ---- */
+
+.diagnostics-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+
+.diagnostics-actions .help-note {
+  margin: 0;
+}
+
+.diagnostics-save {
+  padding: 4px 12px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: var(--bg-field);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.diagnostics-save:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.diagnostics-save:disabled {
+  opacity: 0.6;
+}
+
+.diagnostics-text {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--bg-active);
+  border-radius: var(--radius-control);
+  background: var(--bg-field);
+  color: var(--text);
+  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
