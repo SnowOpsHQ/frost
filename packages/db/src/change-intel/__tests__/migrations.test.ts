@@ -1,20 +1,23 @@
 // Spec: specs/capture-db.spec.ts (CHANGE_INTEL_TABLES, CAPTURED_TABLES, AUDIT_TABLES, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME),
 // specs/workspace-db.spec.ts (WORKSPACE_TABLES: Phase 10's tables and `ci_projects` columns)
-// Acceptance: specs/capture-db.feature.md (Schema), specs/workspace-db.feature.md (Tables, Triggers)
+// Acceptance: specs/capture-db.feature.md (Schema), specs/workspace-db.feature.md (Tables, Triggers; API readings (Phase 12))
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, test } from 'vitest';
 import { AUDIT_TABLES, CAPTURED_TABLES, CHANGE_INTEL_TABLES, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME } from '@app/specs/capture-db.spec';
-import { WORKSPACE_TABLES } from '@app/specs/workspace-db.spec';
+import { SERP_API_READINGS_TABLES, WORKSPACE_TABLES } from '@app/specs/workspace-db.spec';
 import { AGENT_SKILL_PREFS_MIGRATIONS } from '../../agent-skill-prefs-migrations';
 import { MIGRATIONS, runMigrations } from '../../migrations';
 import { CHANGE_INTEL_MIGRATIONS } from '../migrations';
 import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions } from '../schema';
+import { ciSerpApiPurges } from '../serp-api-schema';
 import { ciEntryTags, ciProjectCompetitors, ciSerpReadings } from '../workspace-schema';
 
 const DRIZZLE_TABLES: readonly SQLiteTable[] = [ciProjects, ciProjectPages, ciProjectQueries, ciVersions, ciCaptures, ciDiffs, ciScreenshots, ciPurges, ciTombstones];
 /** Phase 10's tables (`workspace-schema.ts`), created after Phase 6's. */
 const WORKSPACE_DRIZZLE_TABLES: readonly SQLiteTable[] = [ciProjectCompetitors, ciEntryTags, ciSerpReadings];
+/** Phase 12's API readings purge record (`serp-api-schema.ts`, `0245`). */
+const SERP_API_DRIZZLE_TABLES: readonly SQLiteTable[] = [ciSerpApiPurges];
 
 interface Column {
   name: string;
@@ -63,19 +66,20 @@ describe('change-intelligence migrations', () => {
     expect(start + CHANGE_INTEL_MIGRATIONS.length).toBeLessThanOrEqual(MIGRATIONS.indexOf(AGENT_SKILL_PREFS_MIGRATIONS[0]!));
 
     // Tables, in creation order, column for column with the Drizzle schema (`ci_projects` with Phase 10's columns).
-    expect(named(db, 'table')).toEqual([...CHANGE_INTEL_TABLES, ...WORKSPACE_TABLES]);
+    expect(named(db, 'table')).toEqual([...CHANGE_INTEL_TABLES, ...WORKSPACE_TABLES, ...SERP_API_READINGS_TABLES]);
+    expect(SERP_API_DRIZZLE_TABLES.map((table) => getTableConfig(table).name)).toEqual([...SERP_API_READINGS_TABLES]);
     expect(DRIZZLE_TABLES.map((table) => getTableConfig(table).name)).toEqual([...CHANGE_INTEL_TABLES]);
     expect(WORKSPACE_DRIZZLE_TABLES.map((table) => getTableConfig(table).name)).toEqual([...WORKSPACE_TABLES]);
     expect(sqliteColumns(db, 'ci_projects').map((column) => column.name)).toEqual(
       expect.arrayContaining(['favorite', 'site_domain', 'site_subdomains', 'capture_cadence', 'auto_capture']),
     );
-    for (const table of [...DRIZZLE_TABLES, ...WORKSPACE_DRIZZLE_TABLES]) {
+    for (const table of [...DRIZZLE_TABLES, ...WORKSPACE_DRIZZLE_TABLES, ...SERP_API_DRIZZLE_TABLES]) {
       const name = getTableConfig(table).name;
       expect(sqliteColumns(db, name), name).toEqual(drizzleColumns(table));
     }
 
     // Indexes: exactly the Drizzle schema's.
-    const declared = [...DRIZZLE_TABLES, ...WORKSPACE_DRIZZLE_TABLES].flatMap((table) => getTableConfig(table).indexes.map((index) => index.config.name)).sort();
+    const declared = [...DRIZZLE_TABLES, ...WORKSPACE_DRIZZLE_TABLES, ...SERP_API_DRIZZLE_TABLES].flatMap((table) => getTableConfig(table).indexes.map((index) => index.config.name)).sort();
     expect(named(db, 'index').sort()).toEqual(declared);
     expect(declared).toEqual(
       expect.arrayContaining([
@@ -116,7 +120,11 @@ describe('change-intelligence migrations', () => {
       ...['ci_project_competitors', 'ci_entry_tags'].flatMap((t) => [`${t}_no_delete`, `${t}_id_stays`, `${t}_no_replace`, `${t}_live_key_unique`]),
       'ci_serp_readings_no_update',
       'ci_serp_readings_no_replace',
-      'ci_serp_readings_capture_gone_only',
+      // Phase 12's `0245` (`workspace-db.feature.md`, API readings): Phase 10's `_capture_gone_only` replaced.
+      'ci_serp_readings_delete_guard',
+      'ci_serp_readings_no_resurrect',
+      'ci_serp_api_purges_no_update',
+      'ci_serp_api_purges_no_delete',
     ];
     expect(named(db, 'trigger').sort()).toEqual(triggers.sort());
 

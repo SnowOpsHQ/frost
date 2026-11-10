@@ -22,7 +22,9 @@ describe('data keys never leave main', () => {
     let stored: 'serpapi' | 'dataforseo' | 'serper' | null = null;
     const settings = { dataSerpProvider: async () => stored, setDataSerpProvider: async (provider: 'serpapi' | 'dataforseo' | 'serper') => ((stored = provider), true) };
     const counts = async (months: readonly string[]) => Object.fromEntries(DATA_PROVIDERS.map((p) => [p, months.map(() => 1)])) as Record<(typeof DATA_PROVIDERS)[number], number[]>;
-    const service = { ...keys, ...createDataUsageService({ usage: { counts }, settings, status: () => keys.status(), isOpen: allOpen }) };
+    const usage = createDataUsageService({ usage: { counts }, settings, status: () => keys.status(), isOpen: allOpen });
+    // Task 4's procedures answer views only (no key reaches them): not wired here.
+    const service = { ...keys, ...usage, checkPlan: async () => ({ status: 'refused', reason: 'unavailable' }) as const, checkProjectSearches: async () => ({ status: 'refused', reason: 'unavailable' }) as const };
     const ctx: IpcContext = {
       sender: { origin: APP_ORIGIN, live: true, windowId: WINDOW_ID, isWindowContents: true, isMainFrame: true },
       policy: createSenderPolicy({ knownWindowIds: new Set([WINDOW_ID]) }),

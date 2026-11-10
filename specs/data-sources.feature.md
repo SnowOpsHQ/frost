@@ -157,3 +157,78 @@ Scenario: settings-data-sources-serp-choice
   When the user picks one
   Then main stores it (`DATA_SERP_PROVIDER_KEY`), refusing a vendor whose gate is closed
   (`unavailable`) or that has no key (`no-key`)
+
+## Check via API (Task 4)
+
+Plan: Task 4, Decision 7 (API results become ordinary readings in Phase 10's store), Decision 4
+(nothing spends in the background). Values: `data-sources.spec.ts` (`DATA_CHECK_REFUSALS`,
+`DATA_CHECK_SEARCH_RESULTS`, `DATA_CHECK_STOP_REFUSALS`, `DATA_CHECK_TEXT`), shapes:
+`data-sources.schema.ts` (`DataCheckPlanInputSchema`, `DataCheckPlanSchema`,
+`DataCheckProjectInputSchema`, `DataCheckProjectAnswerSchema`). Main:
+`apps/desktop/src/main/data-sources/project-check.ts`; tests:
+`apps/desktop/src/main/data-sources/__tests__/project-check.test.ts`,
+`packages/ipc-contract/src/__tests__/data-sources-router.test.ts`, the renderer's
+`apps/desktop/src/renderer/__tests__/rankings-components.test.ts` and
+`apps/desktop/src/renderer/__tests__/data-sources-palette.test.ts`.
+
+- **The vendor** is main's, re-read at every call: `resolveDataSerpProvider(stored, choices)` over
+  the vendors offered (legal gate open and every slot set). No SERP vendor gate open is `unavailable`
+  (`LEGAL_GATE_NOTE`); gates open but no vendor with a key is `no-key` ("Add a key in Settings › Data
+  sources."); vendors offered but none chosen is `no-provider` ("Choose a provider in Settings › Data
+  sources."). The renderer never decides: it reads `dataSources.checkPlan`.
+- **Confirm first.** `dataSources.checkPlan({ projectId, searchIds? })` answers the vendor and the
+  number of requests a check would send (one per saved search of the live project, or of the listed
+  ones), or why none would. The renderer shows "This sends N requests to <provider>." and
+  `DATA_SPEND_NOTE` and calls `dataSources.checkProjectSearches({ projectId, searchIds?, provider,
+  requests })` only on the user's Send. Main plans again and refuses `changed` when the vendor or the
+  count is not what the user confirmed (what was shown is what runs).
+- **Running.** One check at a time (`busy`). The searches go one after another through Task 3's
+  `checkSearchViaApi` (the client spaces them, `minIntervalMs`). Each answered snapshot is written with
+  `appendApiReading`: `source = 'serp-api'`, `capture_id` `NULL`, `page_url` the vendor's canonical SERP
+  request URL (`serpApiReadingPageUrl`: how the rank table names the vendor), `filters` `{}`, the search
+  key `searchKeyOf(params, {})` (the saved search's own key, so the tab captures' series), the
+  snapshot's status and pack version, `observed_at` the time it was stored. No location in this task:
+  the readings' `SearchParams` never carry `location`.
+- **Failures.** A search whose check fails (`SERP_API_OUTCOMES`) or whose write is refused is
+  reported for that search; the readings already written stay, and the next search is still sent.
+  After a client refusal that would refuse every request alike (`DATA_CHECK_STOP_REFUSALS`:
+  `unavailable`, `no-key`, `no-keychain`, `key-failed`) the rest are `skipped`, never sent.
+- **Afterwards** the project's retention policy is enforced (as after a capture run's end), when
+  at least one reading was written.
+- **Nothing on a timer.** Only the procedure starts a check: no timer, no schedule, no startup work.
+
+Scenario: api-check-gated-off-refuses
+  Given the shipped `SERP_API_VENDOR_AVAILABLE` (all `false`) and a stored SerpApi key
+  When the renderer asks `checkPlan` and `checkProjectSearches` for a project with saved searches
+  Then both answer `unavailable` with `LEGAL_GATE_NOTE`, and no request is sent and no reading written
+
+Scenario: api-check-is-user-initiated
+  Given the check service is set up with an open gate and a key
+  When time passes (fake timers) and nothing calls the procedure
+  Then no request is sent; only `checkProjectSearches` sends one
+
+Scenario: api-check-says-the-count-first
+  Given a project with three saved searches and SerpApi chosen
+  Then `checkPlan` answers SerpApi and 3 requests, sending nothing
+  And the Rankings view shows "This sends 3 requests to SerpApi." with `DATA_SPEND_NOTE` before
+  anything is sent, and Cancel sends nothing
+  When the confirmed vendor or count is not main's any more
+  Then main answers `changed` and sends nothing
+
+Scenario: api-check-joins-the-tab-series
+  Given a project with three saved searches, one of them also captured in a tab
+  When the user checks them via SerpApi
+  Then three readings are stored, one per search, each with `source = 'serp-api'`, no capture,
+  the saved search's key (the same key as the tab capture's reading), and no `location`
+  And the rank table shows the API point in the same row as the tab capture's
+
+Scenario: api-check-partial-failure
+  Given three saved searches and a vendor that answers an error for the second
+  When the user checks them
+  Then the first and third readings are stored, the second is reported `failed` with its outcome
+  And a client refusal for every request (`no-key`) stops the rest (`skipped`)
+
+Scenario: api-check-palette-command
+  Given main's view says a vendor is available with a key (`dataSources.serpProvider`)
+  Then the palette offers "Check searches via <provider>" (the project last opened), and it opens that
+  project's Rankings view on the same confirm; otherwise it is not offered

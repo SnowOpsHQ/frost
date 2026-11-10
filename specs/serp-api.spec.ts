@@ -77,7 +77,7 @@
  *   `hl`, `location`) is the plan's; no device field is documented, so Serper takes desktop only.
  */
 import type { DataSerpProvider } from './data-sources.spec';
-import { DATA_API_LIMITS, DATA_SERP_PROVIDERS, LEGAL_GATE_NOTE } from './data-sources.spec';
+import { DATA_API_LIMITS, DATA_API_REQUESTS, DATA_SERP_PROVIDERS, LEGAL_GATE_NOTE } from './data-sources.spec';
 import type { SearchEngineId } from './browser-polish.spec';
 import { SEARCH_LOCATION_MAX_CHARS } from './serp-search-params.schema';
 import type { SerpResultType } from './serp-selector-pack.spec';
@@ -295,4 +295,19 @@ export const DATAFORSEO_COUNTRY_LOCATION_CODES: Readonly<Record<string, number>>
 /** DataForSEO's `location_code` for the country `gl` (`DATAFORSEO_COUNTRY_LOCATION_CODES`), or `null`. */
 export function dataForSeoLocationCode(gl: string): number | null {
   return typeof gl === 'string' && /^[a-z]{2}$/.test(gl) && Object.prototype.hasOwnProperty.call(DATAFORSEO_COUNTRY_LOCATION_CODES, gl) ? DATAFORSEO_COUNTRY_LOCATION_CODES[gl]! : null;
+}
+
+/**
+ * Task 4: the `page_url` of an API reading (`ci_serp_readings`; `source = 'serp-api'`): the vendor's
+ * canonical SERP request URL (`DATA_API_REQUESTS`, no query, never a key). It is how a stored reading
+ * names its vendor (the rank point's source, "<Vendor> API"); `SearchParams` carry no source (Decision 7).
+ */
+export function serpApiReadingPageUrl(provider: SerpApiProvider): string {
+  return DATA_API_REQUESTS[provider].find((target) => target.purpose === 'serp')!.url;
+}
+
+/** The vendor whose `serpApiReadingPageUrl` is exactly `pageUrl`, else `null`. */
+export function serpApiProviderOfPageUrl(pageUrl: unknown): SerpApiProvider | null {
+  if (typeof pageUrl !== 'string') return null;
+  return DATA_SERP_PROVIDERS.find((provider) => serpApiReadingPageUrl(provider) === pageUrl) ?? null;
 }

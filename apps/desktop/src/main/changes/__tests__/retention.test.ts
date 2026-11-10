@@ -3,6 +3,8 @@
 // specs/capture-db.spec.ts (MAX_RETENTION_VERSIONS, MAX_RETENTION_DAYS, UNFILED_PROJECT_ID)
 // Acceptance: specs/retention.feature.md (Scenarios); the purge rules: specs/capture-db.feature.md (Retention planning);
 // readings' bytes: specs/workspace-db.feature.md (Repository, Purge) and specs/workspace-db.spec.ts (SEARCH_KEY_VERSION)
+// Phase 12 Task 4: specs/retention.feature.md (API readings; api-only-purge-counts-show-readings, api-only-project-obeys-retention),
+// specs/workspace-db.feature.md (API readings (Phase 12)), specs/retention.spec.ts (PurgeCountsView.readings, purgesNothing)
 import { createHash } from 'node:crypto';
 import { lstatSync, lutimesSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,6 +28,7 @@ import {
   formatBytes,
   isRetentionPolicy,
   purgeCountsText,
+  purgesNothing,
   purgeNowDialog,
   type PurgeCountsView,
   type RetentionPolicyInput,
@@ -80,6 +83,12 @@ function setup(deps: Partial<RetentionServiceDeps> = {}) {
   const count = (sql: string, ...args: (string | number)[]) => Number((raw.prepare(sql).get(...args) as { n: number }).n);
   const tables = () => Object.fromEntries(['ci_versions', 'ci_captures', 'ci_diffs', 'ci_screenshots', 'ci_purges', 'ci_tombstones'].map((t) => [t, count(`SELECT count(*) AS n FROM ${t}`)]));
   return { dir, service, repo: opened.changeIntel, raw, files, real, unlinked, state, confirmPurge, confirmCompact, log, count, tables, file: opened.file };
+}
+
+/** A SERP API reading of the project at `at` (Phase 12 Task 4; `appendApiReading`). */
+function apiReading(projectId: string, at: number) {
+  const json = JSON.stringify({ status: 'ready', at });
+  return { id: uuidv7(at), projectId, searchKey: sha('green tea'), searchKeyVersion: SEARCH_KEY_VERSION, searchParamsJson: '{"engine":"google","query":"green tea"}', filtersJson: '{}', status: 'ready' as const, packVersion: 3, readingJson: json, pageUrl: 'https://serpapi.com/search.json', observedAt: at, createdAt: at };
 }
 
 async function project(repo: ChangeIntelRepository, name: string): Promise<string> {
@@ -709,5 +718,72 @@ describe('retention service', () => {
     expect(log.entries[0]!.createdAt).toBeGreaterThanOrEqual(log.entries[1]!.createdAt);
     expect((await service.purgeLog(null)).entries).toHaveLength(PURGE_LOG_LIMIT);
     expect(await service.purgeLog(uuidv7(tick()))).toEqual({ entries: [] });
+  });
+  test('api-only-purge-counts-show-readings', async () => {
+    // Phase 12 Task 4: a project holding only SERP API readings (no capture).
+    const { service, repo, confirmPurge, count } = setup();
+    const id = await project(repo, 'API only');
+    for (let n = 0; n < 3; n++) expect(await repo.appendApiReading(apiReading(id, tick()))).toBe(true);
+    await service.setRetention(id, 'versions', 1);
+    // The preview names the readings (and the wording says so), never all zeros.
+    const preview = await service.retentionPreview(id);
+    expect(RetentionPreviewAnswerSchema.parse(preview)).toMatchObject({ status: 'ok', counts: { captures: 0, versions: 0, diffs: 0, screenshots: 0, readings: 2 } });
+    if (preview.status !== 'ok') throw new Error('refused');
+    expect(purgesNothing(preview.counts)).toBe(false);
+    expect(purgeCountsText(preview.counts)).toBe('0 captures, 0 versions, 0 diffs, 0 screenshots and 2 API readings');
+    expect(purgeNowDialog('API only', { mode: 'versions', value: 1 }, preview.counts, preview.bytes).detail).toContain('0 screenshots and 2 API readings');
+    // Purge now asks with the readings' count, and purges them (not `empty`).
+    const answer = await service.purgeNow(id);
+    expect(confirmPurge).toHaveBeenCalledWith('API only', { mode: 'versions', value: 1 }, { captures: 0, versions: 0, diffs: 0, screenshots: 0, readings: 2 }, preview.bytes);
+    expect(PurgeNowAnswerSchema.parse(answer)).toMatchObject({ status: 'purged', counts: { readings: 2 } });
+    expect(count("SELECT count(*) AS n FROM ci_serp_readings WHERE project_id = ? AND source = 'serp-api'", id)).toBe(1);
+    expect(count('SELECT count(*) AS n FROM ci_serp_api_purges')).toBe(2);
+    // An API-only purge writes no `ci_purges` row: the (synced) purge log lists nothing; nothing left: `empty`.
+    expect(PurgeLogAnswerSchema.parse(await service.purgeLog(id)).entries).toEqual([]);
+    expect(count("SELECT count(*) AS n FROM ci_serp_api_purges WHERE project_id = ? AND reason = 'purge-now'", id)).toBe(2);
+    expect(await service.purgeNow(id)).toEqual({ status: 'empty' });
+    // A plan without API readings keeps Phase 6's exact counts (no `readings` key).
+    expect(purgeCountsText({ captures: 1, versions: 2, diffs: 1, screenshots: 0 })).toBe('1 capture, 2 versions, 1 diff and 0 screenshots');
+    expect(purgesNothing({ captures: 0, versions: 0, diffs: 0, screenshots: 0 })).toBe(true);
+  });
+
+  test('api-only-project-obeys-retention', async () => {
+    // Phase 12 Task 4: retention runs after a "Check via API" writes (`afterApiCheck`), each mode on the readings alone.
+    const { service, repo, confirmPurge, count, state } = setup();
+    const id = await project(repo, 'API only');
+    const rows = (projectId: string) => count("SELECT count(*) AS n FROM ci_serp_readings WHERE project_id = ? AND source = 'serp-api'", projectId);
+    for (let n = 0; n < 3; n++) expect(await repo.appendApiReading(apiReading(id, tick()))).toBe(true);
+    // forever: nothing goes.
+    service.afterApiCheck(id);
+    await service.settled();
+    expect(rows(id)).toBe(3);
+    // versions 2: the oldest goes, recorded as `retention`, no dialog.
+    await service.setRetention(id, 'versions', 2);
+    service.afterApiCheck(id);
+    await service.settled();
+    expect(rows(id)).toBe(2);
+    expect(confirmPurge).not.toHaveBeenCalled();
+    expect(count("SELECT count(*) AS n FROM ci_serp_api_purges WHERE project_id = ? AND reason = 'retention'", id)).toBe(1);
+    expect(count('SELECT count(*) AS n FROM ci_purges WHERE project_id = ?', id)).toBe(0);
+    // Not rate-limited (each check is a user action, like a run's end); a run of the project under way waits for its end.
+    expect(await repo.appendApiReading(apiReading(id, tick()))).toBe(true);
+    state.running = id;
+    service.afterApiCheck(id);
+    await service.settled();
+    expect(rows(id)).toBe(3);
+    state.running = null;
+    service.afterApiCheck(id);
+    await service.settled();
+    expect(rows(id)).toBe(2);
+    // days 1, two days later: every reading older than a day goes, but the search's newest always stays.
+    await service.setRetention(id, 'days', 1);
+    clock += 2 * 24 * HOUR;
+    service.afterApiCheck(id);
+    await service.settled();
+    expect(rows(id)).toBe(1);
+    expect(await repo.appendApiReading(apiReading(id, tick()))).toBe(true);
+    service.afterApiCheck(id);
+    await service.settled();
+    expect(rows(id)).toBe(1);
   });
 });

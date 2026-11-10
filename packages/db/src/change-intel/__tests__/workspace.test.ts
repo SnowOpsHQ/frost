@@ -150,8 +150,10 @@ describe('workspace storage', () => {
 
   test('serp-readings-triggers-named', () => {
     const triggers = named(t.raw, 'trigger');
-    expect(triggers).toEqual(expect.arrayContaining(['ci_serp_readings_no_update', 'ci_serp_readings_no_replace', 'ci_serp_readings_capture_gone_only']));
-    expect(triggers.filter((name) => name.startsWith('ci_serp_readings'))).toHaveLength(3);
+    // After Phase 12's `0245` (`workspace-db.feature.md`, API readings): Phase 10's capture-only delete
+    // guard is replaced by the two-armed one, and a no-resurrect guard is added; the others are Phase 10's.
+    expect(triggers.filter((name) => name.startsWith('ci_serp_readings')).sort()).toEqual(['ci_serp_readings_delete_guard', 'ci_serp_readings_no_replace', 'ci_serp_readings_no_resurrect', 'ci_serp_readings_no_update']);
+    expect(triggers).not.toContain('ci_serp_readings_capture_gone_only');
     for (const table of ['ci_project_competitors', 'ci_entry_tags']) {
       expect(triggers.filter((name) => name.startsWith(`${table}_`)).sort(), table).toEqual([`${table}_id_stays`, `${table}_live_key_unique`, `${table}_no_delete`, `${table}_no_replace`]);
     }
@@ -206,7 +208,9 @@ describe('workspace storage', () => {
     expect(() => plant(t.raw, { id: 'short' })).toThrow();
   });
 
-  test('serp-api-reading-refused-in-phase-10', async () => {
+  // Replaces Phase 10's `serp-api-reading-refused-in-phase-10`: the public paths still refuse a
+  // `serp-api` reading; only `appendApiReading` writes one (`serp-api-readings.test.ts`).
+  test('serp-api-reading-only-through-appendApiReading (public paths)', async () => {
     const { result } = await captureWithReading(1_000, '{"v":1}', { reading: undefined });
     const { captureId } = appended(result);
     expect(count(t.raw, 'ci_serp_readings')).toBe(1);

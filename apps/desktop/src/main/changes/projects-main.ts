@@ -60,7 +60,14 @@ export interface MainProjectsDeps {
 /** Whether a frost window is on screen: visible and not minimised. */
 const windowVisible = (): boolean => BrowserWindow.getAllWindows().some((win) => !win.isDestroyed() && win.isVisible() && !win.isMinimized());
 
-export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log, searchParamsOf, serpVerdictOf, settings, crawls }: MainProjectsDeps): ProjectsService & Pick<MainProjectsService, 'purgeDeleted'> {
+/** Main's projects service, plus (Phase 12 Task 4) the hook a "Check via API" calls after its writes. */
+export type MainProjects = ProjectsService &
+  Pick<MainProjectsService, 'purgeDeleted'> & {
+    /** A "Check via API" stored readings into the project: its retention policy is enforced (`retention.afterApiCheck`). */
+    afterApiCheck(projectId: string): void;
+  };
+
+export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log, searchParamsOf, serpVerdictOf, settings, crawls }: MainProjectsDeps): MainProjects {
   const files = createScreenshotFiles(userData);
   const sweeps = createWorkspaceSweeps({ store, log });
   // One purge at a time, whoever asks (a delete, Purge now, an enforcement); each purge is followed by the readings sweep.
@@ -145,7 +152,7 @@ export function createMainProjects({ store, userData, browser, changes, screensh
   void startupChain(() => projects.purgeDeleted(), sweeps.startup, () => retention.startup());
   const { setRetention, retentionPreview, purgeNow, usage, purgeLog, compact } = retention;
   const workspace = createWorkspaceService({ store, log });
-  return { ...projects, ...workspace, setRetention, retentionPreview, purgeNow, usage, purgeLog, compact };
+  return { ...projects, ...workspace, setRetention, retentionPreview, purgeNow, usage, purgeLog, compact, afterApiCheck: (projectId) => retention.afterApiCheck(projectId) };
 }
 
 // ---- Phase 10's sweeps (`workspace-db.feature.md`, Orphans and when the sweeps run) -------------

@@ -418,3 +418,85 @@ export const DATA_SOURCES_SETTINGS_TEXT = {
   readFailed: 'Couldn’t read the data source settings.',
   retry: 'Try again',
 } as const;
+
+// ---- "Check via API" into a project's readings (Task 4) -----------------------------------------
+
+/**
+ * Why `dataSources.checkPlan` or `dataSources.checkProjectSearches` sends nothing
+ * (`data-sources.feature.md`, Check via API):
+ * - `unavailable`: no SERP vendor's legal gate is open, or the vendor's gate closed (`LEGAL_GATE_NOTE`);
+ * - `no-key`: a vendor's gate is open but no vendor has every key slot set;
+ * - `no-provider`: several vendors are offered and none is chosen (`resolveDataSerpProvider`);
+ * - `not-found`: the project is not live;
+ * - `no-searches`: the project (or the searches asked for) has no saved search to check;
+ * - `busy`: a check is already under way (one at a time);
+ * - `changed`: the vendor or the number of requests is not the one the user confirmed.
+ */
+export const DATA_CHECK_REFUSALS = ['unavailable', 'no-key', 'no-provider', 'not-found', 'no-searches', 'busy', 'changed'] as const;
+export type DataCheckRefusal = (typeof DATA_CHECK_REFUSALS)[number];
+
+export const DATA_CHECK_REFUSAL_MESSAGES: Readonly<Record<DataCheckRefusal, string>> = {
+  unavailable: LEGAL_GATE_NOTE,
+  'no-key': 'Add a key in Settings › Data sources.',
+  'no-provider': 'Choose a provider in Settings › Data sources.',
+  'not-found': 'This project is no longer there.',
+  'no-searches': 'This project has no saved searches to check.',
+  busy: 'A check via API is already under way.',
+  changed: 'The provider or the searches changed. Check again.',
+};
+
+/**
+ * What happened to one search of a check: `stored` (its reading was written), `failed` (the vendor
+ * check failed: `SERP_API_OUTCOMES`), `not-stored` (the write was refused), `skipped` (not sent; why:
+ * `DATA_CHECK_SKIP_REASONS`).
+ */
+export const DATA_CHECK_SEARCH_RESULTS = ['stored', 'failed', 'not-stored', 'skipped'] as const;
+export type DataCheckSearchResult = (typeof DATA_CHECK_SEARCH_RESULTS)[number];
+
+/** Client refusals that would refuse every request of a check alike: the rest of the check is not sent. */
+export const DATA_CHECK_STOP_REFUSALS = ['unavailable', 'no-key', 'no-keychain', 'key-failed'] as const satisfies readonly DataApiRefusal[];
+
+/**
+ * Vendor statuses (`http-error`) that are about the account, not the search (a bad key, no credit, no
+ * access, rate-limited): the rest of the check is not sent either.
+ */
+export const DATA_CHECK_STOP_STATUSES: readonly number[] = [401, 402, 403, 429];
+
+/**
+ * Why a search of a check was not sent:
+ * - `stopped`: an earlier search was refused for the account or the key (`DATA_CHECK_STOP_REFUSALS`,
+ *   `DATA_CHECK_STOP_STATUSES`), the project went away, or the check failed after it began;
+ * - `unsupported`: the vendor can't take it (its engine, device, country or language);
+ * - `other-series`: what the vendor would be asked is not exactly the saved search's parameters, so
+ *   its reading would be filed under another search key (never paid for: it is not counted or sent).
+ */
+export const DATA_CHECK_SKIP_REASONS = ['stopped', 'unsupported', 'other-series'] as const;
+export type DataCheckSkipReason = (typeof DATA_CHECK_SKIP_REASONS)[number];
+
+export const DATA_CHECK_SKIP_MESSAGES: Readonly<Record<DataCheckSkipReason, string>> = {
+  stopped: 'Not sent: the check stopped before it.',
+  unsupported: 'Not sent: this provider can’t run this search.',
+  'other-series': 'Not sent: this provider would check a different search than the one saved.',
+};
+
+const requestsText = (n: number): string => `${n} ${n === 1 ? 'request' : 'requests'}`;
+
+/** "Check via API" in words (text labels only, L7). */
+export const DATA_CHECK_TEXT = {
+  button: 'Check via API',
+  /** The confirm, before anything is sent (with `DATA_SPEND_NOTE`). */
+  confirm: (requests: number, provider: string) => `This sends ${requestsText(requests)} to ${provider}.`,
+  send: (requests: number) => `Send ${requestsText(requests)}`,
+  cancel: 'Cancel',
+  checking: (provider: string) => `Checking via ${provider}…`,
+  /** The palette command (the project last opened). */
+  palette: (provider: string) => `Check searches via ${provider}`,
+  /** After a check: how many readings were stored. */
+  done: (stored: number, total: number, provider: string) =>
+    stored === total ? `Checked ${total} ${total === 1 ? 'search' : 'searches'} via ${provider}.` : `Checked ${stored} of ${total} searches via ${provider}; the others could not be checked.`,
+  failed: 'The check could not be run. Try again.',
+  /** A rank point's source: a tab capture, or a vendor's API (`<Vendor> API`). */
+  sourceCapture: 'Tab capture',
+  sourceApi: (provider: string) => `${provider} API`,
+  sourceApiUnknown: 'Data API',
+} as const;

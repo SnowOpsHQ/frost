@@ -5,7 +5,10 @@
 // compare-shares-one-dates-read, compare-drops-a-stale-answer, compare-says-refusals,
 // series-close-returns-focus); specs/projects.feature.md (The sheet: projects-run-progress-on-every-view;
 // Phase 10 Task 7's star and sort, Settings, tags and Bulk add; Task 8's Due, Check rankings, cadence and blocked run;
-// the L1 gate: rank-check-hidden-until-cleared), specs/capture-schedule.spec.ts (RANK_CHECK_AVAILABLE)
+// the L1 gate: rank-check-hidden-until-cleared), specs/capture-schedule.spec.ts (RANK_CHECK_AVAILABLE);
+// Phase 12 Task 4: specs/projects.feature.md (Checking searches via a data API: rank-point-shows-source,
+// api-check-button-follows-main), specs/data-sources.feature.md (Check via API: api-check-says-the-count-first),
+// specs/data-sources.spec.ts (DATA_CHECK_TEXT, DATA_CHECK_REFUSAL_MESSAGES, DATA_SPEND_NOTE)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -14,6 +17,7 @@ import { CADENCE_TEXT, CAPTURE_SCHEDULE_NOTE, RANK_CHECK_AVAILABLE } from '@app/
 import type { TabState } from '@app/specs/browser.spec';
 import { BULK_ADD_TEXT, CHECK_RANKINGS_TEXT, DUE_TEXT, PROJECT_REFUSAL_MESSAGES, PROJECT_SETTINGS_TEXT, PROJECT_VIEWS, RUN_BLOCKED_NOTE, RUN_BLOCK_REASON_LABELS, RUN_REFUSAL_MESSAGES, type ProjectSummary } from '@app/specs/projects.spec';
 import { RANKINGS_REFUSAL_MESSAGES, RANK_VIEW_TEXT, type RankPoint, type RankTableRow, type ReadingDate, type SearchParamsShape } from '@app/specs/rankings.spec';
+import { DATA_CHECK_REFUSAL_MESSAGES, DATA_CHECK_TEXT, DATA_SPEND_NOTE } from '@app/specs/data-sources.spec';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -45,6 +49,8 @@ const fakes = vi.hoisted(() => ({
   rankings: { table: vi.fn(), series: vi.fn(), readingDates: vi.fn(), compare: vi.fn(), copyCsv: vi.fn(), saveCsv: vi.fn() },
   projects: { list: vi.fn(), get: vi.fn(), runState: vi.fn() },
   workspace: { setFavorite: vi.fn(), setSite: vi.fn(), addCompetitor: vi.fn(), removeCompetitor: vi.fn(), setTags: vi.fn(), addSearches: vi.fn(), setCadence: vi.fn(), setAutoCapture: vi.fn(), checkRankings: vi.fn() },
+  // Phase 12 Task 4: main's "Check via API" views (the legal gate closed unless a test says otherwise).
+  dataSources: { checkPlan: vi.fn(), checkProjectSearches: vi.fn(), serpProvider: vi.fn() },
 }));
 
 /** `rankCheck`: the L1 flag as the sheet reads it (`undefined`: the shipped `RANK_CHECK_AVAILABLE`). */
@@ -67,6 +73,11 @@ vi.mock('../ipc', () => ({
       usage: { query: vi.fn(() => new Promise(() => undefined)) },
       purgeLog: { query: vi.fn(() => new Promise(() => undefined)) },
       cancelRun: { mutate: vi.fn(async () => true) },
+    },
+    dataSources: {
+      checkPlan: { query: fakes.dataSources.checkPlan },
+      checkProjectSearches: { mutate: fakes.dataSources.checkProjectSearches },
+      serpProvider: { query: fakes.dataSources.serpProvider },
     },
   },
 }));
@@ -113,7 +124,9 @@ async function openSheet(project: ProjectSummary, detail: Record<string, unknown
 
 beforeEach(() => {
   flags.rankCheck = undefined;
-  for (const fake of [...Object.values(fakes.rankings), ...Object.values(fakes.projects), ...Object.values(fakes.workspace)]) fake.mockReset();
+  for (const fake of [...Object.values(fakes.rankings), ...Object.values(fakes.projects), ...Object.values(fakes.workspace), ...Object.values(fakes.dataSources)]) fake.mockReset();
+  fakes.dataSources.checkPlan.mockResolvedValue({ status: 'refused', reason: 'unavailable' });
+  fakes.dataSources.serpProvider.mockResolvedValue({ provider: null, choices: [] });
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -549,5 +562,115 @@ describe('rankings components', () => {
     expect($('projects-run-blocked')!.textContent).toContain(RUN_BLOCK_REASON_LABELS['not-a-result-page']);
     expect($('projects-run-blocked')!.textContent).toContain(RUN_BLOCKED_NOTE);
     expect(all('projects-run-target').map((target) => target.dataset.outcome)).toEqual(['blocked', 'cancelled']);
+  });
+
+  test('rank-point-shows-source', async () => {
+    // Phase 12 Task 4: each point says where it came from, in the table (the latest) and in the series.
+    const api: RankPoint = { ...point('tea-3', 3_000), source: 'serp-api', provider: 'serpapi' };
+    const tea = { ...row(KEY_A, 'tea'), latest: api, previous: point('tea-2', 2_000), points: [point('tea-2', 2_000), api] };
+    const coffee = row(KEY_B, 'coffee');
+    fakes.rankings.table.mockResolvedValue(tableAnswer([tea, coffee]));
+    fakes.rankings.series.mockResolvedValue({ status: 'ok', searchKey: KEY_A, points: [point('tea-2', 2_000), api, { ...point('tea-4', 4_000), source: 'serp-api' }], capped: false });
+    await act(async () => root.render(createElement(Rankings, { projectId: P1, refreshKey: 1, busy: false, onOpenUrl: vi.fn(), say: vi.fn() })));
+    await flush();
+    expect(all('rankings-source').map((cell) => cell.textContent)).toEqual(['SerpApi API', DATA_CHECK_TEXT.sourceCapture]);
+    await act(async () => host.querySelectorAll<HTMLButtonElement>('[data-testid="rankings-row-open"]')[0]!.click());
+    await flush();
+    // Newest first: an API point whose vendor is unknown, the SerpApi one, the tab capture.
+    expect(all('rankings-series-source').map((cell) => cell.textContent)).toEqual([DATA_CHECK_TEXT.sourceApiUnknown, 'SerpApi API', 'Tab capture']);
+  });
+
+  test('api-check-button-follows-main', async () => {
+    fakes.rankings.table.mockResolvedValue(tableAnswer([row(KEY_A, 'tea')]));
+    const render = async (plan: unknown) => {
+      fakes.dataSources.checkPlan.mockResolvedValue(plan);
+      await act(async () => root.render(createElement(Rankings, { projectId: P1, refreshKey: Math.random(), busy: false, onOpenUrl: vi.fn(), say: vi.fn() })));
+      await flush();
+    };
+    // The legal gate closed (as shipped), or main unreachable: no button at all.
+    await render({ status: 'refused', reason: 'unavailable' });
+    expect($('rankings-api-check')).toBeNull();
+    await render(null);
+    expect($('rankings-api-check')).toBeNull();
+    // No key, no vendor chosen, nothing to check: disabled, with the reason in words.
+    for (const reason of ['no-key', 'no-provider', 'no-searches'] as const) {
+      await render({ status: 'refused', reason });
+      expect($<HTMLButtonElement>('rankings-api-check')!.disabled, reason).toBe(true);
+      expect($('rankings-api-check-reason')!.textContent, reason).toBe(DATA_CHECK_REFUSAL_MESSAGES[reason]);
+    }
+    expect(DATA_CHECK_REFUSAL_MESSAGES['no-key']).toBe('Add a key in Settings › Data sources.');
+    expect(DATA_CHECK_REFUSAL_MESSAGES['no-provider']).toBe('Choose a provider in Settings › Data sources.');
+    // Ready: enabled, and disabled while a capture run is under way.
+    await render({ status: 'ready', provider: 'serpapi', requests: 3 });
+    expect($<HTMLButtonElement>('rankings-api-check')!.disabled).toBe(false);
+    expect($('rankings-api-check-reason')).toBeNull();
+    await act(async () => root.render(createElement(Rankings, { projectId: P1, refreshKey: 1, busy: true, onOpenUrl: vi.fn(), say: vi.fn() })));
+    await flush();
+    expect($<HTMLButtonElement>('rankings-api-check')!.disabled).toBe(true);
+    expect(fakes.dataSources.checkProjectSearches).not.toHaveBeenCalled();
+  });
+
+  test('api-check-says-the-count-first', async () => {
+    fakes.rankings.table.mockResolvedValue(tableAnswer([row(KEY_A, 'tea')]));
+    fakes.dataSources.checkPlan.mockResolvedValue({ status: 'ready', provider: 'serpapi', requests: 3 });
+    fakes.dataSources.checkProjectSearches.mockResolvedValue({ status: 'checked', provider: 'serpapi', results: [] });
+    const say = vi.fn();
+    await act(async () => root.render(createElement(Rankings, { projectId: P1, refreshKey: 1, busy: false, onOpenUrl: vi.fn(), say })));
+    await flush();
+    // The confirm, before anything is sent: the count, the vendor and the cost note. Cancel sends nothing.
+    await click('rankings-api-check');
+    await flush();
+    expect($('rankings-api-check-confirm')!.textContent).toContain('This sends 3 requests to SerpApi.');
+    expect($('rankings-api-check-confirm')!.textContent).toContain(DATA_SPEND_NOTE);
+    expect($('rankings-api-check-send')!.textContent).toBe('Send 3 requests');
+    await click('rankings-api-check-cancel');
+    expect($('rankings-api-check-confirm')).toBeNull();
+    expect(fakes.dataSources.checkProjectSearches).not.toHaveBeenCalled();
+    // Send asks for exactly what was shown; the table is read again and the outcome said.
+    const reads = fakes.rankings.table.mock.calls.length;
+    fakes.dataSources.checkProjectSearches.mockResolvedValue({
+      status: 'checked',
+      provider: 'serpapi',
+      results: [
+        { searchId: '01920000-0000-7000-8000-0000000000b1', result: 'stored' },
+        { searchId: '01920000-0000-7000-8000-0000000000b2', result: 'stored' },
+        { searchId: '01920000-0000-7000-8000-0000000000b3', result: 'failed', outcome: 'vendor-error' },
+      ],
+    });
+    await click('rankings-api-check');
+    await flush();
+    await click('rankings-api-check-send');
+    await flush();
+    expect(fakes.dataSources.checkProjectSearches.mock.calls).toEqual([[{ projectId: P1, provider: 'serpapi', requests: 3 }]]);
+    expect(say).toHaveBeenLastCalledWith(DATA_CHECK_TEXT.done(2, 3, 'SerpApi'));
+    expect(fakes.rankings.table.mock.calls.length).toBeGreaterThan(reads);
+    expect($('rankings-api-check-confirm')).toBeNull();
+    // Main's plan is read again on the press: refused by then (the key cleared meanwhile), it says why and opens no confirm.
+    fakes.dataSources.checkPlan.mockResolvedValue({ status: 'refused', reason: 'no-key' });
+    await click('rankings-api-check');
+    await flush();
+    expect($('rankings-api-check-confirm')).toBeNull();
+    expect(say).toHaveBeenLastCalledWith(DATA_CHECK_REFUSAL_MESSAGES['no-key']);
+    expect(fakes.dataSources.checkProjectSearches).toHaveBeenCalledTimes(1);
+  });
+
+  test('api-check-palette-opens-the-confirm', async () => {
+    // The palette's command leaves a request; the Rankings view of that project shows the confirm (never sends).
+    const { requestApiCheck } = await import('../data-sources-palette');
+    fakes.rankings.table.mockResolvedValue(tableAnswer([row(KEY_A, 'tea')]));
+    fakes.dataSources.checkPlan.mockResolvedValue({ status: 'ready', provider: 'serpapi', requests: 1 });
+    requestApiCheck(P1);
+    await act(async () => root.render(createElement(Rankings, { projectId: P1, refreshKey: 1, busy: false, onOpenUrl: vi.fn(), say: vi.fn() })));
+    await flush();
+    expect($('rankings-api-check-confirm')!.textContent).toContain('This sends 1 request to SerpApi.');
+    // While the view is open too; another project's request is not this view's.
+    await click('rankings-api-check-cancel');
+    requestApiCheck('01920000-0000-7000-8000-0000000000ff');
+    await flush();
+    expect($('rankings-api-check-confirm')).toBeNull();
+    await act(async () => requestApiCheck(P1));
+    await flush();
+    expect($('rankings-api-check-confirm')).not.toBeNull();
+    expect(fakes.dataSources.checkProjectSearches).not.toHaveBeenCalled();
   });
 });

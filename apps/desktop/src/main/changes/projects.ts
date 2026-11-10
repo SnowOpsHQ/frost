@@ -256,7 +256,8 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
         const { result } = await purges.execute(plan, 'project-deleted', at);
         if (result === null) break;
         if (result.status === 'empty') purged = { captures: 0, versions: 0, diffs: 0, screenshots: 0 };
-        if (result.status === 'purged') purged = { ...result.plan.counts };
+        // The delete's answer keeps Phase 6's four counts (a deleted project's API readings, Phase 12 Task 4, go with it uncounted).
+        if (result.status === 'purged') purged = { captures: result.plan.counts.captures, versions: result.plan.counts.versions, diffs: result.plan.counts.diffs, screenshots: result.plan.counts.screenshots };
       }
     } catch (error) {
       log(`the purge of a deleted project failed (${codeOf(error)})`);

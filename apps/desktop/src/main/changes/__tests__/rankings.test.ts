@@ -2,7 +2,9 @@
 // MAX_READING_DATES), specs/rankings.schema.ts (StoredReadingSchema, RankTableSchema, RankSeriesSchema, ReadingDatesSchema,
 // CompareAnswerSchema, SaveCsvAnswerSchema), specs/workspace-db.spec.ts (SEARCH_KEY_VERSION, MAX_READINGS_PER_READ)
 // Acceptance: specs/rankings.feature.md (Router; Scenarios: rank-table-reads-live-project-only, tampered-reading-skipped,
-// orphan-reading-ignored-and-swept, compare-refuses-readings-of-another-project, rankings-never-reject)
+// orphan-reading-ignored-and-swept, compare-refuses-readings-of-another-project, rankings-never-reject);
+// Phase 12 Task 4: specs/projects.feature.md (Checking searches via a data API: rank-table-shows-api-readings), specs/serp-api.spec.ts
+// (serpApiReadingPageUrl)
 import path from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
 import { canonicalJson } from '@app/change-intel';
@@ -10,6 +12,7 @@ import { uuidv7, type ChangeIntelRepository } from '@app/db';
 import type { RankingsService } from '@app/ipc-contract';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { RANK_LIMITS } from '@app/specs/rankings.spec';
+import { serpApiReadingPageUrl } from '@app/specs/serp-api.spec';
 import { MAX_READINGS_PER_READ } from '@app/specs/workspace-db.spec';
 import { CompareAnswerSchema, RankSeriesSchema, RankTableSchema, ReadingDatesSchema, SaveCsvAnswerSchema } from '@app/specs/rankings.schema';
 import { createRankingsService, searchKeyOf } from '../rankings';
@@ -273,6 +276,35 @@ describe('rankings service', () => {
     sweep.mockRejectedValueOnce(new Error('SQLITE_BUSY /home/user/db'));
     expect(ok(await t.rankings.table(a, 'all', null)).rows[0]!.points).toHaveLength(2);
     expect(t.log.mock.calls.flat().join('\n')).not.toContain('/home/user');
+  });
+
+  test('rank-table-shows-api-readings', async () => {
+    // Phase 12 Task 4: an API reading (no capture) of the saved search is listed in its row and series,
+    // never filtered as an orphan, each point saying where it came from (the vendor from `page_url`).
+    const t = setup();
+    const a = await project(t, 'Tea');
+    const key = searchKeyOf(SEARCH, {})!;
+    const tab = await captured(t, a, SEARCH, readingOf(SEARCH, ['rival.com', 'example.com']));
+    const api = plant(t, a, { page_url: serpApiReadingPageUrl('serpapi') });
+    const unnamed = plant(t, a, { page_url: 'https://elsewhere.example/search' });
+    const table = ok(await t.rankings.table(a, 'all', null));
+    expect(RankTableSchema.safeParse(table).success).toBe(true);
+    expect(table.rows).toHaveLength(1);
+    const [row] = table.rows;
+    expect(row!.searchKey).toBe(key);
+    expect(row!.saved).not.toBeNull();
+    expect(row!.points.map((point) => point.readingId)).toEqual([tab.readingId, api, unnamed]);
+    expect(row!.points.map((point) => [point.source ?? 'capture', point.provider ?? null])).toEqual([
+      ['capture', null],
+      ['serp-api', 'serpapi'],
+      ['serp-api', null],
+    ]);
+    expect(row!.latest).toMatchObject({ readingId: unnamed, source: 'serp-api', outcome: 'ranked', position: 1 });
+    const series = ok(await t.rankings.series(a, key, 'all'));
+    expect(RankSeriesSchema.safeParse(series).success).toBe(true);
+    expect(series.points.find((point) => point.readingId === api)).toMatchObject({ source: 'serp-api', provider: 'serpapi' });
+    // The sweep never removes them.
+    expect(readingIds(t, a).sort()).toEqual([tab.readingId, api, unnamed].sort());
   });
 
   test('compare-refuses-readings-of-another-project', async () => {

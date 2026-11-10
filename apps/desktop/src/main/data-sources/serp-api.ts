@@ -95,33 +95,59 @@ function savedParamsBy(search: SerpApiRequest, pack: SelectorPack): SearchParams
   return params !== null && params.engine === saved.engine && params.gl === gl && params.hl === hl && params.page === 1 ? params : null;
 }
 
+/** What a check would send (steps 1–3 of the header), or why it sends nothing. */
+type Prepared =
+  | { readonly ok: true; readonly provider: SerpApiProvider; readonly params: SearchParams; readonly pack: SelectorPack; readonly build: DataApiBuild }
+  | { readonly ok: false; readonly outcome: Exclude<SerpApiOutcome, 'request-failed'> };
+
+function prepare(search: unknown, provider: unknown, deps: Pick<SerpApiCheckDeps, 'isOpen' | 'pack'>): Prepared {
+  // The gate first: nothing is validated, built, read or sent for a vendor that isn't offered.
+  if (!isLegalGateId(provider) || !deps.isOpen(provider)) return { ok: false, outcome: 'unavailable' };
+  if (!isDataSerpProvider(provider)) return { ok: false, outcome: 'unsupported' };
+  const parsed = SerpApiRequestSchema.safeParse(search);
+  if (!parsed.success) return { ok: false, outcome: 'invalid-search' };
+  const request = parsed.data;
+  const info = SERP_API_PROVIDERS[provider];
+  if (!info.engines.includes(request.engine) || !info.devices.includes(request.device)) return { ok: false, outcome: 'unsupported' };
+
+  const pack = deps.pack === undefined ? bundledPack() : deps.pack;
+  if (pack === null) return { ok: false, outcome: 'invalid-search' };
+  const saved = savedParamsBy(request, pack);
+  if (saved === null) return { ok: false, outcome: 'invalid-search' };
+  const location = request.location ?? null;
+  const params: SearchParams = location === null ? saved : { ...saved, location: { via: 'api', label: location } };
+  const build = buildFor(provider, params, location);
+  if (build === null) return { ok: false, outcome: 'unsupported' };
+  return { ok: true, provider, params, pack, build };
+}
+
+/**
+ * The search parameters `checkSearchViaApi(search, provider)` would send and file its reading under,
+ * or `null` when it would send nothing (its gate is closed, or the vendor can't take the search).
+ * Task 4 counts a search only when these are exactly its saved parameters. Sends and reads nothing;
+ * never throws.
+ */
+export function serpApiCheckParams(search: unknown, provider: unknown, deps: Pick<SerpApiCheckDeps, 'isOpen' | 'pack'>): SearchParams | null {
+  try {
+    const prepared = prepare(search, provider, deps);
+    return prepared.ok ? prepared.params : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Checks `search` on `provider`'s API (see the header). Never throws. */
 export async function checkSearchViaApi(search: unknown, provider: unknown, deps: SerpApiCheckDeps): Promise<SerpApiCheck> {
   try {
-    // The gate first: nothing is validated, built, read or sent for a vendor that isn't offered.
-    if (!isLegalGateId(provider) || !deps.isOpen(provider)) return fail('unavailable');
-    if (!isDataSerpProvider(provider)) return fail('unsupported');
-    const parsed = SerpApiRequestSchema.safeParse(search);
-    if (!parsed.success) return fail('invalid-search');
-    const request = parsed.data;
-    const info = SERP_API_PROVIDERS[provider];
-    if (!info.engines.includes(request.engine) || !info.devices.includes(request.device)) return fail('unsupported');
-
-    const pack = deps.pack === undefined ? bundledPack() : deps.pack;
-    if (pack === null) return fail('invalid-search');
-    const saved = savedParamsBy(request, pack);
-    if (saved === null) return fail('invalid-search');
-    const location = request.location ?? null;
-    const params: SearchParams = location === null ? saved : { ...saved, location: { via: 'api', label: location } };
-    const build = buildFor(provider, params, location);
-    if (build === null) return fail('unsupported');
-
-    const answer = await deps.client.dataApiRequest(provider, 'serp', build);
+    const prepared = prepare(search, provider, deps);
+    if (!prepared.ok) return fail(prepared.outcome);
+    const { params, pack, build } = prepared;
+    const answer = await deps.client.dataApiRequest(prepared.provider, 'serp', build);
     if (!answer.ok) return { ok: false, outcome: 'request-failed', refusal: answer.refusal, message: answer.message, ...(answer.status !== undefined ? { status: answer.status } : {}) };
     // The client caps the body; the length is checked again before it is posted (the worker checks its bytes).
     if (answer.body.length > SERP_API_LIMITS.maxResponseBytes) return fail('invalid-answer');
 
-    const job: SerpApiJob = { provider, body: answer.body, params, packVersion: pack.version };
+    const job: SerpApiJob = { provider: prepared.provider, body: answer.body, params, packVersion: pack.version };
     const mapped = await deps.parse(job).catch(() => null);
     if (mapped === null || typeof mapped !== 'object') return fail('invalid-answer');
     if (mapped.vendorError === true) return fail('vendor-error');

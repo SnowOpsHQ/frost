@@ -3,6 +3,10 @@ import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import {
   DATA_SET_KEY_RESULTS,
   DATA_SET_SERP_PROVIDER_RESULTS,
+  DataCheckPlanInputSchema,
+  DataCheckPlanSchema,
+  DataCheckProjectAnswerSchema,
+  DataCheckProjectInputSchema,
   DataSerpProviderViewSchema,
   DataSourcesClearKeyInputSchema,
   DataSourcesSetKeyInputSchema,
@@ -37,6 +41,10 @@ const oneOf = <T extends string>(values: readonly T[], value: unknown, fallback:
  * - `usage` (Task 2): `DataUsageView` (this month's and last month's request counts per provider).
  * - `serpProvider` (Task 2): `DataSerpProviderView` (the "Check via API" vendor and the vendors offered).
  * - `setSerpProvider` (`{ provider }`, Task 2): `DATA_SET_SERP_PROVIDER_RESULTS` (`unavailable` while its gate is closed).
+ * - `checkPlan` (`{ projectId, searchIds? }`, Task 4): `DataCheckPlan` (the vendor and the requests a check would
+ *   send, or why none: `unavailable` while no SERP vendor's gate is open); sends nothing.
+ * - `checkProjectSearches` (`{ projectId, searchIds?, provider, requests }`, Task 4): the vendor and count the user
+ *   confirmed; main plans again (`changed` when they differ) and answers `DataCheckProjectAnswer`.
  */
 export const dataSourcesRouter = router({
   status: publicProcedure
@@ -69,4 +77,16 @@ export const dataSourcesRouter = router({
     .use(requireDataSources)
     .input(DataSourcesSetSerpProviderInputSchema)
     .mutation(async ({ ctx, input }): Promise<DataSetSerpProviderResult> => oneOf(DATA_SET_SERP_PROVIDER_RESULTS, await ctx.dataSources.setSerpProvider(input.provider), 'failed')),
+  checkPlan: publicProcedure
+    .use(enforceSender)
+    .use(requireDataSources)
+    .input(DataCheckPlanInputSchema)
+    .output(DataCheckPlanSchema)
+    .query(({ ctx, input }) => ctx.dataSources.checkPlan(input)),
+  checkProjectSearches: publicProcedure
+    .use(enforceSender)
+    .use(requireDataSources)
+    .input(DataCheckProjectInputSchema)
+    .output(DataCheckProjectAnswerSchema)
+    .mutation(({ ctx, input }) => ctx.dataSources.checkProjectSearches(input)),
 });

@@ -11,6 +11,7 @@ import {
   SCREENSHOT_TMP_NAME_PATTERN,
   isRetentionPolicy,
   plural,
+  purgesNothing,
   type PurgeCountsView,
   type PurgeLogEntry,
   type RetentionPolicyInput,
@@ -33,6 +34,9 @@ import { createPurgeFiles, type PurgeFiles } from './purge-files';
 //   project ends, after a manual capture or screenshot into it (at most once per
 //   `RETENTION_ENFORCE_MIN_INTERVAL_MS`), and at startup when due. The last-enforced times are kept in
 //   memory, seeded from the purge log.
+// - Phase 12 Task 4: a plan's SERP API readings count (`counts.readings`, `apiReadingIds`): a plan with
+//   only those is not empty, and the preview and the "Purge now" dialog name them. A "Check via API"
+//   that wrote readings enforces the policy (`afterApiCheck`).
 // - Usage adds measured sizes to the rows' stored ones: each named screenshot file by `lstat`, the
 //   database file and its `-wal` by `stat`.
 // - Compact `VACUUM`s the session database after main's dialog, never during a capture run.
@@ -72,6 +76,11 @@ export interface MainRetentionService extends RetentionService {
   afterCapture(projectId: string): void;
   /** A capture run of the project ended: enforce its policy. */
   afterRun(projectId: string): void;
+  /**
+   * Phase 12 Task 4: a "Check via API" wrote readings into the project: enforce its policy (as after a
+   * run's end: each check is a user action, so no rate limit), unless a run of it is under way (its end enforces).
+   */
+  afterApiCheck(projectId: string): void;
   /** Startup: seeds the last-enforced times from the purge log, enforces where due, then sweeps orphans. Never rejects. */
   startup(): Promise<void>;
   /** The orphan sweep of the screenshot directory. Never rejects. */
@@ -86,7 +95,8 @@ const codeOf = (error: unknown): string => {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === 'string' ? code : error instanceof Error ? error.name : 'unknown error';
 };
-const isEmpty = (plan: PurgePlan): boolean => plan.counts.captures + plan.counts.versions + plan.counts.diffs + plan.counts.screenshots === 0;
+/** Nothing to purge: no capture, version, diff or screenshot, and (Phase 12 Task 4) no SERP API reading. */
+const isEmpty = (plan: PurgePlan): boolean => purgesNothing(plan.counts);
 const policyOf = (project: Project): PurgePolicy => (project.retention.mode === 'forever' || project.retention.value === null ? { mode: 'forever' } : { mode: project.retention.mode, value: project.retention.value });
 const policyInput = (policy: PurgePolicy): RetentionPolicyInput => (policy.mode === 'versions' || policy.mode === 'days' ? { mode: policy.mode, value: policy.value } : { mode: 'forever', value: null });
 
@@ -386,6 +396,11 @@ export function createRetentionService(deps: RetentionServiceDeps): MainRetentio
     },
 
     afterRun(projectId) {
+      enqueue(() => enforce(projectId));
+    },
+
+    afterApiCheck(projectId) {
+      if (deps.running() === projectId) return;
       enqueue(() => enforce(projectId));
     },
 

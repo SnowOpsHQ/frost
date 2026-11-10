@@ -5,7 +5,20 @@
  */
 import { z } from 'zod';
 import { KEY_PROTECTIONS } from './agent-proxy.spec';
-import { DATA_PROVIDERS, DATA_SECRET_MAX_CHARS, DATA_SERP_PROVIDERS, DATA_USAGE_LIMITS, isDataUsageMonth, type DataProvider } from './data-sources.spec';
+import { MAX_PROJECT_QUERIES, UUIDV7_PATTERN } from './capture-db.spec';
+import {
+  DATA_API_REFUSALS,
+  DATA_CHECK_REFUSALS,
+  DATA_CHECK_SEARCH_RESULTS,
+  DATA_CHECK_SKIP_REASONS,
+  DATA_PROVIDERS,
+  DATA_SECRET_MAX_CHARS,
+  DATA_SERP_PROVIDERS,
+  DATA_USAGE_LIMITS,
+  isDataUsageMonth,
+  type DataProvider,
+} from './data-sources.spec';
+import { SERP_API_OUTCOMES } from './serp-api.spec';
 
 /**
  * One pasted secret: one line (no line break anywhere), bounded loosely (main trims and refuses
@@ -112,6 +125,60 @@ export const DataSourcesSetSerpProviderInputSchema = z.strictObject({ provider: 
  */
 export const DATA_SET_SERP_PROVIDER_RESULTS = ['stored', 'unavailable', 'no-key', 'failed'] as const;
 export type DataSetSerpProviderResult = (typeof DATA_SET_SERP_PROVIDER_RESULTS)[number];
+
+// ---- "Check via API" into a project's readings (Task 4) -----------------------------------------
+
+const projectId = z.string().regex(UUIDV7_PATTERN);
+/** Saved search ids of the project (`ci_project_queries`), each once, at most `MAX_PROJECT_QUERIES`. */
+const searchIds = z
+  .array(z.string().regex(UUIDV7_PATTERN))
+  .min(1)
+  .max(MAX_PROJECT_QUERIES)
+  .refine((ids) => new Set(ids).size === ids.length, { message: 'a search twice' });
+/** How many requests a check sends: one per saved search. */
+const requests = z.int().min(1).max(MAX_PROJECT_QUERIES);
+const refusedCheck = z.strictObject({ status: z.literal('refused'), reason: z.enum(DATA_CHECK_REFUSALS) });
+
+/** `dataSources.checkPlan`: the project, and optionally some of its saved searches (else all of them). */
+export const DataCheckPlanInputSchema = z.strictObject({ projectId, searchIds: searchIds.optional() });
+export type DataCheckPlanInput = z.output<typeof DataCheckPlanInputSchema>;
+
+/**
+ * `dataSources.checkPlan`'s answer: `ready` with the vendor main would use and the requests it would
+ * send (nothing is sent), or `refused` with why none would be (`DATA_CHECK_REFUSALS`).
+ */
+export const DataCheckPlanSchema = z.discriminatedUnion('status', [z.strictObject({ status: z.literal('ready'), provider: z.enum(DATA_SERP_PROVIDERS), requests }), refusedCheck]);
+export type DataCheckPlan = z.output<typeof DataCheckPlanSchema>;
+
+/**
+ * `dataSources.checkProjectSearches`: as `checkPlan`, plus what the user confirmed (the vendor and the
+ * number of requests the confirm showed): main refuses `changed` when its own plan differs.
+ */
+export const DataCheckProjectInputSchema = z.strictObject({ projectId, searchIds: searchIds.optional(), provider: z.enum(DATA_SERP_PROVIDERS), requests });
+export type DataCheckProjectInput = z.output<typeof DataCheckProjectInputSchema>;
+
+/**
+ * One search of a check: what happened (`DATA_CHECK_SEARCH_RESULTS`); when it failed, the check's
+ * outcome, the client's refusal and the vendor's status (`http-error`); when it was skipped, why.
+ */
+const searchResult = z.strictObject({
+  searchId: z.string().regex(UUIDV7_PATTERN),
+  result: z.enum(DATA_CHECK_SEARCH_RESULTS),
+  outcome: z.enum(SERP_API_OUTCOMES).optional(),
+  refusal: z.enum(DATA_API_REFUSALS).optional(),
+  status: z.int().min(100).max(599).optional(),
+  reason: z.enum(DATA_CHECK_SKIP_REASONS).optional(),
+});
+
+/**
+ * `dataSources.checkProjectSearches`'s answer: `checked` (per saved search asked for, in the project's
+ * order, the ones not counted among the requests as `skipped` with their reason), or `refused` (nothing sent).
+ */
+export const DataCheckProjectAnswerSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('checked'), provider: z.enum(DATA_SERP_PROVIDERS), results: z.array(searchResult).max(MAX_PROJECT_QUERIES) }),
+  refusedCheck,
+]);
+export type DataCheckProjectAnswer = z.output<typeof DataCheckProjectAnswerSchema>;
 
 // ---- The e2e seam (`DATA_API_E2E_SWITCH`) -------------------------------------------------------
 

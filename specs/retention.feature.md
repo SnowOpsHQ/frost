@@ -42,6 +42,19 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
      files really unlinked, measured by `lstat`) and how many files went. `ci_purges.bytes` keeps the
      planned figure (`capture-db.feature.md`).
 
+- **API readings (Phase 12 Task 4).** The plan also selects the project's SERP API readings
+  (`source = 'serp-api'`, no capture) by its policy, per search key (`workspace-db.feature.md`, API
+  readings (Phase 12)). When it selects any, its counts carry `readings` (`PurgeCountsView.readings`;
+  absent otherwise, never 0), which the preview line and the "Purge now" confirm name
+  (`purgeCountsText`: "… 0 screenshots and 3 API readings") and the IPC answers carry (`counts.readings`,
+  optional, bounded). A plan with only API readings is not empty: `isEmpty` / `purgesNothing` count
+  them, the preview does not say "would remove nothing", and Purge now is enabled. `ci_purges` gains no
+  column: the purge log's counts never have `readings`, and a purge of API readings only writes no
+  `ci_purges` row, so the purge log does not list it (its record is `ci_serp_api_purges`, device-local).
+  Keep N days keeps each search key's newest API reading. Retention is enforced after a "Check via API"
+  writes readings into the project (`afterApiCheck`, as after a run's end; not while a run of it is
+  under way).
+
 ## Files and their lock
 - `ScreenshotFiles.lock(sha)` is a per-hash mutex shared by every store over the directory in the
   process. A screenshot holds it from its file's `write` (which may reuse a file no row names yet)
@@ -158,6 +171,13 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
   into a project, and a run its end. Tests: `service.test.ts` `capture-reports-its-project`,
   `screenshots/__tests__/service.test.ts` `screenshot-reports-its-project`, `capture-run.test.ts`
   `capture-run-reports-its-end`.
+- **Scenario: api-only-purge-counts-show-readings** — an API-only project's retention preview and
+  "Purge now" confirm show its readings count (not all zeros), through the router (the output schema
+  accepts `readings`) and the renderer (`previewText` does not say "would remove nothing"; the Purge now
+  button is enabled); the purge log has no `readings`. Tests: `retention.test.ts`
+  `api-only-purge-counts-show-readings`, `projects-router.test.ts`, `projects-view.test.ts`.
+- **Scenario: api-only-project-obeys-retention** — a project with only API readings: Purge now and
+  the enforcement after a check purge what the policy selects. Test: `retention.test.ts`.
 - **Scenario: router** — Tests in `packages/ipc-contract/src/__tests__/projects-router.test.ts`:
   `every-projects-procedure-enforces-sender`, `projects-inputs-are-validated`,
   `projects-procedures-call-service`, `projects-answers-are-checked` (the retention procedures among them).

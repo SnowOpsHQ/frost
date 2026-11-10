@@ -3,14 +3,16 @@
 // DATA_SET_SERP_PROVIDER_RESULTS), specs/data-sources.spec.ts (DATA_PROVIDERS, DATA_SECRET_MAX_CHARS), specs/ipc-sender.spec.ts,
 // specs/ipc-transport.spec.ts (IPC_INTERNAL_ERROR_CODE)
 // Acceptance: specs/data-sources.feature.md (Keys; Usage counter: data-usage-view; settings-data-sources-serp-choice)
-// · plan docs/plans/phase-12-big-bets.md, Task 1 (IPC), Task 2 (`usage`, the SERP vendor)
+// · plan docs/plans/phase-12-big-bets.md, Task 1 (IPC), Task 2 (`usage`, the SERP vendor), Task 4 (`checkPlan`,
+// `checkProjectSearches`: DataCheckPlanInputSchema, DataCheckPlanSchema, DataCheckProjectInputSchema, DataCheckProjectAnswerSchema;
+// data-sources.feature.md, Check via API)
 import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { DATA_PROVIDERS, DATA_SECRET_MAX_CHARS } from '@app/specs/data-sources.spec';
-import type { DataSerpProviderView, DataSetKeyResult, DataSetSerpProviderResult, DataSourcesSetKeyInput, DataSourcesView, DataUsageView } from '@app/specs/data-sources.schema';
+import type { DataCheckPlan, DataCheckPlanInput, DataCheckProjectAnswer, DataCheckProjectInput, DataSerpProviderView, DataSetKeyResult, DataSetSerpProviderResult, DataSourcesSetKeyInput, DataSourcesView, DataUsageView } from '@app/specs/data-sources.schema';
 import { appRouter, createSenderPolicy, type DataSourcesService, type IpcContext } from '../index';
 
 const WINDOW_ID = 7;
@@ -39,6 +41,18 @@ const USAGE: DataUsageView = {
   },
 };
 const SERP: DataSerpProviderView = { provider: 'serpapi', choices: ['serpapi'] };
+const PROJECT = '01920000-0000-7000-8000-0000000000a1';
+const SEARCH_1 = '01920000-0000-7000-8000-0000000000b1';
+const SEARCH_2 = '01920000-0000-7000-8000-0000000000b2';
+const PLAN: DataCheckPlan = { status: 'ready', provider: 'serpapi', requests: 2 };
+const CHECKED: DataCheckProjectAnswer = {
+  status: 'checked',
+  provider: 'serpapi',
+  results: [
+    { searchId: SEARCH_1, result: 'stored' },
+    { searchId: SEARCH_2, result: 'failed', outcome: 'request-failed', refusal: 'http-error' },
+  ],
+};
 
 function fakeService(overrides: Partial<DataSourcesService> = {}) {
   return {
@@ -48,6 +62,8 @@ function fakeService(overrides: Partial<DataSourcesService> = {}) {
     usage: vi.fn(async (): Promise<DataUsageView> => USAGE),
     serpProvider: vi.fn(async (): Promise<DataSerpProviderView> => SERP),
     setSerpProvider: vi.fn(async (_provider: 'serpapi' | 'dataforseo' | 'serper'): Promise<DataSetSerpProviderResult> => 'stored'),
+    checkPlan: vi.fn(async (_input: DataCheckPlanInput): Promise<DataCheckPlan> => PLAN),
+    checkProjectSearches: vi.fn(async (_input: DataCheckProjectInput): Promise<DataCheckProjectAnswer> => CHECKED),
     ...overrides,
   } satisfies DataSourcesService;
 }
@@ -81,6 +97,8 @@ const PROCEDURES: Record<string, unknown> = {
   usage: undefined,
   serpProvider: undefined,
   setSerpProvider: { provider: 'serpapi' },
+  checkPlan: { projectId: PROJECT },
+  checkProjectSearches: { projectId: PROJECT, provider: 'serpapi', requests: 2 },
 };
 
 describe('dataSources router', () => {
@@ -96,6 +114,8 @@ describe('dataSources router', () => {
     expect(service.setKey).not.toHaveBeenCalled();
     expect(service.clearKey).not.toHaveBeenCalled();
     expect(service.setSerpProvider).not.toHaveBeenCalled();
+    expect(service.checkPlan).not.toHaveBeenCalled();
+    expect(service.checkProjectSearches).not.toHaveBeenCalled();
   });
 
   test('data-sources-inputs-bounded', async () => {
@@ -168,5 +188,51 @@ describe('dataSources router', () => {
     expect((await errorOf(call(odd, 'serpProvider'))).code).toBe(IPC_INTERNAL_ERROR_CODE);
     expect(await call(odd, 'setSerpProvider', { provider: 'serpapi' })).toBe('failed');
     expect(await call(ctxFor(fakeService({ setSerpProvider: vi.fn(async () => 'unavailable' as const) })), 'setSerpProvider', { provider: 'serper' })).toBe('unavailable');
+  });
+
+  test('data-sources-check-via-api', async () => {
+    const service = fakeService();
+    const ctx = ctxFor(service);
+    expect(await call(ctx, 'checkPlan', { projectId: PROJECT })).toEqual(PLAN);
+    expect(await call(ctx, 'checkPlan', { projectId: PROJECT, searchIds: [SEARCH_1] })).toEqual(PLAN);
+    expect(service.checkPlan).toHaveBeenLastCalledWith({ projectId: PROJECT, searchIds: [SEARCH_1] });
+    expect(await call(ctx, 'checkProjectSearches', { projectId: PROJECT, searchIds: [SEARCH_1, SEARCH_2], provider: 'serpapi', requests: 2 })).toEqual(CHECKED);
+    expect(service.checkProjectSearches).toHaveBeenCalledWith({ projectId: PROJECT, searchIds: [SEARCH_1, SEARCH_2], provider: 'serpapi', requests: 2 });
+    // Inputs are strict and bounded: a project id, distinct search ids (1…MAX_PROJECT_QUERIES), a SERP vendor and the count confirmed.
+    for (const input of [
+      {},
+      { projectId: 'nope' },
+      { projectId: PROJECT, searchIds: [] },
+      { projectId: PROJECT, searchIds: [SEARCH_1, SEARCH_1] },
+      { projectId: PROJECT, searchIds: Array.from({ length: 51 }, (_, i) => `01920000-0000-7000-8000-${String(i).padStart(12, '0')}`) },
+      { projectId: PROJECT, extra: 1 },
+    ]) {
+      expect((await errorOf(call(ctx, 'checkPlan', input))).code, JSON.stringify(input).slice(0, 60)).toBe('BAD_REQUEST');
+    }
+    for (const input of [
+      { projectId: PROJECT },
+      { projectId: PROJECT, provider: 'serpapi' },
+      { projectId: PROJECT, provider: 'perplexity', requests: 1 },
+      { projectId: PROJECT, provider: 'serpapi', requests: 0 },
+      { projectId: PROJECT, provider: 'serpapi', requests: 51 },
+      { projectId: PROJECT, provider: 'serpapi', requests: 1.5 },
+      { projectId: PROJECT, provider: 'serpapi', requests: 1, location: 'Berlin' },
+    ]) {
+      expect((await errorOf(call(ctx, 'checkProjectSearches', input))).code, JSON.stringify(input).slice(0, 60)).toBe('BAD_REQUEST');
+    }
+    expect(service.checkProjectSearches).toHaveBeenCalledTimes(1);
+    // Answers are checked against their strict schemas.
+    const odd = ctxFor(
+      fakeService({
+        checkPlan: vi.fn(async () => ({ status: 'ready', provider: 'perplexity', requests: 2 }) as unknown as DataCheckPlan),
+        checkProjectSearches: vi.fn(async () => ({ ...CHECKED, key: KEY }) as unknown as DataCheckProjectAnswer),
+      }),
+    );
+    expect((await errorOf(call(odd, 'checkPlan', { projectId: PROJECT }))).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    const error = await errorOf(call(odd, 'checkProjectSearches', { projectId: PROJECT, provider: 'serpapi', requests: 2 }));
+    expect(error.code).toBe(IPC_INTERNAL_ERROR_CODE);
+    expect(`${error.message} ${JSON.stringify(error)}`).not.toContain(KEY);
+    // A refusal goes through as data.
+    expect(await call(ctxFor(fakeService({ checkPlan: vi.fn(async () => ({ status: 'refused', reason: 'unavailable' }) as const) })), 'checkPlan', { projectId: PROJECT })).toEqual({ status: 'refused', reason: 'unavailable' });
   });
 });

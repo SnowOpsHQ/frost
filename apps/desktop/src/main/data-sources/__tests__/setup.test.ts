@@ -1,7 +1,7 @@
 // Spec: specs/data-sources.spec.ts (DATA_API_PARTITION, DATA_CREDENTIALS_FILE, DATA_API_E2E_SWITCH,
 // LEGAL_GATES_E2E_SWITCH, LEGAL_GATE_IDS), specs/security-policy.spec.ts (PACKAGED_FORBIDDEN_SWITCHES)
 // Acceptance: specs/data-sources.feature.md (data-api-e2e-seam-only-unpackaged, legal-gates-open-only-by-switch-unpackaged;
-// Task 2: data-usage-counts-every-request, wired)
+// Task 2: data-usage-counts-every-request, wired; Task 4: Check via API, wired)
 // · plan docs/plans/phase-12-big-bets.md, Decision 4 (in-memory `frost-data-api`), Task 1 (`index.ts`: setup, e2e seam)
 import path from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
@@ -15,7 +15,7 @@ const SEAM_BASE = 'http://127.0.0.1:41234';
 const NOW = Date.UTC(2026, 10, 10, 12);
 
 /** `setupDataSources` with a fake `electron` (the agent's `key-never-leaves-main` pattern). */
-function setup(packaged: boolean) {
+function setup(packaged: boolean, extra: { checks?: Parameters<typeof setupDataSources>[0]['checks'] } = {}) {
   const memory = createMemoryFs();
   const safe = createFakeSafeStorage();
   const partitions: string[] = [];
@@ -47,6 +47,7 @@ function setup(packaged: boolean) {
     usage,
     settings,
     now: () => NOW,
+    ...extra,
   });
   return { main, memory, partitions, fetched, logLines, readSeamFile, usage, settings };
 }
@@ -102,5 +103,28 @@ describe('data sources setup', () => {
     expect((await main.service.status()).providers.serpapi.hasKey).toBe(false);
     expect(logLines).toContain('data credentials: the key file could not be read');
     expect(logLines.some((line) => line.startsWith('agent credentials:'))).toBe(false);
+  });
+
+  test('data-sources-setup-wires-check-via-api', async () => {
+    const PROJECT = '01920000-0000-7000-8000-0000000000a1';
+    const store = { project: vi.fn(async () => null), projectQueries: vi.fn(async () => []), appendApiReading: vi.fn(async () => false) };
+    const checks = { store, parse: vi.fn(), afterWrite: vi.fn() };
+    // Packaged (every gate closed as shipped): refused before anything is read.
+    const shipped = setup(true, { checks });
+    expect(await shipped.main.service.checkPlan({ projectId: PROJECT })).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(await shipped.main.service.checkProjectSearches({ projectId: PROJECT, provider: 'serpapi', requests: 1 })).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(store.project).not.toHaveBeenCalled();
+    // Gates open (unpackaged switch), no key yet: main's own vendor view says so (Task 2's `serpProvider`).
+    const open = setup(false, { checks });
+    expect(await open.main.service.checkPlan({ projectId: PROJECT })).toEqual({ status: 'refused', reason: 'no-key' });
+    expect(await open.main.service.setKey({ provider: 'serpapi', key: SERPAPI_KEY })).toBe('stored');
+    expect(await open.main.service.checkPlan({ projectId: PROJECT })).toEqual({ status: 'refused', reason: 'not-found' });
+    expect(store.project).toHaveBeenCalledWith(PROJECT);
+    expect(open.fetched).toEqual([]);
+    // Without the change store wired, both refuse and send nothing.
+    const bare = setup(false);
+    expect(await bare.main.service.checkPlan({ projectId: PROJECT })).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(await bare.main.service.checkProjectSearches({ projectId: PROJECT, provider: 'serpapi', requests: 1 })).toEqual({ status: 'refused', reason: 'unavailable' });
+    expect(checks.parse).not.toHaveBeenCalled();
   });
 });

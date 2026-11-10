@@ -3,7 +3,8 @@
 // (AUTO_CAPTURE_AVAILABLE, CAPTURE_CADENCE_LABELS, CAPTURE_SCHEDULE_NOTE, CADENCE_TEXT), specs/render-profile.spec.ts
 // (QUICK_RENDER_PROFILES), specs/command-palette.spec.ts (Registration API)
 // Acceptance: specs/projects.feature.md (The sheet, with Phase 10 Task 7's star and sort, Settings, tags
-// and Bulk add, and Task 8's Due, Check rankings, cadence and blocked run; Changes panel picker; Command palette)
+// and Bulk add, and Task 8's Due, Check rankings, cadence and blocked run; Changes panel picker; Command palette);
+// Phase 12 Task 4: specs/retention.feature.md (api-only-purge-counts-show-readings: the preview names API readings)
 import { describe, expect, test, vi } from 'vitest';
 import type { TabState } from '@app/specs/browser.spec';
 import { MAX_PROJECT_QUERIES, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
@@ -535,6 +536,10 @@ describe('projects view', () => {
     expect(previewText({ status: 'ok', policy: { mode: 'versions', value: 1 }, counts: { captures: 0, versions: 0, diffs: 0, screenshots: 0 }, bytes: 0 })).toBe('Purging now would remove nothing.');
     expect(previewText({ status: 'ok', policy: { mode: 'forever', value: null }, counts: { captures: 0, versions: 0, diffs: 0, screenshots: 0 }, bytes: 0 })).toBe('Keep everything: purging removes nothing.');
     expect(previewText(null)).toBe('The preview could not be read.');
+    // api-only-purge-counts-show-readings (Phase 12 Task 4): a plan with only API readings is not "nothing".
+    const apiOnly = { captures: 0, versions: 0, diffs: 0, screenshots: 0, readings: 3 };
+    expect(previewText({ status: 'ok', policy: { mode: 'days', value: 30 }, counts: apiOnly, bytes: 2_000 })).toBe('Purging now would remove 0 captures, 0 versions, 0 diffs, 0 screenshots and 3 API readings (≈ 2.0 kB).');
+    expect(purgeNowText({ status: 'purged', counts: apiOnly, bytes: 2_000, files: 0 })).toBe('Purged 0 captures, 0 versions, 0 diffs, 0 screenshots and 3 API readings (≈ 2.0 kB freed).');
     expect(purgeNowText({ status: 'purged', counts, bytes: 1_234, files: 0 })).toBe('Purged 2 captures, 2 versions, 2 diffs and 0 screenshots (≈ 1.2 kB freed).');
     expect(purgeNowText({ status: 'empty' })).toBe('Nothing to purge.');
     expect(purgeNowText({ status: 'changed' })).toBe('The captures changed while you were asked, so nothing was deleted. Try again.');

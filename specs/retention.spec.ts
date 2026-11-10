@@ -69,6 +69,12 @@ export interface PurgeCountsView {
   versions: number;
   diffs: number;
   screenshots: number;
+  /**
+   * Phase 12 Task 4: the SERP API readings (`source = 'serp-api'`) the purge removes; present only
+   * when there is at least one (absent, never 0, otherwise). Never in the purge log (`ci_purges` has no
+   * such column).
+   */
+  readings?: number;
 }
 
 export type SetRetentionAnswer = { status: 'ok' } | RetentionRefused;
@@ -171,9 +177,20 @@ export function plural(n: number, one: string, many: string): string {
   return `${NUMBER.format(n)} ${n === 1 ? one : many}`;
 }
 
-/** "3 captures, 2 versions, 1 diff and 0 screenshots". */
+/**
+ * "3 captures, 2 versions, 1 diff and 0 screenshots"; with API readings (Phase 12 Task 4) "0 captures,
+ * 0 versions, 0 diffs, 0 screenshots and 3 API readings".
+ */
 export function purgeCountsText(counts: PurgeCountsView): string {
-  return `${plural(counts.captures, 'capture', 'captures')}, ${plural(counts.versions, 'version', 'versions')}, ${plural(counts.diffs, 'diff', 'diffs')} and ${plural(counts.screenshots, 'screenshot', 'screenshots')}`;
+  const rows = `${plural(counts.captures, 'capture', 'captures')}, ${plural(counts.versions, 'version', 'versions')}, ${plural(counts.diffs, 'diff', 'diffs')}`;
+  const screenshots = plural(counts.screenshots, 'screenshot', 'screenshots');
+  const readings = typeof counts.readings === 'number' && counts.readings > 0 ? counts.readings : 0;
+  return readings > 0 ? `${rows}, ${screenshots} and ${plural(readings, 'API reading', 'API readings')}` : `${rows} and ${screenshots}`;
+}
+
+/** Whether a purge's counts remove nothing (API readings included, Phase 12 Task 4). */
+export function purgesNothing(counts: PurgeCountsView): boolean {
+  return counts.captures + counts.versions + counts.diffs + counts.screenshots + (counts.readings ?? 0) === 0;
 }
 
 /** A policy in words, as the "Purge now" dialog names it: "keep the last 1 version of each page". */

@@ -3,7 +3,8 @@
 // specs/projects.schema.ts (answers), specs/capture-db.spec.ts (UNFILED_PROJECT_ID, MAX_PROJECT_PAGES)
 // Phase 10 Task 8: RANK_RUN_DISCLOSURE, RANK_RUN_DISCLOSURE_SETTING_KEY (through the settings repository), CAPTURE_CADENCES,
 // specs/capture-schedule.spec.ts (isDue, AUTO_CAPTURE_AVAILABLE, RANK_CHECK_AVAILABLE)
-// Acceptance: specs/projects.feature.md (The service; Deleting a project; Searches in a run; Cadence; Scenarios: service)
+// Acceptance: specs/projects.feature.md (The service; Deleting a project; Searches in a run; Cadence; Scenarios: service;
+// Phase 12 Task 4, Checking searches via a data API: api-only-project-delete-retried-after-restart), specs/workspace-db.feature.md (API readings (Phase 12))
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -322,6 +323,45 @@ describe('projects service', () => {
     const before = setup({ store: Object.assign(Object.create(first.repo) as ChangeIntelRepository, { deletedProjectsWithRows }) });
     await before.service.startRun(id, false);
     expect(deletedProjectsWithRows).toHaveBeenCalledOnce();
+  });
+
+  test('api-only-project-delete-retried-after-restart', async () => {
+    // Phase 12 Task 4: a project whose only data is SERP API readings; its deletion's purge fails.
+    const dir = mkdtempSync(path.join(tmpdir(), 'frost-projects-restart-'));
+    let current = openSessionStore({ dir });
+    cleanups.push(async () => {
+      await current.close();
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+    const id = (await current.changeIntel.createProject('API only', tick()))!.id;
+    for (let n = 0; n < 2; n++) {
+      const at = tick();
+      const json = JSON.stringify({ status: 'ready', at });
+      expect(await current.changeIntel.appendApiReading({ id: uuidv7(at), projectId: id, searchKey: sha('green tea'), searchKeyVersion: 1, searchParamsJson: canonicalJson(PARAMS), filtersJson: '{}', status: 'ready', packVersion: 3, readingJson: json, pageUrl: 'https://serpapi.com/search.json', observedAt: at, createdAt: at })).toBe(true);
+    }
+    const failing = Object.assign(Object.create(current.changeIntel) as ChangeIntelRepository, {
+      executePurge: vi.fn(async () => {
+        throw Object.assign(new Error('disk full'), { code: 'SQLITE_FULL' });
+      }),
+    });
+    expect(await setup({ store: failing }).service.remove(id)).toEqual({ status: 'deleted', purged: null });
+    // frost restarts: the deleted project still has its readings, so the startup retry finds it.
+    await current.close();
+    current = openSessionStore({ dir });
+    expect(await current.changeIntel.deletedProjectsWithRows()).toEqual([id]);
+    const retry = setup({ store: current.changeIntel });
+    expect(await retry.service.purgeDeleted()).toBe(1);
+    const raw = new DatabaseSync(current.file, { readOnly: true });
+    try {
+      expect(Number(raw.prepare('SELECT count(*) AS n FROM ci_serp_readings WHERE project_id = ?').get(id)!['n'])).toBe(0);
+      // An API-only purge writes no (synced) `ci_purges` row; its records are the log.
+      expect(Number(raw.prepare('SELECT count(*) AS n FROM ci_purges WHERE project_id = ?').get(id)!['n'])).toBe(0);
+      expect(Number(raw.prepare("SELECT count(*) AS n FROM ci_serp_api_purges WHERE project_id = ? AND reason = 'project-deleted'").get(id)!['n'])).toBe(2);
+    } finally {
+      raw.close();
+    }
+    expect(await current.changeIntel.deletedProjectsWithRows()).toEqual([]);
+    expect(await retry.service.purgeDeleted()).toBe(0);
   });
 
   test('delete-project-asks-first', async () => {

@@ -73,3 +73,15 @@ export const MAX_READINGS_PER_READ = 1_000;
  * while their running total stays within it, and never reads the JSON of the rest.
  */
 export const MAX_READING_BYTES_PER_READ = 33_554_432;
+
+// ---- API readings (Phase 12 Task 4; `workspace-db.feature.md`, API readings) --------------------
+
+/**
+ * Phase 12's table for API readings: the record of each purged `serp-api` reading id
+ * (`ci_serp_api_purges (reading_id, purged_at)`), the `ci_tombstones` idea for a table its frozen
+ * `CHECK` cannot name. Device-local, like the readings.
+ */
+export const SERP_API_READINGS_TABLES = ['ci_serp_api_purges'] as const;
+
+/** Phase 12's migration for API readings (Phase 12 owns `0240`–`0249`; spread after `0243`/`0244`). */
+export const SERP_API_READINGS_MIGRATION_IDS = ['0245_serp_api_readings'] as const;

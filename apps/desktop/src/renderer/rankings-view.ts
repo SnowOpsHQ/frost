@@ -1,4 +1,5 @@
 import type { RetentionMode } from '@app/specs/capture-db.spec';
+import { DATA_CHECK_TEXT, DATA_PROVIDER_LABELS } from '@app/specs/data-sources.spec';
 import {
   COMPARE_MOVEMENT_LABELS,
   DEFAULT_RANK_RANGE,
@@ -120,6 +121,20 @@ export interface RankRowView {
   readonly capped: string | null;
   /** The canonical result page "Open this result page" loads (`null`: not `http(s)`). */
   readonly url: string | null;
+  /** Where the latest point came from (`rankSourceLabel`; empty with no reading). */
+  readonly source: string;
+}
+
+/**
+ * Where a point came from, as the views say it (Phase 12 Task 4; `projects.feature.md`, Checking
+ * searches via a data API): "Tab capture", or "<Vendor> API" for a SERP API reading ("Data API" when
+ * the reading names no vendor frost knows). Empty for no point.
+ */
+export function rankSourceLabel(point: Pick<RankPoint, 'source' | 'provider'> | null): string {
+  if (point === null) return '';
+  if (point.source !== 'serp-api') return DATA_CHECK_TEXT.sourceCapture;
+  const provider = point.provider;
+  return provider !== undefined && Object.hasOwn(DATA_PROVIDER_LABELS, provider) ? DATA_CHECK_TEXT.sourceApi(DATA_PROVIDER_LABELS[provider]) : DATA_CHECK_TEXT.sourceApiUnknown;
 }
 
 /** A rank table row as the view shows it; `competitors` are the project's competitor domains, in its order. */
@@ -152,6 +167,7 @@ export function rankRowView(row: RankTableRow, competitors: readonly string[]): 
     alsoIn: latest ? alsoInText(latest.alsoIn) : '',
     capped: row.capped === true ? RANK_VIEW_TEXT.capped : null,
     url: resultPageUrl(params),
+    source: rankSourceLabel(latest),
   };
 }
 
@@ -260,6 +276,8 @@ export interface SeriesRowView {
   /** The site's result URL as text (`—` with none). */
   readonly url: string;
   readonly alsoIn: string;
+  /** Where the point came from (`rankSourceLabel`). */
+  readonly source: string;
 }
 
 /** A search's points as the series lists them: newest first, with date, position and URL. */
@@ -267,7 +285,7 @@ export function seriesRows(points: readonly RankPoint[]): SeriesRowView[] {
   return [...points]
     .filter(present)
     .reverse()
-    .map((point) => ({ readingId: point.readingId, when: formatWhen(point.at), position: rankLabel(point), url: typeof point.url === 'string' && point.url !== '' ? point.url : RANK_VIEW_TEXT.none, alsoIn: alsoInText(point.alsoIn) }));
+    .map((point) => ({ readingId: point.readingId, when: formatWhen(point.at), position: rankLabel(point), url: typeof point.url === 'string' && point.url !== '' ? point.url : RANK_VIEW_TEXT.none, alsoIn: alsoInText(point.alsoIn), source: rankSourceLabel(point) }));
 }
 
 // ---- Refusals and export ------------------------------------------------------------------------

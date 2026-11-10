@@ -134,8 +134,18 @@ export interface SerpObservation {
   readonly filters: SerpFilters;
   readonly observedAt: number;
   readonly source: SerpReadingSource;
+  /** Phase 12 Task 4: a `serp-api` reading's vendor (main reads it from the row's `page_url`); absent when unknown. */
+  readonly provider?: RankPointProvider;
   readonly snapshot: SerpSnapshotShape;
 }
+
+/**
+ * The vendors a `serp-api` point may name: `data-sources.spec.ts` `DATA_SERP_PROVIDERS`, repeated here
+ * so this spec (read by `@app/change-intel`) imports no other (`rankings.schema.ts` proves the two lists
+ * the same); the read model checks a point's vendor against it.
+ */
+export const RANK_POINT_PROVIDERS = ['serpapi', 'dataforseo', 'serper'] as const;
+export type RankPointProvider = (typeof RANK_POINT_PROVIDERS)[number];
 
 /**
  * The current-version search key of a search (main: SHA-256 hex of `searchIdentityJson(params,
@@ -179,6 +189,14 @@ export interface RankPoint {
   readonly organicRead: number;
   readonly page: number;
   readonly alsoIn: readonly string[];
+  /**
+   * Phase 12 Task 4: where the reading came from, present only for a SERP API reading (`serp-api`);
+   * absent, the point is a tab capture's (every Phase 10 point). The view labels it "Tab capture" or
+   * "<Vendor> API".
+   */
+  readonly source?: 'serp-api';
+  /** The vendor of a `serp-api` point, when the reading names one (`RANK_POINT_PROVIDERS`). */
+  readonly provider?: RankPointProvider;
 }
 
 /**
