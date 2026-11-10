@@ -1327,3 +1327,23 @@ Where the build differs from the plan above, or settles what it left open. **Lea
 - **Execution.** Two lanes in one worktree: lane A = Tasks 1 → 2 → 3 → 4 → 8 → 9; lane B = Tasks
   5 → 6a → 6b → 7 → 10a → 10b; then Task 11 and the whole-branch review. One commit per task by the
   lead.
+- Task 1: Perplexity is pinned to `POST https://api.perplexity.ai/v1/sonar` (the current reference,
+  2026-11-10), not `/chat/completions`; Serper and OpenAI endpoints are the plan's (docs not
+  fetchable: marked unverified in the spec). SerpApi query names are a fixed set
+  (`SERPAPI_QUERY_NAMES`, no `no_cache`), request headers a fixed set, bodies POST-only and capped.
+- Task 1: `DataSourcesView` is `{ protection, providers: { <provider>: { hasKey, available } } }`
+  (protection belongs to the store). `DATA_API_REFUSALS` adds `unavailable` (the legal gate),
+  `busy` (more than `maxWaitingPerProvider` = 4 waiting) and the transport outcomes; a request
+  reserves its `minIntervalMs` turn after the gate check and **before** any key is read;
+  `dataApiRequest` never throws. SerpApi's `api_key` must appear exactly once and nowhere else in
+  the URL, or the request is `not-allowed`. `createCredentialStore` gains an optional `logPrefix`.
+- Task 5: the `CHECK`s live in `0240`'s tables (SQLite cannot add one later); `0241` holds the
+  delete cascade and `*_run_exists` triggers (a late write for a deleted run is refused). The
+  frontier is the seen-set and the authority for in-links and sitemap orphans (`inlinks`,
+  `from_sitemap`); `crawl_pages` has no `inlinks` column. Run deletes are chunked
+  (`CRAWL_LIMITS.deleteChunkRows`) and yield between statements. Counts split `refused` (robots,
+  scope, private address) from `failed`. Start-up moves `running` **and** `queued` runs to
+  `paused`. `allowRedirect(nextUrl, { signal })` races the call's signal (`aborted`).
+- Task 5: the plan's `CRAWL_RULE_IDS` list is kept exactly; the catalogue rules it leaves out
+  (`title-too-wide`, `meta-description-too-wide`, the link, sitemap and hreflang check rules) are
+  recorded with reasons in `CRAWL_EXCLUDED_RULES`.
