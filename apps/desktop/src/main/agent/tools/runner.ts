@@ -1,4 +1,4 @@
-import { getToolDefinition } from '@app/ai-skills';
+import { getToolDefinition, runAiSearchApprovedInputSchema } from '@app/ai-skills';
 import type { SeoAuditResponse } from '@app/seo-core';
 import { pageUrlOf } from '@app/specs/agent-approvals.spec';
 import { EXECUTE_JS_LIMITS, modelPageUrl, PAGE_SCRIPT_TIMEOUT_MS, PAGE_TEXT_DEFAULT_CHARS, pageKeyOf, pageSource } from '@app/specs/agent-page-tools.spec';
@@ -34,7 +34,8 @@ import { createProbeTools } from './probe-tools';
 // - Every tool honours `signal` (an abort answers `failed`), and no tool reads cookies, storage or
 //   the page's main world.
 // - `serp_results`, `search_intent`, `run_ai_search` and `gsc_performance` run over `deps.ports`
-//   (Task 8, `search-tools.ts`): a missing port answers `unavailable`;
+//   (Task 8, `search-tools.ts`): a missing port answers `unavailable`; `run_ai_search` is re-parsed
+//   with `runAiSearchApprovedInputSchema` (Phase 12 Task 8: the approved `engine` and `via`);
 // - `visibility_probes` and `run_visibility_probes` run over `deps.ports.probes` (`probe-tools.ts`),
 //   page tools like the others: the tab must still show the expected page (approved: exactly it).
 // - `read_attached_tab` (Phase 11 Task 9, Decision 11) reads the tab the broker resolved the ref to
@@ -143,7 +144,7 @@ function fitString<T extends Record<string, unknown>>(data: T, key: keyof T & st
 export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
   const now = deps.now ?? Date.now;
   // `gsc_performance`'s page is in its input: the broker fills in the tab's as the call arrives.
-  const search = createSearchTools(deps.ports ? { ports: deps.ports } : {});
+  const search = createSearchTools({ ...(deps.ports ? { ports: deps.ports } : {}), ...(deps.now ? { now: deps.now } : {}) });
   const probeTools = createProbeTools({
     port: deps.ports?.probes ?? null,
     // The page check every page tool makes: the tab's live page must be the expected one.
@@ -352,7 +353,9 @@ export function createPageToolRunner(deps: PageToolDeps): ToolRunner {
       if (context.signal.aborted) return fail('failed');
       const definition = getToolDefinition(toolName);
       if (definition === undefined) return fail('unavailable');
-      const parsed = definition.inputSchema.safeParse(input);
+      // `run_ai_search` runs only the approved input (Phase 12 Task 8): its `engine` and `via`, filled
+      // by main's broker from the user's settings, are not in the model-facing schema.
+      const parsed = definition.name === 'run_ai_search' ? runAiSearchApprovedInputSchema.safeParse(input) : definition.inputSchema.safeParse(input);
       if (!parsed.success) return fail('invalid-input');
       const value = parsed.data as Record<string, unknown>;
       switch (definition.name) {

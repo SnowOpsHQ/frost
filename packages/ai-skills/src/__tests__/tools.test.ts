@@ -70,9 +70,12 @@ describe('tool definitions', () => {
     const serp = getToolDefinition('serp_results').inputSchema;
     expect(serp.parse({ query: 'q', locale: 'EN-us' }).locale).toBe('en-US');
     expect(serp.parse({ query: 'q', locale: 'ES-419' }).locale).toBe('es-419');
-    expect(getToolDefinition('run_ai_search').inputSchema.parse({ query: 'q', locale: 'De' }).locale).toBe('de');
     expect(accepts('serp_results', { query: 'q', device: 'watch' })).toBe(false);
-    expect(accepts('run_ai_search', { query: 'q', locale: 'de' })).toBe(true);
+    // run_ai_search takes no locale (Phase 12 Task 8 review: neither provider's body sends one); an engine only from AI_SEARCH_ENGINES.
+    expect(accepts('run_ai_search', { query: 'q', locale: 'de' })).toBe(false);
+    expect(accepts('run_ai_search', { query: 'q', engine: 'chatgpt' })).toBe(true);
+    expect(accepts('run_ai_search', { query: 'q', engine: 'bing' })).toBe(false);
+    expect(accepts('run_ai_search', { query: 'q', via: 'api' })).toBe(false);
 
     expect(accepts('gsc_performance', {})).toBe(true);
     expect(accepts('gsc_performance', { url: 'https://example.com/', days: L.maxGscDays })).toBe(true);

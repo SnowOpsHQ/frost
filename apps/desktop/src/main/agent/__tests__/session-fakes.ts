@@ -1,6 +1,7 @@
 // Fakes for the session manager's tests (no Electron, no network): the real host, key store,
 // settings, grants and approval broker from `createAgent`, over a fake utility process that runs
 // the real runtime in this process with the e2e seam's scripted model, and a scripted tool runner.
+import type { AiSearchContext } from '@app/specs/ai-search.spec';
 import { vi } from 'vitest';
 import type { SkillRegistry } from '@app/ai-skills/skills';
 import { createScriptedModelFactory, startRuntime, type RuntimePort } from '@app/agent-runtime';
@@ -40,6 +41,8 @@ export async function setupSession(
     consumeGesture?: AgentSessionDeps['consumeGesture'];
     /** Phase 11 Task 9: other open tabs (mutable), attachable to chats; default: no attached-tabs port. */
     otherTabs?: { id: number; url: string; title: string }[];
+    /** Phase 12 Task 8: the AI search context the broker completes `run_ai_search` from; default: none. */
+    aiSearchContext?: () => AiSearchContext | Promise<AiSearchContext>;
   } = {},
 ) {
   const memory = createMemoryFs();
@@ -93,6 +96,7 @@ export async function setupSession(
     ...(options.mcp ? { mcp: options.mcp } : {}),
     tabUrl: tabUrlOf,
     ...(attachedTabs ? { attachedTabs } : {}),
+    ...(options.aiSearchContext ? { aiSearchContext: options.aiSearchContext } : {}),
     log: (line) => logs.push(line),
   });
   if (options.key !== false) await agent.credentials.setKey('gateway', KEY);

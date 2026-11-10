@@ -31,8 +31,10 @@ function runner(ports: PageToolDeps['ports'], tabUrl: string | null = TAB_URL) {
 }
 
 const ctx = (via: ToolRunVia = 'read', signal: AbortSignal = new AbortController().signal): ToolRunContext => ({ tabId: TAB, signal, via, expectedOrigin: null, expectedUrl: null });
+/** `run_ai_search` runs only its approved input (Phase 12 Task 8): main's broker filled `engine` and `via`. */
+const APPROVED_AI = { engine: 'perplexity', via: 'api' } as const;
 const run = (tools: ReturnType<typeof runner>, toolName: string, input: Record<string, unknown>, context: ToolRunContext = ctx(toolName === 'run_ai_search' ? 'approval' : 'read')) =>
-  tools.run(toolName, input as JsonValue, context);
+  tools.run(toolName, (toolName === 'run_ai_search' ? { ...APPROVED_AI, ...input } : input) as JsonValue, context);
 
 const dataOf = (outcome: ToolRunOutcome) => {
   expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
@@ -82,13 +84,16 @@ describe('search tools', () => {
 
     expect(dataOf(await run(tools, 'run_ai_search', { query: 'best green tea' }))).toEqual({
       query: 'best green tea',
+      engine: 'perplexity',
+      via: 'api',
+      note: FAKE_AI_SEARCH_ANSWER.note,
       answer: FAKE_AI_SEARCH_ANSWER.answer,
       answerTruncated: false,
       citations: FAKE_AI_SEARCH_ANSWER.citations,
       citationsTotal: 1,
       fetchedAt: FAKE_AI_SEARCH_ANSWER.fetchedAt,
     });
-    expect(serp.calls[1]).toEqual({ method: 'aiSearch', query: { query: 'best green tea' } });
+    expect(serp.calls[1]).toEqual({ method: 'aiSearch', query: { query: 'best green tea', engine: 'perplexity', via: 'api' } });
 
     expect(dataOf(await run(tools, 'search_intent', { query: 'buy green tea' }))).toEqual({ query: 'buy green tea', primary: FAKE_INTENT.primary, intents: FAKE_INTENT.intents });
     expect(intent.calls).toEqual([{ query: 'buy green tea' }]);

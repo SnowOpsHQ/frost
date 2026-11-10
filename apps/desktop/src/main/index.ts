@@ -59,7 +59,8 @@ import { startSyncService } from './sync/service';
 import { createTelemetryMain } from './telemetry/main';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 import { createAgentService } from './agent/wire';
-import { gscAdapter, intentAdapter, probesAdapter, serpAdapter } from './agent/ports';
+import { aiSearchAdapter, gscAdapter, intentAdapter, probesAdapter, serpAdapter } from './agent/ports';
+import { setupAiSearch } from './ai-search';
 import { createMainChanges } from './changes/changes-main';
 import { createMainScreenshots } from './screenshots/electron';
 import { createMainProjects } from './changes/projects-main';
@@ -474,15 +475,17 @@ function start(): void {
     telemetryMain.useGestures((windowId) => account.gestures.consume(windowId));
     // Search Console (specs/gsc.feature.md): read-only and not gated (no frost account needed); reuses the account's store and gestures.
     const gsc = await createGscMain(account);
+    // Data sources (specs/data-sources.feature.md): BYO keys and the one data API client, main only; legal gates closed as shipped.
+    const dataSources = setupDataSources({ app, session, safeStorage, log: logSession, usage: sessionStore.dataUsage, settings: sessionStore.settings, checks: { store: sessionStore.changeIntel, parse: (job) => serp.analyseApi(job), afterWrite: (projectId) => projects.afterApiCheck(projectId) } });
+    // AI search (specs/ai-search.feature.md): run_ai_search through the providers' APIs on the user's key; gated off as shipped.
+    const aiSearch = setupAiSearch({ app, dataSources, settings: sessionStore.settings, log: logSession });
     // The AI agent (specs/agent-host.feature.md): its SERP, intent, probe and Search Console tools. Not gated: no
     // entitlements port is passed (it must not be wired to the account; specs/entitlements-client.feature.md).
-    const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, consumeGesture: (windowId) => account.gestures.consume(windowId), ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) } });
+    const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, consumeGesture: (windowId) => account.gestures.consume(windowId), aiSearch, ports: { serp: serpAdapter(serp.readApi, aiSearchAdapter(aiSearch)), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) } });
     // Help, keyboard shortcuts and What's New (specs/help.feature.md): bundled notes, fixed pages opened on a gesture only.
     const help = createHelpMain({ app, settings: sessionStore.settings, consumeGesture: (windowId) => account.gestures.consume(windowId), log: logSession, diagnostics: createDiagnosticsMain({ app, sessionStore, telemetry: telemetryMain.service, agent, gsc: gsc.service, sync, log: logSession }) });
     // AI checks (specs/ai-checks.feature.md): off by default; only the audit's cookieless served HTML (peeked), on the agent's own route and model.
     const aiChecks = createAiChecksMain({ browser, isBrowseContents, served: () => served, tabUserAgent, tabScripting, agent: agent.checks, sessionStore, log: logSession });
-    // Data sources (specs/data-sources.feature.md): BYO keys and the one data API client, main only; legal gates closed as shipped.
-    const dataSources = setupDataSources({ app, session, safeStorage, log: logSession, usage: sessionStore.dataUsage, settings: sessionStore.settings, checks: { store: sessionStore.changeIntel, parse: (job) => serp.analyseApi(job), afterWrite: (projectId) => projects.afterApiCheck(projectId) } });
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,

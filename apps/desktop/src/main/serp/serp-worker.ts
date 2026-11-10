@@ -1,4 +1,5 @@
 import { parentPort } from 'node:worker_threads';
+import { runAiAnswerJob } from '../ai-search/parse';
 import { runLlmsTxtJob } from './llms-parse';
 import { runProbeJob } from './probe-parse';
 import { analyseSerp } from './serp-analyse';
@@ -21,6 +22,11 @@ import { runSerpApiJob } from './serp-api-parse';
 // vendor's JSON text, never parsed on main's thread, is validated, size- and depth-capped and mapped
 // by `runSerpApiJob` (`SerpApiJobSchema`), answered `{ id, result, skipped, vendorError }` with
 // `result` the `SerpSnapshot`.
+//
+// An AI search provider's answer (Phase 12 Task 8, `ai-search.spec.ts`) comes as `{ id, kind:
+// 'ai-answer', job }` in a worker instance of its own (`main/ai-search/parser.ts`): the provider's JSON
+// text, never parsed on main's thread, is validated, size- and depth-capped and mapped by
+// `runAiAnswerJob` (`AiAnswerJobSchema`), answered `{ id, result }`.
 
 parentPort?.on('message', (message: unknown) => {
   if (typeof message !== 'object' || message === null) return;
@@ -32,6 +38,10 @@ parentPort?.on('message', (message: unknown) => {
   }
   if (kind === 'llms-txt') {
     parentPort?.postMessage({ id, result: runLlmsTxtJob(job) });
+    return;
+  }
+  if (kind === 'ai-answer') {
+    parentPort?.postMessage({ id, result: runAiAnswerJob(job) });
     return;
   }
   if (kind === 'api') {

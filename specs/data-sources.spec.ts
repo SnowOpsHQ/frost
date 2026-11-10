@@ -260,9 +260,15 @@ export const DATA_API_LIMITS = {
  * - `redirect`: the provider answered with a redirect (never followed);
  * - `timeout`, `network`: no complete answer in `timeoutMs`, or none at all;
  * - `too-large`: the body was longer than `maxResponseBytes`;
- * - `http-error`: a status outside 2xx; the status is kept, the body withheld.
+ * - `http-error`: a status outside 2xx; the status is kept, the body withheld;
+ * - `aborted` (Phase 12 Task 8 review): the caller's `signal` aborted (Stop, or its own deadline)
+ *   while the request waited for its turn or before it was sent (nothing sent), or while it was in
+ *   flight (the fetch is aborted, the body not read);
+ * - `cancelled` (Phase 12 Task 8 review): the caller's `beforeSend` check, run once the turn is
+ *   granted and before any key is read, said the request is no longer wanted (what it was for
+ *   changed while it waited); nothing was read or sent.
  */
-export const DATA_API_REFUSALS = ['unavailable', 'busy', 'no-key', 'no-keychain', 'key-failed', 'not-allowed', 'redirect', 'timeout', 'network', 'too-large', 'http-error'] as const;
+export const DATA_API_REFUSALS = ['unavailable', 'busy', 'no-key', 'no-keychain', 'key-failed', 'not-allowed', 'redirect', 'timeout', 'network', 'too-large', 'http-error', 'aborted', 'cancelled'] as const;
 export type DataApiRefusal = (typeof DATA_API_REFUSALS)[number];
 
 /** What each refusal says (never a key, a URL or the provider's error text). */
@@ -278,6 +284,8 @@ export const DATA_API_REFUSAL_MESSAGES: Readonly<Record<DataApiRefusal, string>>
   network: 'The data source couldn’t be reached.',
   'too-large': 'The data source’s answer was too large to read.',
   'http-error': 'The data source answered with an error. Its details are not shown.',
+  aborted: 'The request was stopped.',
+  cancelled: 'The request was not sent: what it was for changed while it waited.',
 };
 
 /** `--frost-e2e-data-api=<file>`: the seam mapping providers to loopback fakes (`data-sources.schema.ts`). */

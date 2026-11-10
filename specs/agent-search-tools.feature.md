@@ -23,7 +23,12 @@ and 4 merge), `service.ts` (`ports`, `entitlements`). Each line maps to one name
   fixed). With no port at all the tool fails `unavailable`. Main wires
   `unavailablePort(PORT_NOT_CONNECTED_REASONS.…)` for each port until the lead passes adapters.
 - **`run_ai_search` runs only with the user's approval** (`act`, never grantable): the handler
-  refuses any other `via`.
+  refuses any other run `via` (`ToolRunContext.via`: `read`, `grant`). Phase 12 Task 8
+  (`ai-search.feature.md`): the broker completes its input with `completeToolInput`'s context (the
+  model's AI-search `via` dropped; `engine` and `via` from the user's settings), the runner re-parses
+  it with `runAiSearchApprovedInputSchema`, the handler forwards `engine` and `via` to
+  `SerpPort.aiSearch`, caps calls per turn and per engine (`AI_SEARCH_LIMITS`), keeps `http(s)`
+  citations once each, and answers the port's `setting-changed` as `expired`.
 
 ## Handlers (`apps/desktop/src/main/agent/__tests__/search-tools.test.ts`)
 - **Scenario: search-tools-unavailable-without-a-port** — each tool fails `unavailable` with no
@@ -40,7 +45,8 @@ and 4 merge), `service.ts` (`ports`, `entitlements`). Each line maps to one name
   `GSC_NOT_PUBLIC_REASON`; the port is asked for neither.
 - **Scenario: search-tools-worst-case-fits-the-budget** — every string at its cap in escaped
   characters, every list at its cap: each tool's data within `budgetChars`.
-- **Scenario: run-ai-search-needs-approval** — `via` other than `approval` is refused.
+- **Scenario: run-ai-search-needs-approval** — a run `via` other than `approval` is refused (the input
+  is the approved one: Phase 12 Task 8).
 
 ## Wiring (`apps/desktop/src/main/agent/__tests__/agent-ports.test.ts`)
 - **Scenario: agent-ports-default-to-not-connected** — `resolveAgentPorts()` answers

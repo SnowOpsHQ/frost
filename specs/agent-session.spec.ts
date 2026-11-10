@@ -17,6 +17,8 @@ import type { ReasoningEffort } from './agent-reasoning.spec';
 import { isAllowedModelId, type AgentModelId, type AgentToolRisk, type AttachedTabRef, type ModelId, type ModelRoute, type ToolErrorCode } from './agent-tools.spec';
 import type { SkillCategory, SkillInputSlot } from './skills.spec';
 import { PROBE_AGENT_IDS, PROBE_LIMITS } from './visibility-probes.spec';
+import { AI_SEARCH_API_PROVIDER, AI_SEARCH_ENGINE_LABELS, AI_SEARCH_VIA_LABELS, isAiSearchEngine, isAiSearchVia } from './ai-search.spec';
+import { DATA_PROVIDER_LABELS } from './data-sources.spec';
 
 // ---- Bounds ----------------------------------------------------------------------------------
 
@@ -73,6 +75,21 @@ export const EXECUTE_JS_APPROVAL_NOTE = 'Runs alongside any code you allowed ear
  * can't be stopped once started.
  */
 export const RUN_PROBES_APPROVAL_NOTE = `frost will fetch this page as search and AI crawlers would: up to ${PROBE_LIMITS.maxRunRequests} requests (${PROBE_AGENT_IDS.length} user agents, its own browser's and each crawler's it models, and one request for the site's /llms.txt, redirects followed), without cookies; robots.txt may come from cache. The site sees these requests. Stop stops waiting; a run already started finishes.`;
+
+/**
+ * What a `run_ai_search` approval card says (Phase 12 Task 8, plan Decision 8), in frost's own words:
+ * which engine and how it is reached (its label: `chatgpt` is "OpenAI web search — may differ from
+ * the ChatGPT app"), that the request goes through the user's own API key and spends their credit,
+ * and that the query is sent exactly as shown. `via` is always `api` in this phase (signed-in tabs are
+ * the deferred proposal D1). An engine or via main doesn't know (never in an approved input) gets a
+ * note that says so rather than guessing.
+ */
+export function runAiSearchApprovalNote(engine: unknown, via: unknown): string {
+  if (!isAiSearchEngine(engine) || !isAiSearchVia(via)) return 'frost would send this query to an AI search engine it does not recognise. Deny it.';
+  const provider = AI_SEARCH_API_PROVIDER[engine];
+  const through = provider === null ? `its ${AI_SEARCH_VIA_LABELS[via]}` : `the ${DATA_PROVIDER_LABELS[provider]} ${AI_SEARCH_VIA_LABELS[via]}`;
+  return `frost will send the query exactly as shown to ${AI_SEARCH_ENGINE_LABELS[engine]}, through ${through} with your own API key, and the provider bills your account for it. The answer comes back as untrusted data.`;
+}
 
 /**
  * Each allowed model's context window (tokens), for the context meter; `null` where frost has no
@@ -342,7 +359,11 @@ export interface AgentApprovalView {
   /** `execute_javascript`'s exact code, `null` for other tools. */
   readonly code: string | null;
   readonly grantable: boolean;
-  /** `EXECUTE_JS_APPROVAL_NOTE` for `execute_javascript`, `null` otherwise. */
+  /**
+   * What the card says beside the input: `EXECUTE_JS_APPROVAL_NOTE` for `execute_javascript`,
+   * `RUN_PROBES_APPROVAL_NOTE` for `run_visibility_probes`, `runAiSearchApprovalNote(engine, via)` of the
+   * approved input for `run_ai_search` (Phase 12 Task 8); `null` otherwise.
+   */
   readonly note: string | null;
   readonly createdAt: number;
   readonly expiresAt: number;

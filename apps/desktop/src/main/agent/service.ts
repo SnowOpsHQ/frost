@@ -13,6 +13,7 @@ import { CHATGPT_E2E_SWITCH } from '@app/specs/agent-chatgpt-e2e.schema';
 import { AGENT_MCP_PARTITION } from '@app/specs/agent-mcp.spec';
 import { createDefaultAgentEntitlements, type AgentEntitlements } from './entitlements';
 import { createMcpManager, createMcpSecrets, createMemoryMcpStore, nodeMcpDeps, type McpManagerDeps, type McpServersStore, type McpSessionLike, type McpStartPrompt } from './mcp';
+import type { AiSearchContext } from '@app/specs/ai-search.spec';
 import { resolveAgentPorts, type AgentPorts } from './ports';
 import { createAgent, type AgentElectron } from './index';
 import { createAgentSession } from './session';
@@ -94,6 +95,12 @@ export interface AgentServiceDeps {
   readonly clearInterval?: (handle: unknown) => void;
   /** The search tools' data ports (default: each not connected, `resolveAgentPorts`). */
   readonly ports?: AgentPorts;
+  /**
+   * AI search (Phase 12 Task 8, `main/ai-search`): its context (settings, legal gates, keys) for the
+   * broker's `run_ai_search` completion. Its answers reach the agent through `ports.serp`'s `aiSearch`
+   * (`serpAdapter(readApi, aiSearchAdapter(aiSearch))`). Default: none (`not-available`, no card).
+   */
+  readonly aiSearch?: { context(): Promise<AiSearchContext> };
   /** Which agent features may run (default: all, always: the agent is not gated; tests pass a refusing port). Never wired to the account's entitlements. */
   readonly entitlements?: AgentEntitlements;
   /**
@@ -217,6 +224,7 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSessionWith
     mcp,
     tabUrl,
     attachedTabs,
+    ...(deps.aiSearch ? { aiSearchContext: () => deps.aiSearch!.context() } : {}),
     e2eAgentScript,
     ...(openExternal ? { openExternal } : {}),
     ...(deps.focusWindow ? { focusWindow: deps.focusWindow } : {}),

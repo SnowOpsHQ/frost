@@ -5,6 +5,7 @@
 // tells the model why (`apps/desktop/src/main/agent/ports/`). Every query is read-only: no port changes anything anywhere, and each
 // takes an optional `{ signal }` so a stopped chat abandons it.
 import { AGENT_PROTOCOL_LIMITS } from '@app/specs/agent-protocol.schema';
+import type { AiSearchEngine, AiSearchVia } from '@app/specs/ai-search.spec';
 
 /** A port's answer: the data, or why there is none (shown to the model as an `unavailable` result). */
 export type PortAnswer<T> =
@@ -78,11 +79,24 @@ export interface SerpResults {
 
 export interface AiSearchQuery {
   readonly query: string;
-  readonly locale?: string;
+  /**
+   * The engine and via of the approved input (Phase 12 Task 8, `runAiSearchApprovedInputSchema`):
+   * main's broker filled both from the user's settings before the call was shown and hashed, and the
+   * port asks exactly them. Absent only outside main's broker (a port then answers `unavailable`).
+   */
+  readonly engine?: AiSearchEngine;
+  readonly via?: AiSearchVia;
 }
 
 export interface AiSearchAnswer {
   readonly query: string;
+  /** The engine and via that answered (Phase 12 Task 8), and what the answer says beside itself (`aiSearchAnswerNote`). */
+  readonly engine?: AiSearchEngine;
+  readonly via?: AiSearchVia;
+  readonly note?: string;
+  /** Whether the source cut the answer's text, and how many distinct citations it gave before its cap (Task 8 review). */
+  readonly answerTruncated?: boolean;
+  readonly citationsTotal?: number;
   /** The answer's text. */
   readonly answer: string;
   /** The sources the answer cited, in order. */

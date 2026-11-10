@@ -55,6 +55,13 @@ Scenario: serpapi-key-never-in-a-logged-url
   And no value `dataApiRequest` returns and no log line contains the key
   And the URL returned is the key-less URL
 
+Scenario: data-api-signal-and-before-send (Phase 12 Task 8 review; tested in `main/ai-search/__tests__/ai-search.test.ts`)
+  Given a caller passes `signal` and `beforeSend`
+  When the signal aborts while the request waits for its turn, before it is counted, or in flight
+  Then it answers `aborted`, ends the wait at once, aborts the fetch, and sends nothing not yet sent
+  When `beforeSend` answers false once the turn is granted
+  Then it answers `cancelled` before any key is read, and nothing is sent
+
 Scenario: data-api-spaced-per-provider
   When two requests to one provider follow each other
   Then the second starts at least `minIntervalMs` after the first

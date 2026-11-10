@@ -16,6 +16,7 @@ import {
   CHAT_TITLE_MAX_CHARS,
   EXECUTE_JS_APPROVAL_NOTE,
   RUN_PROBES_APPROVAL_NOTE,
+  runAiSearchApprovalNote,
   MAX_CHATS_KEPT_IN_MEMORY,
   historyBudgetChars,
   MAX_DISPLAY_ENTRIES,
@@ -420,6 +421,24 @@ function outputPreview(result: ToolResult): string {
   return cutText(JSON.stringify(result.output.data) ?? 'null', TOOL_CARD_OUTPUT_PREVIEW_CHARS);
 }
 
+/** What the card says beside the input (`AgentApprovalView.note`). */
+function approvalNote(request: ApprovalRequestView): string | null {
+  if (request.toolName === 'execute_javascript') return EXECUTE_JS_APPROVAL_NOTE;
+  if (request.toolName === 'run_visibility_probes') return RUN_PROBES_APPROVAL_NOTE;
+  if (request.toolName === 'run_ai_search') {
+    // The approved input's engine and via (main filled both; the card shows the same input).
+    let input: { engine?: unknown; via?: unknown } = {};
+    try {
+      const parsed: unknown = JSON.parse(request.input);
+      if (typeof parsed === 'object' && parsed !== null) input = parsed as typeof input;
+    } catch {
+      input = {};
+    }
+    return runAiSearchApprovalNote(input.engine, input.via);
+  }
+  return null;
+}
+
 function approvalView(request: ApprovalRequestView): AgentApprovalView {
   // Field by field: nothing the broker might add later reaches the renderer unreviewed.
   return {
@@ -435,7 +454,7 @@ function approvalView(request: ApprovalRequestView): AgentApprovalView {
     inputSha256: request.inputSha256,
     code: request.code,
     grantable: request.grantable,
-    note: request.toolName === 'execute_javascript' ? EXECUTE_JS_APPROVAL_NOTE : request.toolName === 'run_visibility_probes' ? RUN_PROBES_APPROVAL_NOTE : null,
+    note: approvalNote(request),
     createdAt: request.createdAt,
     expiresAt: request.expiresAt,
   };

@@ -32,6 +32,10 @@ import type { CredentialStore, WithKeyResult } from '../agent/credentials';
 //    leave the closure; logs carry the provider, method, origin and path only.
 // It never throws: a `build` that throws is `not-allowed` (its error, which may hold a key, is dropped).
 //
+// Phase 12 Task 8 review: a caller may pass `signal` (Stop or its deadline: `aborted`, checked after the
+// turn, before counting, and passed to the fetch; it also ends the turn's wait) and `beforeSend` (still
+// wanted? asked once the turn is granted, before any key is read: `cancelled`).
+//
 // Requests to one provider start at least `minIntervalMs` apart: after the gate, and before any key
 // is opened, a request reserves its turn and waits for it (so no key is held while waiting); with
 // `maxWaitingPerProvider` already waiting it is refused `busy`. Each request that is sent is counted
@@ -90,8 +94,24 @@ export interface DataApiClientDeps {
   readonly countRequest?: (provider: DataProvider) => Promise<void> | void;
 }
 
+/** What a caller may add to one request (Phase 12 Task 8 review). */
+export interface DataApiRequestOptions {
+  /**
+   * The caller's Stop or deadline: checked once the turn is granted and again inside the key closure
+   * before the request is counted and sent (`aborted`, nothing sent), it also wakes a request waiting
+   * for its turn and aborts the fetch in flight (`aborted`).
+   */
+  readonly signal?: AbortSignal;
+  /**
+   * Whether the request is still wanted, asked once its turn is granted and before any key is read
+   * (`run_ai_search`: the engine's via is still the approved one). `false` or a throw: `cancelled`,
+   * nothing read or sent.
+   */
+  readonly beforeSend?: () => boolean | Promise<boolean>;
+}
+
 export interface DataApiClient {
-  dataApiRequest(provider: DataProvider, purpose: DataProviderPurpose, build: DataApiBuild): Promise<DataApiOutcome>;
+  dataApiRequest(provider: DataProvider, purpose: DataProviderPurpose, build: DataApiBuild, options?: DataApiRequestOptions): Promise<DataApiOutcome>;
 }
 
 const refused = (refusal: DataApiRefusal, extra: { readonly status?: number; readonly url?: string } = {}): DataApiOutcome => ({ ok: false, refusal, message: DATA_API_REFUSAL_MESSAGES[refusal], ...extra });
@@ -192,7 +212,7 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
    * Reserves the provider's next turn (synchronously, so requests made at once are spaced too) and
    * waits for it, before any key is opened; `false` (`busy`) when `maxWaitingPerProvider` already wait.
    */
-  const takeTurn = async (provider: DataProvider): Promise<boolean> => {
+  const takeTurn = async (provider: DataProvider, signal?: AbortSignal): Promise<boolean> => {
     const at = now();
     const start = Math.max(at, nextStart.get(provider) ?? 0);
     if (start <= at) {
@@ -204,11 +224,26 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
     nextStart.set(provider, start + DATA_API_LIMITS.minIntervalMs[provider]);
     waiting.set(provider, count + 1);
     try {
-      await sleep(start - at);
+      // A caller's abort ends the wait at once (the reserved turn stays spent).
+      await sleepUnlessAborted(start - at, signal);
     } finally {
       waiting.set(provider, (waiting.get(provider) ?? 1) - 1);
     }
     return true;
+  };
+
+  /** `sleep(ms)`, or less when `signal` aborts first. */
+  const sleepUnlessAborted = (ms: number, signal: AbortSignal | undefined): Promise<void> => {
+    if (signal === undefined) return sleep(ms);
+    if (signal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = (): void => {
+        signal.removeEventListener('abort', done);
+        resolve();
+      };
+      signal.addEventListener('abort', done, { once: true });
+      void sleep(ms).then(done, done);
+    });
   };
 
   /** Runs `fn` with all of `provider`'s secrets, each slot opened by its own nested `withKey`. */
@@ -224,7 +259,7 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
   };
 
   /** Sends the checked request; `url` is the key-less form for the outcome. Inside the closure only. */
-  const send = async (provider: DataProvider, request: DataApiRequestInit, headers: Headers, url: string): Promise<DataApiOutcome> => {
+  const send = async (provider: DataProvider, request: DataApiRequestInit, headers: Headers, url: string, signal: AbortSignal | undefined): Promise<DataApiOutcome> => {
     // The e2e seam moves only the destination of a request that passed every check.
     const base = deps.seam?.[provider];
     let target = request.url;
@@ -234,6 +269,9 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
     }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // The caller's abort ends the fetch too.
+    const onAbort = (): void => controller.abort();
+    signal?.addEventListener('abort', onAbort, { once: true });
     try {
       const response = await deps.fetch(target, {
         method: request.method,
@@ -254,28 +292,50 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
         return refused('http-error', { status: response.status, url });
       }
       const body = await readCapped(response, DATA_API_LIMITS.maxResponseBytes);
+      if (signal?.aborted) return refused('aborted', { url });
       if (body === null) return refused('too-large', { url });
       return { ok: true, status: response.status, body, url };
     } catch (error) {
+      if (signal?.aborted) return refused('aborted', { url });
       if (controller.signal.aborted) return refused('timeout', { url });
       if (isRedirectError(error)) return refused('redirect', { url });
       return refused('network', { url });
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
     }
   };
 
   return {
-    async dataApiRequest(provider, purpose, build) {
+    async dataApiRequest(provider, purpose, build, options = {}) {
+      const { signal, beforeSend } = options;
       // The gate first: nothing is read or sent for a provider that isn't offered.
       if (!isDataProvider(provider) || !deps.isOpen(provider)) {
         log(`data api: ${String(provider)} refused (unavailable)`);
         return refused('unavailable');
       }
       // The turn next, so no key is held while a request waits.
-      if (!(await takeTurn(provider))) {
+      if (signal?.aborted) return refused('aborted');
+      if (!(await takeTurn(provider, signal))) {
         log(`data api: ${provider} refused (busy)`);
         return refused('busy');
+      }
+      // The turn is granted: still wanted, and still not stopped? Asked before any key is read.
+      if (signal?.aborted) {
+        log(`data api: ${provider} refused (aborted)`);
+        return refused('aborted');
+      }
+      if (beforeSend !== undefined) {
+        let wanted = false;
+        try {
+          wanted = (await beforeSend()) === true;
+        } catch {
+          wanted = false;
+        }
+        if (!wanted || signal?.aborted) {
+          log(`data api: ${provider} refused (${wanted ? 'aborted' : 'cancelled'})`);
+          return refused(wanted ? 'aborted' : 'cancelled');
+        }
       }
       const opened = await withSecrets(provider, async (secrets): Promise<DataApiOutcome> => {
         // Inside the closure: the secrets, the keyed URL and the headers stay here.
@@ -291,13 +351,15 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
         if (!isAllowedDataRequest(provider, purpose, request.method, request.url) || headers === null || !bodyAllowed) return refused('not-allowed');
         const url = keylessUrl(provider, request.url, secrets);
         if (url === null) return refused('not-allowed');
+        // Stopped while the key was opened: nothing counted or sent.
+        if (signal?.aborted) return refused('aborted', { url });
         // Counted now: the request passed every check and is sent next, whatever it answers.
         try {
           await deps.countRequest?.(provider);
         } catch {
           log(`data api: ${provider} usage not counted`);
         }
-        const outcome = await send(provider, request, headers, url);
+        const outcome = await send(provider, request, headers, url, signal);
         const parsed = new URL(url);
         log(`data api: ${provider} ${request.method} ${parsed.origin}${parsed.pathname} ${outcome.ok ? outcome.status : outcome.refusal}${!outcome.ok && outcome.status !== undefined ? ` ${outcome.status}` : ''}`);
         return outcome;

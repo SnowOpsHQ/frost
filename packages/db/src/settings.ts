@@ -15,6 +15,7 @@ import {
 } from '@app/specs/browser-polish.spec';
 import { isAppVersion, WHATS_NEW_SEEN_SETTING_KEY } from '@app/specs/help.spec';
 import { DATA_SERP_PROVIDER_KEY, isDataSerpProvider, type DataSerpProvider } from '@app/specs/data-sources.spec';
+import { AI_SEARCH_DEFAULT_ENGINE_KEY, AI_SEARCH_ENGINES, AI_SEARCH_VIA_KEY, isAiSearchEngine, isAiSearchViaSetting, type AiSearchSettings } from '@app/specs/ai-search.spec';
 import type { SessionDatabase } from './client';
 import { appSettings } from './settings-schema';
 
@@ -59,6 +60,12 @@ export interface SettingsRepository {
   dataSerpProvider(): Promise<DataSerpProvider | null>;
   /** Stores it; `false` (nothing written) for anything but a `DATA_SERP_PROVIDERS` id. */
   setDataSerpProvider(provider: DataSerpProvider, at: number): Promise<boolean>;
+  /**
+   * Phase 12 Task 8 (`ai-search.spec.ts`, `AI_SEARCH_VIA_KEY(engine)`, `AI_SEARCH_DEFAULT_ENGINE_KEY`):
+   * each AI engine's via setting (`api` | `off`; `null` when none, or a tampered value, is stored)
+   * and the default engine (`null` likewise). Read only here; Task 9's view writes them.
+   */
+  aiSearchSettings(): Promise<AiSearchSettings>;
 }
 
 export interface HistorySettings {
@@ -154,6 +161,16 @@ export function createSettingsRepository(db: SessionDatabase): SettingsRepositor
       if (!isDataSerpProvider(provider) || !Number.isFinite(at)) return false;
       await write(DATA_SERP_PROVIDER_KEY, provider, at);
       return true;
+    },
+
+    async aiSearchSettings() {
+      const via = {} as Record<(typeof AI_SEARCH_ENGINES)[number], 'api' | 'off' | null>;
+      for (const engine of AI_SEARCH_ENGINES) {
+        const value = await read(AI_SEARCH_VIA_KEY(engine));
+        via[engine] = isAiSearchViaSetting(value) ? value : null;
+      }
+      const engine = await read(AI_SEARCH_DEFAULT_ENGINE_KEY);
+      return { via, defaultEngine: isAiSearchEngine(engine) ? engine : null };
     },
   };
 }

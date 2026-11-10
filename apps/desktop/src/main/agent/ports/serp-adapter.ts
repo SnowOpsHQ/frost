@@ -12,7 +12,8 @@ import { unavailable, type AiSearchAnswer, type PortAnswer, type SerpPort, type 
 // - `serp_results` answers from the chat tab's reading when that tab shows a `ready` result page for
 //   the same query (compared case- and space-insensitively), mapped below; any other state answers
 //   `unavailable` with a reason the model can relay ("open the search in the tab first" …);
-// - `run_ai_search` always answers `unavailable` (no AI answer read exists).
+// - `run_ai_search` is delegated to main's AI search (Phase 12 Task 8, `aiSearchAdapter`) when given;
+//   without it, it answers `unavailable` (no AI answer read exists in Phase 3).
 // When a query-based read lands, add it to `SerpReadApiLike` (optional) and prefer it here.
 //
 // The types below are minimal structural copies of the parts of Phase 3's types this adapter reads;
@@ -74,7 +75,7 @@ export function serpResultsOf(state: Extract<SerpStateLike, { status: 'ready' }>
 }
 
 /** `readApi` as a `SerpPort`, or `null` without one (main then wires the not-connected port). */
-export function serpAdapter(readApi: SerpReadApiLike | null | undefined): SerpPort | null {
+export function serpAdapter(readApi: SerpReadApiLike | null | undefined, aiSearch: SerpPort['aiSearch'] | null = null): SerpPort | null {
   if (!readApi) return null;
   return {
     async results(query, options): Promise<PortAnswer<SerpResults>> {
@@ -91,7 +92,7 @@ export function serpAdapter(readApi: SerpReadApiLike | null | undefined): SerpPo
       if (!sameQuery(state.snapshot.params.query, query.query)) return unavailable(SERP_ADAPTER_REASONS.otherQuery);
       return { status: 'ok', data: serpResultsOf(state) };
     },
-    // Phase 3 has no AI answer read.
-    aiSearch: async (): Promise<PortAnswer<AiSearchAnswer>> => unavailable(SERP_ADAPTER_REASONS.aiSearch),
+    // Phase 3 has no AI answer read: main's AI search answers when it is wired (Phase 12 Task 8).
+    aiSearch: aiSearch ?? (async (): Promise<PortAnswer<AiSearchAnswer>> => unavailable(SERP_ADAPTER_REASONS.aiSearch)),
   };
 }
