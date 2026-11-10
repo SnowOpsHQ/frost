@@ -11,7 +11,9 @@ import { createWindowRegistry } from './app-windows';
 import { createGscMain } from './gsc/main';
 import { contextMenuTemplate, copySeoMenuForContents } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
-import { hardenBrowseSession } from './browser/guard';
+import { isBrowseClassContents, isBrowseClassSession, onBrowseClassSession } from './browser/browse-class';
+import { browseSessionInstaller } from './browser/browse-session-wiring';
+import { createCookieBlock } from './browser/cookie-block';
 import { confirmClearHistory, confirmClearHistoryRange, confirmHistoryRetention } from './browser/history-dialog';
 import { createHistoryService, createSearchEngineSetting } from './browser/history-service';
 import { createBrowsePermissionHandlers, createPermissionBroker, createPersistentDecisionStore } from './browser/permissions';
@@ -40,9 +42,8 @@ import { SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
 import { createServedHtml, PENDING_SERVED, type ServedHtml } from './seo/served';
 import type { ContextSource } from './seo/auditor';
 import { contextSource, knownInput, laterInput } from './seo/context-source';
-import { observeMainFrames, observeRequests } from './browser/web-request';
 import { createDevtoolsService } from './devtools/service';
-import { browseCookies, clearBrowseOrigin, confirmClearSiteData, networkExportIo } from './devtools/site-data';
+import { confirmClearSiteData, networkExportIo, tabSiteData } from './devtools/site-data';
 import { nativeWayland, runVitals, withTimeout, type CollectOptions } from './seo/vitals';
 import { createShownTimes } from './seo/vitals-shown';
 import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
@@ -253,9 +254,9 @@ function start(): void {
     responses,
     robots: () => robots,
     robotsVerdicts: (job) => analyzer.robotsVerdicts(job),
-    cookies: browseCookies,
+    // The Storage tab reads and clears the tab's own session (browse-class only; site-data.ts).
+    ...tabSiteData((contentsId) => tabContents.get(contentsId)),
     confirmClearSiteData: (origin) => confirmClearSiteData(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null, origin),
-    clearOrigin: clearBrowseOrigin,
     liveWindow: (id) => BrowserWindow.fromId(id)?.isDestroyed() === false,
     networkExport: { ...networkExportIo, appVersion: app.getVersion() },
     log: logSession,
@@ -320,6 +321,8 @@ function start(): void {
   const seoExports = createSeoExports({ audit: (tabId) => browser.seo.getAudit(tabId), clipboard });
   const browser = createBrowserController({
     createView: createTabView,
+    // Cookies off (Phase 11 Task 6): the blocking pair only ever on a browse-class session, the tab's own.
+    tabOverrides: { cookieBlock: createCookieBlock({ isBrowseClass: isBrowseClassSession }) },
     openWindow: () => openMainWindow(),
     permissions,
     session: sessionStore.writer,
@@ -399,12 +402,29 @@ function start(): void {
     // Only the app's own windows (and their DevTools) may load app:// (APP_REQUEST_FILTER in
     // specs/app-protocol.spec.ts); this owns the session's single onBeforeRequest listener.
     restrictAppRequests(session.defaultSession, windows.isAppWebContents);
-    // Tabs' session: no `app:` handler (protocol.handle below is the default session's), per-origin
-    // permission prompts (everything not promptable denied), and every download cancelled with a notice.
+    // Every browse-class session (browser/browse-class.ts: today the browse partition's alone) gets
+    // one installer, run on each as it joins: its main-frame observers (the one owner of its
+    // onBeforeRedirect / onResponseStarted / onErrorOccurred: browser/web-request.ts) and the devtools
+    // drawer's request observers, then no `app:` handler (protocol.handle below is the default
+    // session's), per-origin permission prompts (everything not promptable denied), and every
+    // download cancelled with a notice.
+    onBrowseClassSession(
+      browseSessionInstaller({
+        mainFrames: responses,
+        requests: devtools.observer,
+        hooks: {
+          onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
+          permissions: createBrowsePermissionHandlers({
+            broker: permissions,
+            tabIdOf: (contents) => browser.tabIdOf(contents),
+            isFullscreen: (tabId) => browser.isFullscreen(tabId),
+          }),
+        },
+      }),
+    );
+    // The bounded fetchers' session: the browse partition's alone (Phase 12 Decision 11), never a
+    // class check (browse-class-registry-is-the-only-test).
     const browseSession = session.fromPartition(BROWSE_PARTITION);
-    // The browse session's main-frame observers (the one owner of its onBeforeRedirect /
-    // onResponseStarted / onErrorOccurred: browser/web-request.ts) and its robots.txt fetcher.
-    observeMainFrames(browseSession, responses);
     // One bounded fetcher for every request made on the user's behalf (specs/fetcher.spec.ts), in two
     // lanes over one hop: robots.txt and the served HTML share the `audit` lane's per-origin queues;
     // the link, sitemap and hreflang checks have the `checks` lane, so an audit never waits behind one.
@@ -417,7 +437,6 @@ function start(): void {
     const fetchers = createFetcherLanes({ hop, resolve });
     robots = createRobotsFetcher({ hop, fetcher: fetchers.audit });
     served = createServedHtml({ fetcher: fetchers.audit, parse: (input) => servedAnalyzer.parseServed(input) });
-    observeRequests(browseSession, devtools.observer);
     const robotsFetcher = robots;
     // The crawl lane over this hop and resolver; robots.txt through the audit lane's robots fetcher (never the crawl lane).
     crawl.bindFetching({ hop, resolve, robots: robotsFetcher, userAgent: () => browseSession.getUserAgent() });
@@ -433,14 +452,6 @@ function start(): void {
         return { contentsId: contents.id, url: contents.getURL(), active: state.activeTabId === tabId, userAgent: tabUserAgent(contents), audit: browser.seo.getAudit(tabId) };
       },
       rescore: (tabId) => void browser.rescoreAudit(tabId),
-    });
-    hardenBrowseSession(browseSession, {
-      onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
-      permissions: createBrowsePermissionHandlers({
-        broker: permissions,
-        tabIdOf: (contents) => browser.tabIdOf(contents),
-        isFullscreen: (tabId) => browser.isFullscreen(tabId),
-      }),
     });
     // The SERP overlay (specs/serp-overlay.feature.md): selector packs, the SERP worker, on-device
     // intent, the visibility probes (their own fetcher lane over this hop and resolver) and each tab's
@@ -587,11 +598,7 @@ function start(): void {
   });
 }
 
-/** Whether `contents` is a tab's (on the browse partition's session); fails closed. */
+/** Whether `contents` is a tab's (its session is browse-class: browser/browse-class.ts); fails closed. */
 function isBrowseContents(contents: WebContents): boolean {
-  try {
-    return contents.session === session.fromPartition(BROWSE_PARTITION);
-  } catch {
-    return false;
-  }
+  return isBrowseClassContents(contents);
 }

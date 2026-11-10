@@ -44,7 +44,7 @@ beforeEach(() => {
   pinWrites = vi.fn();
   pins = createRenderProfilePins({ save: pinWrites as never });
   cookieBlock = {
-    add: vi.fn((id: number, session: unknown) => void blocked.set(id, session)),
+    add: vi.fn((id: number, session: unknown) => (blocked.set(id, session), true)),
     remove: vi.fn((id: number) => void blocked.delete(id)),
     isRegistered: () => blocked.size > 0,
   };

@@ -8,7 +8,7 @@ import type { BrowsePermissionHandlers } from './permissions';
 
 // The browse guard for tab WebContents (`specs/browse-guard.feature.md`; the session-classified
 // install is `browser-chrome.feature.md`). Installed by the app-wide `web-contents-created` guard
-// in `security/register.ts` for WebContents on the browse partition's session.
+// in `security/register.ts` for WebContents on a browse-class session (`browse-class.ts`).
 
 function includes(list: readonly string[], value: string): boolean {
   return list.includes(value);
@@ -148,7 +148,8 @@ export interface BrowseSessionHooks {
 }
 
 /**
- * Session-wide policy of the browse partition: permission requests and checks go to the
+ * Session-wide policy of a browse-class session (main runs it on each, through
+ * `browse-session-wiring.ts` and `onBrowseClassSession`): permission requests and checks go to the
  * per-origin prompt handlers (`hooks.permissions`; deny-all without them, which also keeps
  * Electron's `openExternal` permission denied); device permissions (HID, serial, USB) are always
  * denied; every `file:` request fails; every download is cancelled (no download manager in Phase 1). No certificate-verify proc

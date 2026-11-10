@@ -3,8 +3,8 @@ import { parseWebUrl } from '@app/specs/web-url.spec';
 import { cut } from './network-log';
 
 // The devtools drawer's Storage tab (spec `devtools.spec.ts`, `COOKIE_LIMITS`, `CLEAR_SITE_DATA`;
-// acceptance `devtools.feature.md`, Storage). Cookies of the tab's URL come from the browse
-// partition's cookie store; values are masked (`value: null`) unless the user revealed that cookie
+// acceptance `devtools.feature.md`, Storage). Cookies of the tab's URL come from the tab's own
+// (browse-class) session's cookie store; values are masked (`value: null`) unless the user revealed that cookie
 // for the tab's current document. Which cookies are revealed is kept here, in memory only, each
 // stamped with the tab's committed document when it was asked for; a stale stamp shows nothing, and
 // the reveals are forgotten when the tab commits its next document (`did-navigate`), on "Clear this
@@ -28,12 +28,18 @@ export interface CookieLike {
 }
 
 export interface SiteStorageOptions {
-  /** The browse partition's cookies for `url` (`session.fromPartition(BROWSE_PARTITION).cookies.get({ url })`). */
-  readonly cookies: (url: string) => Promise<readonly CookieLike[]>;
+  /** The cookies for `url` of WebContents `contentsId`'s own session (main: `site-data.ts` `tabSiteData`, its `contents.session.cookies.get({ url })`). */
+  readonly cookies: (url: string, contentsId: number) => Promise<readonly CookieLike[]>;
   /** Asks in main's own dialog (`CLEAR_SITE_DATA`); `true` to clear. */
   readonly confirmClear: (origin: string) => Promise<boolean>;
-  /** Clears the origin's data from the browse partition (`session.clearData`, `CLEAR_SITE_DATA.dataTypes`). */
-  readonly clearOrigin: (origin: string) => Promise<void>;
+  /** Clears the origin's data from WebContents `contentsId`'s own session (`session.clearData`, `CLEAR_SITE_DATA.dataTypes`). */
+  readonly clearOrigin: (origin: string, contentsId: number) => Promise<void>;
+  /**
+   * The store WebContents `contentsId` reads and clears (main: its own browse-class session, or `null`
+   * for none). A "Clear this site's data" in flight is shared only by a request for the same store and
+   * origin. Without it every tab shares one store.
+   */
+  readonly storeOf?: (contentsId: number) => unknown;
   readonly changed?: (contentsId: number) => void;
   readonly log?: (message: string) => void;
 }
@@ -50,9 +56,10 @@ export interface SiteStorage {
   /** Reveals one cookie of the page's URL until the tab's next navigation; `false` for an unknown cookie or a non-web page. Never rejects. */
   reveal(contentsId: number, pageUrl: string, cookie: CookieRef): Promise<boolean>;
   /**
-   * Asks, then clears the page origin's data; `refused` for a non-web page (nothing asked). One dialog
-   * at a time: a request for the origin being asked about shares its answer, any other is `busy`.
-   * Never rejects.
+   * Asks, then clears the page origin's data from the tab's store; `refused` for a non-web page
+   * (nothing asked), `failed` when clearing threw. One dialog at a time: a request for the same store
+   * (`storeOf`: the tab's session) and origin as the one being asked about shares its answer, any
+   * other is `busy`. Never rejects.
    */
   clearSiteData(contentsId: number, pageUrl: string): Promise<ClearSiteDataResult>;
   /** The tab committed a cross-document navigation (`did-navigate`): a new document, its reveals forgotten. */
@@ -91,12 +98,19 @@ export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
   /** Per tab: its committed document (counts up with each commit). */
   const documents = new Map<number, number>();
   const documentOf = (contentsId: number): number => documents.get(contentsId) ?? 0;
-  let clearing: { readonly origin: string; readonly answer: Promise<ClearSiteDataResult> } | null = null;
+  let clearing: { readonly store: unknown; readonly origin: string; readonly answer: Promise<ClearSiteDataResult> } | null = null;
+  const storeOf = (contentsId: number): unknown => {
+    try {
+      return options.storeOf ? options.storeOf(contentsId) : null;
+    } catch {
+      return null;
+    }
+  };
   const log = (message: string): void => options.log?.(`devtools: ${message}`);
 
-  const read = async (url: string): Promise<readonly CookieLike[] | null> => {
+  const read = async (url: string, contentsId: number): Promise<readonly CookieLike[] | null> => {
     try {
-      const cookies = await options.cookies(url);
+      const cookies = await options.cookies(url, contentsId);
       return Array.isArray(cookies) ? cookies : [];
     } catch (error) {
       log(`reading cookies failed (${error instanceof Error ? error.message : String(error)})`);
@@ -108,7 +122,7 @@ export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
     async storage(contentsId, pageUrl) {
       const page = parseWebUrl(pageUrl);
       if (!page) return { status: 'no-page' };
-      const cookies = (await read(page.href)) ?? [];
+      const cookies = (await read(page.href, contentsId)) ?? [];
       const shown = revealed.get(contentsId);
       const now = documentOf(contentsId);
       return {
@@ -131,7 +145,7 @@ export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
       if (!page) return false;
       // Stamped now: a commit that lands while the store is read leaves this reveal in the old document.
       const stamp = documentOf(contentsId);
-      const cookies = (await read(page.href)) ?? [];
+      const cookies = (await read(page.href, contentsId)) ?? [];
       if (documentOf(contentsId) !== stamp) return false;
       const key = keyOf(cookie);
       // Only a cookie the drawer lists (within `maxCookies`), compared by its listed (capped) fields.
@@ -147,7 +161,8 @@ export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
     clearSiteData(contentsId, pageUrl) {
       const page = parseWebUrl(pageUrl);
       if (!page) return Promise.resolve('refused');
-      if (clearing) return clearing.origin === page.origin ? clearing.answer : Promise.resolve('busy');
+      const store = storeOf(contentsId);
+      if (clearing) return clearing.origin === page.origin && clearing.store === store ? clearing.answer : Promise.resolve('busy');
       const answer = (async (): Promise<ClearSiteDataResult> => {
         let confirmed = false;
         try {
@@ -156,19 +171,21 @@ export function createSiteStorage(options: SiteStorageOptions): SiteStorage {
           log(`the confirmation failed (${error instanceof Error ? error.message : String(error)})`);
         }
         if (!confirmed) return 'cancelled';
+        let result: ClearSiteDataResult = 'cleared';
         try {
-          await options.clearOrigin(page.origin);
+          await options.clearOrigin(page.origin, contentsId);
         } catch (error) {
+          result = 'failed';
           log(`clearing site data failed (${error instanceof Error ? error.message : String(error)})`);
         }
-        // Every reveal goes (the origin's tabs may be several).
+        // Every reveal goes (the origin's tabs may be several; some data may be gone even on a failure).
         revealed.clear();
         options.changed?.(contentsId);
-        return 'cleared';
+        return result;
       })().finally(() => {
         clearing = null;
       });
-      clearing = { origin: page.origin, answer };
+      clearing = { store, origin: page.origin, answer };
       return answer;
     },
 

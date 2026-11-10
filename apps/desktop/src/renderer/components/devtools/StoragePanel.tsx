@@ -26,6 +26,7 @@ const CLEAR_MESSAGES: Readonly<Record<ClearSiteDataResult, string>> = {
   cancelled: 'Nothing was cleared.',
   refused: 'This page has no site data to clear.',
   busy: 'Another site’s data is being cleared. Try again in a moment.',
+  failed: 'This site’s data couldn’t be cleared. Try again.',
 };
 
 const AREA_TITLES: Readonly<Record<WebStorageArea, string>> = { local: 'Local storage', session: 'Session storage' };

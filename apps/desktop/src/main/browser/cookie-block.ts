@@ -4,8 +4,9 @@ import { COOKIE_BLOCK } from '@app/specs/render-profile.spec';
 // Cookies off on HTTP, a tab override (spec `render-profile.feature.md`, Page writes and Tab
 // overrides; Phase 11 Task 6, Decision 8). The one module allowed a blocking `webRequest` listener on
 // a browse-class session (Semgrep `webrequest-blocking-outside-allowlisted-modules`): while at least
-// one tab of a session has cookies off, it registers a blocking `onBeforeSendHeaders` /
-// `onHeadersReceived` pair on **that tab's own session** (never a partition lookup), which removes
+// one tab of a browse-class session (`browse-class.ts`; Phase 12 Task 10a) has cookies off, it
+// registers a blocking `onBeforeSendHeaders` / `onHeadersReceived` pair on **that tab's own
+// session** (never a partition lookup; one pair per session, each removed on its own), which removes
 // `Cookie` from the requests and `Set-Cookie` from the responses of those tabs only (by
 // `webContentsId`: their frames and dedicated workers too; a service worker's requests carry no tab
 // and keep their cookies). The pair goes when the session's last cookies-off tab closes or turns it
@@ -26,8 +27,13 @@ export interface CookieBlockSession {
 }
 
 export interface CookieBlock {
-  /** The tab whose WebContents is `webContentsId`, on `session`, has cookies off (moved there if it was on another). */
-  add(webContentsId: number, session: CookieBlockSession): void;
+  /**
+   * The tab whose WebContents is `webContentsId`, on `session`, has cookies off (moved there if it was
+   * on another). Answers whether the block is in effect for it: `false` when `session` is not
+   * browse-class or its pair could not be registered (the tab then keeps its cookies, and
+   * `tab-overrides.ts` reports its overrides `failed`, so the UI never claims "cookies off").
+   */
+  add(webContentsId: number, session: CookieBlockSession): boolean;
   /** That WebContents no longer has cookies off (switched off, or its tab closed); a no-op if it had not. */
   remove(webContentsId: number): void;
   /** Whether `session` has the pair registered now. */
@@ -37,6 +43,13 @@ export interface CookieBlock {
 export interface CookieBlockOptions {
   /** Where a listener's failure is logged (one line each). */
   readonly log?: (line: string) => void;
+  /**
+   * Whether a session may get the pair: main passes the browse-class registry's
+   * `isBrowseClassSession` (`browse-class.ts`), so only a tab's session ever holds a blocking
+   * listener from here; a tab on any other session keeps its cookies (fail-open, as below) and
+   * nothing is registered. Without it (unit tests of the block alone) every session may.
+   */
+  readonly isBrowseClass?: (session: CookieBlockSession) => boolean;
 }
 
 /** An error's code or name: never its message (it may hold a URL or a header). */
@@ -132,11 +145,24 @@ export function createCookieBlock(options: CookieBlockOptions = {}): CookieBlock
     }
   };
 
+  const mayBlock = (session: CookieBlockSession): boolean => {
+    if (!options.isBrowseClass) return true;
+    try {
+      return options.isBrowseClass(session) === true;
+    } catch {
+      return false;
+    }
+  };
+
   return {
     add(webContentsId, session) {
       const current = sessionOf.get(webContentsId);
-      if (current === session) return;
+      if (current === session) return true;
       if (current) remove(webContentsId);
+      if (!mayBlock(session)) {
+        log('cookie-block: not a browse-class session; the tab keeps its cookies');
+        return false;
+      }
       let ids = tabsOf.get(session);
       if (!ids) {
         ids = new Set();
@@ -148,11 +174,12 @@ export function createCookieBlock(options: CookieBlockOptions = {}): CookieBlock
           log(`cookie-block: the listeners could not be registered (${codeOf(error)})`);
           // Half a pair (the first registered, the second threw) would hold every request for nothing.
           unregister(session);
-          return;
+          return false;
         }
       }
       ids.add(webContentsId);
       sessionOf.set(webContentsId, session);
+      return true;
     },
     remove,
     isRegistered: (session) => tabsOf.has(session),

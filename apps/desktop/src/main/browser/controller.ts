@@ -276,7 +276,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const snapshot = (): BrowserState => ({
     version: stateWatch.version(),
-    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight, highlightPhrase: tab.highlightPhrase, renderProfile: renderProfiles.state(tab), ...tabOverrides.state(tab), overridesStatus: renderProfiles.overridesStatus(tab) })),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight, highlightPhrase: tab.highlightPhrase, renderProfile: renderProfiles.state(tab), ...tabOverrides.state(tab), overridesStatus: tabOverrides.cookiesFailed(tab) ? 'failed' : renderProfiles.overridesStatus(tab) })),
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     toggleSidebarSeq,

@@ -40,12 +40,14 @@ export interface DevtoolsServiceOptions {
   readonly robots: () => { get(pageUrl: string): Promise<RobotsFetch | null> } | null;
   /** The analysis worker's robots.txt verdict job (`Analyzer.robotsVerdicts`). */
   readonly robotsVerdicts: (job: { robots: RobotsFetch; urls: string[] }) => Promise<RobotsVerdictsResult>;
-  /** The browse partition's cookies for `url`. */
-  readonly cookies: (url: string) => Promise<readonly CookieLike[]>;
+  /** The cookies for `url` of WebContents `contentsId`'s own (browse-class) session (`site-data.ts` `tabSiteData`). */
+  readonly cookies: (url: string, contentsId: number) => Promise<readonly CookieLike[]>;
   /** Main's "Clear this site's data" dialog (`CLEAR_SITE_DATA`); `true` to clear. */
   readonly confirmClearSiteData: (origin: string) => Promise<boolean>;
-  /** Clears the origin's data from the browse partition. */
-  readonly clearOrigin: (origin: string) => Promise<void>;
+  /** Clears the origin's data from WebContents `contentsId`'s own (browse-class) session. */
+  readonly clearOrigin: (origin: string, contentsId: number) => Promise<void>;
+  /** WebContents `contentsId`'s store (its browse-class session): a clear in flight is shared per store and origin. */
+  readonly storeOf?: (contentsId: number) => unknown;
   /** Whether app window `windowId` is still open. */
   readonly liveWindow: (windowId: number) => boolean;
   /** The network export's save dialog and file write (Phase 11 Task 4); without it every export is `failed`. */
@@ -100,7 +102,7 @@ export function createDevtoolsService(options: DevtoolsServiceOptions): Devtools
 
   const network = createNetworkLog({ changed });
   const consoleLog = createConsoleLog({ changed });
-  const storage = createSiteStorage({ cookies: options.cookies, confirmClear: options.confirmClearSiteData, clearOrigin: options.clearOrigin, changed, log: options.log });
+  const storage = createSiteStorage({ cookies: options.cookies, confirmClear: options.confirmClearSiteData, clearOrigin: options.clearOrigin, ...(options.storeOf ? { storeOf: options.storeOf } : {}), changed, log: options.log });
   const webStorage = createWebStorageReader({ changed, log: options.log });
   let exporting = false;
 
