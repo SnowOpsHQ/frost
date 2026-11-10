@@ -188,6 +188,13 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   no pause written): the run's stored pacing already holds that request's start + 10 s. At the next
   start the run is paused (`interrupted`), and Resume, two seconds after the kill, sends its first
   request exactly at the stored time, never before.
+- `crawl-pacing-stored-before-a-redirect-hop` — (council review round 3, item H) robots.txt on
+  `http://example.com` allows the start and sets no delay; its same-host redirect to `https://` learns
+  `Crawl-delay: 10` from that origin's robots.txt in the redirect hook, and the app is killed with the
+  HTTPS request in flight: the run's stored pacing already holds the call's start + 10 s (written
+  before the hop was followed, `CrawlFetchOptions.beforeHop`). After start-up (`interrupted`), Resume
+  two seconds on sends its first request exactly at the stored time. A pacing write that fails there
+  refuses the hop (the HTTPS URL is never requested) and the run ends `failed` (`error`), no row written.
 - `crawl-pacing-changes-only-when-a-snapshot-would` — (council review, item 5; round 2, item B)
   `Politeness.changes` moves for a 429 / 503 (back-off, `Retry-After`), for the answer that clears a
   back-off, and for a `Crawl-delay` learned, changed or dropped; never for a start, calls at the run's

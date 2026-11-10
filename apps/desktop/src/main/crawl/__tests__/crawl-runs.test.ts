@@ -712,6 +712,88 @@ describe('crawl runs', () => {
     expect(await repo.getRun(runId)).toMatchObject({ state: 'done' });
   });
 
+  test('crawl-pacing-stored-before-a-redirect-hop', async () => {
+    // Council review round 3, item H (K-B1 across a crash): robots.txt on `http://example.com` allows the page and sets no
+    // delay; its same-host redirect to `https://example.com/` learns `Crawl-delay: 10` from that origin's robots.txt in the
+    // redirect hook. The pacing that raised delay leaves is stored before the hop is followed, so a kill with the HTTPS
+    // request in flight, then start-up (`interrupted`) and a Resume two seconds on, waits until the stored time: the call's
+    // start plus 10 s. A write that fails refuses the hop (the HTTPS URL is never requested) and fails the run (`error`).
+    const START = 'http://example.com/';
+    const SECURE = 'https://example.com/';
+    const kit = timerClock();
+    const db = tempStore();
+    cleanups.push(db.close);
+    const store = db.store.siteCrawl;
+    const requests: { url: string; at: number }[] = [];
+    let killed!: () => void;
+    const kill = new Promise<void>((resolve) => (killed = resolve));
+    let crashing = true;
+    const encoder = new TextEncoder();
+    const lane: BoundedFetcher = {
+      async fetch(request) {
+        requests.push({ url: request.url, at: kit.now() });
+        const headers: Record<string, string> = { 'content-type': 'text/html' };
+        if (request.url === START) {
+          if (!(await request.allowRedirect!(SECURE, { signal: new AbortController().signal }))) return { url: START, outcome: 'redirect-refused', status: 301, finalUrl: START, redirects: 0, chain: [], headers: {}, body: new Uint8Array(0), truncated: false, durationMs: 5 };
+          requests.push({ url: SECURE, at: kit.now() });
+          // The first session dies with the HTTPS request in flight: it never answers.
+          if (crashing) {
+            killed();
+            return new Promise<never>(() => undefined);
+          }
+          return { url: START, outcome: 'response', status: 200, finalUrl: SECURE, redirects: 1, chain: [{ url: START, status: 301, location: SECURE }], headers, body: encoder.encode('<!doctype html><title>Home</title>') as Uint8Array<ArrayBuffer>, truncated: false, durationMs: 5 };
+        }
+        return { url: request.url, outcome: 'response', status: 200, finalUrl: request.url, redirects: 0, chain: [], headers, body: encoder.encode('<!doctype html><title>Page</title>') as Uint8Array<ArrayBuffer>, truncated: false, durationMs: 5 };
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    const robotsText = encoder.encode('User-agent: *\nCrawl-delay: 10\nAllow: /\n');
+    const robots: CrawlRobotsSource = {
+      get: async (pageUrl) => {
+        const origin = new URL(pageUrl).origin;
+        const url = `${origin}/robots.txt`;
+        return origin === 'https://example.com' ? { url, outcome: 'ok', status: 200, finalUrl: url, redirects: 0, body: robotsText, truncated: false } : { url, outcome: 'unavailable', status: 404, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false };
+      },
+    };
+    /** One app session on the same database (a new crawl fetcher: empty pacing). */
+    const boot = (repo = store): CrawlService => {
+      const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent: () => 'Mozilla/5.0', clock: kit.clock });
+      const crawler = createCrawler({ repo, fetcher, analyse: inProcessAnalyse, projectLive: async () => true, now: kit.now });
+      return createCrawlService({ repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, now: kit.now, log: () => undefined });
+    };
+
+    const first = boot();
+    const runId = await started(first, settingsFor(START));
+    await kit.settle(kill);
+    expect(requests.map((r) => r.url)).toEqual([START, SECURE]);
+    const callAt = requests[0]!.at;
+    expect(await store.getRun(runId)).toMatchObject({ state: 'running' });
+    // Stored before the hop was followed: the call's start plus the Crawl-delay the hop learned.
+    expect(await store.runPacing(runId)).toEqual([{ host: 'example.com', waitUntil: callAt + 10_000, inARow: 0 }]);
+
+    // The next start, two seconds on: the run left `running` is paused (`interrupted`), and Resume waits the stored time.
+    kit.advance(2_000);
+    crashing = false;
+    const second = boot();
+    expect(await second.startup()).toBe(1);
+    expect(await second.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(second.idle());
+    expect(requests[2]).toEqual({ url: START, at: callAt + 10_000 });
+    expect(await store.getRun(runId)).toMatchObject({ state: 'done' });
+    expect(await store.getPage(runId, START)).toMatchObject({ outcome: 'crawled', finalUrl: SECURE });
+
+    // A pacing write that fails while the hop is checked: the hop is refused and the run fails.
+    requests.length = 0;
+    const failing: typeof store = { ...store, updateRun: (id, patch, now) => (patch.pacing !== undefined && patch.state === undefined ? Promise.reject(new Error('disk I/O error')) : store.updateRun(id, patch, now)) };
+    const third = boot(failing);
+    kit.advance(60_000);
+    const failed = await started(third, settingsFor(START));
+    await kit.settle(third.idle());
+    expect(requests.map((r) => r.url)).toEqual([START]);
+    expect(await store.getRun(failed)).toMatchObject({ state: 'failed', reason: 'error' });
+    expect(await store.getPage(failed, START)).toBeNull();
+  });
+
   test('crawl-query-variants-counted-from-the-frontier', async () => {
     const variants = (from: number, n: number) => Array.from({ length: n }, (_, i) => `/list?page=${from + i}`);
     const t = setup({ [HOME]: htmlPage('Home', ['/other', ...variants(0, 30)]), [`${HOME}other`]: htmlPage('Other', [...variants(0, 3), ...variants(100, 5)]) });

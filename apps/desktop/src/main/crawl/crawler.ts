@@ -49,7 +49,8 @@ import type { SitemapSeeder } from './sitemaps';
 // change (`Politeness.startRaises`, the request's own start counted: council review round 2, item B; the
 // write is awaited inside the host's slot, after the project check, and the start is stamped once it is
 // stored, so a crash with that request in flight loses nothing; a write that fails sends nothing and the
-// run fails), and again with its end if it pauses (a finished one clears it). A resumed run seeds its crawl fetcher's pacing from it before its first
+// run fails), before a same-host redirect hop is followed when that hop's robots.txt changed it (a learned
+// `Crawl-delay`: round 3, item H; a failed write refuses the hop and the run fails), and again with its end if it pauses (a finished one clears it). A resumed run seeds its crawl fetcher's pacing from it before its first
 // request, so neither a restart nor a crash or kill lets a resume reach a host sooner than it asked
 // (`crawl-pacing-survives-a-restart`, `crawl-pacing-survives-a-crash`). A run whose hosts never raise
 // their interval writes no pacing per page.
@@ -258,8 +259,10 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
         /**
          * The run's page fetch. Inside the host's paced slot, right before the request: the project is still live
          * (a deleted one sends nothing and stops the run), then the pacing that request will leave is stored, so
-         * a crash with it in flight never lets a resume reach the host sooner. Its pacing is stored again once
-         * the call has ended, if the answer changed it. A pacing write that fails sends nothing and fails the run.
+         * a crash with it in flight never lets a resume reach the host sooner. A same-host redirect hop whose
+         * robots.txt changed the pacing has it stored before the hop is followed (`beforeHop`; round 3, item H).
+         * Its pacing is stored again once the call has ended, if the answer changed it. A pacing write that fails
+         * sends nothing more and fails the run.
          */
         const fetchPage = async (fetching: CrawlerRunFetcher, url: string, options: CrawlFetchOptions = {}): Promise<CrawlPageFetch> => {
           let failure: { readonly error: unknown } | null = null;
@@ -273,7 +276,19 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
             }
             return !signal.aborted;
           };
-          const fetched = await fetching.fetchPage(url, signal, { ...options, beforeRequest });
+          // A same-host hop whose robots.txt raised the host's pacing (a learned `Crawl-delay`): stored before the hop is
+          // followed (council review round 3, item H); a write that fails refuses the hop and fails the run.
+          const beforeHop = async (): Promise<boolean> => {
+            if (signal.aborted) return false;
+            try {
+              await storePacing();
+            } catch (error) {
+              failure = { error };
+              return false;
+            }
+            return !signal.aborted;
+          };
+          const fetched = await fetching.fetchPage(url, signal, { ...options, beforeRequest, beforeHop });
           if (failure !== null) throw (failure as { readonly error: unknown }).error;
           await storePacing();
           return fetched;

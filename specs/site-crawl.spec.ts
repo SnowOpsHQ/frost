@@ -137,8 +137,10 @@ export const MAX_CRAWL_DELAY_MS = 10_000;
  * it (a back-off set or cleared, a `Retry-After`, a `Crawl-delay` learned or changed), **before** every
  * request that starts under a raised interval or follows such a change (that request's own start
  * counted, the write awaited inside the host's slot before the start is stamped: council review round
- * 2, item B; a write that fails sends nothing and fails the run), never for a call at the run's own
- * interval, and as the run pauses (any reason: the user, a quit, a slow-down); a finished run clears
+ * 2, item B; a write that fails sends nothing and fails the run), **before** a same-host redirect hop
+ * is followed when that hop's robots.txt changed it (a `Crawl-delay` learned in the redirect hook,
+ * measured from the call's own start: round 3, item H; a write that fails refuses the hop and fails the
+ * run), never for a call at the run's own interval, and as the run pauses (any reason: the user, a quit, a slow-down); a finished run clears
  * it. The stored start is read as the write begins, so it can precede the request's own start by that
  * one local write. A resume, in this session or after
  * a restart or a crash (start-up pauses the run left `running`), seeds the crawl fetcher's pacing from

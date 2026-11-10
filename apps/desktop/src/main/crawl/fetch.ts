@@ -39,7 +39,9 @@ import { createCrawlScope, normaliseCrawlUrl, type CrawlScopeRule, type CrawlSco
 // `fetchPage` (per-call caps and `Accept`), so they pass the same scope, robots.txt, pacing and
 // redirect policy as pages, and asks `beforeRequest` inside the paced slot. The pacing stamps a call's
 // start only after `beforeRequest` has answered, right before the request (council review round 2, item
-// A): a slow check never brings two requests to one host closer than the effective interval.
+// A): a slow check never brings two requests to one host closer than the effective interval. A same-host
+// hop the policy allows is followed only once `beforeHop` has answered (round 3, item H: the crawl stores
+// the pacing a `Crawl-delay` learned from the hop's robots.txt there, before the hop's request).
 
 /** The crawl lane (`fetcher.spec.ts`, Lanes): a bounded fetcher over main's hop and resolver with `CRAWL_FETCHER_LIMITS`, per-origin queues of its own. */
 export function createCrawlLane(options: { readonly hop: Hop; readonly resolve: Resolve; readonly now?: () => number }): BoundedFetcher {
@@ -135,6 +137,13 @@ export interface CrawlFetchOptions {
   readonly accept?: string;
   readonly maxRedirects?: number;
   readonly beforeRequest?: (host: string) => Promise<boolean>;
+  /**
+   * Asked in the redirect hook with the call's pacing key, after a same-host hop's robots.txt allowed it
+   * (and any `Crawl-delay` it set was learned), right before the hop is followed: the crawl stores the
+   * pacing the hop's robots.txt changed there (council review round 3, item H), so a crash with the hop in
+   * flight loses nothing. `false` refuses the hop (the call ends `aborted`, the hop never requested).
+   */
+  readonly beforeHop?: (host: string) => Promise<boolean>;
 }
 
 /** One run's fetching. */
@@ -300,6 +309,7 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
 
         let refusal: { readonly outcome: CrawlFetchOutcome; readonly url: string } | null = null;
         let finalRobots = robots;
+        const beforeHop = options.beforeHop;
         const allowRedirect = async (next: string, options: { readonly signal: AbortSignal }): Promise<boolean> => {
           // 1. Scope and the private / exact-origin rule, with no request to the new origin.
           const where = scope.check(next);
@@ -326,6 +336,12 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
             return false;
           }
           learnCrawlDelay(host, new URL(next).origin, state);
+          // 4. The pacing that robots.txt may have raised is stored before the hop is followed (round 3, item H); a write
+          // that fails refuses it.
+          if (beforeHop) {
+            refusal = { outcome: 'aborted', url: next };
+            if (!(await beforeHop(host))) return false;
+          }
           finalRobots = state;
           return true;
         };
