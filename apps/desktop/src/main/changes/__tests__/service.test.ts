@@ -1,6 +1,10 @@
 // Spec: specs/changes.spec.ts (CAPTURE_REFUSALS incl. tab-emulation-on, CAPTURE_BUSY, CAPTURE_STALE_RETRIES), specs/changes.schema.ts
-// (RegionAnswerSchema, CHANGES_READ_API), specs/capture-db.spec.ts (UNFILED_PROJECT_ID), specs/capture.spec.ts (DIFF_ENGINE_VERSION)
-// Acceptance: specs/changes-capture.feature.md (The service, Scenarios: Service)
+// (RegionAnswerSchema, CHANGES_READ_API), specs/capture-db.spec.ts (UNFILED_PROJECT_ID), specs/capture.spec.ts (DIFF_ENGINE_VERSION),
+// specs/rankings.spec.ts (searchIdentityJson), specs/rankings-url.spec.ts (serpFiltersOf), specs/rankings.schema.ts (StoredReadingSchema),
+// specs/workspace-db.spec.ts (SEARCH_KEY_VERSION, MAX_SERP_READING_JSON_BYTES)
+// Acceptance: specs/rankings.feature.md (The search key and its version: one key function; Scenario:
+// capture-then-rank-shares-the-key)
+// Acceptance: specs/changes-capture.feature.md (The service; SERP reading; Scenarios: Service)
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,12 +15,19 @@ import { openSessionStore, uuidv7, type AppendCaptureInput, type SessionStore } 
 import type { SeoAuditResponse } from '@app/seo-core';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS, DIFF_ENGINE_VERSION, type CaptureSnapshot } from '@app/specs/capture-snapshot.schema';
+import { StoredReadingSchema } from '@app/specs/rankings.schema';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
+import { SerpSnapshotSchema, type SerpSnapshot } from '@app/specs/serp-snapshot.schema';
+import { SERP_RESULT_TYPES } from '@app/specs/serp-selector-pack.spec';
+import { MAX_SERP_FILTERS_JSON_BYTES, MAX_SERP_READING_JSON_BYTES, SEARCH_KEY_VERSION } from '@app/specs/workspace-db.spec';
 import { CAPTURE_BUSY, CHANGES_READ_API, type CaptureAnswer, type RegionAnswer } from '@app/specs/changes.schema';
 import { DEFAULT_RENDER_PROFILE, DEFAULT_TAB_OVERRIDES, type AuditRenderProfile, type RenderProfile, type TabOverrides } from '@app/specs/render-profile.spec';
 import type { TabState } from '@app/specs/browser.spec';
-import { auditOf, regionAnswer, regionText } from './fakes';
+import { auditOf, readyReading, regionAnswer, regionText } from './fakes';
 import { changesTabs, createChangesService, type ChangesServiceDeps } from '../service';
+import { savedSearchParams } from '../projects';
+import { createRankingsService } from '../rankings';
+import { searchKeyOf } from '../search-key';
 import { lateSearchParams } from '../serp-params';
 import { buildCaptureSnapshot, identityHash, laneKeyFor, sha256Hex } from '../snapshot';
 
@@ -292,6 +303,213 @@ describe('changes service', () => {
     const lanes = rows('ci_captures').map((row) => row.lane_key);
     expect(lanes).toEqual([laneKeyFor(PAGE, null, PARAMS), laneKeyFor(PAGE, null, PARAMS)]);
     expect(rows('ci_versions')).toHaveLength(1);
+  });
+
+  /** The tab shows result page `url`: its audit and regions are of it. */
+  const onSerp = (state: ReturnType<typeof setup>['state'], url: string) => {
+    state.url = url;
+    state.response = { status: 'ready', url, audit: auditOf(url), renderProfile: null };
+    state.answer = regionAnswer(url);
+  };
+  /** A setup whose SERP reading of the tab is `reading.current`. */
+  const serpSetup = (deps: Partial<ChangesServiceDeps> = {}) => {
+    const reading = { current: null as unknown };
+    const readingOf = vi.fn((_tabId: number, _pageUrl: string) => reading.current as SerpSnapshot | null);
+    return { ...setup({ readingOf, ...deps }), reading, readingOf };
+  };
+  const SERP = 'https://www.google.com/search?q=green+tea&gl=de&hl=de&tbs=QDR:w&ei=abc';
+  /** The search key main stores: the one function the capture and the rankings share (`search-key.ts`). */
+  const keyOf = (params: SearchParams, filters: Record<string, string>) => searchKeyOf(params, filters)!;
+
+  test('capture-records-serp-reading', async () => {
+    const t = serpSetup();
+    onSerp(t.state, SERP);
+    t.state.params = PARAMS;
+    t.reading.current = readyReading(PARAMS);
+    // Asked only after the second look at the tab: a page that changed during the extraction asks for none.
+    t.extract.mockImplementationOnce(async () => {
+      t.state.response = { status: 'ready', url: SERP, audit: auditOf(SERP, { extractedAt: (clock += 1) }), renderProfile: null };
+      return regionAnswer(SERP);
+    });
+    expect(refused(await t.service.capture(1))).toBe('no-audit');
+    expect(t.readingOf).not.toHaveBeenCalled();
+    const one = captured(await t.service.capture(1));
+    // Asked of the tab and its page (stored form), once, after the extraction.
+    expect(t.readingOf).toHaveBeenCalledExactlyOnceWith(1, SERP);
+    expect(t.readingOf.mock.invocationCallOrder[0]).toBeGreaterThan(t.extract.mock.invocationCallOrder.at(-1)!);
+    const [capture] = t.rows('ci_captures');
+    expect(t.rows('ci_serp_readings')).toMatchObject([
+      {
+        project_id: UNFILED_PROJECT_ID,
+        capture_id: one.captureId,
+        source: 'capture',
+        search_key: keyOf(PARAMS, { tbs: 'qdr:w' }),
+        search_key_version: SEARCH_KEY_VERSION,
+        search_params: canonicalJson(PARAMS),
+        filters: '{"tbs":"qdr:w"}',
+        page_url: SERP,
+        status: 'ready',
+        pack_version: 3,
+        reading: canonicalJson(readyReading(PARAMS)),
+        observed_at: capture!.created_at,
+      },
+    ]);
+    // The capture's parameters are the reading's; it reads back as a valid stored reading.
+    expect(capture!.search_params).toBe(canonicalJson(PARAMS));
+    const [stored] = await t.repo.readings({ projectId: UNFILED_PROJECT_ID, limit: 10 });
+    const row = StoredReadingSchema.parse({
+      id: stored!.id,
+      projectId: stored!.projectId,
+      captureId: stored!.captureId,
+      source: stored!.source,
+      searchKey: stored!.searchKey,
+      searchKeyVersion: stored!.searchKeyVersion,
+      params: JSON.parse(stored!.searchParamsJson),
+      filters: JSON.parse(stored!.filtersJson),
+      pageUrl: stored!.pageUrl,
+      status: stored!.status,
+      packVersion: stored!.packVersion,
+      snapshot: JSON.parse(stored!.readingJson),
+      observedAt: stored!.observedAt,
+    });
+    expect(row.snapshot).toEqual(readyReading(PARAMS));
+
+    // An unreadable page with its parameters is a reading too (one more capture of the same version).
+    t.reading.current = { status: 'unreadable', reason: 'no-results', params: PARAMS, packVersion: 3 };
+    t.state.response = { status: 'ready', url: SERP, audit: auditOf(SERP, { extractedAt: (clock += 1) }), renderProfile: null };
+    const two = captured(await t.service.capture(1));
+    expect(two.newVersion).toBe(false);
+    expect(t.rows('ci_serp_readings', 'capture_id = ?', two.captureId)).toMatchObject([{ status: 'unreadable', pack_version: 3, search_key: keyOf(PARAMS, { tbs: 'qdr:w' }) }]);
+
+    // A run's capture of the search (its parameters given) stores its reading in the project.
+    const project = (await t.repo.createProject('Teas', 5))!;
+    t.reading.current = readyReading(PARAMS);
+    const run = captured(await t.service.capture(1, { projectId: project.id, source: 'project', searchParams: PARAMS, pageUrl: SERP }));
+    expect(t.rows('ci_serp_readings', 'capture_id = ?', run.captureId)).toMatchObject([{ project_id: project.id, status: 'ready' }]);
+    // Exactly one reading per capture.
+    expect(t.rows('ci_serp_readings')).toHaveLength(t.rows('ci_captures').length);
+    expect(t.log).not.toHaveBeenCalled();
+  });
+
+  // spec: specs/rankings.feature.md — The search key and its version (one key function; capture-then-rank-shares-the-key)
+  test('capture-then-rank-shares-the-key', async () => {
+    // A project's saved search, through the one saved-search path.
+    const saved = savedSearchParams({ engine: 'google', query: 'green tea', country: 'de', language: 'de', device: 'desktop' })!;
+    const t = serpSetup();
+    const project = (await t.repo.createProject('Teas', tick()))!;
+    const query = (await t.repo.addQuery(project.id, saved.query, canonicalJson(saved), tick()))!;
+    // The tab shows that search's result page, read ready: a capture into the project stores its reading.
+    onSerp(t.state, saved.url);
+    t.state.params = saved;
+    t.reading.current = readyReading(saved);
+    const answer = captured(await t.service.capture(1, { projectId: project.id }));
+    const [reading] = t.rows('ci_serp_readings', 'capture_id = ?', answer.captureId);
+    expect(reading).toMatchObject({ project_id: project.id, search_key: searchKeyOf(saved, {}) });
+    // The rankings read files it under the saved search's own row: that row's latest point is this reading.
+    const rankings = createRankingsService({ store: t.repo, now: tick });
+    const table = await rankings.table(project.id, 'all', null);
+    if (table.status !== 'ok') throw new Error(`refused: ${table.reason}`);
+    expect(table.rows).toHaveLength(1);
+    const [row] = table.rows;
+    expect(row!.saved).toMatchObject({ id: query.id });
+    expect(row!.searchKey).toBe(reading!.search_key);
+    expect(row!.latest?.readingId).toBe(reading!.id);
+    expect(row!.points.map((point) => point.readingId)).toEqual([reading!.id]);
+  });
+
+  test('capture-without-reading-still-captures', async () => {
+    const t = serpSetup();
+    onSerp(t.state, SERP);
+    t.state.params = PARAMS;
+    /** A capture of the page with the tab's reading `reading`: captured, no reading, one log line without page text. */
+    const withoutReading = async (reading: unknown, why: RegExp) => {
+      t.reading.current = reading;
+      t.log.mockClear();
+      const answer = captured(await t.service.capture(1));
+      expect(t.rows('ci_captures', 'id = ?', answer.captureId)).toHaveLength(1);
+      expect(t.rows('ci_serp_readings', 'capture_id = ?', answer.captureId)).toEqual([]);
+      expect(t.log).toHaveBeenCalledTimes(1);
+      const [line] = t.log.mock.calls[0]!;
+      expect(line).toMatch(why);
+      for (const text of ['green', 'tea', 'google', 'example', '€', 'Green tea guide']) expect(line).not.toContain(text);
+    };
+    // Not read yet (pending), or read for another search (a lagging reload).
+    await withoutReading(null, /^changes: SERP reading not recorded: /);
+    await withoutReading(readyReading({ ...PARAMS, gl: 'us', url: 'https://www.google.com/search?q=green+tea&gl=us&hl=de' }), /another search/);
+    // A reading that does not fit SerpSnapshotSchema.
+    await withoutReading({ ...readyReading(PARAMS), results: [] }, /SerpSnapshotSchema/);
+    // A valid reading past MAX_SERP_READING_JSON_BYTES.
+    const long = '€'.repeat(2_000);
+    const many = Array.from({ length: 100 }, (_, i) => ({ rank: i + 1, type: 'organic' as const, position: i + 1, featureSlot: null, title: '€'.repeat(300), url: `https://example.com/${long}`, redirected: false, domain: 'example.com' }));
+    const counts = Object.fromEntries(SERP_RESULT_TYPES.map((type) => [type, type === 'organic' ? 100 : 0])) as Extract<SerpSnapshot, { status: 'ready' }>['composition']['counts'];
+    const huge = SerpSnapshotSchema.parse(
+      readyReading(PARAMS, {
+        results: many,
+        composition: { counts, features: [] },
+        ownership: { page: 1, organic: 100, complete: true, domains: [{ domain: 'example.com', count: 100, share: 1, positions: many.map((result) => result.position), best: 1 }] },
+      }),
+    );
+    expect(Buffer.byteLength(canonicalJson(huge), 'utf8')).toBeGreaterThan(MAX_SERP_READING_JSON_BYTES);
+    await withoutReading(huge, /reading is too large/);
+    // Filters past MAX_SERP_FILTERS_JSON_BYTES: never cut to fit (that would merge series), so no reading.
+    onSerp(t.state, `${SERP}&num=${'1'.repeat(MAX_SERP_FILTERS_JSON_BYTES)}`);
+    await withoutReading(readyReading(PARAMS), /filters are too large/);
+    onSerp(t.state, SERP);
+    // Said only once the capture is stored: a capture the store refuses logs its own failure only.
+    t.reading.current = null;
+    t.log.mockClear();
+    vi.spyOn(t.repo, 'appendCapture').mockResolvedValueOnce(null);
+    expect(refused(await t.service.capture(1))).toBe('store-failed');
+    expect(t.log).toHaveBeenCalledTimes(1);
+    expect(t.log.mock.calls[0]![0]).not.toMatch(/SERP reading/);
+    // With a reading again, it is stored.
+    t.reading.current = readyReading(PARAMS);
+    const last = captured(await t.service.capture(1));
+    expect(t.rows('ci_serp_readings', 'capture_id = ?', last.captureId)).toHaveLength(1);
+  });
+
+  test('filtered-serp-is-its-own-series', async () => {
+    const t = serpSetup();
+    t.state.params = PARAMS;
+    t.reading.current = readyReading(PARAMS);
+    const keys: unknown[] = [];
+    const captureOf = async (url: string) => {
+      onSerp(t.state, url);
+      const answer = captured(await t.service.capture(1));
+      keys.push(t.rows('ci_serp_readings', 'capture_id = ?', answer.captureId)[0]?.search_key);
+      return answer;
+    };
+    // "Past week", then the same search without the filter: one lane (Phase 3's canonical URL), two series.
+    const week = await captureOf(SERP);
+    const plain = await captureOf('https://www.google.com/search?q=green+tea&gl=de&hl=de&ei=abc');
+    // The engine's tracking parameters change nothing.
+    const tracked = await captureOf('https://www.google.com/search?q=green+tea&gl=de&hl=de&ei=xyz&sclient=gws');
+    const lanes = [week, plain, tracked].map((answer) => t.rows('ci_captures', 'id = ?', answer.captureId)[0]!.lane_key);
+    expect(new Set(lanes)).toEqual(new Set([laneKeyFor(SERP, null, PARAMS)]));
+    // Another engine host is another series.
+    const de: SearchParams = { ...PARAMS, url: 'https://www.google.de/search?q=green+tea&gl=de&hl=de' };
+    t.state.params = de;
+    t.reading.current = readyReading(de);
+    await captureOf('https://www.google.de/search?q=green+tea&gl=de&hl=de');
+    expect(keys).toEqual([keyOf(PARAMS, { tbs: 'qdr:w' }), keyOf(PARAMS, {}), keyOf(PARAMS, {}), keyOf(de, {})]);
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  test('non-serp-capture-has-no-reading', async () => {
+    const t = serpSetup();
+    t.reading.current = readyReading(PARAMS);
+    // A page without search parameters asks for no reading, stores none and logs nothing.
+    const plain = captured(await t.service.capture(1));
+    expect(t.rows('ci_captures', 'id = ?', plain.captureId)).toMatchObject([{ search_params: null }]);
+    expect(t.readingOf).not.toHaveBeenCalled();
+    expect(t.rows('ci_serp_readings')).toEqual([]);
+    expect(t.log).not.toHaveBeenCalled();
+    // A service without a read API bound records captures as before.
+    const unbound = setup();
+    onSerp(unbound.state, SERP);
+    unbound.state.params = PARAMS;
+    captured(await unbound.service.capture(1));
+    expect(unbound.rows('ci_serp_readings')).toEqual([]);
   });
 
   test('unchanged-page-reuses-version', async () => {

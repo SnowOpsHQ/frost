@@ -20,6 +20,7 @@ import type { InspectorService } from './inspector-router';
 import type { TelemetryService } from './telemetry-service';
 import type { GscIpcService } from './gsc-service';
 import type { AiChecksService } from './ai-checks-service';
+import type { RankingsService } from './rankings-service';
 import type { SeoExportService } from './seo-export-service';
 import type { TabOverridesService } from './tab-overrides-router';
 import type { HelpService } from './help-service';
@@ -206,6 +207,8 @@ export interface IpcServices {
   readonly gsc?: GscIpcService;
   /** AI checks (Phase 9 Task 10, `ai-checks-service.ts`). */
   readonly aiChecks?: AiChecksService;
+  /** Rankings: the rank table, series, comparison and CSV export (Phase 10 Task 5, `rankings-service.ts`). */
+  readonly rankings?: RankingsService;
   /** SEO table exports as CSV (Phase 11 Task 1, `seo-export-service.ts`). */
   readonly seoExport?: SeoExportService;
   /** Tab overrides: CSS off, cookies off, geolocation (Phase 11 Task 6, `tab-overrides-router.ts`). */

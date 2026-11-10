@@ -20,6 +20,7 @@ export { requireFeature } from './account-router';
 export type { TelemetryService } from './telemetry-service';
 export type { GscIpcService, GscService } from './gsc-service';
 export type { AiChecksService } from './ai-checks-service';
+export type { RankingsService } from './rankings-service';
 export type { SeoExportService } from './seo-export-service';
 export type { TabOverridesService } from './tab-overrides-router';
 export type { HelpService } from './help-service';

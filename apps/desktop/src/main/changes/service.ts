@@ -1,17 +1,21 @@
 import { canonicalJson, diffSnapshots } from '@app/change-intel';
-import { uuidv7 as defaultUuidv7, type ChangeIntelRepository } from '@app/db';
+import { uuidv7 as defaultUuidv7, type CaptureReadingInput, type ChangeIntelRepository } from '@app/db';
 import type { ChangesReadService, ChangesService } from '@app/ipc-contract';
 import type { SeoAuditResponse } from '@app/seo-core';
 import { MAX_DIFF_JSON_BYTES, MAX_SNAPSHOT_JSON_BYTES, UNFILED_PROJECT_ID, type CaptureSource } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS, CAPTURE_SNAPSHOT_VERSION, PAGE_REGIONS, CaptureSnapshotSchema, DIFF_ENGINE_VERSION, SnapshotDiffSchema, type CaptureSnapshot, type SnapshotDiff } from '@app/specs/capture-snapshot.schema';
+import { serpFiltersOf } from '@app/specs/rankings-url.spec';
 import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-params.schema';
-import type { SearchParamsOf } from './serp-params';
+import { SerpSnapshotSchema, type SerpSnapshot } from '@app/specs/serp-snapshot.schema';
+import { MAX_SERP_FILTERS_JSON_BYTES, MAX_SERP_READING_JSON_BYTES, SEARCH_KEY_VERSION } from '@app/specs/workspace-db.spec';
+import type { SearchParamsOf, SerpReadingOf } from './serp-params';
 import { CAPTURE_BUSY, CAPTURE_STALE_RETRIES, DiffSummarySchema, type CaptureAnswer, type CaptureRefusal, type HistoryVersion } from '@app/specs/changes.schema';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import { isDefaultTabOverrides, type TabOverrides } from '@app/specs/render-profile.spec';
 import type { z } from 'zod';
 import type { LoadTimes } from './loads';
 import { recordedProfile } from './profile-in-effect';
+import { searchKeyOf } from './search-key';
 import { parseRegionAnswer, type RegionTarget } from './regions';
 import { buildCaptureSnapshot, identityHash, laneKeyFor, sha256Hex, storedPageUrl } from './snapshot';
 import { readScreenshots } from '../screenshots/service';
@@ -23,6 +27,9 @@ import { readScreenshots } from '../screenshots/service';
 // one more capture of the lane's latest version. Writes go one at a time through a queue; a capture
 // never rejects (each failure is a refusal and one log line, never page text). Everything read back
 // from the database is parsed with its Zod schema first: a tampered row is skipped.
+// Phase 10 (`changes-capture.feature.md`, SERP reading): a capture with search parameters also stores
+// Phase 3's reading of that result page, in the capture's batch, when the tab has one of the same
+// search; without it the capture is stored all the same, with one log line.
 
 /** What the service needs of the browser: the active tab, a tab's page, and its audit (`browser.seo.getAudit`). */
 export interface ChangesTabs {
@@ -56,6 +63,11 @@ export interface ChangesServiceDeps {
    * `pageUrl` (stored form), `null` for any other page (`serp-params.ts`; default: always `null`).
    */
   readonly searchParamsOf?: SearchParamsOf;
+  /**
+   * Phase 3's reading of the tab's result page `pageUrl` (stored form), stored with a capture that
+   * has search parameters (`serp-params.ts`, `lateSearchParams().readingOf`; default: always `null`).
+   */
+  readonly readingOf?: SerpReadingOf;
   /** How long an extraction may take (default `CAPTURE_LIMITS.extractTimeoutMs`). */
   readonly extractTimeoutMs?: number;
 }
@@ -78,6 +90,9 @@ export interface MainChangesService extends ChangesService, ChangesReadService {
 
 /** Before Phase 3's SERP service is bound (and in tests): no search parameters. */
 const noSearchParams: SearchParamsOf = () => null;
+/** Likewise, no SERP reading. */
+const noReading: SerpReadingOf = () => null;
+const utf8Bytes = (text: string): number => Buffer.byteLength(text, 'utf8');
 
 const refused = (reason: CaptureRefusal): CaptureAnswer => ({ status: 'refused', reason });
 /** An error's code or name: never its message (a database error's message holds its parameters, URLs among them). */
@@ -125,6 +140,7 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
   const uuid = deps.uuidv7 ?? defaultUuidv7;
   const log = (message: string): void => deps.log?.(`changes: ${message}`);
   const searchParamsOf = deps.searchParamsOf ?? noSearchParams;
+  const readingOf = deps.readingOf ?? noReading;
   const extractTimeoutMs = deps.extractTimeoutMs ?? CAPTURE_LIMITS.extractTimeoutMs;
   /** Tabs with a capture running. */
   const busy = new Set<number>();
@@ -187,6 +203,50 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
       return true;
     }
   };
+  /**
+   * The SERP reading a capture of tab `tabId`'s page `page` with `searchParams` stores (its row
+   * without an id), or why it stores none (`null`: a page without search parameters asks for none):
+   * the tab has no finished reading of that page, its reading is of another search, does not fit
+   * `SerpSnapshotSchema`, or is too large to store (the reading, or the page's filters). The reason is
+   * frost's own words, never page text; it is logged once the capture is stored.
+   */
+  const readingFor = (tabId: number, page: string, searchParams: SearchParams | null): { readonly row: Omit<CaptureReadingInput, 'id'> } | { readonly skipped: string } | null => {
+    if (searchParams === null) return null;
+    let found: SerpSnapshot | null;
+    try {
+      found = readingOf(tabId, page);
+    } catch {
+      found = null;
+    }
+    if (found === null) return { skipped: 'the page has no finished reading' };
+    const parsed = SerpSnapshotSchema.safeParse(found);
+    if (!parsed.success) return { skipped: 'its reading does not fit SerpSnapshotSchema' };
+    const reading = parsed.data;
+    const searchParamsJson = canonicalJson(searchParams);
+    // A reading that lags a reload (or a run target captured with its own parameters) is another search's.
+    if (reading.params === null || canonicalJson(reading.params) !== searchParamsJson) return { skipped: 'its reading is of another search' };
+    // Filters past their cap are never cut to fit (that would file the page under another series).
+    const filters = serpFiltersOf(page, searchParams.engine);
+    if (filters === null) return { skipped: 'its filters are too large to store' };
+    // The key every rankings read looks it up by (`search-key.ts`: one function for both).
+    const searchKey = searchKeyOf(searchParams, filters);
+    if (searchKey === null) return { skipped: 'its search has no engine host' };
+    const filtersJson = canonicalJson(filters);
+    const readingJson = canonicalJson(reading);
+    if (utf8Bytes(readingJson) > MAX_SERP_READING_JSON_BYTES || utf8Bytes(filtersJson) > MAX_SERP_FILTERS_JSON_BYTES) return { skipped: 'its reading is too large to store' };
+    return {
+      row: {
+        searchKey,
+        searchKeyVersion: SEARCH_KEY_VERSION,
+        searchParamsJson,
+        filtersJson,
+        status: reading.status,
+        packVersion: reading.packVersion,
+        readingJson,
+      },
+    };
+  };
+
   /** A `readyTab` refusal: `invalid-page` is a failure (logged), the others are states. */
   const notReady = (reason: CaptureRefusal): CaptureAnswer => (reason === 'invalid-page' ? failed(reason, 'its URL is longer than a snapshot keeps') : refused(reason));
 
@@ -260,6 +320,8 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     }
     if (laneKey === null || Buffer.byteLength(snapshotJson, 'utf8') > MAX_SNAPSHOT_JSON_BYTES) return failed('invalid-page', 'its snapshot cannot be stored');
     const lane = laneKey;
+    // Phase 3's reading of this page (asked after the second look at the tab), stored in the capture's batch.
+    const reading = readingFor(tabId, page, searchParams);
     const capture = {
       projectId,
       laneKey: lane,
@@ -298,9 +360,18 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
             head !== null && diff !== null
               ? { id: uuid(at), fromVersionId: head.id, engineVersion: DIFF_ENGINE_VERSION, diffJson: canonicalJson(diff), summaryJson: canonicalJson(diff.summary), changeCount: diff.changeCount }
               : undefined;
-          const result = await store.appendCapture({ ...capture, ...(reuse === null ? {} : { snapshotHash: reuse }), ...ids, createdAt: at, ...(diffInput ? { diff: diffInput } : {}) });
+          const result = await store.appendCapture({
+            ...capture,
+            ...(reuse === null ? {} : { snapshotHash: reuse }),
+            ...ids,
+            createdAt: at,
+            ...(diffInput ? { diff: diffInput } : {}),
+            ...(reading !== null && 'row' in reading ? { reading: { ...reading.row, id: uuid(at) } } : {}),
+          });
           if (result === null) return goneOr('the store refused the capture');
           if (result.status === 'appended') {
+            // Stored without its reading: said once, now that the capture is in.
+            if (reading !== null && 'skipped' in reading) log(`SERP reading not recorded: ${reading.skipped}`);
             captured(projectId);
             return { status: 'captured', captureId: result.captureId, versionId: result.versionId, newVersion: result.newVersion, changeCount: result.newVersion ? (diff?.changeCount ?? null) : 0 };
           }

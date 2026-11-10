@@ -1,4 +1,4 @@
-// Spec: specs/changes-diff.feature.md (change-intel is pure TypeScript: no Electron, DOM, Node or Zod)
+// Spec: specs/changes-diff.feature.md and specs/rankings.feature.md (change-intel is pure TypeScript: no Electron, DOM, Node or Zod)
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,8 +26,9 @@ test('change-intel-is-pure', () => {
     // `import … from`, `export … from`, side-effect `import '…'` and `import('…')`, either quote.
     const imports = [...code.matchAll(/\b(?:from|import)\s*\(?\s*(['"`])([^'"`]+)\1/g)].map((m) => m[2]!);
     for (const specifier of imports) {
-      // Relative modules and the Zod-free capture spec only.
-      const allowed = specifier.startsWith('.') || specifier === '@app/specs/capture.spec';
+      // Relative modules and the Zod-free capture and rankings specs only (the rankings spec: Phase 10
+      // Task 3's rank read model, plain ECMAScript; specs/rankings.feature.md).
+      const allowed = specifier.startsWith('.') || specifier === '@app/specs/capture.spec' || specifier === '@app/specs/rankings.spec';
       expect(allowed, `${path.relative(SRC, file)} imports ${specifier}`).toBe(true);
     }
     expect(code, file).not.toMatch(/\b(document|window|process|require|globalThis)\b\s*[.[(]/);

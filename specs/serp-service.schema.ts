@@ -22,6 +22,7 @@
  * `url` is the page's own URL (the reading is of that page); the canonical one is `params.url`.
  */
 import { z } from 'zod';
+import { AI_DESTINATION_IDS, OPEN_DESTINATION_REFUSALS, type OpenDestinationResult } from './ai-destinations.spec';
 import { INTENT_LIMITS, INTENT_STATES, INTENT_ENABLE_OUTCOMES, type IntentAnswer } from './intent-classifier.spec';
 import { IntentResultSchema } from './intent-classifier.schema';
 import { PACK_SOURCES, PACK_UPDATE_OUTCOMES } from './serp-selector-pack.spec';
@@ -92,10 +93,32 @@ export const PackStatusSchema = z.strictObject({
 });
 export type PackStatus = z.infer<typeof PackStatusSchema>;
 
+/** A URL parameter name as the selector pack takes one. */
+const paramName = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[A-Za-z0-9_.-]+$/);
+
+/**
+ * The selector pack's parameter names for the tab's engine (Phase 10 Task 9: the SERP parameter
+ * editor sends the country and language of an engine outside `SEARCH_ENGINES` by them,
+ * `serp-param-editor.spec.ts` `EditorParamNames`): the first name of its `params.query`, `params.gl`
+ * and `params.hl` (`null`: the engine has none), no two the same.
+ */
+export const SerpParamNamesSchema = z
+  .strictObject({ query: paramName, gl: paramName.nullable(), hl: paramName.nullable() })
+  .refine(({ query, gl, hl }) => {
+    const names = [query, gl, hl].filter((name) => name !== null);
+    return new Set(names).size === names.length;
+  }, { message: 'a parameter name twice' });
+
 /**
  * What `serp.watch` and `serp.state` answer for a tab: its SERP state, whether its outlines are
  * drawn, the intent of its current query (`null` until a `ready` reading has one, or while it is
  * being classified), the service's `version` (`0` before any change) and the pack's status.
+ * Phase 10 adds `paramNames` (optional): the pack's parameter names for the engine of a `pending`,
+ * `ready` or `unreadable` page (`null` for any other state).
  */
 export const SerpTabStateSchema = z.strictObject({
   version: z.int().nonnegative(),
@@ -104,6 +127,7 @@ export const SerpTabStateSchema = z.strictObject({
   outlines: z.boolean(),
   intent: IntentAnswerSchema.nullable(),
   pack: PackStatusSchema,
+  paramNames: SerpParamNamesSchema.nullable().optional(),
 });
 export type SerpTabState = z.infer<typeof SerpTabStateSchema>;
 
@@ -124,3 +148,20 @@ export type SerpTabInput = z.infer<typeof SerpTabInputSchema>;
 export type SerpWatchInput = z.infer<typeof SerpWatchInputSchema>;
 export type SerpOutlinesInput = z.infer<typeof SerpOutlinesInputSchema>;
 export type SerpClassifyInput = z.infer<typeof SerpClassifyInputSchema>;
+
+/**
+ * `serp.openDestination` input (Phase 10 Task 10; `ai-destinations.spec.ts`): the tab and a
+ * destination id of `AI_SEARCH_DESTINATIONS`, nothing else. Never a query, a URL or a host: main
+ * builds the URL from the table and the tab's own search.
+ */
+export const OpenDestinationInputSchema = z.strictObject({ tabId, destination: z.enum(AI_DESTINATION_IDS) });
+export type OpenDestinationInput = z.infer<typeof OpenDestinationInputSchema>;
+/** `serp.openDestination`'s answer (`OpenDestinationResult`): the tab opened, or why not (`OPEN_DESTINATION_REFUSALS`). */
+export const OpenDestinationAnswerSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('opened'), tabId }),
+  z.strictObject({ status: z.literal('refused'), reason: z.enum(OPEN_DESTINATION_REFUSALS) }),
+]);
+type OpenDestinationAnswerParsed = z.infer<typeof OpenDestinationAnswerSchema>;
+// The schema and the spec's type describe one shape.
+const _destinationMatches: [OpenDestinationAnswerParsed extends OpenDestinationResult ? true : false, OpenDestinationResult extends OpenDestinationAnswerParsed ? true : false] = [true, true];
+void _destinationMatches;

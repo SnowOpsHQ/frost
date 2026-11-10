@@ -10,6 +10,9 @@ import type { HighlightMode, ImageFilter } from '@app/specs/seo-sidebar.spec';
 import type { SeoExportKind } from '@app/specs/seo-exports.spec';
 import type { HistoryCursorAnswer, HistoryPageAnswer, HistoryRetentionAnswer, JumpBackInAnswer } from '@app/ipc-contract';
 import type { HistoryClearRange, HistoryRetentionResult, SearchEngineId } from '@app/specs/browser-polish.spec';
+import type { CompareAnswer, CopyCsvAnswer, RankCsvKind, RankRange, RankSeriesAnswer, RankTableAnswer, ReadingDatesAnswer, SaveCsvAnswer } from '@app/specs/rankings.spec';
+import type { AddCompetitorAnswer, BulkAddAnswer, BulkSearchesInput, ProjectChangeAnswer, SetSiteAnswer, SetTagsAnswer } from '@app/specs/projects.spec';
+import type { CaptureCadence, EntryKind } from '@app/specs/workspace-db.spec';
 
 // The chrome's one IPC client (the sender-guarded `browser.*` and `seo.*` procedures, `ping`) and
 // the user intents it sends. All browser state, and every SEO audit, lives in main. The chrome never
@@ -96,4 +99,38 @@ export const actions = {
   reopenClosedTab: () => ipc.history.reopenClosedTab.mutate().catch(() => null),
   showHistory: () => ipc.history.show.mutate().catch(ignore),
   setSearchEngine: (engine: SearchEngineId) => ipc.settings.setSearchEngine.mutate({ engine }).catch(() => false),
+};
+
+/**
+ * The Rankings and Compare views' procedures (`rankings.*`; acceptance `rankings.feature.md`, The
+ * views). Each resolves `null` on an IPC failure (the views say it as `store-failed`); none names a
+ * path: Save CSV… asks in main's own dialog.
+ */
+export const rankingsActions = {
+  table: (input: { projectId: string; range: RankRange; tag?: string }): Promise<RankTableAnswer | null> => ipc.rankings.table.query(input).catch(() => null),
+  series: (projectId: string, searchKey: string, range: RankRange): Promise<RankSeriesAnswer | null> => ipc.rankings.series.query({ projectId, searchKey, range }).catch(() => null),
+  readingDates: (projectId: string, searchKey: string): Promise<ReadingDatesAnswer | null> => ipc.rankings.readingDates.query({ projectId, searchKey }).catch(() => null),
+  compare: (projectId: string, a: string, b: string): Promise<CompareAnswer | null> => ipc.rankings.compare.query({ projectId, a, b }).catch(() => null),
+  copyCsv: (projectId: string, kind: RankCsvKind, range: RankRange, tag: string | null): Promise<CopyCsvAnswer> => ipc.rankings.copyCsv.mutate({ projectId, kind, range, ...(tag === null ? {} : { tag }) }).catch(() => null),
+  saveCsv: (projectId: string, kind: RankCsvKind, range: RankRange, tag: string | null): Promise<SaveCsvAnswer | null> => ipc.rankings.saveCsv.mutate({ projectId, kind, range, ...(tag === null ? {} : { tag }) }).catch(() => null),
+};
+
+/**
+ * The project workspace's procedures (`projects.*`, Phase 10 Task 4; the sheet's star, Settings, tag
+ * editor and Bulk add, acceptance `projects.feature.md`, The sheet). Each resolves `null` on an IPC
+ * failure (the sheet says "Something went wrong"); main reads every domain and tag again.
+ */
+export const projectsActions = {
+  setFavorite: (projectId: string, favorite: boolean): Promise<ProjectChangeAnswer | null> => ipc.projects.setFavorite.mutate({ projectId, favorite }).catch(() => null),
+  setSite: (projectId: string, domain: string | null, subdomains: boolean): Promise<SetSiteAnswer | null> => ipc.projects.setSite.mutate({ projectId, domain, subdomains }).catch(() => null),
+  addCompetitor: (projectId: string, domain: string): Promise<AddCompetitorAnswer | null> => ipc.projects.addCompetitor.mutate({ projectId, domain }).catch(() => null),
+  removeCompetitor: (projectId: string, competitorId: string): Promise<ProjectChangeAnswer | null> => ipc.projects.removeCompetitor.mutate({ projectId, competitorId }).catch(() => null),
+  setTags: (projectId: string, entryKind: EntryKind, entryId: string, tags: readonly string[]): Promise<SetTagsAnswer | null> => ipc.projects.setTags.mutate({ projectId, entryKind, entryId, tags: [...tags] }).catch(() => null),
+  addSearches: (projectId: string, searches: BulkSearchesInput): Promise<BulkAddAnswer | null> =>
+    ipc.projects.addSearches.mutate({ projectId, searches: { ...searches, locales: [...searches.locales], devices: [...searches.devices], tags: [...searches.tags] } }).catch(() => null),
+  // Phase 10 Task 8: main may ask the rank run disclosure before a cadence is first set.
+  setCadence: (projectId: string, cadence: CaptureCadence): Promise<ProjectChangeAnswer | null> => ipc.projects.setCadence.mutate({ projectId, cadence }).catch(() => null),
+  setAutoCapture: (projectId: string, on: boolean): Promise<ProjectChangeAnswer | null> => ipc.projects.setAutoCapture.mutate({ projectId, on }).catch(() => null),
+  /** Check rankings: a run of the saved searches only, without screenshots (main asks the disclosure first when it must). */
+  checkRankings: (projectId: string) => ipc.projects.startRun.mutate({ projectId, screenshot: false, scope: 'searches' }).catch(() => null),
 };

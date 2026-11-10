@@ -9,6 +9,8 @@ Phase 6 Task 1; builds on `browser-session-db.feature.md` (the session database,
 store's `changeIntel` repository. Each scenario maps to one named test in
 `packages/db/src/change-intel/__tests__/`.
 
+Phase 10's project workspace tables, the new `ci_projects` columns and the SERP readings stored with captures (and purged with them) are `workspace-db.feature.md`.
+
 ## Behaviour
 - **Where.** Nine `ci_*` tables (`CHANGE_INTEL_TABLES`) in the session database, created by
   `0040_change_intelligence`; `0041_change_intelligence_guards` adds the triggers. Plain SQLite SQL

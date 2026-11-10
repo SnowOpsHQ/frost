@@ -1164,3 +1164,10 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   edited-copy retention lanes rely on the local-only `screenshot_edits` link, so a device that syncs
   the copy without the link treats it as a taken screenshot of that lane; latent until `ci_*` sync
   ships (issue #15), and fixing it needs a synced marker column and a sync schema bump.
+- **Merge of main with Phase 10 (562716e):** `MIGRATIONS` ends `...WORKSPACE_MIGRATIONS` (0220–0223),
+  then `...PHASE11_MIGRATIONS` (0230, 0231); Phase 10's `workspace-migrations-apply-in-order` now
+  checks its block is contiguous with only `0230`+ after it, and the tables test lists both
+  `WORKSPACE_TABLES` and `SCREENSHOT_EDIT_TABLES`. `changes/service.ts` keeps Phase 11's
+  `stampedOn`/`overridesMoved` beside Phase 10's `readingFor`; `purge.ts` keeps both the
+  `screenshot_edits` lane flag and the SERP-reading purge. Main's `AGENT_PROTOCOL_VERSION` is still
+  `9`, so Phase 11's `10` stands. The release notes gain the Phase 10 line.

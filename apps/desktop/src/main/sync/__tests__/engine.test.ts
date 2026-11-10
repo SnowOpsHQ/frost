@@ -1,8 +1,16 @@
-// Spec: specs/sync.spec.ts (Sync tables) · Acceptance: specs/sync-engine.feature.md (Engine)
+// Spec: specs/sync.spec.ts (Sync tables) · Acceptance: specs/sync-engine.feature.md (Engine);
+// Phase 10's sync position: specs/workspace-db.feature.md (Sync position; Orphans and when the sweeps run)
 // The session side is `node:sqlite` on a file per device; the replica is one libSQL `file:` database
 // that every device pushes to and pulls from, standing in for the primary.
+import { createHash } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { openSessionStore, uuidv7, type ChangeIntelRepository } from '@app/db';
+import { createNodeSqliteDriver } from '@app/db/driver-node-sqlite';
 import type { SqlDriver } from '@app/db/driver-types';
+import { SEARCH_KEY_VERSION } from '@app/specs/workspace-db.spec';
 import {
   SYNC_LOG_TABLE,
   SYNC_PENDING_TABLE,
@@ -509,5 +517,164 @@ describe('sync engine', () => {
     expect(() => quoteIdentifier('ci_projects"; --')).toThrow();
     expect(quoteIdentifier('ci_projects')).toBe('"ci_projects"');
     expect(triggerSql()).toContain('ci_versions_no_resurrect');
+  });
+});
+
+// Phase 10 (`workspace-db.feature.md`, Sync position): the devices are real session databases (every
+// migration, Phase 10's columns and tables included); the replica keeps Phase 6's fixture tables, as
+// `SYNC_TABLES` lists them. Workspace flags, competitors, tags and readings never sync.
+describe('sync and the device-local workspace', () => {
+  const PHASE_6_SYNC_TABLES = ['ci_projects', 'ci_project_pages', 'ci_project_queries', 'ci_purges', 'ci_tombstones', ...SYNC_PURGE_DELETE_ORDER];
+  const PHASE_6_PROJECT_COLUMNS = ['id', 'name', 'render_profile', 'retention_mode', 'retention_value', 'created_at', 'updated_at', 'deleted_at'];
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+  const closers: (() => Promise<void>)[] = [];
+  afterEach(async () => {
+    // Closed before the fixture's directory goes (Windows refuses to delete an open file).
+    for (const close of closers.splice(0).reverse()) await close();
+  });
+
+  /** A device's session store (`openSessionStore`, every migration) and the engine's driver on the same file. */
+  async function realDevice(name: string): Promise<{ repo: ChangeIntelRepository; driver: SqlDriver; raw: DatabaseSync }> {
+    const dir = path.join(fx.dir, `store-${name}`);
+    mkdirSync(dir);
+    const store = openSessionStore({ dir });
+    const raw = new DatabaseSync(store.file, { timeout: 10_000 });
+    const driver = createNodeSqliteDriver(raw);
+    closers.push(async () => {
+      await driver.close();
+      await store.close();
+    });
+    return { repo: store.changeIntel, driver, raw };
+  }
+
+  const projectRow = (raw: DatabaseSync, id: string) => ({ ...raw.prepare('SELECT * FROM ci_projects WHERE id = ?').get(id) });
+  const listed = (row: Record<string, unknown>) => PHASE_6_PROJECT_COLUMNS.map((column) => row[column]);
+  const DEFAULTS = { favorite: false, siteDomain: null, siteSubdomains: true, cadence: 'off', autoCapture: false };
+
+  test('sync-keeps-device-local-project-columns', async () => {
+    // SYNC_TABLES is still exactly Phase 6's nine, with Phase 6's columns.
+    expect(SYNC_TABLES.map((t) => t.name).sort()).toEqual([...PHASE_6_SYNC_TABLES].sort());
+    expect(SYNC_TABLES.find((t) => t.name === 'ci_projects')!.columns).toEqual(PHASE_6_PROJECT_COLUMNS);
+    for (const table of SYNC_TABLES) expect(table.columns.some((column) => ['favorite', 'site_domain', 'site_subdomains', 'capture_cadence', 'auto_capture'].includes(column)), table.name).toBe(false);
+
+    const a = await realDevice('a');
+    const b = await realDevice('b');
+    const id = (await a.repo.createProject('Site', 1_000))!.id;
+    expect(await a.repo.setProjectFavorite(id, true)).toBe(true);
+    expect(await a.repo.setProjectSite(id, 'example.com', false)).toBe(true);
+    await pass(a.driver, 'device-a');
+    await pass(b.driver, 'device-b');
+    // First pulled here: the listed columns, and this device's defaults for the rest.
+    expect(listed(projectRow(b.raw, id))).toEqual(listed(projectRow(a.raw, id)));
+    expect(await b.repo.projectWorkspace(id)).toEqual({ projectId: id, ...DEFAULTS });
+
+    // B's own flags; then A's rename arrives as an UPDATE of the listed columns only.
+    expect(await b.repo.setProjectCadence(id, 'daily')).toBe(true);
+    expect(await b.repo.setProjectAutoCapture(id, true)).toBe(true);
+    expect(await a.repo.renameProject(id, 'Renamed', 2_000)).toBe(true);
+    await pass(a.driver, 'device-a');
+    await pass(b.driver, 'device-b');
+    expect(projectRow(b.raw, id)).toMatchObject({ name: 'Renamed', updated_at: 2_000 });
+    expect(await b.repo.projectWorkspace(id)).toEqual({ projectId: id, ...DEFAULTS, cadence: 'daily', autoCapture: true });
+    expect(await a.repo.projectWorkspace(id)).toEqual({ projectId: id, ...DEFAULTS, favorite: true, siteDomain: 'example.com', siteSubdomains: false });
+    // Nothing of them reached the replica.
+    expect(await rowsOf(fx.replica, 'ci_projects')).toContainEqual(listed(projectRow(a.raw, id)));
+  });
+
+  test('device-local-change-never-wins-a-rename', async () => {
+    const a = await realDevice('a');
+    const b = await realDevice('b');
+    const id = (await a.repo.createProject('Site', 1_000))!.id;
+    await pass(a.driver, 'device-a');
+    await pass(b.driver, 'device-b');
+    // A renames; B stars the project later (by the clock), and pushes first.
+    expect(await a.repo.renameProject(id, 'Renamed on A', 2_000)).toBe(true);
+    expect(await b.repo.setProjectFavorite(id, true)).toBe(true);
+    await pass(b.driver, 'device-b');
+    await pass(a.driver, 'device-a');
+    await pass(b.driver, 'device-b');
+    await pass(a.driver, 'device-a');
+    for (const device of [a, b]) expect(projectRow(device.raw, id)).toMatchObject({ name: 'Renamed on A', updated_at: 2_000 });
+    expect((await b.repo.projectWorkspace(id))?.favorite).toBe(true);
+    expect((await a.repo.projectWorkspace(id))?.favorite).toBe(false);
+    expect(listed(projectRow(a.raw, id))).toEqual(listed(projectRow(b.raw, id)));
+  });
+
+  test('orphan-readings-swept-after-sync-pull', async () => {
+    const a = await realDevice('a');
+    const b = await realDevice('b');
+    const id = (await b.repo.createProject('Site', 1_000))!.id;
+    const url = 'https://www.google.com/search?q=green+tea';
+    const params = '{"engine":"google","query":"green tea"}';
+    const laneKey = sha(`lane ${url}`);
+    const captureOn = async (at: number, snapshot: string) => {
+      const head = await b.repo.latestVersion(laneKey);
+      const reading = { id: uuidv7(at), searchKey: sha('green tea'), searchKeyVersion: SEARCH_KEY_VERSION, searchParamsJson: params, filtersJson: '{}', status: 'ready' as const, packVersion: 1, readingJson: `{"status":"ready","at":${at}}` };
+      const result = await b.repo.appendCapture({
+        captureId: uuidv7(at),
+        versionId: uuidv7(at),
+        projectId: id,
+        laneKey,
+        pageUrl: url,
+        renderProfileJson: null,
+        renderProfilePartial: false,
+        searchParamsJson: params,
+        source: 'manual',
+        auditTakenAt: at,
+        snapshotJson: snapshot,
+        snapshotHash: sha(snapshot),
+        schemaVersion: 1,
+        createdAt: at,
+        reading,
+        ...(head ? { diff: { id: uuidv7(at), fromVersionId: head.id, engineVersion: 1, diffJson: '{}', summaryJson: '{}', changeCount: 1 } } : {}),
+      });
+      if (result?.status !== 'appended') throw new Error('not appended');
+      return { captureId: result.captureId, readingId: reading.id };
+    };
+    const old = await captureOn(1_100, '{"v":1}');
+    const kept = await captureOn(1_200, '{"v":2}');
+    await pass(b.driver, 'device-b');
+    await pass(a.driver, 'device-a');
+    // A purges the old capture under its retention policy; the tombstones reach B, which deletes it.
+    expect(await a.repo.setRetention(id, 'versions', 1, 2_000)).toBe(true);
+    const plan = (await a.repo.planPurge({ projectId: id, policy: { mode: 'versions', value: 1 }, now: 3_000 }))!;
+    expect(plan.captureIds).toEqual([old.captureId]);
+    expect(await a.repo.executePurge(plan, 'retention', 3_000)).toMatchObject({ status: 'purged' });
+    await pass(a.driver, 'device-a');
+    const pulled = await pass(b.driver, 'device-b');
+    expect(tableReport(pulled.pull, 'ci_captures').deleted).toBe(1);
+    // Sync never touches readings: the old one is left, skipped by the reads, and the next sweep removes it.
+    expect(Number(b.raw.prepare('SELECT count(*) AS n FROM ci_serp_readings').get()!['n'])).toBe(2);
+    expect((await b.repo.readings({ projectId: id, limit: 10 })).map((r) => r.id)).toEqual([kept.readingId]);
+    expect(await b.repo.deleteOrphanReadings()).toBe(1);
+    expect(b.raw.prepare('SELECT id FROM ci_serp_readings').all().map((row) => row['id'])).toEqual([kept.readingId]);
+  });
+
+  test('orphan-competitors-and-tags-tombstoned-after-sync-pull', async () => {
+    const a = await realDevice('a');
+    const b = await realDevice('b');
+    const id = (await a.repo.createProject('Site', 1_000))!.id;
+    await pass(a.driver, 'device-a');
+    await pass(b.driver, 'device-b');
+    // B's device-local workspace rows.
+    expect(await b.repo.addCompetitor(id, 'rival.com', 1_100)).not.toBeNull();
+    const page = (await b.repo.addPage(id, 'https://example.com/tea', 1_100))!;
+    expect(await b.repo.setEntryTags({ projectId: id, entryKind: 'page', entryId: page.id, tags: ['brand', 'tea'], now: 1_100 })).toHaveLength(2);
+    await pass(b.driver, 'device-b');
+    await pass(a.driver, 'device-a');
+    // A deletes the project; B learns it from the pulled ci_projects row (no tombstoneProject runs on B).
+    expect(await a.repo.tombstoneProject(id, 5_000)).toBe(true);
+    await pass(a.driver, 'device-a');
+    await pass(b.driver, 'device-b');
+    expect(projectRow(b.raw, id)).toMatchObject({ deleted_at: 5_000 });
+    const live = (table: string) => Number(b.raw.prepare(`SELECT count(*) AS n FROM ${table} WHERE project_id = ? AND deleted_at IS NULL`).get(id)!['n']);
+    const rows = (table: string) => Number(b.raw.prepare(`SELECT count(*) AS n FROM ${table} WHERE project_id = ?`).get(id)!['n']);
+    expect(live('ci_project_competitors') + live('ci_entry_tags')).toBe(3);
+    // The next startup sweep tombstones them, deleting none.
+    expect(await b.repo.tombstoneOrphanWorkspaceRows(6_000)).toBe(3);
+    expect(live('ci_project_competitors') + live('ci_entry_tags')).toBe(0);
+    expect(rows('ci_project_competitors') + rows('ci_entry_tags')).toBe(3);
+    // Nothing of them was ever in the replica.
+    expect((await fx.replica.execute("SELECT count(*) FROM sqlite_master WHERE name IN ('ci_project_competitors', 'ci_entry_tags', 'ci_serp_readings')", [], 'get')).rows).toEqual([0]);
   });
 });

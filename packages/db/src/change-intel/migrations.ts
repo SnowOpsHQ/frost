@@ -130,12 +130,15 @@ const TABLES = `
     VALUES ('${UNFILED_PROJECT_ID}', '${UNFILED_PROJECT_NAME}', NULL, 'forever', NULL, 0, 0, NULL);
 `;
 
+// The `noReplace` and `mutable` guard helpers below are exported for Phase 10's own migrations
+// (`workspace-migrations.ts`), which reuse them on their tables; the SQL they produce here is unchanged.
+
 // Every table: an insert never lands on an existing row. SQLite's REPLACE (and `INSERT OR REPLACE`,
 // `UPDATE OR REPLACE`) deletes the conflicting row without firing any DELETE trigger, so the
 // DELETE guards below cannot see it; a BEFORE INSERT trigger runs before conflict resolution and
 // refuses first. `extra` adds a table's other unique keys. A consequence: `ON CONFLICT DO NOTHING`
 // aborts too, so a sync inserts with `INSERT … SELECT … WHERE NOT EXISTS (…)`.
-const noReplace = (table: string, extra = '') => `
+export const noReplace = (table: string, extra = '') => `
   CREATE TRIGGER ${table}_no_replace BEFORE INSERT ON ${table}
   WHEN EXISTS (SELECT 1 FROM ${table} WHERE id = NEW.id)${extra}
   BEGIN SELECT RAISE(ABORT, '${table} rows are never replaced'); END;
@@ -169,7 +172,7 @@ const audit = (table: string, extra = '') => `
 // Mutable rows: tombstoned with deleted_at (so a sync can carry it), never deleted; ids are stable.
 // Pages and queries keep one live row per key: an insert or an update onto another live row's key
 // is refused (an `UPDATE OR REPLACE` would otherwise delete that row unseen).
-const mutable = (table: string, key: readonly string[] = []) => `
+export const mutable = (table: string, key: readonly string[] = []) => `
   CREATE TRIGGER ${table}_no_delete BEFORE DELETE ON ${table}
   BEGIN SELECT RAISE(ABORT, '${table} rows are tombstoned with deleted_at, never deleted'); END;
   CREATE TRIGGER ${table}_id_stays BEFORE UPDATE ON ${table}

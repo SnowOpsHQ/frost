@@ -3,6 +3,8 @@ import type { IntentAnswer } from '@app/specs/intent-classifier.spec';
 import type { PackUpdateOutcome } from '@app/specs/serp-selector-pack.spec';
 import type { EngineLayout, SelectorEngine } from '@app/specs/serp-selector-pack.schema';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
+import { serpFiltersOf } from '@app/specs/rankings-url.spec';
+import { sortedJson } from '@app/specs/rankings.spec';
 import type { PackStatus, SerpState, SerpTabState } from '@app/specs/serp-service.schema';
 import { MAX_PENDING_SERP_WATCHES, SERP_INPAGE_DEBOUNCE_MS, SERP_INTENT_CACHE_SIZE, SERP_OUTLINE_ACTIVE_POLL_MS } from '@app/specs/serp-service.spec';
 import type { SerpSnapshot } from '@app/specs/serp-snapshot.schema';
@@ -37,7 +39,8 @@ import type { SerpAnalyzer } from './serp-analyzer';
 //   switch (polled every `SERP_OUTLINE_ACTIVE_POLL_MS` while one is drawn), a pack swap, Clear
 //   Browsing Data or the toggle, always with an `off` paint to the page (harmless on a fresh
 //   document, so a paint that crossed a navigation is removed too); off when the page ends them. An
-//   in-page move within the same search keeps the reading and the outlines.
+//   in-page move within the same search keeps the reading and the outlines, unless it changes a known
+//   filter (`SERP_FILTER_PARAMS`, Phase 10): that page is read again, as another search is.
 
 /** A tab as the service sees it, now. */
 export interface SerpTab {
@@ -89,8 +92,8 @@ export interface SerpServiceOptions {
 /** The SERP overlay's read API (`SerpReadApi` without the probes, which `setup.ts` joins from `probes.ts`). */
 export type SerpOverlayReadApi = Omit<SerpReadApi, 'probes' | 'runProbes'>;
 
-/** The SERP overlay's part of `SerpService` (the probes' part is `probes.ts`, joined in `setup.ts`). */
-export interface Serp extends Omit<SerpService, keyof SerpProbesService> {
+/** The SERP overlay's part of `SerpService` (the probes' part is `probes.ts` and `openDestination` is `destinations.ts`, joined in `setup.ts`). */
+export interface Serp extends Omit<SerpService, keyof SerpProbesService | 'openDestination'> {
   /** The read API for Phase 5 (`SerpReadApi`, the probes aside). */
   readonly readApi: SerpOverlayReadApi;
   /** A page finished loading (`did-finish-load`): read it if it is a result page. */
@@ -105,6 +108,8 @@ export interface Serp extends Omit<SerpService, keyof SerpProbesService> {
   forget(): void;
   /** The app is quitting: timers stop, watchers answer, nothing runs again. */
   dispose(): void;
+  /** The tab's SERP state as it stands, passively: no read is started and no reading dropped (Phase 10 Task 10, `destinations.ts`). */
+  peek(tabId: number): SerpState;
   /** How many `watch` calls wait. */
   pendingWatches(): number;
 }
@@ -310,21 +315,22 @@ export function createSerpService(options: SerpServiceOptions): Serp {
    * The tab's SERP state and its current entry. A loaded result page with no current reading is read
    * now, unless `passive` (an answer nobody waits for: nothing is started or dropped).
    */
-  const serpState = (tabId: number, passive = false): { serp: SerpState; entry: Entry | null } => {
+  /** The tab's state, its entry, and the engine of the result page it shows (`null`: none). */
+  const serpState = (tabId: number, passive = false): { serp: SerpState; entry: Entry | null; engine: SelectorEngine | null } => {
     const pack = readyPack();
-    if (!pack) return { serp: { status: 'disabled', tabId, reason: 'pack-invalid' }, entry: null };
+    if (!pack) return { serp: { status: 'disabled', tabId, reason: 'pack-invalid' }, entry: null, engine: null };
     const tab = tabs.tab(tabId);
-    if (!tab) return { serp: { status: 'not-serp', tabId, url: '' }, entry: null };
+    if (!tab) return { serp: { status: 'not-serp', tabId, url: '' }, entry: null, engine: null };
     let entry = entries.get(tabId) ?? null;
     if (!entry || !isCurrent(entry, tab, pack)) {
       // A reading of something the tab no longer shows goes (removed from the page if it is still that document).
       if (entry && !passive) retire(entry);
       const match = disposed ? null : matchSerp(tab.url, pack.pack, tab.device);
-      if (!match) return { serp: { status: 'not-serp', tabId, url: tab.url.length <= SERP_PARAM_LIMITS.maxUrlChars ? tab.url : '' }, entry: null };
-      if (tab.loading || passive) return { serp: { status: 'pending', tabId, documentSeq: tab.documentSeq, url: tab.url, params: match.params }, entry: null };
+      if (!match) return { serp: { status: 'not-serp', tabId, url: tab.url.length <= SERP_PARAM_LIMITS.maxUrlChars ? tab.url : '' }, entry: null, engine: null };
+      if (tab.loading || passive) return { serp: { status: 'pending', tabId, documentSeq: tab.documentSeq, url: tab.url, params: match.params }, entry: null, engine: match.engine };
       entry = begin(tabId, tab, match, pack, null);
     }
-    return { serp: stateOf(entry), entry };
+    return { serp: stateOf(entry), entry, engine: entry.engine };
   };
 
   const stateOf = (entry: Entry): SerpState => {
@@ -409,9 +415,11 @@ export function createSerpService(options: SerpServiceOptions): Serp {
 
   /** The tab's `SerpTabState`; `passive`: start and drop nothing (an answer nobody waits for). */
   const tabState = (tabId: number, passive = false): SerpTabState => {
-    const { serp, entry } = serpState(tabId, passive);
+    const { serp, entry, engine } = serpState(tabId, passive);
     const intent = intentOf(entry, serp, passive);
-    return { version, tabId, serp, outlines: entry?.outline != null, intent, pack: packStatus() };
+    // The pack's parameter names of the page's engine, for the SERP parameter editor (Phase 10 Task 9).
+    const paramNames = engine === null ? null : { query: engine.params.query[0]!, gl: engine.params.gl?.[0] ?? null, hl: engine.params.hl?.[0] ?? null };
+    return { version, tabId, serp, outlines: entry?.outline != null, intent, pack: packStatus(), paramNames };
   };
 
   const serp: Serp = {
@@ -504,6 +512,8 @@ export function createSerpService(options: SerpServiceOptions): Serp {
     enableIntent: () => classifier.ensureModel().catch(() => 'storage' as const),
     classify: (query) => classifier.classify(query).catch((): IntentAnswer => ({ state: 'unavailable' })),
 
+    peek: (tabId) => serpState(tabId, true).serp,
+
     readApi: {
       snapshot: (tabId) => serpState(tabId).serp,
       classifyIntent: (query) => classifier.classify(query).catch((): IntentAnswer => ({ state: 'unavailable' })),
@@ -542,8 +552,18 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       if (tabId === null || !tab || tab.contentsId !== contentsId || !pack) return;
       const entry = entries.get(tabId);
       const match = matchSerp(url, pack.pack, tab.device);
-      // The same search at another URL (a fragment, a tracking token): the reading stays.
-      if (entry && match && entry.contentsId === contentsId && entry.documentSeq === tab.documentSeq && entry.packVersion === pack.version && entry.device === tab.device && entry.params.url === match.params.url) {
+      // The same search at another URL (a fragment, a tracking token): the reading stays. Not when a
+      // known filter changed (canonical params leave filters out): a capture would file old results under it.
+      if (
+        entry &&
+        match &&
+        entry.contentsId === contentsId &&
+        entry.documentSeq === tab.documentSeq &&
+        entry.packVersion === pack.version &&
+        entry.device === tab.device &&
+        entry.params.url === match.params.url &&
+        sortedJson(serpFiltersOf(entry.url, match.engine.id)) === sortedJson(serpFiltersOf(url, match.engine.id))
+      ) {
         entry.url = url;
         return;
       }

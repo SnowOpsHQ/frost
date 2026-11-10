@@ -325,9 +325,9 @@ describe('retention', () => {
     }
     // A file another project names too: `b` is p's and q's.
     await t.repo.appendScreenshot(screenshotInput({ pageUrl: OTHER, createdAt: 6_000, sha256: sha256('b'), bytes: 50, projectId: q }));
-    expect(await t.repo.usage(p)).toEqual({ captures: 2, versions: 2, sharedVersions: 1, snapshotBytes: utf8(s1) + utf8(s2), diffBytes: utf8(diff), screenshots: 3, screenshotBytes: 150, sharedScreenshotFiles: 1 });
-    expect(await t.repo.usage(q)).toEqual({ captures: 2, versions: 2, sharedVersions: 1, snapshotBytes: utf8(s2) + utf8(s3), diffBytes: utf8(diff), screenshots: 2, screenshotBytes: 120, sharedScreenshotFiles: 1 });
-    expect(await t.repo.usage()).toEqual({ captures: 4, versions: 3, sharedVersions: 1, snapshotBytes: utf8(s1) + utf8(s2) + utf8(s3), diffBytes: utf8(diff), screenshots: 5, screenshotBytes: 220, sharedScreenshotFiles: 1 });
+    expect(await t.repo.usage(p)).toEqual({ captures: 2, versions: 2, sharedVersions: 1, snapshotBytes: utf8(s1) + utf8(s2), diffBytes: utf8(diff), screenshots: 3, screenshotBytes: 150, sharedScreenshotFiles: 1, readingBytes: 0 });
+    expect(await t.repo.usage(q)).toEqual({ captures: 2, versions: 2, sharedVersions: 1, snapshotBytes: utf8(s2) + utf8(s3), diffBytes: utf8(diff), screenshots: 2, screenshotBytes: 120, sharedScreenshotFiles: 1, readingBytes: 0 });
+    expect(await t.repo.usage()).toEqual({ captures: 4, versions: 3, sharedVersions: 1, snapshotBytes: utf8(s1) + utf8(s2) + utf8(s3), diffBytes: utf8(diff), screenshots: 5, screenshotBytes: 220, sharedScreenshotFiles: 1, readingBytes: 0 });
     expect(await t.repo.usage('nope')).toBeNull();
   });
 

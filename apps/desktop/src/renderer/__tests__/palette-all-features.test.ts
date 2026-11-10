@@ -42,9 +42,10 @@ function everySource(): PaletteSource[] {
     ...browserPolishPaletteSources({ openFind: yes, reopenClosedTab: vi.fn(async () => 1), showHistory: yes, setSearchEngine: yes }),
     ...checksPaletteSources({ checkLinks: yes, checkSitemaps: yes, checkHreflang: yes, stop: yes, known: () => undefined }),
     ...updatePaletteSources({ check: vi.fn(async () => null), setChecks: vi.fn(async () => null), known: () => undefined }),
-    ...serpPaletteSources({ setOutlines: yes, checkPackUpdate: vi.fn(async () => 'not-newer' as const), enableIntent: vi.fn(async () => 'ready' as const), refreshIntent: yes, runProbes: yes, stopProbes: yes, knownSerp: () => undefined, knownProbes: () => undefined, knownIntent: () => undefined }),
+    ...serpPaletteSources({ setOutlines: yes, checkPackUpdate: vi.fn(async () => 'not-newer' as const), enableIntent: vi.fn(async () => 'ready' as const), refreshIntent: yes, runProbes: yes, stopProbes: yes, openEditor: vi.fn(), openDestination: vi.fn(async () => null), knownSerp: () => undefined, knownProbes: () => undefined, knownIntent: () => undefined }),
     ...changesPaletteSources({ capture: vi.fn(async () => null), screenshot: vi.fn(async () => null) }),
-    ...projectsPaletteSources({ open: vi.fn(), lastProject: () => 'x', startRun: vi.fn(async () => null) }),
+    // With "Check rankings now" (`rankCheckAvailable` injected), so its id is checked against every other too.
+    ...projectsPaletteSources({ open: vi.fn(), lastProject: () => 'x', startRun: vi.fn(async () => null) }, { rankCheckAvailable: true }),
     ...retentionPaletteSources({ open: vi.fn(), lastProject: () => 'x', purgeNow: vi.fn(async () => null), compact: vi.fn(async () => null) }),
     ...inspectorPaletteSources({ pick: vi.fn(async () => null) }),
     ...gscPaletteSources({ scope: () => 'page', setScope: vi.fn(), filtered: () => true, clearFilters: vi.fn() }),
@@ -73,5 +74,9 @@ describe('palette actions of every feature', () => {
     const shown = registry.resolve(ctx).map((action) => action.id);
     for (const prefix of ['javascript.', 'devtools.', 'checks.', 'panel.javascript']) expect(shown.some((id) => id.startsWith(prefix)), prefix).toBe(true);
     expect(shown.some((id) => /find|history|reopen|search/.test(id))).toBe(true);
+    // Phase 10 Task 6 (rankings.feature.md, The views): the Rankings and Compare views.
+    const labels = registry.resolve(ctx).map((action) => action.label);
+    expect(labels).toContain('Open rankings');
+    expect(labels).toContain('Compare searches');
   });
 });

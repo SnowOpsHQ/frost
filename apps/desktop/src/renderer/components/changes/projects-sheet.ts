@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
+import type { ProjectViewId } from '@app/specs/projects.spec';
 
 // Whether the Projects sheet is open, and what it was opened for (acceptance `projects.feature.md`,
 // The sheet; per window, like History). It opens from the palette ("Open projects", "Add this page
@@ -12,6 +13,8 @@ export interface ProjectsRequest {
   readonly projectId: string | null;
   /** The page to add (the active tab's, from "Add this page to a project"). */
   readonly addUrl: string | null;
+  /** The view to show the project in ("Open rankings", "Compare searches"); `null`: as it was. */
+  readonly view: ProjectViewId | null;
 }
 
 interface Snapshot {
@@ -40,9 +43,9 @@ function subscribe(listener: () => void): () => void {
 /** Told on every open request (the other page-column sheets close: one sheet at a time). */
 const openedListeners = new Set<() => void>();
 
-/** Opens the sheet (on `projectId`, or to add `addUrl` to a project). */
-export function openProjects(options: { readonly projectId?: string | null; readonly addUrl?: string | null } = {}): void {
-  set({ open: true, request: { seq: (snapshot.request?.seq ?? 0) + 1, projectId: options.projectId ?? null, addUrl: options.addUrl ?? null } });
+/** Opens the sheet (on `projectId` and its `view`, or to add `addUrl` to a project). */
+export function openProjects(options: { readonly projectId?: string | null; readonly addUrl?: string | null; readonly view?: ProjectViewId | null } = {}): void {
+  set({ open: true, request: { seq: (snapshot.request?.seq ?? 0) + 1, projectId: options.projectId ?? null, addUrl: options.addUrl ?? null, view: options.view ?? null } });
   for (const listener of [...openedListeners]) listener();
 }
 

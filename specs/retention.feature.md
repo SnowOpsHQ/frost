@@ -23,7 +23,8 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
 
 ## Preview and Purge now
 - `retentionPreview(projectId)` is `planPurge` with the project's policy at `now`: the counts and the
-  bytes it would free. A dry run: nothing is written.
+  bytes it would free (the purged captures' SERP readings included, `workspace-db.feature.md`). A dry
+  run: nothing is written.
 - `purgeNow(projectId)`:
   1. a project whose capture run is under way is `running`;
   2. plan; an empty plan answers `empty` (no dialog);
@@ -62,7 +63,7 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
 
 ## Usage
 - `usage(projectId | null)`: the repository's numbers (captures, versions and the shared ones, stored
-  snapshot and diff bytes, screenshots) and **measured** ones: each screenshot file the rows name,
+  snapshot and diff bytes, the stored bytes of the SERP readings kept with captures (`readingBytes`), screenshots) and **measured** ones: each screenshot file the rows name,
   once, by `lstat` (a missing file, or one that is not a regular file, is counted as missing and
   shown as "N missing"; the files another project's rows also name are labelled shared), and the
   database file and its `-wal` by `stat` (the session store's `file`;
@@ -107,7 +108,7 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
   each change; Purge now (main confirms; the outcome, with the bytes really freed, in the polite live
   region). Both follow the **saved** policy: while the form shows another one, the preview says
   `UNSAVED_POLICY_PREVIEW` (`data-stale`) and Purge now is disabled until Save. Usage (captures,
-  versions and shared, screenshots, stored bytes, files with the shared ones and "N missing", the
+  versions and shared, screenshots, stored bytes, search readings, files with the shared ones and "N missing", the
   database file) with `USAGE_NOTE`; the purge log; Compact database (main confirms; before → after).
 - After Purge now (and any change to the projects) the Changes panel reads its history and
   screenshots again.
@@ -147,6 +148,9 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
   sweep runs again. Tests: `retention.test.ts` `sweep-skips-a-fresh-database`; the read:
   `packages/db/src/change-intel/__tests__/retention.test.ts` `has-any-change-intel-rows`.
 - **Scenario: usage-counts-measured-bytes** — Test: `retention.test.ts` `usage-counts-measured-bytes`.
+- **Scenario: usage-reports-reading-bytes** — the usage answer carries the stored readings' bytes
+  (`readingBytes`, `workspace-db.feature.md`). Test: `retention.test.ts` `usage-reports-reading-bytes`;
+  the view's "Search readings" row: `projects-view.test.ts` `usage-rows-show-readings`.
 - **Scenario: compact-shrinks-and-refuses-during-a-run** — Test: `retention.test.ts`
   `compact-shrinks-and-refuses-during-a-run` (and `compact-failed`); the repository's `VACUUM`:
   `packages/db/src/change-intel/__tests__/retention.test.ts` `compact-vacuums`.
