@@ -222,8 +222,9 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   `no-location`, which RFC 9309 counts as unreachable), a lookup still unanswered at
   `ROBOTS_FETCH_LIMITS.timeoutMs` + `CRAWL_ROBOTS_HOOK_MARGIN_MS` (recorded as `timeout`), and a lookup
   that fails, refuses the page: the start URL on its own origin and a page on another origin alike are
-  answered `robots-unreachable` (verdicts `unknown`) and never requested (the crawler then records
-  nothing and pauses the run: round 2, item D, `crawl-robots-unreachable-pauses-the-run`). `unavailable` and `forbidden` (no robots.txt) allow the page.
+  answered `robots-unreachable` (verdicts `unknown`) and never requested (on the start URL's origin the
+  crawler then records nothing and pauses the run: round 2, item D, `crawl-robots-unreachable-pauses-the-run`;
+  on another origin it records the refusal and goes on: round 3, item G). `unavailable` and `forbidden` (no robots.txt) allow the page.
 - `crawl-robots-private-redirect-is-unreadable` — (council review round 2, item C) in the crawl only,
   a robots.txt whose redirect the fetcher refused (`private-redirect`) is robots.txt the crawl could not
   read (`CRAWL_ROBOTS_UNREADABLE_OUTCOMES`), not "no robots.txt": a public site's robots.txt redirecting
@@ -356,9 +357,9 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   refusal or a failure is recorded as such; `deferred` records nothing, leaves the URL queued and pauses
   the run (`slow-down`); a `slowDown` answer is recorded, then the run pauses (`slow-down`,
   `CRAWL_SLOW_DOWN_MESSAGE`).
-- (Council review round 2, item D) `robots-unreachable` — robots.txt the crawl cannot read, for any
-  queued page (the start URL, another host's page, a cross-host redirect target) or for a same-host
-  redirect hop — **never completes the frontier entry**: no row is written, the URL stays `queued`, and
+- (Council review round 2, item D; round 3, item G) `robots-unreachable` — robots.txt the crawl cannot
+  read **on the start URL's origin** (scheme, host and port), for a queued page or a same-host redirect
+  hop — **never completes the frontier entry**: no row is written, the URL stays `queued`, and
   the run pauses (`robots-unreachable`, `CRAWL_ROBOTS_UNREACHABLE_MESSAGE`: "frost could not read the
   site's robots.txt. Resume to try again."). A start URL whose robots.txt is never readable pauses at
   once instead of finishing. A brief failure (a robots.txt re-fetch answering 429 after the cache's
@@ -366,7 +367,11 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   refused and done; Resume asks again (a Resume within that minute meets the cached failure and pauses
   again). A replayed page (item 3) that meets it keeps the row it already had, still counted: its
   entry stays queued, and the replay that completes it replaces the row. Sitemaps are unchanged: a
-  sitemap request refused this way is skipped.
+  sitemap request refused this way is skipped. On **any other origin** (another host's page, a
+  cross-host redirect target, a same-host hop to another scheme or port) the page is a refusal like the
+  others (round 3, item G): recorded `robots-unreachable` (nothing requested from that origin; a refused
+  hop keeps its status and `finalUrl` the hop's target), counted `refused`, and its entry completed, so a
+  host whose robots.txt never answers cannot hold the run paused for good.
 - The run ends `done` when the frontier is empty, or `maxPages` rows are recorded (`max-pages` while
   URLs are still queued); `paused` (`user`, `quit`, `slow-down`, `robots-unreachable`); `cancelled` (`user`, or
   `project-deleted`); `failed` (`error`, a database failure). Once stopped, nothing more is fetched or
@@ -415,7 +420,14 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   `queued` and nothing refused. Resume while it still fails pauses again at once with nothing recorded;
   Resume with robots.txt readable crawls the rest and the run ends `done`, every row `crawled`. A start
   URL whose robots.txt is never readable pauses at once (nothing requested, the start still queued),
-  and a run whose oldest queued page is on another host with an unreadable robots.txt pauses the same way.
+  and (round 3, item G) a run whose oldest queued page is on another host with an unreadable robots.txt
+  records that page `robots-unreachable` (its entry done), crawls the rest and ends `done`.
+- `crawl-robots-unreachable-off-the-start-origin-is-recorded` — (council review round 3, item G) a
+  `site` crawl whose start links `https://legacy.example.com/` (robots.txt always 503) and a page that
+  redirects to `http://example.com/moved` (robots.txt always 503): neither is requested, both are
+  recorded `robots-unreachable` (the hop with its 301 and target) and done, every other page is crawled
+  and the run ends `done` with two refused. A hop from another origin to the start origin, whose
+  robots.txt cannot be read, pauses the run (`robots-unreachable`) with that page unrecorded and queued.
 - `crawl-query-variants-counted-from-the-frontier` — 30 variants of one path admit 20; a later page's
   new variants are refused and its known ones counted as inlinks; a restart counts the same rows.
 - `crawl-cancels-when-its-project-is-gone` — a project tombstoned mid-run (by sync) while a fetch call

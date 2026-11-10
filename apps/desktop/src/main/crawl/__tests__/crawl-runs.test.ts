@@ -452,7 +452,9 @@ describe('crawl runs', () => {
     expect(await repo.getRun(unreadable)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 0, queued: 1 } });
     expect(await repo.frontierEntry(unreadable, 'https://other.example.com/')).toMatchObject({ state: 'queued' });
 
-    // Another host's queued page pauses the run the same way (its robots.txt is the one that fails), however the others read.
+    // Council review round 3, item G: only the start origin's robots.txt pauses the run. Another host's queued page whose
+    // robots.txt cannot be read is refused and recorded (`robots-unreachable`, nothing requested, its entry done), and the
+    // rest of the queue goes on.
     readable = (url) => new URL(url).hostname !== 'www.example.com';
     const cross = await repo.createRun({ projectId: null, settings: settingsFor(HOME, { scope: 'site' }), now: kit.now() });
     await repo.enqueue(cross.id, [{ url: 'https://www.example.com/x', depth: 1, source: 'link' }, { url: `${HOME}p1`, depth: 1, source: 'link' }]);
@@ -460,8 +462,80 @@ describe('crawl runs', () => {
     requests.length = 0;
     expect(await service.resume(cross.id)).toEqual({ status: 'resumed', runId: cross.id });
     await kit.settle(service.idle());
-    expect(requests).toEqual([]);
-    expect(await repo.getRun(cross.id)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 0, queued: 2 } });
+    expect(requests).toEqual([`${HOME}p1`]);
+    expect(await repo.getPage(cross.id, 'https://www.example.com/x')).toMatchObject({ outcome: 'robots-unreachable', status: null, robotsCrawl: 'unknown' });
+    expect(await repo.frontierEntry(cross.id, 'https://www.example.com/x')).toMatchObject({ state: 'done' });
+    expect(await repo.getRun(cross.id)).toMatchObject({ state: 'done', reason: null, counts: { pages: 2, queued: 0, refused: 1 } });
+  });
+
+  test('crawl-robots-unreachable-off-the-start-origin-is-recorded', async () => {
+    // Council review round 3, item G: a `site` crawl meets `https://legacy.example.com/`, whose robots.txt is never readable
+    // (503). Pausing on it would hand it out first on every Resume and pause again, so nothing else would ever be crawled.
+    // Only the start origin's robots.txt pauses the run; any other origin's is refused and recorded, for a queued page and
+    // for a redirect hop alike (a hop to `http://example.com`, another origin of the start's host). A hop to the start
+    // origin whose robots.txt cannot be read still pauses the run, its page kept queued.
+    const kit = timerClock();
+    const db = tempStore();
+    cleanups.push(db.close);
+    const repo = db.store.siteCrawl;
+    const requests: string[] = [];
+    const encoder = new TextEncoder();
+    /** Page → where it redirects (followed only when the crawl's hook allows it). */
+    const redirects: Record<string, string> = { [`${HOME}moved`]: 'http://example.com/moved', 'http://example.com/old': `${HOME}old` };
+    const lane: BoundedFetcher = {
+      async fetch(request) {
+        requests.push(request.url);
+        const base = { url: request.url, redirects: 0, chain: [], truncated: false, durationMs: 5, headers: {} as Record<string, string> };
+        const target = redirects[request.url];
+        if (target !== undefined) {
+          const hop = await request.allowRedirect!(target, { signal: new AbortController().signal });
+          if (!hop) return { ...base, outcome: 'redirect-refused', status: 301, finalUrl: request.url, body: new Uint8Array(0) };
+          requests.push(target);
+          return { ...base, outcome: 'response', status: 200, finalUrl: target, redirects: 1, chain: [{ url: request.url, status: 301, location: target }], headers: { 'content-type': 'text/html' }, body: encoder.encode('<!doctype html><title>Moved</title>') as Uint8Array<ArrayBuffer> };
+        }
+        const links = request.url === HOME ? ['https://legacy.example.com/', '/a', '/moved', '/b'] : [];
+        const body = encoder.encode(`<!doctype html><title>Page</title>${links.map((href) => `<a href="${href}">x</a>`).join('')}`) as Uint8Array<ArrayBuffer>;
+        return { ...base, outcome: 'response', status: 200, finalUrl: request.url, headers: { 'content-type': 'text/html' }, body };
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    let unreadable = (origin: string): boolean => origin === 'https://legacy.example.com' || origin === 'http://example.com';
+    const lookups: string[] = [];
+    const robots: CrawlRobotsSource = {
+      get: async (pageUrl) => {
+        const origin = new URL(pageUrl).origin;
+        lookups.push(origin);
+        const url = `${origin}/robots.txt`;
+        return unreadable(origin) ? { url, outcome: 'server-error', status: 503, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false } : { url, outcome: 'unavailable', status: 404, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false };
+      },
+    };
+    const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent: () => 'Mozilla/5.0', clock: kit.clock });
+    const crawler = createCrawler({ repo, fetcher, analyse: inProcessAnalyse, projectLive: async () => true, now: kit.now });
+    const service = createCrawlService({ repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, now: kit.now, log: () => undefined });
+
+    const runId = await started(service, settingsFor(HOME, { scope: 'site' }));
+    await kit.settle(service.idle());
+    // Nothing is requested from legacy.example.com, nor the refused hop's target; every other page is crawled.
+    expect(requests).toEqual([HOME, `${HOME}a`, `${HOME}moved`, `${HOME}b`]);
+    expect(await repo.getPage(runId, 'https://legacy.example.com/')).toMatchObject({ outcome: 'robots-unreachable', status: null, robotsCrawl: 'unknown', robotsGooglebot: 'unknown' });
+    expect(await repo.getPage(runId, `${HOME}moved`)).toMatchObject({ outcome: 'robots-unreachable', status: 301, finalUrl: 'http://example.com/moved' });
+    for (const url of ['https://legacy.example.com/', `${HOME}moved`]) expect(await repo.frontierEntry(runId, url)).toMatchObject({ state: 'done' });
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'done', reason: null, counts: { pages: 5, queued: 0, refused: 2, failed: 0 } });
+
+    // A hop from another origin to the start origin, whose robots.txt cannot be read (it fails after the start page): the
+    // run pauses (`robots-unreachable`) with that page unrecorded and still queued.
+    unreadable = (origin) => origin === 'https://example.com' && lookups.filter((seen) => seen === origin).length > 1;
+    lookups.length = 0;
+    requests.length = 0;
+    const hopRun = await repo.createRun({ projectId: null, settings: settingsFor(HOME), now: kit.now() });
+    await repo.enqueue(hopRun.id, [{ url: HOME, depth: 0, source: 'start' }, { url: 'http://example.com/old', depth: 1, source: 'link' }]);
+    await repo.updateRun(hopRun.id, { state: 'paused', reason: 'user' }, kit.now());
+    expect(await service.resume(hopRun.id)).toEqual({ status: 'resumed', runId: hopRun.id });
+    await kit.settle(service.idle());
+    expect(requests).toEqual([HOME, 'http://example.com/old']);
+    expect(await repo.getPage(hopRun.id, 'http://example.com/old')).toBeNull();
+    expect(await repo.frontierEntry(hopRun.id, 'http://example.com/old')).toMatchObject({ state: 'queued' });
+    expect(await repo.getRun(hopRun.id)).toMatchObject({ state: 'paused', reason: 'robots-unreachable' });
   });
 
   test('crawl-pacing-survives-a-restart', async () => {

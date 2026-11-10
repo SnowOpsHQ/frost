@@ -24,11 +24,13 @@ import type { SitemapSeeder } from './sitemaps';
 // - `redirected` (another host name) is recorded and its target queued at depth + 1, as a link;
 // - a refusal or a failure is recorded as such; `deferred` records nothing, leaves the URL queued and
 //   pauses the run (`slow-down`), as `slowDown` does after its row;
-// - `robots-unreachable` (robots.txt the crawl cannot read, for the page or a same-host hop) records
-//   nothing either: the URL stays queued and the run pauses (`robots-unreachable`; council review round 2,
-//   item D), so a brief robots.txt failure (a 429 cached for a minute) never completes the rest of the
-//   queue as refused. Resume asks again. A page replayed after a stop keeps the row it had until a
-//   replay completes it.
+// - `robots-unreachable` (robots.txt the crawl cannot read, for the page or a same-host hop) on the start
+//   URL's origin records nothing either: the URL stays queued and the run pauses (`robots-unreachable`;
+//   council review round 2, item D), so a brief robots.txt failure (a 429 cached for a minute) never
+//   completes the rest of the queue as refused. Resume asks again. A page replayed after a stop keeps the
+//   row it had until a replay completes it. On any other origin (another host's page, a hop to another
+//   scheme or port) it is a refusal like the others: recorded `robots-unreachable` and completed (council
+//   review round 3, item G), so a host whose robots.txt never answers cannot block the run for good.
 // Nothing is written once the run is stopped: every write follows a check of its signal, and a fetch or
 // a parse still under way when it stops is left to end on its own (its answer is dropped). A page's
 // completion (its discoveries and its frontier entry marked done: `CrawlFrontier.complete`) is one write
@@ -38,7 +40,7 @@ import type { SitemapSeeder } from './sitemaps';
 // take the replaced row out first, and its discoveries are counted once. Such a replay comes before the
 // `maxPages` cap, which counts new pages only (council review round 2, item E). The run ends
 // `done` when the frontier is empty or `maxPages` rows are recorded (`max-pages` with URLs still
-// queued); `paused` (by the user, a quit, a slow-down, unreadable robots.txt) or `cancelled` (by the user, or its project gone)
+// queued); `paused` (by the user, a quit, a slow-down, the start origin's unreadable robots.txt) or `cancelled` (by the user, or its project gone)
 // when stopped; `failed` (`error`) when the database fails. Held in memory: the frontier's window, one
 // page's links while they are discovered, the pacing table (K-B3); every page goes to SQLite at once.
 // A run stores its pacing (`Politeness.snapshot`) as it starts, whenever it changes (`Politeness.changes`:
@@ -151,6 +153,15 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | 
 const codeOf = (error: unknown): string => {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === 'string' ? code : error instanceof Error ? error.name : 'unknown error';
+};
+
+/** `url`'s origin (scheme, host and port), or `null` for no URL. */
+const originOf = (url: string): string | null => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
 };
 
 /** A status the row can keep (100–599), else `null`. */
@@ -270,6 +281,7 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
         try {
           runFetcher = deps.fetcher.forRun(settings);
           const scope = runFetcher.scope;
+          const startOrigin = originOf(scope.start);
           frontier = createFrontier({ repo, runId, scope });
           Object.assign(counts, await repo.pageCounts(runId));
           // A resume (perhaps after a restart, with a new crawl fetcher): no host is reached sooner, or less backed off, than when it paused.
@@ -318,9 +330,11 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
             if (fetched === ABORTED || fetched.outcome === 'aborted' || signal.aborted) return await finish(stoppedEnd());
             // A host past the pacing table's cap: nothing requested, nothing recorded; the URL stays queued.
             if (fetched.outcome === 'deferred') return await finish(SLOW_DOWN);
-            // robots.txt the crawl cannot read (the page's, or a same-host hop's): nothing recorded, the URL stays queued, the run
-            // pauses; Resume asks again. A replayed page's earlier row is left as it was (still counted, replaced once completed).
-            if (fetched.outcome === 'robots-unreachable') return await finish(ROBOTS_UNREACHABLE);
+            // robots.txt the crawl cannot read on the start URL's origin (the page's, or a same-host hop's): nothing recorded, the URL
+            // stays queued, the run pauses; Resume asks again. A replayed page's earlier row is left as it was (still counted,
+            // replaced once completed). Another origin's is recorded as a refusal below and its entry completed (council review
+            // round 3, item G): a lasting failure there would otherwise be handed out first on every Resume and block the run.
+            if (fetched.outcome === 'robots-unreachable' && originOf(fetched.refusedUrl ?? entry.url) === startOrigin) return await finish(ROBOTS_UNREACHABLE);
 
             let outcome: CrawlPageOutcome;
             let page: CrawlPageAnalysis | null = null;
