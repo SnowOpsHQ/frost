@@ -71,3 +71,14 @@ test('agent-text-fields-hold-their-height', () => {
   expect(field).toMatch(/min-height:\s*30px;/);
   expect(field).toMatch(/max-height:\s*30px;/);
 });
+
+test('screenshot-swatch-has-no-button-face-and-keeps-its-outline', () => {
+  // Council round 2 (specs/screenshot.feature.md, Editing): the swatch's colour is an SVG fill, so the
+  // button paints no background of its own (no grey ButtonFace ring), and the outline that keeps a
+  // light swatch visible is the circle's stroke, in a token colour (no literal colour here).
+  const swatch = rules(read('styles.css')).filter((r) => r.selector === '.shot-editor-swatch').map((r) => r.body).join('\n');
+  expect(swatch).toMatch(/background:\s*none;/);
+  expect(swatch).toMatch(/color:\s*var\(--[a-z-]+\);/);
+  const editor = readFileSync(`${RENDERER}components/changes/ScreenshotEditor.tsx`, 'utf8');
+  expect(editor).toMatch(/<circle[^>]*fill=\{each\}[^>]*stroke="currentColor"/);
+});

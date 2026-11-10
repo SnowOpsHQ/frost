@@ -1207,3 +1207,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
 - **Council round 2:** Inspector find resumes one unit past each match's start, so a match that
   overlaps an earlier one and crosses a row boundary still marks both rows (`--` in `x…x---y…`,
   `aba` in `x…xababa`; `find-across-row-boundary`).
+- **Council round 2:** the screenshot editor's swatch paints no button background (`background:
+  none`, so no grey ButtonFace ring) and its outline is the SVG circle's `stroke="currentColor"` in
+  `--border-field`, so light swatches stay visible; no literal colour added
+  (`screenshot-swatch-has-no-button-face-and-keeps-its-outline`).

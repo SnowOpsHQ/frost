@@ -9831,7 +9831,9 @@ input {
   padding: 0;
   border: 2px solid transparent;
   border-radius: 50%;
-  box-shadow: inset 0 0 0 1px rgb(15 23 42 / 0.2);
+  background: none;
+  /* The circle's outline (its stroke is currentColor), so a light swatch stays visible. */
+  color: var(--border-field);
 }
 
 .shot-editor-swatch[aria-pressed='true'] {
@@ -9844,7 +9846,7 @@ input {
 }
 
 /* The swatch's colour is an SVG fill from SCREENSHOT_EDIT_COLORS (a presentation attribute, not an
-   inline style), so the stylesheet holds no literal colours for it. */
+   inline style), so the stylesheet holds no literal colours for it; its outline is the circle's stroke. */
 .shot-editor-swatch > svg {
   position: absolute;
   inset: 0;
