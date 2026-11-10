@@ -2,7 +2,7 @@
 // specs/command-palette.spec.ts (FEATURE_PANEL_JUMPS, Registration API), specs/seo-sidebar.spec.ts (SEO_PANELS)
 // Acceptance: specs/inspector.feature.md (The panel, Command palette; Scenarios inspector-row-labels,
 // inspector-tree-model, inspector-tree-keys, inspector-details-text, inspector-palette-actions; Phase 11 Task 5:
-// source-lines-are-text, source-window-bounded, INSPECTOR_SOURCE_VIEW)
+// source-lines-are-text, source-window-bounded, INSPECTOR_SOURCE_VIEW; council round 1: find-across-row-boundary)
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, test, vi } from 'vitest';
@@ -222,6 +222,36 @@ describe('inspector view', () => {
     }
   });
 
+  test('find-across-row-boundary', () => {
+    // Council round 1: find searches the source itself, so a match across the 500-character row
+    // boundary is found, and marks (and jumps to) each row it covers.
+    const long = 'x'.repeat(495) + 'canonical';
+    const listed = sourceRows(long);
+    expect(listed.rows.map((row) => row.text.length)).toEqual([500, 4]);
+    expect(findRows(long, listed.rows, 'canonical')).toEqual([0, 1]);
+    expect(findRows(long, listed.rows, 'CANONICAL')).toEqual([0, 1]);
+    // A match wholly in one row marks that row; regex characters are literal.
+    expect(findRows(long, listed.rows, 'ical')).toEqual([1]);
+    expect(findRows(long, listed.rows, 'x.c')).toEqual([]);
+    const dotted = 'a.b' + 'y'.repeat(600) + 'a.b';
+    expect(findRows(dotted, sourceRows(dotted).rows, 'A.B')).toEqual([0, 1]);
+    // Across a line break nothing joins (the query is one line); a narrower view wraps more rows.
+    const view = { ...INSPECTOR_SOURCE_VIEW, rowChars: 4, maxRows: 6 };
+    const wrapped = 'abcdefghij\r\nklmn';
+    const rows = sourceRows(wrapped, view).rows;
+    expect(findRows(wrapped, rows, 'cdefghi')).toEqual([0, 1, 2]);
+    expect(findRows(wrapped, rows, 'lm')).toEqual([3]);
+    // Still capped by rows; matches past the listed rows (`cut`) mark nothing.
+    expect(findRows(wrapped, rows, 'bcdefghij', 2)).toEqual([0, 1]);
+    const cutSource = 'q\n'.repeat(10);
+    const cut = sourceRows(cutSource, view);
+    expect(cut.cut).toBe(true);
+    expect(findRows(cutSource, cut.rows, 'q')).toEqual([0, 1, 2, 3, 4, 5]);
+    // A lone surrogate in the query is a code unit like any other.
+    const lone = 'ab\ud800cd';
+    expect(findRows(lone, sourceRows(lone).rows, '\ud800c')).toEqual([0]);
+  });
+
   test('source-lines-are-text', async () => {
     const hostile = '<!DOCTYPE html>\n<html><head><script>alert("x")</script></head>\r\n<body onload="steal()"><img src=x onerror=alert(1)>\r<p>مرحبا</p></body></html>';
     const { rows, cut, lines } = sourceRows(hostile);
@@ -229,22 +259,24 @@ describe('inspector view', () => {
     expect(lines).toBe(4);
     expect(cut).toBe(false);
     expect(rows).toEqual([
-      { line: 1, text: '<!DOCTYPE html>' },
-      { line: 2, text: '<html><head><script>alert("x")</script></head>' },
-      { line: 3, text: '<body onload="steal()"><img src=x onerror=alert(1)>' },
-      { line: 4, text: '<p>مرحبا</p></body></html>' },
+      { line: 1, text: '<!DOCTYPE html>', start: 0 },
+      { line: 2, text: '<html><head><script>alert("x")</script></head>', start: 16 },
+      { line: 3, text: '<body onload="steal()"><img src=x onerror=alert(1)>', start: 64 },
+      { line: 4, text: '<p>مرحبا</p></body></html>', start: 116 },
     ]);
+    // Each row's `start` is where its text is in the source.
+    for (const row of rows) expect(hostile.slice(row.start, row.start + row.text.length)).toBe(row.text);
     expect(rows.map((r) => r.text).join('\n')).toBe(hostile.replace(/\r\n?/g, '\n'));
     // A long line wraps into rows of `rowChars` (only the first carries its number), never splitting a surrogate pair.
     const view = { ...INSPECTOR_SOURCE_VIEW, rowChars: 4, maxRows: 6 };
     expect(sourceRows('abcdefghij\nk', view).rows).toEqual([
-      { line: 1, text: 'abcd' },
-      { line: null, text: 'efgh' },
-      { line: null, text: 'ij' },
-      { line: 2, text: 'k' },
+      { line: 1, text: 'abcd', start: 0 },
+      { line: null, text: 'efgh', start: 4 },
+      { line: null, text: 'ij', start: 8 },
+      { line: 2, text: 'k', start: 11 },
     ]);
     expect(sourceRows('abc😀d', view).rows.map((r) => r.text)).toEqual(['abc', '😀d']);
-    expect(sourceRows('', view)).toEqual({ rows: [{ line: 1, text: '' }], cut: false, lines: 1 });
+    expect(sourceRows('', view)).toEqual({ rows: [{ line: 1, text: '', start: 0 }], cut: false, lines: 1 });
     // At most `maxRows` rows: the rest is cut, and said so.
     const many = sourceRows('a\n'.repeat(20), view);
     expect(many.rows).toHaveLength(6);
@@ -253,11 +285,12 @@ describe('inspector view', () => {
     expect(sourceRows('x'.repeat(INSPECTOR_SOURCE_MAX_CHARS)).rows).toHaveLength(Math.ceil(INSPECTOR_SOURCE_MAX_CHARS / INSPECTOR_SOURCE_VIEW.rowChars));
     const breaks = sourceRows('\n'.repeat(INSPECTOR_SOURCE_MAX_CHARS));
     expect([breaks.rows.length, breaks.cut]).toEqual([INSPECTOR_SOURCE_VIEW.maxRows, true]);
-    // Find: case-insensitive, within a row, capped; a blank query finds nothing.
-    const found = sourceRows('<H1>Title</H1>\n<p>title again</p>\n<p>none</p>');
-    expect(findRows(found.rows, 'TITLE')).toEqual([0, 1]);
-    expect(findRows(found.rows, '  ')).toEqual([]);
-    expect(findRows(sourceRows('x\n'.repeat(10)).rows, 'x', 3)).toEqual([0, 1, 2]);
+    // Find: case-insensitive, capped; a blank query finds nothing.
+    const foundIn = '<H1>Title</H1>\n<p>title again</p>\n<p>none</p>';
+    const found = sourceRows(foundIn);
+    expect(findRows(foundIn, found.rows, 'TITLE')).toEqual([0, 1]);
+    expect(findRows(foundIn, found.rows, '  ')).toEqual([]);
+    expect(findRows('x\n'.repeat(10), sourceRows('x\n'.repeat(10)).rows, 'x', 3)).toEqual([0, 1, 2]);
 
     // The panel's line list renders every row as text: the page's markup never becomes markup.
     const { SourceLines } = await import('../components/changes/Inspector');

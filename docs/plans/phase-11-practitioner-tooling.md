@@ -1179,3 +1179,10 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   taking S1 and S2 and editing S1 into E1, purge 1 took S1 (and E1's link), and purge 2 took S2, a
   real capture. The gallery chip's tooltip no longer claims the original is kept. Regression:
   `purged-source-keeps-copy-lane` (`packages/db/src/__tests__/repository.test.ts`).
+- **Council round 1: Inspector find no longer misses a match across a row boundary.** `findRows`
+  takes the source and searches it whole (a literal, case-insensitive `gi` RegExp, offsets in code
+  units), mapping each match back to the rows it covers through a new `SourceRow.start` (the row's
+  offset in the source); each covered row is marked and is a jump target, the `maxFindMatches` row
+  cap holds, and matches past the listed rows (`cut`) mark nothing. Before, `'x'.repeat(495) +
+  'canonical'` found nothing. Regression: `find-across-row-boundary`
+  (`apps/desktop/src/renderer/__tests__/inspector-view.test.ts`).

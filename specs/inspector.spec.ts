@@ -105,8 +105,9 @@ export const INSPECTOR_SOURCE_MAX_CHARS = 2_000_000;
  * (past them the view says so; Copy source still copies all of it). Only a window of rows is rendered:
  * `pageRows` at first, "Show more lines" / "Show earlier lines" add `pageRows` after or before it, never
  * more than `maxRendered` rows at once (the far end is dropped); moving to a find match outside the
- * window renders the `pageRows` rows around it instead. Find-in-view lists at most `maxFindMatches`
- * rows whose text holds the query (case-insensitive, within one row).
+ * window renders the `pageRows` rows around it instead. Find-in-view searches the source itself
+ * (case-insensitive), not row by row, and lists at most `maxFindMatches` rows a match covers: a match
+ * across a wrapped row's boundary marks (and jumps to) each row it covers.
  */
 export const INSPECTOR_SOURCE_VIEW = { rowChars: 500, maxRows: 100_000, pageRows: 500, maxRendered: 1_000, maxFindChars: 200, maxFindMatches: 10_000 } as const;
 

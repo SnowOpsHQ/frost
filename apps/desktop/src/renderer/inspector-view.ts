@@ -238,10 +238,11 @@ export function seoRows(node: InspectorNode): [string, string][] {
 
 // ---- Sources (Phase 11 Task 5) ---------------------------------------------------------------------
 
-/** A source row as listed: its text (plain, never markup) and its line number (only on a line's first row). */
+/** A source row as listed: its text (plain, never markup), its line number (only on a line's first row) and where its text starts in the source. */
 export interface SourceRow {
   readonly line: number | null;
   readonly text: string;
+  readonly start: number;
 }
 
 /** The end of a row of at most `max` code units from `start`, never splitting a surrogate pair. */
@@ -273,7 +274,7 @@ export function sourceRows(text: string, view: { readonly rowChars: number; read
     do {
       if (rows.length >= view.maxRows) return { rows, cut: true, lines: line };
       const end = rowEnd(content, start, width);
-      rows.push({ line: start === 0 ? line : null, text: content.slice(start, end) });
+      rows.push({ line: start === 0 ? line : null, text: content.slice(start, end), start: at + start });
       start = end;
     } while (start < content.length);
     if (stop >= text.length) break;
@@ -284,12 +285,35 @@ export function sourceRows(text: string, view: { readonly rowChars: number; read
   return { rows, cut: false, lines: line };
 }
 
-/** The indexes of the rows whose text holds `query` (case-insensitive; a blank query finds nothing), at most `max`. */
-export function findRows(rows: readonly SourceRow[], query: string, max: number = INSPECTOR_SOURCE_VIEW.maxFindMatches): number[] {
-  const needle = query.toLowerCase();
-  if (needle.trim() === '') return [];
+/**
+ * The indexes of the rows (of `sourceRows(source)`) that a match of `query` in `source` covers, in
+ * order, each once, at most `max` (case-insensitive; a blank query finds nothing). The source is
+ * searched whole, so a match across a wrapped row's boundary marks every row it covers.
+ */
+export function findRows(source: string, rows: readonly SourceRow[], query: string, max: number = INSPECTOR_SOURCE_VIEW.maxFindMatches): number[] {
+  if (query.trim() === '' || rows.length === 0) return [];
+  // A literal, case-insensitive search by code unit (no `u` flag: a lone surrogate is just a unit),
+  // so match offsets are offsets in `source`.
+  const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  const last = rows[rows.length - 1]!;
+  const viewEnd = last.start + last.text.length;
   const found: number[] = [];
-  for (let i = 0; i < rows.length && found.length < max; i++) if (rows[i]!.text.toLowerCase().includes(needle)) found.push(i);
+  let row = 0;
+  for (let match = pattern.exec(source); match !== null && found.length < max; match = pattern.exec(source)) {
+    const from = match.index;
+    const to = from + match[0].length;
+    // Past the listed rows (`cut`): nothing more to mark.
+    if (from >= viewEnd) break;
+    while (row + 1 < rows.length && rows[row + 1]!.start <= from) row += 1;
+    for (let i = row; i < rows.length && found.length < max; i++) {
+      const { start, text } = rows[i]!;
+      if (start >= to) break;
+      if (start + text.length > from && found[found.length - 1] !== i) found.push(i);
+    }
+    // A later match that ends inside the last marked row marks nothing new: skip past those.
+    const marked = rows[found[found.length - 1] ?? 0]!;
+    pattern.lastIndex = Math.max(pattern.lastIndex, marked.start + marked.text.length - match[0].length + 1);
+  }
   return found;
 }
 

@@ -151,8 +151,10 @@ An Inspector rail item after Changes (`SEO_PANELS`, no rules, no status dot).
   (and again on "Read again" or a new document), says what it is (`INSPECTOR_SOURCE_NOTES`), and
   lists it as numbered text rows (`INSPECTOR_SOURCE_VIEW`: long lines wrapped into rows, a page of
   rows rendered at a time, "Show more lines" / "Show earlier lines", never more than `maxRendered`),
-  each row React text in `<bdi dir="auto">`, never markup. Find in source marks the rows holding the
-  query and moves between them (Enter, Previous, Next); a match outside the rendered rows renders the
+  each row React text in `<bdi dir="auto">`, never markup. Find in source searches the source itself
+  and marks the rows a match covers (a match across a wrapped row's boundary marks each row it
+  covers; council round 1, `find-across-row-boundary`), and moves between them (Enter, Previous,
+  Next); a match outside the rendered rows renders the
   page of rows around it instead. Copy source asks main with the view's `ref`; a `stale` answer reads
   the source again and says so. A source view reads again on a new URL in the same document (an
   in-page move). The served view says when the served HTML is still being fetched (it reads again

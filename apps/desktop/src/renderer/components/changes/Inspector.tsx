@@ -722,7 +722,7 @@ function SourceView({ tabId, kind, source, onReadAgain }: { readonly tabId: numb
   const [at, setAt] = useState<number | null>(null);
   const [copied, setCopied] = useState('');
   const listRef = useRef<HTMLOListElement | null>(null);
-  const matches = useMemo(() => (listing === null ? [] : findRows(listing.rows, find)), [listing, find]);
+  const matches = useMemo(() => (listing === null ? [] : findRows(text ?? '', listing.rows, find)), [text, listing, find]);
   const current = at === null || matches.length === 0 ? null : matches[Math.min(at, matches.length - 1)]!;
 
   /** Moves to the next (or previous) match; a match outside the rendered window renders the rows around it instead. */
