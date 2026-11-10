@@ -15,12 +15,18 @@ export interface DataSourcesServiceDeps {
   readonly isOpen: (id: LegalGateId) => boolean;
 }
 
-export function createDataSourcesService(deps: DataSourcesServiceDeps): DataSourcesService {
+/** The keys' part of `DataSourcesService` (Task 2's usage and SERP vendor members are `usage.ts`'s). */
+export type DataKeysService = Pick<DataSourcesService, 'status' | 'setKey' | 'clearKey'>;
+
+export function createDataSourcesService(deps: DataSourcesServiceDeps): DataKeysService {
   const { store, isOpen } = deps;
 
-  const hasKey = async (provider: DataProvider): Promise<boolean> => {
-    for (const slot of DATA_PROVIDER_SLOTS[provider]) if (!(await store.hasKey(slot))) return false;
-    return true;
+  /** How many of the provider's slots hold a key, and how many it has. */
+  const slotsSet = async (provider: DataProvider): Promise<{ readonly set: number; readonly of: number }> => {
+    const slots = DATA_PROVIDER_SLOTS[provider];
+    let set = 0;
+    for (const slot of slots) if (await store.hasKey(slot)) set += 1;
+    return { set, of: slots.length };
   };
 
   /** Stores each `[slot, value]` in order after every value passed `normalizeDataSecret` (so an invalid half stores nothing). */
@@ -35,8 +41,12 @@ export function createDataSourcesService(deps: DataSourcesServiceDeps): DataSour
 
   return {
     async status(): Promise<DataSourcesView> {
-      const providers = {} as Record<DataProvider, { hasKey: boolean; available: boolean }>;
-      for (const provider of DATA_PROVIDERS) providers[provider] = { hasKey: await hasKey(provider), available: isOpen(provider) };
+      const providers = {} as Record<DataProvider, { hasKey: boolean; partial: boolean; available: boolean }>;
+      for (const provider of DATA_PROVIDERS) {
+        const { set, of } = await slotsSet(provider);
+        // `partial`: some but not all slots (DataForSEO's login or password alone), so it can be cleared.
+        providers[provider] = { hasKey: set === of, partial: set > 0 && set < of, available: isOpen(provider) };
+      }
       return { protection: await store.protection(), providers };
     },
 

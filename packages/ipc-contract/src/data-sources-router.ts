@@ -2,10 +2,15 @@ import { TRPCError } from '@trpc/server';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import {
   DATA_SET_KEY_RESULTS,
+  DATA_SET_SERP_PROVIDER_RESULTS,
+  DataSerpProviderViewSchema,
   DataSourcesClearKeyInputSchema,
   DataSourcesSetKeyInputSchema,
+  DataSourcesSetSerpProviderInputSchema,
   DataSourcesViewSchema,
+  DataUsageViewSchema,
   type DataSetKeyResult,
+  type DataSetSerpProviderResult,
 } from '@app/specs/data-sources.schema';
 import type { DataSourcesService } from './data-sources-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
@@ -29,6 +34,9 @@ const oneOf = <T extends string>(values: readonly T[], value: unknown, fallback:
  * - `status`: `DataSourcesView` (protection; per provider `hasKey` and `available`; never a key).
  * - `setKey` (`DataSourcesSetKeyInput`): `DATA_SET_KEY_RESULTS` (`unavailable` while the provider's legal gate is closed).
  * - `clearKey` (`{ provider }`): whether every slot was cleared (never gated).
+ * - `usage` (Task 2): `DataUsageView` (this month's and last month's request counts per provider).
+ * - `serpProvider` (Task 2): `DataSerpProviderView` (the "Check via API" vendor and the vendors offered).
+ * - `setSerpProvider` (`{ provider }`, Task 2): `DATA_SET_SERP_PROVIDER_RESULTS` (`unavailable` while its gate is closed).
  */
 export const dataSourcesRouter = router({
   status: publicProcedure
@@ -46,4 +54,19 @@ export const dataSourcesRouter = router({
     .use(requireDataSources)
     .input(DataSourcesClearKeyInputSchema)
     .mutation(async ({ ctx, input }) => (await ctx.dataSources.clearKey(input.provider)) === true),
+  usage: publicProcedure
+    .use(enforceSender)
+    .use(requireDataSources)
+    .output(DataUsageViewSchema)
+    .query(({ ctx }) => ctx.dataSources.usage()),
+  serpProvider: publicProcedure
+    .use(enforceSender)
+    .use(requireDataSources)
+    .output(DataSerpProviderViewSchema)
+    .query(({ ctx }) => ctx.dataSources.serpProvider()),
+  setSerpProvider: publicProcedure
+    .use(enforceSender)
+    .use(requireDataSources)
+    .input(DataSourcesSetSerpProviderInputSchema)
+    .mutation(async ({ ctx, input }): Promise<DataSetSerpProviderResult> => oneOf(DATA_SET_SERP_PROVIDER_RESULTS, await ctx.dataSources.setSerpProvider(input.provider), 'failed')),
 });

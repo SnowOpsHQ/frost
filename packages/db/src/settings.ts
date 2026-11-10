@@ -14,6 +14,7 @@ import {
   type SearchEngineId,
 } from '@app/specs/browser-polish.spec';
 import { isAppVersion, WHATS_NEW_SEEN_SETTING_KEY } from '@app/specs/help.spec';
+import { DATA_SERP_PROVIDER_KEY, isDataSerpProvider, type DataSerpProvider } from '@app/specs/data-sources.spec';
 import type { SessionDatabase } from './client';
 import { appSettings } from './settings-schema';
 
@@ -51,6 +52,13 @@ export interface SettingsRepository {
   whatsNewSeenVersion(): Promise<string | null>;
   /** Stores it; `false` (nothing written) for anything but an app version (`isAppVersion`). */
   setWhatsNewSeenVersion(version: string, at: number): Promise<boolean>;
+  /**
+   * Phase 12 Task 2 (`data-sources.spec.ts`, `DATA_SERP_PROVIDER_KEY`): which SERP vendor "Check via
+   * API" uses; `null` when none (or an unknown one) is stored. Main checks the gate and the key.
+   */
+  dataSerpProvider(): Promise<DataSerpProvider | null>;
+  /** Stores it; `false` (nothing written) for anything but a `DATA_SERP_PROVIDERS` id. */
+  setDataSerpProvider(provider: DataSerpProvider, at: number): Promise<boolean>;
 }
 
 export interface HistorySettings {
@@ -134,6 +142,17 @@ export function createSettingsRepository(db: SessionDatabase): SettingsRepositor
     async setWhatsNewSeenVersion(version, at) {
       if (!isAppVersion(version) || !Number.isFinite(at)) return false;
       await write(WHATS_NEW_SEEN_SETTING_KEY, version, at);
+      return true;
+    },
+
+    async dataSerpProvider() {
+      const value = await read(DATA_SERP_PROVIDER_KEY);
+      return isDataSerpProvider(value) ? value : null;
+    },
+
+    async setDataSerpProvider(provider, at) {
+      if (!isDataSerpProvider(provider) || !Number.isFinite(at)) return false;
+      await write(DATA_SERP_PROVIDER_KEY, provider, at);
       return true;
     },
   };

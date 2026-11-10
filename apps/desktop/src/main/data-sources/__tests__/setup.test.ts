@@ -1,6 +1,7 @@
 // Spec: specs/data-sources.spec.ts (DATA_API_PARTITION, DATA_CREDENTIALS_FILE, DATA_API_E2E_SWITCH,
 // LEGAL_GATES_E2E_SWITCH, LEGAL_GATE_IDS), specs/security-policy.spec.ts (PACKAGED_FORBIDDEN_SWITCHES)
-// Acceptance: specs/data-sources.feature.md (data-api-e2e-seam-only-unpackaged, legal-gates-open-only-by-switch-unpackaged)
+// Acceptance: specs/data-sources.feature.md (data-api-e2e-seam-only-unpackaged, legal-gates-open-only-by-switch-unpackaged;
+// Task 2: data-usage-counts-every-request, wired)
 // · plan docs/plans/phase-12-big-bets.md, Decision 4 (in-memory `frost-data-api`), Task 1 (`index.ts`: setup, e2e seam)
 import path from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
@@ -11,6 +12,7 @@ import { SERPAPI_KEY } from './fakes';
 
 const USER_DATA = '/user-data';
 const SEAM_BASE = 'http://127.0.0.1:41234';
+const NOW = Date.UTC(2026, 10, 10, 12);
 
 /** `setupDataSources` with a fake `electron` (the agent's `key-never-leaves-main` pattern). */
 function setup(packaged: boolean) {
@@ -20,6 +22,9 @@ function setup(packaged: boolean) {
   const fetched: { url: string; init: RequestInit }[] = [];
   const logLines: string[] = [];
   const readSeamFile = vi.fn(() => JSON.stringify({ serpapi: SEAM_BASE }));
+  // Task 2: the session store's usage counter and SERP vendor setting, as fakes.
+  const usage = { increment: vi.fn(async (_provider: string, _at: number) => true), counts: vi.fn(async (months: readonly string[]) => Object.fromEntries(['serpapi', 'dataforseo', 'serper', 'perplexity', 'openai-search'].map((p) => [p, months.map(() => 0)])) as never) };
+  const settings = { dataSerpProvider: vi.fn(async () => null), setDataSerpProvider: vi.fn(async () => true) };
   const switches: Record<string, string> = { [LEGAL_GATES_E2E_SWITCH]: LEGAL_GATE_IDS.join(','), [DATA_API_E2E_SWITCH]: '/tmp/frost-data-seam.json' };
   const main = setupDataSources({
     app: { isPackaged: packaged, getPath: () => USER_DATA, commandLine: { getSwitchValue: (name) => switches[name] ?? '' } },
@@ -39,13 +44,16 @@ function setup(packaged: boolean) {
     platform: 'linux',
     readSeamFile,
     log: (line) => void logLines.push(line),
+    usage,
+    settings,
+    now: () => NOW,
   });
-  return { main, memory, partitions, fetched, logLines, readSeamFile };
+  return { main, memory, partitions, fetched, logLines, readSeamFile, usage, settings };
 }
 
 describe('data sources setup', () => {
   test('data-sources-setup-packaged-ignores-both-seams', async () => {
-    const { main, memory, partitions, fetched, readSeamFile } = setup(true);
+    const { main, memory, partitions, fetched, readSeamFile, usage } = setup(true);
     // Every gate keeps its shipped value (closed), and the seam file is never read.
     for (const id of LEGAL_GATE_IDS) expect(main.gates.isOpen(id), id).toBe(false);
     expect(readSeamFile).not.toHaveBeenCalled();
@@ -56,10 +64,13 @@ describe('data sources setup', () => {
     expect(await main.client.dataApiRequest('serpapi', 'serp', () => ({ method: 'GET', url: 'https://serpapi.com/search.json' }))).toMatchObject({ ok: false, refusal: 'unavailable' });
     expect(partitions).toEqual([]);
     expect(fetched).toEqual([]);
+    // A refused request is never counted; the SERP vendor choice is refused too.
+    expect(usage.increment).not.toHaveBeenCalled();
+    expect(await main.service.setSerpProvider('serpapi')).toBe('unavailable');
   });
 
   test('data-sources-setup-uses-the-in-memory-partition', async () => {
-    const { main, memory, partitions, fetched, readSeamFile, logLines } = setup(false);
+    const { main, memory, partitions, fetched, readSeamFile, logLines, usage, settings } = setup(false);
     // Unpackaged: the switch opens the listed gates and the seam file is read once.
     for (const id of LEGAL_GATE_IDS) expect(main.gates.isOpen(id), id).toBe(true);
     expect(readSeamFile).toHaveBeenCalledTimes(1);
@@ -73,6 +84,12 @@ describe('data sources setup', () => {
     expect(partitions.every((partition) => !partition.startsWith('persist:'))).toBe(true);
     expect(fetched.map((call) => call.url)).toEqual([`${SEAM_BASE}/search.json?q=frost&api_key=${SERPAPI_KEY}`]);
     expect(fetched[0]!.init).toMatchObject({ redirect: 'error', credentials: 'omit' });
+    // The request was counted once, for its provider, at main's time (Task 2).
+    expect(usage.increment.mock.calls).toEqual([['serpapi', NOW]]);
+    expect(await main.service.usage()).toMatchObject({ thisMonth: '2026-11', lastMonth: '2026-10' });
+    expect(usage.counts).toHaveBeenCalledWith(['2026-11', '2026-10']);
+    expect(await main.service.setSerpProvider('serpapi')).toBe('stored');
+    expect(settings.setDataSerpProvider).toHaveBeenCalledWith('serpapi', NOW);
     // The data store logs as itself, never the key.
     expect(logLines.join('\n')).not.toContain(SERPAPI_KEY);
   });

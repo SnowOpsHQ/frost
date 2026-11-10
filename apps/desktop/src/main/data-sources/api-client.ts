@@ -34,7 +34,8 @@ import type { CredentialStore, WithKeyResult } from '../agent/credentials';
 //
 // Requests to one provider start at least `minIntervalMs` apart: after the gate, and before any key
 // is opened, a request reserves its turn and waits for it (so no key is held while waiting); with
-// `maxWaitingPerProvider` already waiting it is refused `busy`. Nothing runs in the background:
+// `maxWaitingPerProvider` already waiting it is refused `busy`. Each request that is sent is counted
+// (`countRequest`, Task 2) just before its fetch; a refused one never is. Nothing runs in the background:
 // every call follows a user action or an approved agent call. For SerpApi the closure also checks
 // that `api_key` holds exactly the key, once, and that no other part of the URL shows a secret
 // (else `not-allowed`), so the key-less URL is the URL with that one parameter removed.
@@ -81,6 +82,12 @@ export interface DataApiClientDeps {
   readonly sleep?: (ms: number) => Promise<void>;
   /** The time cap (default `DATA_API_LIMITS.timeoutMs`; tests shorten it). */
   readonly timeoutMs?: number;
+  /**
+   * The usage counter (Task 2; `data_api_usage`): called once per request the client sends, after
+   * every check and before the fetch; never for a refused one. A failure is logged and the request
+   * still goes (the counter is a record, not a gate). Setup wires it; tests pass a fake.
+   */
+  readonly countRequest?: (provider: DataProvider) => Promise<void> | void;
 }
 
 export interface DataApiClient {
@@ -284,6 +291,12 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
         if (!isAllowedDataRequest(provider, purpose, request.method, request.url) || headers === null || !bodyAllowed) return refused('not-allowed');
         const url = keylessUrl(provider, request.url, secrets);
         if (url === null) return refused('not-allowed');
+        // Counted now: the request passed every check and is sent next, whatever it answers.
+        try {
+          await deps.countRequest?.(provider);
+        } catch {
+          log(`data api: ${provider} usage not counted`);
+        }
         const outcome = await send(provider, request, headers, url);
         const parsed = new URL(url);
         log(`data api: ${provider} ${request.method} ${parsed.origin}${parsed.pathname} ${outcome.ok ? outcome.status : outcome.refusal}${!outcome.ok && outcome.status !== undefined ? ` ${outcome.status}` : ''}`);

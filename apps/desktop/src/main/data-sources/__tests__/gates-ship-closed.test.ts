@@ -38,7 +38,7 @@ describe('legal gates ship closed', () => {
 
     // The view says so; clearing is never gated.
     const view = await service.status();
-    for (const provider of DATA_PROVIDERS) expect(view.providers[provider], provider).toEqual({ hasKey: false, available: false });
+    for (const provider of DATA_PROVIDERS) expect(view.providers[provider], provider).toEqual({ hasKey: false, partial: false, available: false });
     expect(await store.setKey('serpapi', SERPAPI_KEY)).toBe('stored');
     expect(await service.clearKey('serpapi')).toBe(true);
     expect(await store.hasKey('serpapi')).toBe(false);

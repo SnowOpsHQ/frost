@@ -82,3 +82,78 @@ Scenario: data-gates-ship-closed
   When a request is made to any provider
   Then main answers `unavailable` (`LEGAL_GATE_NOTE`) before reading a key or sending anything
   And clearing a key still works, and the view says `available: false`
+
+## Usage counter (Task 2)
+
+Tests: `apps/desktop/src/main/data-sources/__tests__/usage.test.ts`,
+`packages/db/src/__tests__/data-usage.test.ts`.
+
+Scenario: data-usage-migration-creates-table
+  Given a database migrated to the latest id
+  Then `0243_data_api_usage` is spread after the site crawl's `0240`/`0241`, in id order
+  And `data_api_usage` has `provider`, `month` (`YYYY-MM`, UTC) and `requests`, keyed by (provider, month)
+  And its `CHECK`s accept exactly `DATA_PROVIDERS` and well-formed months, and no negative count
+
+Scenario: data-usage-counts-every-request
+  When the client sends a request (it passed the gate, its turn, its key and the allowlist)
+  Then that provider's count for the current UTC month goes up by one, before the fetch
+  And it counts whatever the answer is (2xx, an error status, a redirect, a timeout, a network failure)
+  When a request is refused before sending (`unavailable`, `busy`, `no-key`, `no-keychain`,
+  `key-failed`, `not-allowed`)
+  Then nothing is counted
+
+Scenario: data-usage-keeps-twelve-months
+  When a request is counted
+  Then rows older than `DATA_USAGE_LIMITS.monthsKept` months (the current one included) are deleted
+
+Scenario: data-usage-view
+  When the renderer asks for `dataSources.usage`
+  Then it gets this UTC month's and last month's counts per provider (0 when none), never a key
+
+## Settings › Data sources (Task 2)
+
+Tests: `apps/desktop/src/renderer/__tests__/settings-data-sources.test.ts`,
+`apps/desktop/src/main/data-sources/__tests__/usage.test.ts` (the SERP vendor choice).
+
+Scenario: settings-data-sources-rows
+  Given Settings is open on "Data sources"
+  Then the providers show in two groups, "Search results" (SerpApi, DataForSEO, Serper) and
+  "AI search" (Perplexity, OpenAI web search), each a text label only (no logo or icon)
+  And each row says "Key set" or "No key", and this month's and last month's request counts
+  And the cost note `DATA_SPEND_NOTE` is shown
+  And OpenAI web search says the agent's OpenAI key is not reused
+
+Scenario: settings-data-sources-key-entry
+  Given a provider whose legal gate is open and keys are protected (`os`)
+  When the user pastes a key in its password field and presses Save
+  Then the field is emptied at once, main stores the key, and the row says "Key set"
+  And the key is never rendered again (no field, text or attribute holds it)
+  And DataForSEO has a login and a password field, each saved on its own
+
+Scenario: settings-data-sources-clear-asks-first
+  When the user presses Clear on a row with a key
+  Then the row asks first, and only "Remove key" clears it (Cancel leaves it set)
+
+Scenario: settings-data-sources-weak-protection
+  Given keys can't be protected here (`weak` or `unavailable`)
+  Then each row says why and its fields and Save are disabled
+
+Scenario: settings-data-sources-gated
+  Given a provider whose legal gate is closed (`available: false`, as shipped)
+  Then its row is disabled with `LEGAL_GATE_NOTE`
+  And Clear stays enabled if a key is somehow set
+
+Scenario: settings-data-sources-partial-dataforseo
+  Given only the DataForSEO login is saved (`partial`: some but not all of its slots set)
+  Then the row says "No key" and that only one of the login and password is saved
+  And Clear is offered, and clears what was saved
+  When a DataForSEO Save is answered `stored` while the row still has no key
+  Then it says to add the other field ("Saved. Add the password too.")
+
+Scenario: settings-data-sources-serp-choice
+  Then "Check via API uses" lists only the vendors main offers (`choices`: open gate and key set)
+  When exactly one vendor is offered and none is stored (or the stored one is no longer offered)
+  Then that vendor is the one used (`resolveDataSerpProvider`, lead ruling)
+  When the user picks one
+  Then main stores it (`DATA_SERP_PROVIDER_KEY`), refusing a vendor whose gate is closed
+  (`unavailable`) or that has no key (`no-key`)

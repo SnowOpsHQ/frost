@@ -7,6 +7,7 @@ import { createAgentSkillPrefsRepository, type AgentSkillPrefsRepository } from 
 import { createAgentMcpRepository, type AgentMcpRepository } from './agent-mcp';
 import { createAiChecksRepository, type AiChecksRepository } from './ai-checks';
 import { createChangeIntelRepository, type ChangeIntelRepository } from './change-intel/repository';
+import { createDataUsageRepository, type DataUsageRepository } from './data-usage';
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
 import { createHistoryRepository, type HistoryRepository } from './history';
 import { createSettingsRepository, type SettingsRepository } from './settings';
@@ -45,6 +46,8 @@ export interface SessionStore {
   readonly aiChecks: AiChecksRepository;
   /** The site crawler's runs, pages, links and frontier (Phase 12 Task 5), written at once; deleted per run, never by Clear Browsing Data. */
   readonly siteCrawl: SiteCrawlRepository;
+  /** The data API usage counter (Phase 12 Task 2): requests per provider per UTC month; never by Clear Browsing Data. */
+  readonly dataUsage: DataUsageRepository;
   /** Whether the database is still open (`close()` closes it). */
   readonly isOpen: boolean;
   /**
@@ -79,6 +82,7 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     changeIntel: createChangeIntelRepository(drizzle),
     aiChecks: createAiChecksRepository(drizzle),
     siteCrawl: createSiteCrawlRepository(drizzle),
+    dataUsage: createDataUsageRepository(drizzle),
     get isOpen() {
       return db.isOpen;
     },

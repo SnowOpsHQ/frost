@@ -465,7 +465,7 @@ function start(): void {
     // AI checks (specs/ai-checks.feature.md): off by default; only the audit's cookieless served HTML (peeked), on the agent's own route and model.
     const aiChecks = createAiChecksMain({ browser, isBrowseContents, served: () => served, tabUserAgent, tabScripting, agent: agent.checks, sessionStore, log: logSession });
     // Data sources (specs/data-sources.feature.md): BYO keys and the one data API client, main only; legal gates closed as shipped.
-    const dataSources = setupDataSources({ app, session, safeStorage, log: logSession });
+    const dataSources = setupDataSources({ app, session, safeStorage, log: logSession, usage: sessionStore.dataUsage, settings: sessionStore.settings });
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,

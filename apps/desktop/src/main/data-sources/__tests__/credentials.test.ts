@@ -1,7 +1,7 @@
 // Spec: specs/data-sources.spec.ts (DATA_CREDENTIAL_SLOTS, DATA_PROVIDER_SLOTS, DATA_CREDENTIALS_FILE,
 // normalizeDataSecret), specs/data-sources.schema.ts (DataSourcesView, DATA_SET_KEY_RESULTS),
 // specs/agent-proxy.spec.ts (KEY_PROTECTIONS)
-// Acceptance: specs/data-sources.feature.md (Keys) · plan docs/plans/phase-12-big-bets.md, Decision 4, Task 1
+// Acceptance: specs/data-sources.feature.md (Keys; Task 2: `partial`, settings-data-sources-partial-dataforseo) · plan docs/plans/phase-12-big-bets.md, Decision 4, Task 1
 import { describe, expect, test, vi } from 'vitest';
 import { DATA_CREDENTIAL_SLOTS, DATA_PROVIDERS, normalizeDataSecret } from '@app/specs/data-sources.spec';
 import { createDataApiClient } from '../api-client';
@@ -82,14 +82,15 @@ describe('data credentials', () => {
 
     // Only the login: no key, and nothing is sent.
     expect(await service.setKey({ provider: 'dataforseo', login: DFS_LOGIN })).toBe('stored');
-    expect((await service.status()).providers.dataforseo.hasKey).toBe(false);
+    // `partial` (Task 2): some but not all slots set, so Settings can offer Clear.
+    expect((await service.status()).providers.dataforseo).toMatchObject({ hasKey: false, partial: true });
     expect(await request()).toMatchObject({ ok: false, refusal: 'no-key' });
     expect(calls).toEqual([]);
 
     // The password on its own: the login stays.
     expect(await service.setKey({ provider: 'dataforseo', password: DFS_PASSWORD })).toBe('stored');
     expect(await store.hasKey('dataforseo-login')).toBe(true);
-    expect((await service.status()).providers.dataforseo.hasKey).toBe(true);
+    expect((await service.status()).providers.dataforseo).toMatchObject({ hasKey: true, partial: false });
     expect(await request()).toMatchObject({ ok: true, status: 200 });
     expect(calls).toHaveLength(1);
     expect(new Headers(calls[0]!.init.headers).get('authorization')).toBe(`Basic ${Buffer.from(`${DFS_LOGIN}:${DFS_PASSWORD}`).toString('base64')}`);
@@ -102,6 +103,7 @@ describe('data credentials', () => {
     expect(await service.clearKey('dataforseo')).toBe(true);
     expect(await store.hasKey('dataforseo-login')).toBe(false);
     expect(await store.hasKey('dataforseo-password')).toBe(false);
+    expect((await service.status()).providers.dataforseo).toMatchObject({ hasKey: false, partial: false });
     // Neither slot alone, when the other is cleared.
     expect(await service.setKey({ provider: 'dataforseo', password: DFS_PASSWORD })).toBe('stored');
     expect((await service.status()).providers.dataforseo.hasKey).toBe(false);

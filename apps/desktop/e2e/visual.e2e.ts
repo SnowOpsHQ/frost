@@ -534,12 +534,12 @@ test.describe('page surfaces', () => {
     await audit('/guide');
     await menu(SETTINGS_MENU.id);
     await expect(page.getByTestId('settings-view')).toBeVisible();
-    // Account, Search Console and AI checks each say "Loading…" until main answers (settings-account.tsx,
-    // settings-gsc.tsx, settings-ai-checks.tsx): every one has answered.
+    // Account, Search Console, Data sources and AI checks each say "Loading…" until main answers
+    // (settings-account.tsx, settings-gsc.tsx, settings-data-sources.tsx, settings-ai-checks.tsx): every one has answered.
     await expect(page.getByTestId('settings-content')).not.toContainText('Loading…');
     await expect(page.getByTestId('settings-content')).toContainText(ACCOUNT_SETTINGS_TEXT.unconfigured);
     await capture('settings');
-    // Below AI checks: the rest of that section and Telemetry.
+    // Lower down (Data sources sits between Search Console and AI checks): the rest of the sections.
     await capture('settings-lower', { scroll: { selector: '.settings-content', to: 'end' } });
     await page.getByTestId('settings-close').click();
     await expect(page.getByTestId('settings-view')).toHaveCount(0);

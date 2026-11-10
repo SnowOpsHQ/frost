@@ -10,6 +10,7 @@ import { AI_CHECKS_MIGRATIONS } from './ai-checks-migrations';
 import { WORKSPACE_MIGRATIONS } from './change-intel/workspace-migrations';
 import { PHASE11_MIGRATIONS } from './phase11-migrations';
 import { SITE_CRAWL_MIGRATIONS } from './site-crawl/migrations';
+import { DATA_USAGE_MIGRATIONS } from './data-usage-migrations';
 
 // Forward-only migrations (spec `browser-session-db.feature.md`, Migrations). Each one is a
 // numbered SQL string compiled into the main bundle: nothing is read from disk at runtime. Append
@@ -108,6 +109,7 @@ export const MIGRATIONS: readonly Migration[] = [
   ...WORKSPACE_MIGRATIONS,
   ...PHASE11_MIGRATIONS,
   ...SITE_CRAWL_MIGRATIONS,
+  ...DATA_USAGE_MIGRATIONS,
 ];
 
 /**

@@ -1,6 +1,6 @@
 // Spec: specs/data-sources.spec.ts (DATA_PROVIDERS, DATA_API_REFUSALS), specs/data-sources.schema.ts
 // (DataSourcesViewSchema, DataSourcesSetKeyInputSchema, DATA_SET_KEY_RESULTS), specs/ipc-sender.spec.ts
-// Acceptance: specs/data-sources.feature.md (Keys: data-key-never-leaves-main) · plan docs/plans/phase-12-big-bets.md,
+// Acceptance: specs/data-sources.feature.md (Keys: data-key-never-leaves-main; Task 2's usage and SERP vendor answers too) · plan docs/plans/phase-12-big-bets.md,
 // Global constraints "Secrets", Threat model (an API key leaks)
 import { describe, expect, test, vi } from 'vitest';
 import { appRouter, createSenderPolicy, type IpcContext } from '@app/ipc-contract';
@@ -8,6 +8,7 @@ import { APP_ORIGIN } from '@app/specs/security-policy.spec';
 import { DATA_PROVIDERS } from '@app/specs/data-sources.spec';
 import { createDataApiClient } from '../api-client';
 import { createDataSourcesService } from '../service';
+import { createDataUsageService } from '../usage';
 import { ALL_SECRETS, allOpen, dataStore, DFS_LOGIN, DFS_PASSWORD, OPENAI_KEY, PERPLEXITY_KEY, recordingFetch, SERPAPI_KEY, SERPER_KEY } from './fakes';
 
 const WINDOW_ID = 3;
@@ -17,7 +18,11 @@ type Caller = Record<string, (input?: unknown) => Promise<unknown>>;
 describe('data keys never leave main', () => {
   test('data-key-never-leaves-main', async () => {
     const { store, log: storeLog, memory } = dataStore();
-    const service = createDataSourcesService({ store, isOpen: allOpen });
+    const keys = createDataSourcesService({ store, isOpen: allOpen });
+    let stored: 'serpapi' | 'dataforseo' | 'serper' | null = null;
+    const settings = { dataSerpProvider: async () => stored, setDataSerpProvider: async (provider: 'serpapi' | 'dataforseo' | 'serper') => ((stored = provider), true) };
+    const counts = async (months: readonly string[]) => Object.fromEntries(DATA_PROVIDERS.map((p) => [p, months.map(() => 1)])) as Record<(typeof DATA_PROVIDERS)[number], number[]>;
+    const service = { ...keys, ...createDataUsageService({ usage: { counts }, settings, status: () => keys.status(), isOpen: allOpen }) };
     const ctx: IpcContext = {
       sender: { origin: APP_ORIGIN, live: true, windowId: WINDOW_ID, isWindowContents: true, isMainFrame: true },
       policy: createSenderPolicy({ knownWindowIds: new Set([WINDOW_ID]) }),
@@ -54,8 +59,15 @@ describe('data keys never leave main', () => {
     const view = answers[5] as { providers: Record<string, { hasKey: boolean }> };
     for (const provider of DATA_PROVIDERS) expect(view.providers[provider]!.hasKey, provider).toBe(true);
     expect(Object.keys(view).sort()).toEqual(['protection', 'providers']);
+    // Each row is three booleans (Task 2 added `partial`), never a key.
+    for (const provider of DATA_PROVIDERS) expect(Object.keys(view.providers[provider]!).sort(), provider).toEqual(['available', 'hasKey', 'partial']);
     expect(errors).toHaveLength(5);
     expect((answers.at(-1) as typeof view).providers.serper!.hasKey).toBe(false);
+    // Task 2: the usage view and the SERP vendor choice carry no key either.
+    await call('usage');
+    await call('setSerpProvider', { provider: 'serpapi' });
+    await call('serpProvider');
+    expect(answers.slice(-2)).toEqual(['stored', { provider: 'serpapi', choices: ['serpapi', 'dataforseo'] }]);
 
     // Requests: success, refusals and a throwing build.
     const clientLog = vi.fn<(line: string) => void>();

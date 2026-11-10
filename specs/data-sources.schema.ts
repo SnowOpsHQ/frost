@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import { KEY_PROTECTIONS } from './agent-proxy.spec';
-import { DATA_PROVIDERS, DATA_SECRET_MAX_CHARS, type DataProvider } from './data-sources.spec';
+import { DATA_PROVIDERS, DATA_SECRET_MAX_CHARS, DATA_SERP_PROVIDERS, DATA_USAGE_LIMITS, isDataUsageMonth, type DataProvider } from './data-sources.spec';
 
 /**
  * One pasted secret: one line (no line break anywhere), bounded loosely (main trims and refuses
@@ -45,6 +45,11 @@ export type DataSetKeyResult = (typeof DATA_SET_KEY_RESULTS)[number];
 /** One provider as the renderer sees it: whether all its slots hold a usable key, and whether its gate is open. */
 export const DataSourceViewSchema = z.strictObject({
   hasKey: z.boolean(),
+  /**
+   * Some but not all of its slots are set (only DataForSEO has two: a login or a password saved
+   * alone). Never a key; the renderer offers Clear for it (Task 2).
+   */
+  partial: z.boolean(),
   /** The legal gate (`legalGates.isOpen`): `false` hides or disables the control with `LEGAL_GATE_NOTE`. */
   available: z.boolean(),
 });
@@ -58,9 +63,55 @@ export const DataSourcesViewSchema = z.strictObject({
     serper: DataSourceViewSchema,
     perplexity: DataSourceViewSchema,
     'openai-search': DataSourceViewSchema,
-  }) satisfies z.ZodType<Record<DataProvider, { hasKey: boolean; available: boolean }>>,
+  }) satisfies z.ZodType<Record<DataProvider, { hasKey: boolean; partial: boolean; available: boolean }>>,
 });
 export type DataSourcesView = z.output<typeof DataSourcesViewSchema>;
+
+// ---- Usage and the SERP vendor choice (Task 2) --------------------------------------------------
+
+const Count = z.number().int().min(0).max(DATA_USAGE_LIMITS.maxRequests);
+const Month = z.string().refine(isDataUsageMonth, { message: 'not a month' });
+const ProviderUsage = z.strictObject({ thisMonth: Count, lastMonth: Count });
+
+/**
+ * `dataSources.usage`: requests sent per provider in this UTC month and the one before
+ * (`data_api_usage`), and which months those are (`YYYY-MM`). Counted locally; never a key.
+ */
+export const DataUsageViewSchema = z.strictObject({
+  thisMonth: Month,
+  lastMonth: Month,
+  providers: z.strictObject({
+    serpapi: ProviderUsage,
+    dataforseo: ProviderUsage,
+    serper: ProviderUsage,
+    perplexity: ProviderUsage,
+    'openai-search': ProviderUsage,
+  }) satisfies z.ZodType<Record<DataProvider, { thisMonth: number; lastMonth: number }>>,
+});
+export type DataUsageView = z.output<typeof DataUsageViewSchema>;
+
+/**
+ * `dataSources.serpProvider`: which SERP vendor "Check via API" uses (`DATA_SERP_PROVIDER_KEY`), and
+ * the vendors main offers for it (`choices`: legal gate open **and** key set, in
+ * `DATA_SERP_PROVIDERS` order). `provider` is `resolveDataSerpProvider(stored, choices)`: the stored
+ * choice while it is one of `choices`; otherwise the only choice when there is exactly one (lead
+ * ruling); otherwise `null`. The renderer lists `choices` only and never decides one itself.
+ */
+export const DataSerpProviderViewSchema = z.strictObject({
+  provider: z.enum(DATA_SERP_PROVIDERS).nullable(),
+  choices: z.array(z.enum(DATA_SERP_PROVIDERS)).max(DATA_SERP_PROVIDERS.length),
+});
+export type DataSerpProviderView = z.output<typeof DataSerpProviderViewSchema>;
+
+/** `dataSources.setSerpProvider`. */
+export const DataSourcesSetSerpProviderInputSchema = z.strictObject({ provider: z.enum(DATA_SERP_PROVIDERS) });
+
+/**
+ * `dataSources.setSerpProvider`'s answer: `stored`; `unavailable` (its legal gate is closed); `no-key`
+ * (not all its slots are set); `failed` (nothing written).
+ */
+export const DATA_SET_SERP_PROVIDER_RESULTS = ['stored', 'unavailable', 'no-key', 'failed'] as const;
+export type DataSetSerpProviderResult = (typeof DATA_SET_SERP_PROVIDER_RESULTS)[number];
 
 // ---- The e2e seam (`DATA_API_E2E_SWITCH`) -------------------------------------------------------
 

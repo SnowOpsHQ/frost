@@ -285,3 +285,136 @@ export const DATA_API_E2E_SWITCH = 'frost-e2e-data-api' as const;
 
 /** The cost note every surface that spends shows. Never a price frost cannot keep current (Q5). */
 export const DATA_SPEND_NOTE = 'Each request is billed by the provider to your account. frost sends one only when you ask.';
+
+// ---- Settings › Data sources and the usage counter (Task 2) -------------------------------------
+
+/** The SERP vendors (purpose `serp`), in the order Settings lists them under "Search results". */
+export const DATA_SERP_PROVIDERS = ['serpapi', 'dataforseo', 'serper'] as const;
+export type DataSerpProvider = (typeof DATA_SERP_PROVIDERS)[number];
+
+export function isDataSerpProvider(value: unknown): value is DataSerpProvider {
+  return typeof value === 'string' && (DATA_SERP_PROVIDERS as readonly string[]).includes(value);
+}
+
+/**
+ * Which SERP vendor "Check via API" uses (Task 2; lead ruling), given the stored choice and the
+ * vendors main offers (`choices`: legal gate open and key set): the stored one while it is offered;
+ * otherwise, when exactly one is offered, that one (a stored choice that is no longer offered counts
+ * as none); otherwise `null`. Main answers it in `DataSerpProviderView.provider`; Task 4 uses the same.
+ */
+export function resolveDataSerpProvider(stored: DataSerpProvider | null, choices: readonly DataSerpProvider[]): DataSerpProvider | null {
+  if (stored !== null && choices.includes(stored)) return stored;
+  return choices.length === 1 ? choices[0]! : null;
+}
+
+/** The AI search providers (purpose `ai-search`), listed under "AI search". */
+export const DATA_AI_SEARCH_PROVIDERS = ['perplexity', 'openai-search'] as const;
+
+/**
+ * The `app_settings` key (`0005_app_settings`; no migration) holding which SERP vendor "Check via
+ * API" uses (Task 4): one `DATA_SERP_PROVIDERS` id. Main stores one only while its legal gate is open
+ * and its key is set; a missing or unknown value reads as none.
+ */
+export const DATA_SERP_PROVIDER_KEY = 'data_serp_provider' as const;
+
+/**
+ * The local usage counter (`0243_data_api_usage`, table `data_api_usage`): one row per provider and
+ * UTC month (`YYYY-MM`), counting the requests the client actually sent (after the allowlist, before
+ * the fetch; a refused request never counts). Nothing leaves the device.
+ */
+export const DATA_USAGE_TABLES = ['data_api_usage'] as const;
+export const DATA_USAGE_MIGRATION_IDS = ['0243_data_api_usage'] as const;
+
+export const DATA_USAGE_LIMITS = {
+  /** Months kept per provider, the current one included; older rows are deleted on each write. */
+  monthsKept: 12,
+  /** The largest count stored or shown (a counter at it stays there). */
+  maxRequests: 2_147_483_647,
+} as const;
+
+/** Whether `value` is a usage month: `YYYY-MM`, month 01–12. */
+export function isDataUsageMonth(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
+}
+
+/** The UTC month (`YYYY-MM`) of `at` (Unix ms). */
+export function dataUsageMonth(at: number): string {
+  const date = new Date(at);
+  return `${String(date.getUTCFullYear()).padStart(4, '0')}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** The month `count` months before `month` (`YYYY-MM`). */
+export function dataUsageMonthBefore(month: string, count = 1): string {
+  const [year, mon] = month.split('-').map(Number) as [number, number];
+  const index = year * 12 + (mon - 1) - count;
+  return `${String(Math.floor(index / 12)).padStart(4, '0')}-${String((index % 12) + 1).padStart(2, '0')}`;
+}
+
+/** The oldest month kept when writing in `month` (`DATA_USAGE_LIMITS.monthsKept`, `month` included). */
+export function oldestDataUsageMonthKept(month: string): string {
+  return dataUsageMonthBefore(month, DATA_USAGE_LIMITS.monthsKept - 1);
+}
+
+/**
+ * Settings › Data sources (Task 2; `data-sources.feature.md`, Settings). Text labels only (L7). The
+ * renderer shows what main's views say (`DataSourcesView`, `DataUsageView`, `DataSerpProviderView`)
+ * and never decides a gate itself.
+ */
+export const DATA_SOURCES_SETTINGS_TEXT = {
+  intro: 'Bring your own key to fetch search results or AI search answers from a data provider. Keys stay on this computer, in your system keychain, and are never shown again.',
+  groups: { serp: 'Search results', 'ai-search': 'AI search' } satisfies Record<DataProviderPurpose, string>,
+  keySet: 'Key set',
+  noKey: 'No key',
+  keyLabel: 'API key',
+  loginLabel: 'Login',
+  passwordLabel: 'Password',
+  keyPlaceholder: 'Paste a key',
+  replacePlaceholder: 'Replace the saved key',
+  save: 'Save',
+  clear: 'Clear',
+  /** The buttons' accessible names (each starts with its visible word). */
+  saveName: (label: string) => `Save ${label} key`,
+  clearName: (label: string) => `Clear ${label} key`,
+  clearQuestion: (label: string) => `Remove the saved key for ${label}? frost can’t use ${label} until you add one again.`,
+  clearConfirm: 'Remove key',
+  cancel: 'Cancel',
+  pasteFirst: 'Paste a key first.',
+  cleared: 'Key removed.',
+  clearFailed: 'The key could not be removed. Try again.',
+  /** What Save says for each `dataSources.setKey` answer (`DATA_SET_KEY_RESULTS`); never the key. */
+  setKeyResults: {
+    stored: 'Key saved.',
+    invalid: 'That doesn’t look like a key. Paste it again.',
+    'no-keychain': 'No system keychain protects keys on this computer, so the key was not saved.',
+    failed: 'The key could not be saved. Try again.',
+    unavailable: LEGAL_GATE_NOTE,
+  },
+  /** Why a field is disabled when keys can't be protected here (`KEY_PROTECTIONS` other than `os`). */
+  protection: {
+    weak: 'No system keychain protects keys on this computer, so frost won’t store a data source key here.',
+    unavailable: 'No system keychain is available on this computer, so frost can’t store a data source key here.',
+  },
+  /** DataForSEO signs in with both (`DATA_PROVIDER_SLOTS`); each is saved on its own. */
+  dataForSeoBoth: 'DataForSEO needs both its API login and password.',
+  /** A DataForSEO row with one of its two slots set (`partial`); the view never says which. */
+  partial: 'Only one of the login and password is saved. Add the other, or Clear it.',
+  /** After a DataForSEO Save answered `stored` while the row still has no key: the field not sent. */
+  savedAddOther: { login: 'Saved. Add the login too.', password: 'Saved. Add the password too.' },
+  /** OpenAI web search has its own key (plan Decision 4). */
+  openAiSeparateKey: 'This key is separate from the agent’s OpenAI key, which frost doesn’t reuse here. Paste a key again to use OpenAI web search.',
+  usageLabel: 'Requests sent',
+  usage: (thisMonth: number, lastMonth: number) => `This month: ${thisMonth} · Last month: ${lastMonth}`,
+  usageNote: 'Counted on this computer, per calendar month (UTC). Your provider’s own dashboard is the bill.',
+  serpProviderLabel: 'Check via API uses',
+  serpProviderPlaceholder: 'Choose a provider',
+  serpProviderNone: 'Add a key for an available search results provider to choose one.',
+  /** What the select says for a `dataSources.setSerpProvider` answer other than `stored`. */
+  setSerpProviderResults: {
+    unavailable: LEGAL_GATE_NOTE,
+    'no-key': 'Add a key for that provider first.',
+    failed: 'That choice could not be saved.',
+  },
+  loading: 'Loading…',
+  readFailed: 'Couldn’t read the data source settings.',
+  retry: 'Try again',
+} as const;
