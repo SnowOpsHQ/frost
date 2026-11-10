@@ -9,9 +9,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { crawlRobotsRules, type CrawlRobotsRules } from '@app/seo-core';
 import { CRAWL_FETCHER_LIMITS, type BoundedFetcher, type BoundedFetchRequest } from '@app/specs/fetcher.spec';
 import { SERVED_ACCEPT } from '@app/specs/seo-javascript.spec';
-import { ROBOTS_FETCH_LIMITS, ROBOTS_UNKNOWN_OUTCOMES, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
+import { ROBOTS_ALLOW_ALL_OUTCOMES, ROBOTS_FETCH_LIMITS, ROBOTS_UNKNOWN_OUTCOMES, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
-import { CRAWL_KEEP_HEADERS, CRAWL_LIMITS, CRAWL_ROBOTS_HOOK_MARGIN_MS, CRAWL_ROBOTS_PARSE_WAIT_MS, CRAWL_ROBOTS_TOKEN, CRAWL_SEPARATE_HEADERS, CRAWL_USER_AGENT_TOKEN } from '@app/specs/site-crawl.spec';
+import { CRAWL_KEEP_HEADERS, CRAWL_LIMITS, CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES, CRAWL_ROBOTS_HOOK_MARGIN_MS, CRAWL_ROBOTS_PARSE_WAIT_MS, CRAWL_ROBOTS_TOKEN, CRAWL_ROBOTS_UNREADABLE_OUTCOMES, CRAWL_SEPARATE_HEADERS, CRAWL_USER_AGENT_TOKEN } from '@app/specs/site-crawl.spec';
 import { createBoundedFetcher, type Hop, type HopResult, type Resolve } from '../../seo/fetcher';
 import { createRobotsFetcher } from '../../seo/robots-fetch';
 import { createCrawlFetcher, createCrawlLane, type CrawlRobotsSource } from '../fetch';
@@ -554,11 +554,12 @@ describe('crawl fetching', () => {
     expect(robots.peek('http://127.0.0.1:3000/', { exactOrigin: true })).toBe(exact);
     expect(robots.peek('http://127.0.0.1:3000/')).toMatchObject({ outcome: 'ok' });
 
-    // Through the crawl: the shared fetcher already holds the followed answer (Disallow: /), the crawl is not blocked by it.
+    // Through the crawl: the shared fetcher already holds the followed answer (Disallow: /), the crawl never reads it; its own
+    // answer (`private-redirect`) is robots.txt it could not read (council review round 2, item C), so the page is refused.
     const lanes = lane(hop);
     const run = createCrawlFetcher({ fetcher: lanes.fetcher, robots, userAgent: () => BROWSE_UA }).forRun(settings('http://127.0.0.1:3000/'));
     const page = await settle(run.fetchPage('http://127.0.0.1:3000/page'));
-    expect(page).toMatchObject({ outcome: 'response', robots: { crawl: 'allowed', unreachable: false } });
+    expect(page).toMatchObject({ outcome: 'robots-unreachable', robots: { crawl: 'unknown', unreachable: true } });
     expect(page.robots.fetch?.outcome).toBe('private-redirect');
 
     // A fresh fetcher: the crawl's own lookup never reaches :9229.
@@ -566,14 +567,49 @@ describe('crawl fetching', () => {
     const freshHop = fresh.hop({ 'http://127.0.0.1:3000/robots.txt': redirect('http://127.0.0.1:9229/robots.txt', 302), 'http://127.0.0.1:9229/robots.txt': html('User-agent: *\nDisallow: /\n'), 'http://127.0.0.1:3000/page': html() });
     const freshRobots = createRobotsFetcher({ hop: freshHop, fetcher: createBoundedFetcher({ hop: freshHop, resolve }) });
     const freshRun = createCrawlFetcher({ fetcher: lane(freshHop).fetcher, robots: freshRobots, userAgent: () => BROWSE_UA }).forRun(settings('http://127.0.0.1:3000/'));
-    expect(await settle(freshRun.fetchPage('http://127.0.0.1:3000/page'))).toMatchObject({ outcome: 'response' });
-    expect(fresh.urls()).toEqual(['http://127.0.0.1:3000/robots.txt', 'http://127.0.0.1:3000/page']);
+    expect(await settle(freshRun.fetchPage('http://127.0.0.1:3000/page'))).toMatchObject({ outcome: 'robots-unreachable' });
+    expect(fresh.urls()).toEqual(['http://127.0.0.1:3000/robots.txt']);
     // Another scheme of the same host is another origin too.
     const scheme = fakeNet();
     const schemeHop = scheme.hop({ 'http://127.0.0.1:3000/robots.txt': redirect('https://127.0.0.1:3000/robots.txt', 301) });
     const schemeRobots = createRobotsFetcher({ hop: schemeHop, fetcher: createBoundedFetcher({ hop: schemeHop, resolve }) });
     expect(await settle(schemeRobots.get('http://127.0.0.1:3000/', { exactOrigin: true }))).toMatchObject({ outcome: 'private-redirect' });
     expect(scheme.urls()).toEqual(['http://127.0.0.1:3000/robots.txt']);
+  });
+
+  test('crawl-robots-private-redirect-is-unreadable', async () => {
+    // Council review round 2, item C: in the crawl only, a robots.txt whose redirect was refused (`private-redirect`) is
+    // robots.txt the crawl could not read, never "no robots.txt": the page is refused `robots-unreachable` and never requested.
+    // A public site's robots.txt redirecting to a private address, and a private start's robots.txt redirecting to another
+    // port, both refuse the page. `too-many-redirects`, a 4xx and a missing file still allow it; the sidebar's lookup is unchanged.
+    const net = fakeNet();
+    const hop = net.hop({
+      'https://example.com/robots.txt': redirect('http://10.0.0.5/robots.txt', 302),
+      'http://10.0.0.5/robots.txt': html('User-agent: *\nAllow: /\n', 200, { 'content-type': 'text/plain' }),
+      'https://example.com/page': html(),
+      'http://127.0.0.1:3000/robots.txt': redirect('http://127.0.0.1:9229/robots.txt', 302),
+      'http://127.0.0.1:9229/robots.txt': html('User-agent: *\nAllow: /\n', 200, { 'content-type': 'text/plain' }),
+      'http://127.0.0.1:3000/page': html(),
+    });
+    const robots = createRobotsFetcher({ hop, fetcher: createBoundedFetcher({ hop, resolve }) });
+    const crawl = createCrawlFetcher({ fetcher: lane(hop).fetcher, robots, userAgent: () => BROWSE_UA });
+    const site = await settle(crawl.forRun(settings('https://example.com/')).fetchPage('https://example.com/page'));
+    expect(site).toMatchObject({ outcome: 'robots-unreachable', status: null, startedAt: null, robots: { crawl: 'unknown', googlebot: 'unknown', unreachable: true, crawlDelayMs: null } });
+    expect(site.robots.fetch?.outcome).toBe('private-redirect');
+    const local = await settle(crawl.forRun(settings('http://127.0.0.1:3000/')).fetchPage('http://127.0.0.1:3000/page'));
+    expect(local).toMatchObject({ outcome: 'robots-unreachable', status: null, robots: { unreachable: true } });
+    expect(local.robots.fetch?.outcome).toBe('private-redirect');
+    expect(net.urls()).toEqual(['https://example.com/robots.txt', 'http://127.0.0.1:3000/robots.txt']);
+    // The sidebar's reading of the same answer is unchanged: `private-redirect` means no robots.txt there.
+    expect(await settle(robots.get('https://example.com/page'))).toMatchObject({ outcome: 'private-redirect' });
+
+    // The crawl's lists: the sidebar's "no robots.txt" less `private-redirect`, which joins the unknown ones as unreadable.
+    expect([...CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES, 'private-redirect'].sort()).toEqual([...ROBOTS_ALLOW_ALL_OUTCOMES].sort());
+    expect(CRAWL_ROBOTS_UNREADABLE_OUTCOMES).toEqual([...ROBOTS_UNKNOWN_OUTCOMES, 'private-redirect']);
+    // The other "no robots.txt" outcomes still allow the page.
+    const allowed = crawler({ 'https://loops.example.com/a': html(), 'https://gone.example.com/a': html(), 'https://denied.example.com/a': html() }, fakeRobots({ 'https://loops.example.com': 'too-many-redirects', 'https://gone.example.com': 'unavailable', 'https://denied.example.com': 'forbidden' }).source);
+    const run = allowed.crawl.forRun(settings('https://www.example.com/', { scope: 'site' }));
+    for (const host of ['loops', 'gone', 'denied']) expect(await settle(run.fetchPage(`https://${host}.example.com/a`)), host).toMatchObject({ outcome: 'response', robots: { crawl: 'allowed', unreachable: false } });
   });
 
   test('crawl-redirect-robots-timeout-refuses-the-hop', async () => {

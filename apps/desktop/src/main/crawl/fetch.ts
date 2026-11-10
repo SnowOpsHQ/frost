@@ -1,9 +1,9 @@
 import { crawlRobotsRules, decodeRobotsBytes, type CrawlRobotsRules } from '@app/seo-core';
 import { CRAWL_FETCHER_LIMITS, type BoundedFetcher, type BoundedFetchResult, type FetchRedirect } from '@app/specs/fetcher.spec';
-import { RESPONSE_LIMITS, ROBOTS_ALLOW_ALL_OUTCOMES, ROBOTS_FETCH_LIMITS, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
+import { RESPONSE_LIMITS, ROBOTS_FETCH_LIMITS, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
 import { SERVED_ACCEPT, SERVED_FETCH_LIMITS } from '@app/specs/seo-javascript.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
-import { CRAWL_KEEP_HEADERS, CRAWL_LIMITS, CRAWL_ROBOTS_HOOK_MARGIN_MS, CRAWL_ROBOTS_PARSE_WAIT_MS, CRAWL_ROBOTS_TOKEN, CRAWL_SEPARATE_HEADERS, CRAWL_USER_AGENT_TOKEN, type CrawlPageOutcome, type CrawlRobotsVerdict } from '@app/specs/site-crawl.spec';
+import { CRAWL_KEEP_HEADERS, CRAWL_LIMITS, CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES, CRAWL_ROBOTS_HOOK_MARGIN_MS, CRAWL_ROBOTS_PARSE_WAIT_MS, CRAWL_ROBOTS_TOKEN, CRAWL_SEPARATE_HEADERS, CRAWL_USER_AGENT_TOKEN, type CrawlPageOutcome, type CrawlRobotsVerdict } from '@app/specs/site-crawl.spec';
 import { createBoundedFetcher, type Hop, type Resolve } from '../seo/fetcher';
 import type { RobotsLookupOptions } from '../seo/robots-fetch';
 import { CrawlAbortedError, CrawlSlowDownError, createPacing, pacingKey, systemClock, type CrawlClock, type Politeness } from './politeness';
@@ -23,9 +23,11 @@ import { createCrawlScope, normaliseCrawlUrl, type CrawlScopeRule, type CrawlSco
 // bounded by `ROBOTS_FETCH_LIMITS.timeoutMs + CRAWL_ROBOTS_HOOK_MARGIN_MS`.
 //
 // robots.txt the crawl cannot read refuses (RFC 9309 §2.3.1.4; council review, item 2): an unknown
-// outcome (`ROBOTS_UNKNOWN_OUTCOMES`, the redirect failures included) or no answer within that wait
+// outcome (`ROBOTS_UNKNOWN_OUTCOMES`, the redirect failures included), a robots.txt redirect the fetcher
+// refused (`private-redirect`: round 2, item C; `CRAWL_ROBOTS_UNREADABLE_OUTCOMES`) or no answer within that wait
 // refuses the page, the start origin's included, or the hop, as `robots-unreachable`; nothing is
-// requested. Only a parsed file that allows the URL, or no file at all (a 4xx), lets it through. The
+// requested. Only a parsed file that allows the URL, or no file at all (a 4xx, too many redirects:
+// `CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES`), lets it through. The
 // sidebar's rule (an "unknown" verdict, the `robots-txt-unreachable` finding) does not change.
 //
 // Task 6a parses robots.txt through an injected `parseRobots` (default: seo-core's pure
@@ -155,7 +157,8 @@ export function crawlUserAgent(browse: string): string {
   return clean === '' ? CRAWL_USER_AGENT_TOKEN : `${clean} ${CRAWL_USER_AGENT_TOKEN}`;
 }
 
-const ALLOW_ALL: ReadonlySet<RobotsFetchOutcome> = new Set(ROBOTS_ALLOW_ALL_OUTCOMES);
+/** "No robots.txt" for the crawl: the sidebar's list less `private-redirect`, which the crawl reads as unreadable (council review round 2, item C). */
+const ALLOW_ALL: ReadonlySet<RobotsFetchOutcome> = new Set(CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES);
 const EMPTY = new Uint8Array(0);
 /** The hook's (and the page's own) robots.txt wait: the robots fetcher's own deadline plus a margin, so its `timeout` answer arrives inside it. */
 const ROBOTS_WAIT_MS = ROBOTS_FETCH_LIMITS.timeoutMs + CRAWL_ROBOTS_HOOK_MARGIN_MS;
@@ -228,7 +231,7 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
       return { fetch, crawl: verdict(CRAWL_ROBOTS_TOKEN), googlebot: verdict('googlebot'), unreachable: false, crawlDelayMs: rules.crawlDelayMs };
     }
     if (ALLOW_ALL.has(fetch.outcome)) return { fetch, crawl: 'allowed', googlebot: 'allowed', unreachable: false, crawlDelayMs: null };
-    // Unknown (`ROBOTS_UNKNOWN_OUTCOMES`; `pending` never comes from `get`): the caller refuses, `robots-unreachable`.
+    // Unreadable (`CRAWL_ROBOTS_UNREADABLE_OUTCOMES`: the unknown ones and a refused redirect; `pending` never comes from `get`): the caller refuses, `robots-unreachable`.
     return unknownRobots(fetch);
   }
 

@@ -21,6 +21,7 @@
  * Plain values and types with no Zod, so seo-core (the crawl's pure modules) and the chrome can
  * import them.
  */
+import type { RobotsFetchOutcome } from './seo-indexability.spec';
 import { SERVED_FETCH_LIMITS } from './seo-javascript.spec';
 import { SNAPSHOT_LIMITS } from './seo-limits.spec';
 import type { SeoCategory, SeoRuleId } from './seo-rules.spec';
@@ -161,6 +162,23 @@ export const CRAWL_PACING_LIMITS = {
  * (the page or the hop is refused, `robots-unreachable`).
  */
 export const CRAWL_ROBOTS_HOOK_MARGIN_MS = 1_000;
+
+/**
+ * The robots.txt answers that let the crawl through as "no robots.txt" (council review round 2, item
+ * C): a 4xx (`unavailable`, `forbidden`) and `too-many-redirects`. This is the sidebar's
+ * `ROBOTS_ALLOW_ALL_OUTCOMES` (`seo-indexability.spec.ts`) **less `private-redirect`**: a robots.txt
+ * whose redirect the fetcher refused (to a private address, or for a private start off its exact
+ * origin) was not read, so in the crawl it is unreadable (`CRAWL_ROBOTS_UNREADABLE_OUTCOMES`): the page,
+ * hop or sitemap is refused `robots-unreachable`. The sidebar's reading does not change.
+ */
+export const CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES = ['unavailable', 'forbidden', 'too-many-redirects'] as const satisfies readonly RobotsFetchOutcome[];
+
+/**
+ * The robots.txt answers the crawl cannot read (RFC 9309 §2.3.1.4; council review item 2, round 2 item
+ * C): `ROBOTS_UNKNOWN_OUTCOMES` and `private-redirect`. Each refuses the page, hop or sitemap
+ * (`robots-unreachable`), as does a lookup with no answer in time.
+ */
+export const CRAWL_ROBOTS_UNREADABLE_OUTCOMES = ['server-error', 'unreachable', 'timeout', 'bad-redirect', 'no-location', 'private-redirect'] as const satisfies readonly RobotsFetchOutcome[];
 
 /**
  * The longest the crawl waits for a fetched robots.txt's parse in the crawl worker (ms; council review,
@@ -349,8 +367,9 @@ export type CrawlServiceAnswer =
  *   answer was an unknown outcome (`ROBOTS_UNKNOWN_OUTCOMES`: `server-error`, `unreachable`,
  *   `timeout`, and the redirect failures `bad-redirect` and `no-location`, which RFC 9309 treats as
  *   unreachable), or no answer came within `ROBOTS_FETCH_LIMITS.timeoutMs` +
- *   `CRAWL_ROBOTS_HOOK_MARGIN_MS`. A 4xx or a missing file (`ROBOTS_ALLOW_ALL_OUTCOMES`) allows
- *   everything. This is the crawl's rule only: the sidebar's verdict ("unknown", the
+ *   `CRAWL_ROBOTS_HOOK_MARGIN_MS`, or a robots.txt redirect the fetcher refused (`private-redirect`,
+ *   round 2 item C; `CRAWL_ROBOTS_UNREADABLE_OUTCOMES`). A 4xx, a missing file or too many redirects
+ *   (`CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES`) allows everything. This is the crawl's rule only: the sidebar's verdict ("unknown", the
  *   `robots-txt-unreachable` finding) does not change. It replaces the hook's earlier `robots-timeout`
  *   (one rule, one outcome);
  * - `private-address`, `too-many-redirects`, `bad-redirect`, `no-location`, `unreachable`, `timeout`:

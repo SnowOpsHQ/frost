@@ -212,7 +212,8 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   `User-agent: frost-crawl` / `Disallow: /` blocks every URL although `*` allows them; robots.txt the
   crawl cannot read (an unknown outcome) refuses the page, `robots-unreachable`, never requested
   (council review, item 2: this replaces the start-origin rule that crawled it, flagged); "no
-  robots.txt" outcomes (a 4xx, a missing file) allow everything.
+  robots.txt" outcomes (`CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES`: a 4xx, a missing file, too many redirects)
+  allow everything.
   Each page carries the crawl's verdict and Googlebot's, from the same file.
 - `crawl-robots-unreachable-refuses-the-page` — (council review, item 2; RFC 9309 §2.3.1.4) robots.txt
   the crawl cannot read means everything is disallowed, for the crawl only (the sidebar's "unknown"
@@ -223,6 +224,13 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   that fails, refuses the page: the start URL on its own origin and a page on another origin alike are
   recorded `robots-unreachable` (a refusal, counted in `refused`; verdicts `unknown`) and never
   requested. `unavailable` and `forbidden` (no robots.txt) allow the page.
+- `crawl-robots-private-redirect-is-unreadable` — (council review round 2, item C) in the crawl only,
+  a robots.txt whose redirect the fetcher refused (`private-redirect`) is robots.txt the crawl could not
+  read (`CRAWL_ROBOTS_UNREADABLE_OUTCOMES`), not "no robots.txt": a public site's robots.txt redirecting
+  to `10.0.0.5`, and a private start's robots.txt redirecting to another port, each refuse the page
+  (`robots-unreachable`, verdicts `unknown`), and only robots.txt is requested. `too-many-redirects`,
+  `unavailable` and `forbidden` still allow the page; the sidebar's lookup still answers
+  `private-redirect` and reads it as before (`ROBOTS_ALLOW_ALL_OUTCOMES` is unchanged).
 - `crawl-robots-parse-has-its-own-wait` — (council review, item 1) the robots lookup's wait
   (`ROBOTS_FETCH_LIMITS.timeoutMs` + `CRAWL_ROBOTS_HOOK_MARGIN_MS`) covers the lookup only; a
   robots.txt fetched `ok` is parsed within a wait of its own, `CRAWL_ROBOTS_PARSE_WAIT_MS`. A
@@ -268,7 +276,8 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   lookup); an in-scope, allowed hop is followed in the same call.
 - `crawl-robots-fetch-is-origin-only` — with the exact-origin rule, `127.0.0.1:3000/robots.txt`
   redirecting to `127.0.0.1:9229` is not followed (no request reaches `:9229`): the robots outcome is
-  `private-redirect` (no robots.txt), never `unreachable`; a robots answer cached for another caller
+  `private-redirect`, never `unreachable`, which the crawl reads as unreadable (round 2, item C: the
+  page is refused `robots-unreachable` and never requested); a robots answer cached for another caller
   that followed such a redirect is not reused (the two lookups are cached apart); without the rule
   the sidebar's lookup behaves as before.
 - `crawl-redirect-robots-timeout-refuses-the-hop` — (each case a same-host `http` → `https` hop, so
