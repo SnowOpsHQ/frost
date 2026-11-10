@@ -9,7 +9,12 @@ import { parseWebUrl } from '@app/specs/web-url.spec';
 // is made here, so the redirect hook can decide scope and the address rule before any request to a
 // new origin.
 
-/** A crawl URL's normal form: `http(s)`, no credentials, the fragment dropped, the host lowercased, a default port removed, tracking parameters stripped; `null` when it is no crawl URL. */
+/**
+ * A crawl URL's normal form: `http(s)`, no credentials, the fragment dropped, the host lowercased, a
+ * default port removed, tracking parameters stripped, and the path's and query's percent-escapes
+ * normalised (`normalisePercent`); `null` when it is no crawl URL. The request, the frontier key and the
+ * scope's include / exclude prefixes all use this form.
+ */
 export function normaliseCrawlUrl(raw: string, base?: string): string | null {
   let url: URL;
   try {
@@ -20,12 +25,29 @@ export function normaliseCrawlUrl(raw: string, base?: string): string | null {
   // `parseWebUrl` keeps `http(s)` URLs with a host; the WHATWG parser already lowercases the host and drops a default port.
   if (parseWebUrl(url.href) === null || url.username !== '' || url.password !== '') return null;
   url.hash = '';
-  url.search = stripTracking(url.search);
+  url.pathname = normalisePercent(url.pathname);
+  url.search = normalisePercent(stripTracking(url.search));
   const href = url.href.endsWith('?') ? url.href.slice(0, -1) : url.href;
   return href.length > CRAWL_LIMITS.maxUrlChars ? null : href;
 }
 
 const TRACKING: ReadonlySet<string> = new Set(CRAWL_TRACKING_PARAMS);
+
+/** RFC 3986 §2.3's unreserved characters: ALPHA, DIGIT, `-`, `.`, `_`, `~`. */
+const UNRESERVED = /^[A-Za-z0-9\-._~]$/;
+
+/**
+ * Percent-encoding normalisation (RFC 3986 §6.2.2.1–2): an escape of an unreserved character is
+ * decoded (`%61` → `a`, `%7E` → `~`), every other escape is kept with upper-case hex (`%2f` → `%2F`).
+ * Reserved characters are never decoded (`%2F` stays, so `/%2Fadmin` is not `//admin`). Nothing else
+ * changes: case is kept, since paths are case-sensitive.
+ */
+export function normalisePercent(text: string): string {
+  return text.replace(/%([0-9A-Fa-f]{2})/g, (_escape, hex: string) => {
+    const char = String.fromCharCode(Number.parseInt(hex, 16));
+    return UNRESERVED.test(char) ? char : `%${hex.toUpperCase()}`;
+  });
+}
 
 /** `search` without the tracking parameters (names compared decoded and lowercased); the rest kept byte for byte, in order. */
 function stripTracking(search: string): string {
@@ -79,8 +101,9 @@ export function createCrawlScope(settings: CrawlScopeSettings): CrawlScopeRule {
   if (privateStart && !(CRAWL_PRIVATE_START_SCOPES as readonly CrawlScope[]).includes(settings.scope)) throw new Error('a private start stays on its exact origin (scope host)');
   const domain = registrableDomain(start.hostname);
   const directory = start.pathname.slice(0, start.pathname.lastIndexOf('/') + 1) || '/';
-  const include = [...settings.include];
-  const exclude = [...settings.exclude];
+  // Prefixes compare against the normal form (`normalisePercent`), literally and case-sensitively; a prefix typed with escapes is normalised the same way.
+  const include = settings.include.map(normalisePercent);
+  const exclude = settings.exclude.map(normalisePercent);
 
   /** A public start's port rule: either scheme, on the start URL's own port or a default one (80, 443; `''` once normalised). */
   const portAllowed = (url: URL): boolean => url.port === '' || url.port === start.port;

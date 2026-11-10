@@ -62,7 +62,8 @@ export const CrawlUrlSchema = z
 /**
  * An include or exclude prefix: literal text a URL's path (and query) must start with, beginning
  * with `/`, with no white space or control character. Never a pattern: `*`, `?` and the like are
- * plain characters.
+ * plain characters. Compared case-sensitively against the URL's percent-normalised form (unreserved
+ * escapes decoded, the rest upper-case hex; `CRAWL_SCOPES`), the prefix normalised the same way.
  */
 export const CrawlPrefixSchema = z
   .string()

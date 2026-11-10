@@ -210,8 +210,16 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   directory (the same port rule); include
   prefixes (any one must match, when given) and exclude prefixes (none may match) apply to the path
   and query, literally (`*` is a plain character); the start URL itself is always in scope.
+- `crawl-scope-prefixes-compare-the-normalised-path` — (council review, item 6; RFC 3986 §6.2.2) before
+  any prefix is compared, the URL's path and query are percent-normalised: an escape of an unreserved
+  character (ALPHA, DIGIT, `-`, `.`, `_`, `~`) is decoded and every escape left gets upper-case hex.
+  The request and the frontier key use the same normal form (`normaliseCrawlUrl`), and a prefix typed
+  with escapes is normalised the same way. Exclude `/admin` refuses `/%61dmin/` and `/%61%64min/x`;
+  `/%2Fadmin` (a reserved escape) is never decoded and stays in scope. The comparison stays
+  **case-sensitive**, because paths are: exclude `/admin` does not refuse `/Admin/` or `/%61%44min/`.
 - `crawl-strips-tracking-params` — `CRAWL_TRACKING_PARAMS` (any case) are removed and the remaining
-  query is kept byte for byte, in order; the fragment is dropped, the host lowercased, a default port
+  query is kept in order, byte for byte apart from the percent-normalisation above (`%20`, `+` and
+  every reserved escape stay); the fragment is dropped, the host lowercased, a default port
   removed; a non-`http(s)` URL, one with credentials or one longer than `maxUrlChars` is no crawl URL.
 - `crawl-caps-query-variants` — at most `maxQueryVariantsPerPath` (20) distinct query strings are
   admitted per path (each URL is offered once: the frontier is the seen-set); the URL without a query
@@ -283,6 +291,9 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   for the per-path query-variant cap: a resumed run, or a new crawler after a restart, counts what the
   run holds. A known URL is recorded again (an inlink) at any depth or query; a new one only within
   `CRAWL_LIMITS.maxDepth`, in scope, and under `maxQueryVariantsPerPath` variants of its path.
+- `crawl-frontier-dedupes-percent-encoded-urls` — (council review, item 6) a page linking `/%61bout`
+  and `/about` adds one frontier entry, `/about`, fetched once; `/%41bout` is `/About`, another page
+  (paths are case-sensitive).
 - Links are discovered from a `crawled` page that answered 2xx (those the served parse kept, at most
   `SNAPSHOT_LIMITS.maxLinks`); the first `maxLinksStoredPerPage` are stored (`internal`: in the run's
   scope). `outlinks` counts the `http(s)` links kept; `linksCut` marks a page with more than the parse

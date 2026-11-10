@@ -74,6 +74,18 @@ describe('crawl runs', () => {
     expect(run!.finishedAt).not.toBeNull();
   });
 
+  test('crawl-frontier-dedupes-percent-encoded-urls', async () => {
+    // Council review, item 6: a link to `/%61bout` and one to `/about` are one frontier entry, fetched once, under the
+    // normal form (RFC 3986 §6.2.2: unreserved escapes decoded) that the request and the scope's prefixes also use.
+    const t = setup({ [HOME]: htmlPage('Home', ['/%61bout', '/about', '/%41bout']), [`${HOME}about`]: htmlPage('About'), [`${HOME}About`]: htmlPage('About, capital') });
+    const runId = await started(t.service, settingsFor(HOME));
+    await t.service.idle();
+    expect(t.count('SELECT count(*) AS n FROM crawl_frontier WHERE run_id = ?', runId)).toBe(3);
+    expect(await t.repo.frontierEntry(runId, `${HOME}about`)).toMatchObject({ inlinks: 1 });
+    expect(await t.repo.frontierEntry(runId, `${HOME}%61bout`)).toBeNull();
+    expect([...t.fetcher.fetched].sort()).toEqual([HOME, `${HOME}About`, `${HOME}about`]);
+  });
+
   test('crawl-html-only', async () => {
     const site: Record<string, FakePage> = {
       [HOME]: htmlPage('Home', ['/guide.pdf', '/logo.png', '/data.json', '/plain']),

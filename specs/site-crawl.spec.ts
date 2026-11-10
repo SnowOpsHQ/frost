@@ -181,7 +181,12 @@ export const CRAWL_SEPARATE_HEADERS = ['x-robots-tag'] as const satisfies readon
  *   the last `/`).
  *
  * Include and exclude prefixes then narrow it: a URL's path (and query) must start with one include
- * prefix, when any is given, and with no exclude prefix. Prefixes are literal text, never patterns.
+ * prefix, when any is given, and with no exclude prefix. Prefixes are literal text, never patterns,
+ * compared **case-sensitively** (paths are case-sensitive) against the URL's normal form: its path and
+ * query percent-normalised (RFC 3986 §6.2.2; council review, item 6), an escape of an unreserved
+ * character (ALPHA, DIGIT, `-`, `.`, `_`, `~`) decoded and every escape left in upper-case hex, so
+ * exclude `/admin` refuses `/%61dmin/` while `/%2Fadmin` (a reserved escape) is never decoded. A prefix
+ * is normalised the same way. The request and the frontier key use the same normal form.
  */
 export const CRAWL_SCOPES = ['host', 'site', 'path'] as const;
 export type CrawlScope = (typeof CRAWL_SCOPES)[number];

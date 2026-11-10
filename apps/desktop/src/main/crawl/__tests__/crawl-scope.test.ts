@@ -1,6 +1,7 @@
 // Spec: specs/site-crawl.spec.ts (CRAWL_SCOPES, CRAWL_PRIVATE_START_SCOPES, CRAWL_TRACKING_PARAMS, CRAWL_LIMITS)
 // Acceptance: specs/site-crawl.feature.md (Fetching, politeness and robots: crawl-scope-host-site-path,
-// crawl-strips-tracking-params, crawl-caps-query-variants, crawl-private-start-is-origin-only); plan
+// crawl-strips-tracking-params, crawl-caps-query-variants, crawl-private-start-is-origin-only,
+// crawl-scope-prefixes-compare-the-normalised-path); plan
 // docs/plans/phase-12-big-bets.md Decision 6 and Task 6a
 import { describe, expect, test } from 'vitest';
 import { CRAWL_LIMITS, CRAWL_TRACKING_PARAMS } from '@app/specs/site-crawl.spec';
@@ -108,6 +109,35 @@ describe('crawl scope', () => {
       expect(normaliseCrawlUrl(bad), bad).toBeNull();
     }
     expect(normaliseCrawlUrl(`https://example.com/${'a'.repeat(CRAWL_LIMITS.maxUrlChars)}`)).toBeNull();
+  });
+
+  test('crawl-scope-prefixes-compare-the-normalised-path', () => {
+    // Council review, item 6 (RFC 3986 §6.2.2): escapes of unreserved characters (ALPHA, DIGIT, `-`, `.`, `_`, `~`) are
+    // decoded and every escape left is upper-case hex, in the path and the query, before any prefix is compared; the
+    // request and the frontier key use the same normal form. Reserved escapes stay encoded; comparison stays case-sensitive.
+    expect(normaliseCrawlUrl('https://example.com/%61bout')).toBe('https://example.com/about');
+    expect(normaliseCrawlUrl('https://example.com/%7Euser/%2d%2E%5f%30')).toBe('https://example.com/~user/-._0');
+    expect(normaliseCrawlUrl('https://example.com/a%2fb%3a?q=%41%2f%3d&r=%7e')).toBe('https://example.com/a%2Fb%3A?q=A%2F%3D&r=~');
+    expect(normaliseCrawlUrl('https://example.com/caf%c3%a9')).toBe('https://example.com/caf%C3%A9');
+    // Idempotent.
+    const once = normaliseCrawlUrl('https://example.com/%61%2f%7e?x=%62')!;
+    expect(normaliseCrawlUrl(once)).toBe(once);
+    const admin = scope('https://example.com/', 'host', [], ['/admin']);
+    expect(admin.check('https://example.com/admin/')).toBe('out-of-scope');
+    expect(admin.check('https://example.com/%61dmin/')).toBe('out-of-scope');
+    expect(admin.check('https://example.com/%61%64min/x')).toBe('out-of-scope');
+    expect(admin.check('https://example.com/%61%44min/x')).toBe('in');
+    // A reserved escape is never decoded: `/%2Fadmin` is not `//admin`, nor under `/admin`.
+    expect(admin.check('https://example.com/%2Fadmin')).toBe('in');
+    expect(admin.check('https://example.com/%2fadmin')).toBe('in');
+    // Case-sensitive: paths are.
+    expect(admin.check('https://example.com/Admin/')).toBe('in');
+    // Include prefixes compare the same normal form; a prefix typed with escapes is normalised too.
+    const blog = scope('https://example.com/', 'host', ['/blog'], ['/%61rchive']);
+    expect(blog.check('https://example.com/%62log/post')).toBe('in');
+    expect(blog.check('https://example.com/news')).toBe('out-of-scope');
+    expect(scope('https://example.com/', 'host', ['/blog'], ['/blog/%61rchive']).check('https://example.com/blog/archive/1')).toBe('out-of-scope');
+    expect(scope('https://example.com/', 'host', ['/blog?tag=%61'], []).check('https://example.com/blog?tag=a&x=1')).toBe('in');
   });
 
   test('crawl-caps-query-variants', () => {
