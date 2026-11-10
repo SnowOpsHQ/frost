@@ -1366,3 +1366,40 @@ Where the build differs from the plan above, or settles what it left open. **Lea
   start's port or 80/443. Several `Crawl-delay` values: the largest wins (Q13); a later robots
   lookup without an answer keeps a learned delay. Robots parsing runs behind an injected
   `parseRobots` (6b moves it into the crawl worker); robots lookups stay on the audit lane.
+- Task 3 (K-A1): no vendor dropped; each fixture maps to a `ready` snapshot whose organic positions
+  equal the vendor's rank field, and at run time organic ranks that are not 1…n answer
+  `invalid-answer`. A snapshot (even `no-results`) needs the vendor's organic container; vendor
+  error bodies answer `vendor-error`, so an error never becomes a "not ranking" point. Keyed
+  vendors (SerpApi, Serper) order sections by `SERP_API_TYPE_MAP`; consecutive DataForSEO elements
+  of one type join into one block; link-less ads are skipped. DataForSEO's country is a pinned
+  `gl → location_code` table (`DATAFORSEO_COUNTRY_LOCATION_CODES`, read 2026-11-10). Serper's
+  shape is unverified (no fetchable reference; desktop only). The SERP worker has an `api` job on
+  an analyzer instance of its own.
+- Task 6b: robots.txt is parsed in the crawl worker (its own `seo-analysis.cjs` instance, jobs
+  `crawl`, `crawl-robots`, `crawl-sitemap`); an `ok` robots.txt that fails to parse is treated as
+  blocking. **K-B2 removed `h1-multiple`, `h1-empty` and `heading-level-skipped`** (CSS-hidden
+  headings count in served HTML, so the crawl would report findings the sidebar does not); one-way
+  misses (`h1-missing`, `content-thin`, schema rules on microdata pages) stay, pinned by
+  `crawl-audit-never-adds-a-finding-on-hidden-or-microdata-pages`. Sitemap requests are crawl
+  requests (`fetchPage`: scope, robots, pacing, redirect hook); seeding runs on a fresh start only.
+  Query variants are counted in the frontier. A project's delete awaits any start or resume in
+  flight, and the project is re-checked inside the paced slot right before each request.
+- Task 10a (security review): each WebContents is classified once, at creation; a location
+  partition must be registered before its first tab. `registerBrowseClassSession` refuses the
+  default session and sessions marked by `markAppSession`, and only `location/**` may call it. A
+  refused cookie block reports the tab's overrides as `failed`. "Clear this site's data" is keyed
+  by session and origin, and answers `failed` when the clear throws.
+- Task 4: the vendor is recorded in the reading's `page_url` (its key-less canonical request URL);
+  `RankPoint` gains optional `source`/`provider`. `checkProjectSearches({ projectId, searchIds?,
+  provider, requests })` is re-planned in main and refused `changed` unless the confirmed vendor
+  and count match; only searches whose request params equal the saved series' are counted
+  (`other-series` / `unsupported` are skipped, never sent). A check stops on 401/402/403/429.
+  `ci_serp_api_purges` also records `purge_id`, `reason`, `project_id` and is append-only; an
+  API-only purge writes no `ci_purges` row (no synced all-zero entry), so it is logged only there.
+  **Deviation (lead ruling):** under `days N` each search key's newest API reading stays, as
+  Phase 6 keeps each lane's newest capture.
+- Task 7: `watch` long-polls a change counter, pending polls counted per window; the sheet refreshes
+  at most every `CRAWL_REFRESH_MS` while a run runs. CSV: dialog first, then a fixed id order
+  streamed in batches, one export at a time. "Looks client-rendered" is a crawled 2xx page under 50
+  served words (no script count stored: Decision 6's "with scripts" is not checked). The Pages
+  table shows both robots verdicts (frost-crawl and Googlebot). No index migration was needed.
