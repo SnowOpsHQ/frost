@@ -197,6 +197,8 @@ heuristic does, not what a linguist would count. No rule, finding or score depen
   main's generation, and a change bumps the state's version.
 - **Scenario: content-service-survives-a-closed-database** — with the database closed, reads answer
   no notes and writes `false`; the failure is logged in main, never sent to the chrome.
+- **Scenario: failed-notes-read-keeps-the-known-query** — a notes read the database fails answers
+  no notes and leaves the page's already-known target query (`targetQueryOf`) as it was.
 
 ## Panel (`content-view.test.ts`)
 - **Scenario: ngram-bar-classes** — a row's bar width is an SVG attribute from its count, never a style.

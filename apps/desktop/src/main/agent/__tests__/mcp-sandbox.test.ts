@@ -170,7 +170,7 @@ describe('sandbox detection', () => {
 
   test('mcp-sandbox-probe-reads-a-long-help', async () => {
     // bubblewrap 0.13.1 prints 5.5 kB of `--help`: the real probe must read all of it, or `--disable-userns` is never seen.
-    // (A generous timeout: this starts Node, slow on a loaded runner.)
+    // (Generous timeouts, the test's too: this starts Node three times, slow on a loaded runner.)
     const probe = (bytes: number) => runProbe(process.execPath, ['-e', `process.stdout.write('x'.repeat(${bytes - 17}) + ' --disable-userns')`], process.env['PATH'] ?? '', 30_000);
     const answer = await probe(8 * 1024);
     expect(answer?.code).toBe(0);
@@ -179,7 +179,7 @@ describe('sandbox detection', () => {
     expect(await detectSandbox({ platform: 'linux', exists: at('/usr/bin/bwrap'), run: real })).toMatchObject({ mode: 'bubblewrap', disableUserns: true });
     // More than the bound is still no answer.
     expect(await probe(SANDBOX_PROBE_MAX_BUFFER + 1024)).toBeNull();
-  });
+  }, 100_000);
 
   test('mcp-sandbox-fallback-reported-as-none', async () => {
     const ok = { '--version': { code: 0, stdout: 'bubblewrap 0.13.1' } };
