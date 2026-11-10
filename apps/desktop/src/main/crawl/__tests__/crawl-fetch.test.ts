@@ -222,6 +222,28 @@ describe('crawl fetching', () => {
     expect(lanes.maxInFlight()).toBe(1);
   });
 
+  test('crawl-slow-before-request-never-shortens-the-interval', async () => {
+    // Council review round 2, item A (K-B1): the start is stamped right before the request, after every async check in the
+    // host's slot. A `beforeRequest` (the project lookup) that takes 800 ms on one call and none on the next never brings the
+    // two network starts closer than the effective interval (stamped before the check, they went out 200 ms apart, and
+    // only the lane's 500 ms floor held them).
+    for (const intervalMs of [1_000, 2_500, 4_000]) {
+      const slowMs = intervalMs - 200;
+      const routes: Record<string, Route> = { 'https://example.com/a': html(), 'https://example.com/b': html(), 'https://example.com/c': html() };
+      const { net, lanes, crawl } = crawler(routes, fakeRobots({}).source);
+      const run = crawl.forRun(settings('https://example.com/', { intervalMs }));
+      const slow = () => new Promise<boolean>((resolve) => setTimeout(() => resolve(true), slowMs));
+      const fast = async () => true;
+      const results = await settle(Promise.all([run.fetchPage('https://example.com/a', undefined, { beforeRequest: slow }), run.fetchPage('https://example.com/b', undefined, { beforeRequest: fast }), run.fetchPage('https://example.com/c', undefined, { beforeRequest: slow })]));
+      expect(results.map((r) => r.outcome), String(intervalMs)).toEqual(['response', 'response', 'response']);
+      const starts = ['/a', '/b', '/c'].map((path) => net.requests.find((r) => r.url === `https://example.com${path}`)!.at);
+      for (let i = 1; i < starts.length; i++) expect(starts[i]! - starts[i - 1]!, `${intervalMs} ${i}`).toBeGreaterThanOrEqual(intervalMs);
+      // The fetch call's `startedAt` is the request's own start.
+      expect(results.map((r) => r.startedAt)).toEqual(starts);
+      expect(lanes.maxInFlight()).toBe(1);
+    }
+  });
+
   test('crawl-pacing-survives-runs', async () => {
     // Task 6a review: pacing state belongs to the crawl fetcher; a paused run's last start and back-off hold for the next run.
     const routes: Record<string, Route> = { 'https://example.com/a': html('slow', 429), 'https://example.com/b': html() };

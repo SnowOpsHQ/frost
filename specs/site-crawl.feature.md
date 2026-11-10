@@ -156,6 +156,12 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   follow each other at once (not spaced by the interval, bounded by `maxRedirects`), and the next
   call still waits the full interval after that call **started**. The lane's own floor
   (`CRAWL_FETCHER_LIMITS`) never delays the crawl's pacing.
+- `crawl-slow-before-request-never-shortens-the-interval` — (council review round 2, item A; K-B1) a
+  call's start is stamped right before its request, after every async check in the host's slot
+  (`beforeRequest`, the project lookup), never as the slot opens: with one call's check taking the
+  interval less 200 ms on the fake clock and the next call's none, consecutive network starts are still
+  at least the effective interval apart (the lane's floor is not what holds them), and each call's
+  `startedAt` is its request's own start.
 - `crawl-is-polite-per-host` — two hosts redirecting into a third: both calls end `redirected` with
   the target, nothing is requested from the third host (nor its robots.txt) inside them, and the third
   host's pages, fetched on their own, are paced as one host; an `http` → `https` redirect on one host

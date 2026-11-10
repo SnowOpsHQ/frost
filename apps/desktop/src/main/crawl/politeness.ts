@@ -76,11 +76,15 @@ export function pacingKey(url: string): string | null {
 export interface Politeness {
   /**
    * Runs `fn` (one fetch call to `host`) when the host is free and its interval has passed: at once
-   * for an idle host. Answers what `fn` answers; rejects with `CrawlAbortedError` when `signal` aborts
-   * before `fn` started (an abort once it runs is `fn`'s to handle), and with `CrawlSlowDownError` for a
-   * new host while `maxPacedHosts` are paced.
+   * for an idle host. `before`, when given, is awaited first inside the host's slot (the slot stays
+   * held): the last async checks before the request. The call's start is stamped only once `before` has
+   * settled, right before `fn` is called with nothing awaited between (council review round 2, item A:
+   * a slow check never brings two requests closer than the interval). A `before` that rejects ends the
+   * call with its error, no start stamped (nothing was requested). Answers what `fn` answers; rejects
+   * with `CrawlAbortedError` when `signal` aborts before `fn` started (an abort once it runs is `fn`'s
+   * to handle), and with `CrawlSlowDownError` for a new host while `maxPacedHosts` are paced.
    */
-  schedule<T>(host: string, fn: () => Promise<T>, signal?: AbortSignal): Promise<T>;
+  schedule<T>(host: string, fn: () => Promise<T>, signal?: AbortSignal, before?: () => Promise<void>): Promise<T>;
   /** `Crawl-delay` for `host` as `source` (an origin's robots.txt; default the host) asked for it (ms; `null`: none). The host keeps the largest. */
   setCrawlDelay(host: string, ms: number | null, source?: string): void;
   /** A call's answer: its status (`null`: none, a network error, which changes nothing) and its `Retry-After` header. */
@@ -197,10 +201,13 @@ export function createPacing(options: { readonly clock?: CrawlClock; readonly ma
     }
     const next = state.waiting.shift()!;
     state.busy = true;
-    state.lastStart = at;
-    // A start under a raised interval moves the host's `waitUntil` past what the run's own interval would give.
-    if (intervalOf(state, next.intervalMs) > next.intervalMs) changes += 1;
     next.start();
+  };
+
+  /** Stamps a call's start on `state` (right before its request): a start under a raised interval moves the host's `waitUntil` past what the run's own interval would give. */
+  const stamp = (state: HostState, intervalMs: number): void => {
+    state.lastStart = clock.now();
+    if (intervalOf(state, intervalMs) > intervalMs) changes += 1;
   };
 
   return {
@@ -208,7 +215,7 @@ export function createPacing(options: { readonly clock?: CrawlClock; readonly ma
     forRun(runIntervalMs) {
       const intervalMs = clampInterval(runIntervalMs);
       return {
-        schedule<T>(host: string, fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+        schedule<T>(host: string, fn: () => Promise<T>, signal?: AbortSignal, before?: () => Promise<void>): Promise<T> {
           if (signal?.aborted) return Promise.reject(new CrawlAbortedError());
           const state = stateOf(host);
           if (!state) return Promise.reject(new CrawlSlowDownError());
@@ -217,9 +224,14 @@ export function createPacing(options: { readonly clock?: CrawlClock; readonly ma
               intervalMs,
               start: () => {
                 signal?.removeEventListener('abort', onAbort);
+                /** The start is stamped here, after `before`, and `fn` called with nothing awaited between. */
+                const call = (): Promise<T> => {
+                  stamp(state, intervalMs);
+                  return fn();
+                };
                 let running: Promise<T>;
                 try {
-                  running = fn();
+                  running = before ? before().then(call) : call();
                 } catch (error) {
                   running = Promise.reject(error);
                 }

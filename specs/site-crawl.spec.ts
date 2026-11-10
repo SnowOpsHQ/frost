@@ -115,7 +115,10 @@ export const CRAWL_ANALYSIS_TIMEOUT_MS = 20_000;
 /**
  * The user's interval between two fetch calls to one origin (ms): `default` 1 s, at least `min`
  * (the crawl lane's floor, `CRAWL_FETCHER_LIMITS.perOriginIntervalMs`), at most `max`. The effective
- * interval is this, raised to `Crawl-delay`, back-off and `Retry-After`; never lower.
+ * interval is this, raised to `Crawl-delay`, back-off and `Retry-After`; never lower. It is measured
+ * between **network starts**: a call's start is stamped right before its request, after every async
+ * check in the host's slot (the project lookup), so a slow check never brings two requests closer
+ * (council review round 2, item A).
  */
 export const CRAWL_INTERVAL_MS = { default: 1_000, min: 500, max: 4_000 } as const;
 

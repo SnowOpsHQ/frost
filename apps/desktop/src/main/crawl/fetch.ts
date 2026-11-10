@@ -35,7 +35,9 @@ import { createCrawlScope, normaliseCrawlUrl, type CrawlScopeRule, type CrawlSco
 // "unknown". A fetched robots.txt whose parse fails or runs out of that wait is read as blocked
 // (`blocked-by-robots`), never unknown, and the failed parse is not cached. Task 6b also fetches sitemap files through
 // `fetchPage` (per-call caps and `Accept`), so they pass the same scope, robots.txt, pacing and
-// redirect policy as pages, and asks `beforeRequest` inside the paced slot.
+// redirect policy as pages, and asks `beforeRequest` inside the paced slot. The pacing stamps a call's
+// start only after `beforeRequest` has answered, right before the request (council review round 2, item
+// A): a slow check never brings two requests to one host closer than the effective interval.
 
 /** The crawl lane (`fetcher.spec.ts`, Lanes): a bounded fetcher over main's hop and resolver with `CRAWL_FETCHER_LIMITS`, per-origin queues of its own. */
 export function createCrawlLane(options: { readonly hop: Hop; readonly resolve: Resolve; readonly now?: () => number }): BoundedFetcher {
@@ -329,8 +331,7 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
           fetched = await politeness.schedule(
             host,
             async () => {
-              // Inside the host's slot, after every wait: the last check before the request.
-              if (options.beforeRequest && !(await options.beforeRequest())) throw new RefusedBeforeRequest();
+              // The pacing stamped this call's start just now, after `before`: the request goes out with nothing awaited between.
               startedAt = clock.now();
               const result = await deps.fetcher.fetch({
                 url,
@@ -350,6 +351,10 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
               return result;
             },
             signal,
+            // Inside the host's slot, after every wait: the last checks before the request, before its start is stamped.
+            async () => {
+              if (options.beforeRequest && !(await options.beforeRequest())) throw new RefusedBeforeRequest();
+            },
           );
         } catch (error) {
           if (error instanceof CrawlAbortedError || error instanceof RefusedBeforeRequest) return none('aborted', robots);
