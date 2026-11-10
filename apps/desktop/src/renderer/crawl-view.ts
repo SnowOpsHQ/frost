@@ -11,6 +11,7 @@ import {
   CRAWL_PAGES_LIMITS,
   CRAWL_REFUSAL_TEXT,
   CRAWL_REFRESH_MS,
+  CRAWL_ROBOTS_UNREACHABLE_MESSAGE,
   CRAWL_RULE_IDS,
   CRAWL_SCORE_LABEL,
   CRAWL_SLOW_DOWN_MESSAGE,
@@ -122,6 +123,7 @@ const REASON_TEXT: Readonly<Partial<Record<CrawlRunReason, string>>> = {
   'max-pages': 'it reached its page limit',
   'project-deleted': 'its project was deleted',
   error: 'it could not go on',
+  'robots-unreachable': CRAWL_ROBOTS_UNREACHABLE_MESSAGE,
 };
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;

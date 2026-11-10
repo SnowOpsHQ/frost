@@ -21,6 +21,7 @@ import {
   CRAWL_PAGES_LIMITS,
   CRAWL_REFRESH_MS,
   CRAWL_REFUSAL_TEXT,
+  CRAWL_ROBOTS_UNREACHABLE_MESSAGE,
   CRAWL_SCORE_LABEL,
   CRAWL_VIEW_TEXT,
   type CrawlServiceAnswer,
@@ -167,6 +168,11 @@ describe('the crawl view model', () => {
     expect(CRAWL_VIEW_TEXT.retentionNote.toLowerCase()).toContain('deleted per run');
     // A slow-down pause says why.
     expect(runRowOf(run({ reason: 'slow-down' }), view()).state).toContain('slow down');
+    // A robots.txt pause says why, and that Resume tries again (council review round 2, item D).
+    const robots = runRowOf(run({ reason: 'robots-unreachable' }), view({ available: true }));
+    expect(robots.state).toBe(`Paused: ${CRAWL_ROBOTS_UNREACHABLE_MESSAGE}`);
+    expect(robots.state).toBe("Paused: frost could not read the site's robots.txt. Resume to try again.");
+    expect(robots.resume).toMatchObject({ shown: true, disabled: false });
   });
 
   test('crawl-view-status-line-clears-when-the-run-moves-on', () => {

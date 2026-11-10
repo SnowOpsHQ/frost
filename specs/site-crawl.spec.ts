@@ -296,13 +296,21 @@ export type CrawlRunState = (typeof CRAWL_RUN_STATES)[number];
  *   to slow down");
  * - `max-pages`: done with `maxPages` recorded and URLs still queued;
  * - `project-deleted`: cancelled because its project was deleted or tombstoned;
- * - `error`: failed.
+ * - `error`: failed;
+ * - `robots-unreachable` (council review round 2, item D): a queued page (the start URL, another
+ *   host's page, a redirect target) or a same-host redirect hop met robots.txt the crawl cannot read
+ *   (`CRAWL_ROBOTS_UNREADABLE_OUTCOMES`, or no answer in time). Nothing is recorded for that page and
+ *   its frontier entry stays queued, so a brief robots.txt failure never completes the queue as
+ *   refused; the run pauses ("`CRAWL_ROBOTS_UNREACHABLE_MESSAGE`") and Resume tries the page again.
  */
-export const CRAWL_RUN_REASONS = ['user', 'quit', 'interrupted', 'slow-down', 'max-pages', 'project-deleted', 'error'] as const;
+export const CRAWL_RUN_REASONS = ['user', 'quit', 'interrupted', 'slow-down', 'max-pages', 'project-deleted', 'error', 'robots-unreachable'] as const;
 export type CrawlRunReason = (typeof CRAWL_RUN_REASONS)[number];
 
 /** What the paused message says for `slow-down`. */
 export const CRAWL_SLOW_DOWN_MESSAGE = 'The site asked frost to slow down.' as const;
+
+/** What the paused message says for `robots-unreachable` (council review round 2, item D). */
+export const CRAWL_ROBOTS_UNREACHABLE_MESSAGE = "frost could not read the site's robots.txt. Resume to try again." as const;
 
 /**
  * Notes main keeps about a run for this session (Task 6b review; not stored: the crawl view carries
@@ -369,7 +377,9 @@ export type CrawlServiceAnswer =
  *   unreachable), or no answer came within `ROBOTS_FETCH_LIMITS.timeoutMs` +
  *   `CRAWL_ROBOTS_HOOK_MARGIN_MS`, or a robots.txt redirect the fetcher refused (`private-redirect`,
  *   round 2 item C; `CRAWL_ROBOTS_UNREADABLE_OUTCOMES`). A 4xx, a missing file or too many redirects
- *   (`CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES`) allows everything. This is the crawl's rule only: the sidebar's verdict ("unknown", the
+ *   (`CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES`) allows everything. Since round 2, item D this is a fetch
+ *   outcome only: the crawler records no row for it, leaves the URL queued and pauses the run
+ *   (`CRAWL_RUN_REASONS`, `robots-unreachable`), so no new row carries it. This is the crawl's rule only: the sidebar's verdict ("unknown", the
  *   `robots-txt-unreachable` finding) does not change. It replaces the hook's earlier `robots-timeout`
  *   (one rule, one outcome);
  * - `private-address`, `too-many-redirects`, `bad-redirect`, `no-location`, `unreachable`, `timeout`:

@@ -222,8 +222,8 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   `no-location`, which RFC 9309 counts as unreachable), a lookup still unanswered at
   `ROBOTS_FETCH_LIMITS.timeoutMs` + `CRAWL_ROBOTS_HOOK_MARGIN_MS` (recorded as `timeout`), and a lookup
   that fails, refuses the page: the start URL on its own origin and a page on another origin alike are
-  recorded `robots-unreachable` (a refusal, counted in `refused`; verdicts `unknown`) and never
-  requested. `unavailable` and `forbidden` (no robots.txt) allow the page.
+  answered `robots-unreachable` (verdicts `unknown`) and never requested (the crawler then records
+  nothing and pauses the run: round 2, item D, `crawl-robots-unreachable-pauses-the-run`). `unavailable` and `forbidden` (no robots.txt) allow the page.
 - `crawl-robots-private-redirect-is-unreadable` — (council review round 2, item C) in the crawl only,
   a robots.txt whose redirect the fetcher refused (`private-redirect`) is robots.txt the crawl could not
   read (`CRAWL_ROBOTS_UNREADABLE_OUTCOMES`), not "no robots.txt": a public site's robots.txt redirecting
@@ -283,7 +283,7 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
 - `crawl-redirect-robots-timeout-refuses-the-hop` — (each case a same-host `http` → `https` hop, so
   another robots.txt) a redirect target whose robots answer is
   `timeout`, and one whose lookup is still unanswered at `ROBOTS_FETCH_LIMITS.timeoutMs` +
-  `CRAWL_ROBOTS_HOOK_MARGIN_MS`: the hop is refused and the page recorded `robots-unreachable`, never a
+  `CRAWL_ROBOTS_HOOK_MARGIN_MS`: the hop is refused and the page answered `robots-unreachable`, never a
   page fetch `timeout` (the hook's wait is not the page's deadline); a target whose robots answer is
   `server-error`, `unreachable`, `bad-redirect` or `no-location` (each its own case) is refused the
   same way (council review, item 2: the hook's `robots-timeout` is folded into `robots-unreachable`,
@@ -350,8 +350,19 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   refusal or a failure is recorded as such; `deferred` records nothing, leaves the URL queued and pauses
   the run (`slow-down`); a `slowDown` answer is recorded, then the run pauses (`slow-down`,
   `CRAWL_SLOW_DOWN_MESSAGE`).
+- (Council review round 2, item D) `robots-unreachable` — robots.txt the crawl cannot read, for any
+  queued page (the start URL, another host's page, a cross-host redirect target) or for a same-host
+  redirect hop — **never completes the frontier entry**: no row is written, the URL stays `queued`, and
+  the run pauses (`robots-unreachable`, `CRAWL_ROBOTS_UNREACHABLE_MESSAGE`: "frost could not read the
+  site's robots.txt. Resume to try again."). A start URL whose robots.txt is never readable pauses at
+  once instead of finishing. A brief failure (a robots.txt re-fetch answering 429 after the cache's
+  TTL, cached as `server-error` for a minute) therefore pauses the run rather than marking the queue
+  refused and done; Resume asks again (a Resume within that minute meets the cached failure and pauses
+  again). A replayed page (item 3) that meets it keeps the row it already had, still counted: its
+  entry stays queued, and the replay that completes it replaces the row. Sitemaps are unchanged: a
+  sitemap request refused this way is skipped.
 - The run ends `done` when the frontier is empty, or `maxPages` rows are recorded (`max-pages` while
-  URLs are still queued); `paused` (`user`, `quit`, `slow-down`); `cancelled` (`user`, or
+  URLs are still queued); `paused` (`user`, `quit`, `slow-down`, `robots-unreachable`); `cancelled` (`user`, or
   `project-deleted`); `failed` (`error`, a database failure). Once stopped, nothing more is fetched or
   written: a fetch or a parse under way is left to end on its own and its answer dropped.
 
@@ -384,6 +395,13 @@ fetches (no network, no timer), the real session database, the crawl worker's co
 - `crawl-deferred-and-slow-down-pause-the-run` — `deferred`: no row, the URL queued, the run paused
   (`slow-down`), never resumed by itself; after Resume, a 429 that says slow down is recorded and the
   run pauses again.
+- `crawl-robots-unreachable-pauses-the-run` — (council review round 2, item D) with the real crawl
+  fetcher on a fake clock: robots.txt answers 429 (`server-error`) once two pages are crawled; the run
+  pauses (`robots-unreachable`) with those two rows, no row for the next page, every other URL still
+  `queued` and nothing refused. Resume while it still fails pauses again at once with nothing recorded;
+  Resume with robots.txt readable crawls the rest and the run ends `done`, every row `crawled`. A start
+  URL whose robots.txt is never readable pauses at once (nothing requested, the start still queued),
+  and a run whose oldest queued page is on another host with an unreadable robots.txt pauses the same way.
 - `crawl-query-variants-counted-from-the-frontier` — 30 variants of one path admit 20; a later page's
   new variants are refused and its known ones counted as inlinks; a restart counts the same rows.
 - `crawl-cancels-when-its-project-is-gone` — a project tombstoned mid-run (by sync) while a fetch call
@@ -605,7 +623,8 @@ SL-096/097. Spec: `CRAWL_WATCH`, `CRAWL_STATUS_CLASSES`, `CRAWL_INDEXABLE_FILTER
   running crawl disables Start (busy) and offers Pause and Cancel; finished runs offer delete and export.
 - `crawl-view-run-size-and-retention-note` — each run shows its pages, queued, refused and failed counts
   and its size ("X MB fetched": the page count shows once, in the progress line); the sheet says crawl
-  data is deleted per run; a slow-down pause says why.
+  data is deleted per run; a slow-down pause says why, and a `robots-unreachable` pause reads "Paused:
+  frost could not read the site's robots.txt. Resume to try again." with Resume offered (round 2, item D).
 - `crawl-view-status-line-clears-when-the-run-moves-on` — the sheet's status line about a run holds only
   while that run stays in the states it was said for: "Crawl started." while the run is not in main's view
   yet, queued or running; a run action's refusal while the run stays in the state it was asked in. Main's

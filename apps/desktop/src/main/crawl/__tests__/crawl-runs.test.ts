@@ -11,7 +11,7 @@ import { SITEMAP_LIMITS } from '@app/specs/seo-checks.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
 import { CrawlPageRowSchema, type CrawlPageAnalysis, type CrawlPageJob } from '@app/specs/site-crawl.schema';
-import { CRAWL_LIMITS, CRAWL_RUN_NOTES, CRAWL_SLOW_DOWN_MESSAGE } from '@app/specs/site-crawl.spec';
+import { CRAWL_LIMITS, CRAWL_ROBOTS_UNREACHABLE_MESSAGE, CRAWL_RUN_NOTES, CRAWL_SLOW_DOWN_MESSAGE } from '@app/specs/site-crawl.spec';
 import { parseCrawlRobots, parseCrawlSitemap, type CrawlPageResult } from '../analyse';
 import { createCrawler, type CrawlerDeps, type CrawlMemory } from '../crawler';
 import { createCrawlFetcher, type CrawlRobotsSource } from '../fetch';
@@ -307,6 +307,81 @@ describe('crawl runs', () => {
     expect(await t.repo.getPage(runId, `${HOME}a`)).toMatchObject({ outcome: 'crawled' });
     expect(await t.repo.getPage(runId, `${HOME}b`)).toMatchObject({ status: 429 });
     expect(await t.repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'slow-down' });
+  });
+
+  test('crawl-robots-unreachable-pauses-the-run', async () => {
+    // Council review round 2, item D: robots.txt the crawl cannot read never completes a queued page. A re-fetch of robots.txt
+    // that answers 429 partway through (`server-error`, cached for a minute) would otherwise mark every queued URL
+    // `robots-unreachable` and done within that minute and end the run `done`. Instead nothing is recorded for the page, its
+    // frontier entry stays queued, and the run pauses (`robots-unreachable`); Resume, with robots.txt readable again, completes
+    // the queue.
+    const kit = timerClock();
+    const db = tempStore();
+    cleanups.push(db.close);
+    const repo = db.store.siteCrawl;
+    const requests: string[] = [];
+    const lane: BoundedFetcher = {
+      async fetch(request) {
+        requests.push(request.url);
+        const body = new TextEncoder().encode(request.url === HOME ? '<!doctype html><title>Home</title>' + [1, 2, 3, 4].map((i) => `<a href="/p${i}">p</a>`).join('') : '<!doctype html><title>Page</title>') as Uint8Array<ArrayBuffer>;
+        return { url: request.url, outcome: 'response', status: 200, finalUrl: request.url, redirects: 0, chain: [], headers: { 'content-type': 'text/html' }, body, truncated: false, durationMs: 5 };
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    let readable = (_url: string): boolean => true;
+    const robots: CrawlRobotsSource = {
+      get: async (pageUrl) => {
+        const url = `${new URL(pageUrl).origin}/robots.txt`;
+        return readable(pageUrl) ? { url, outcome: 'unavailable', status: 404, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false } : { url, outcome: 'server-error', status: 429, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false };
+      },
+    };
+    const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent: () => 'Mozilla/5.0', clock: kit.clock });
+    const crawler = createCrawler({ repo, fetcher, analyse: inProcessAnalyse, projectLive: async () => true, now: kit.now });
+    const service = createCrawlService({ repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, now: kit.now, log: () => undefined });
+
+    // robots.txt stops answering once two pages are crawled.
+    readable = () => requests.length < 2;
+    const runId = await started(service, settingsFor(HOME));
+    await kit.settle(service.idle());
+    expect(requests).toEqual([HOME, `${HOME}p1`]);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 2, queued: 3, refused: 0, failed: 0 } });
+    expect(await repo.getPage(runId, `${HOME}p2`)).toBeNull();
+    for (const i of [2, 3, 4]) expect(await repo.frontierEntry(runId, `${HOME}p${i}`)).toMatchObject({ state: 'queued' });
+    expect(CRAWL_ROBOTS_UNREACHABLE_MESSAGE).toBe("frost could not read the site's robots.txt. Resume to try again.");
+
+    // Resume while it still fails: paused again at once, nothing recorded.
+    expect(await service.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(service.idle());
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 2, queued: 3 } });
+    expect(requests).toHaveLength(2);
+
+    // Readable again: Resume completes the queue.
+    readable = () => true;
+    expect(await service.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(service.idle());
+    expect(requests).toEqual([HOME, ...[1, 2, 3, 4].map((i) => `${HOME}p${i}`)]);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'done', reason: null, counts: { pages: 5, queued: 0, refused: 0 } });
+    expect((await repo.pagesOf(runId, { limit: 10, offset: 0 })).every((row) => row.outcome === 'crawled')).toBe(true);
+
+    // A start URL whose robots.txt is never readable: the run pauses at once, nothing requested, the start still queued.
+    readable = () => false;
+    requests.length = 0;
+    const unreadable = await started(service, settingsFor('https://other.example.com/'));
+    await kit.settle(service.idle());
+    expect(requests).toEqual([]);
+    expect(await repo.getRun(unreadable)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 0, queued: 1 } });
+    expect(await repo.frontierEntry(unreadable, 'https://other.example.com/')).toMatchObject({ state: 'queued' });
+
+    // Another host's queued page pauses the run the same way (its robots.txt is the one that fails), however the others read.
+    readable = (url) => new URL(url).hostname !== 'www.example.com';
+    const cross = await repo.createRun({ projectId: null, settings: settingsFor(HOME, { scope: 'site' }), now: kit.now() });
+    await repo.enqueue(cross.id, [{ url: 'https://www.example.com/x', depth: 1, source: 'link' }, { url: `${HOME}p1`, depth: 1, source: 'link' }]);
+    await repo.updateRun(cross.id, { state: 'paused', reason: 'user' }, kit.now());
+    requests.length = 0;
+    expect(await service.resume(cross.id)).toEqual({ status: 'resumed', runId: cross.id });
+    await kit.settle(service.idle());
+    expect(requests).toEqual([]);
+    expect(await repo.getRun(cross.id)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 0, queued: 2 } });
   });
 
   test('crawl-pacing-survives-a-restart', async () => {

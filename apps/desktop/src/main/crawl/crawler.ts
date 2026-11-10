@@ -23,7 +23,12 @@ import type { SitemapSeeder } from './sitemaps';
 // - another media type is recorded `not-html`, never parsed;
 // - `redirected` (another host name) is recorded and its target queued at depth + 1, as a link;
 // - a refusal or a failure is recorded as such; `deferred` records nothing, leaves the URL queued and
-//   pauses the run (`slow-down`), as `slowDown` does after its row.
+//   pauses the run (`slow-down`), as `slowDown` does after its row;
+// - `robots-unreachable` (robots.txt the crawl cannot read, for the page or a same-host hop) records
+//   nothing either: the URL stays queued and the run pauses (`robots-unreachable`; council review round 2,
+//   item D), so a brief robots.txt failure (a 429 cached for a minute) never completes the rest of the
+//   queue as refused. Resume asks again. A page replayed after a stop keeps the row it had until a
+//   replay completes it.
 // Nothing is written once the run is stopped: every write follows a check of its signal, and a fetch or
 // a parse still under way when it stops is left to end on its own (its answer is dropped). A page's
 // completion (its discoveries and its frontier entry marked done: `CrawlFrontier.complete`) is one write
@@ -114,6 +119,7 @@ const STOPPED: Readonly<Record<CrawlStopReason, CrawlRunEnd>> = {
   'project-deleted': { state: 'cancelled', reason: 'project-deleted' },
 };
 const SLOW_DOWN: CrawlRunEnd = { state: 'paused', reason: 'slow-down' };
+const ROBOTS_UNREACHABLE: CrawlRunEnd = { state: 'paused', reason: 'robots-unreachable' };
 const TERMINAL: ReadonlySet<CrawlRunState> = new Set(['done', 'cancelled', 'failed']);
 const REFUSED: ReadonlySet<string> = new Set(CRAWL_REFUSED_OUTCOMES);
 const FAILED: ReadonlySet<string> = new Set(CRAWL_FAILED_OUTCOMES);
@@ -307,6 +313,9 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
             if (fetched === ABORTED || fetched.outcome === 'aborted' || signal.aborted) return await finish(stoppedEnd());
             // A host past the pacing table's cap: nothing requested, nothing recorded; the URL stays queued.
             if (fetched.outcome === 'deferred') return await finish(SLOW_DOWN);
+            // robots.txt the crawl cannot read (the page's, or a same-host hop's): nothing recorded, the URL stays queued, the run
+            // pauses; Resume asks again. A replayed page's earlier row is left as it was (still counted, replaced once completed).
+            if (fetched.outcome === 'robots-unreachable') return await finish(ROBOTS_UNREACHABLE);
 
             let outcome: CrawlPageOutcome;
             let page: CrawlPageAnalysis | null = null;
