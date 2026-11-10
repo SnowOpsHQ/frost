@@ -62,6 +62,8 @@ export interface CredentialStoreDeps<S extends string = CredentialSlot> {
   readonly normalize?: (slot: S, value: unknown) => string | null;
   /** The file read back, at most (bytes; default `CREDENTIAL_LIMITS.maxFileBytes`). */
   readonly maxFileBytes?: number;
+  /** What each log line starts with (default `agent credentials`; Phase 12's data store says `data credentials`). */
+  readonly logPrefix?: string;
 }
 
 /**
@@ -148,6 +150,7 @@ export function credentialSettings<S extends string = CredentialSlot>(store: Cre
 }
 
 export function createCredentialStore<S extends string = CredentialSlot>(deps: CredentialStoreDeps<S>): CredentialStore<S> {
+  const prefix = deps.logPrefix ?? 'agent credentials';
   const log = deps.log ?? (() => undefined);
   const isSlot = (deps.isSlot ?? isCredentialSlot) as (value: unknown) => value is S;
   const normalize = deps.normalize ?? ((_slot: S, value: unknown) => normalizeKey(value));
@@ -166,7 +169,7 @@ export function createCredentialStore<S extends string = CredentialSlot>(deps: C
     if (loaded !== null) return loaded;
     const reading = deps.fs.readFile(deps.file).then((bytes) => parseStored(bytes, isSlot, maxFileBytes), (error: unknown) => {
       if ((error as { code?: unknown }).code === 'ENOENT') return EMPTY;
-      log('agent credentials: the key file could not be read');
+      log(`${prefix}: the key file could not be read`);
       // Not remembered: the next call reads again.
       if (loaded === reading) loaded = null;
       return 'error' as const;
@@ -197,7 +200,7 @@ export function createCredentialStore<S extends string = CredentialSlot>(deps: C
       loaded = Promise.resolve(next);
       return true;
     } catch {
-      log('agent credentials: the key file could not be written');
+      log(`${prefix}: the key file could not be written`);
       await deps.fs.rm(temp, { force: true }).catch(() => undefined);
       return false;
     }
@@ -215,7 +218,7 @@ export function createCredentialStore<S extends string = CredentialSlot>(deps: C
     try {
       blob = Buffer.from(await deps.safeStorage.encryptStringAsync(seal(slot, key))).toString('base64');
     } catch {
-      log('agent credentials: encryption failed');
+      log(`${prefix}: encryption failed`);
       return 'failed';
     }
     const current = await load();
@@ -240,7 +243,7 @@ export function createCredentialStore<S extends string = CredentialSlot>(deps: C
       if (opened === 'other' || normalize(slot, opened.key) !== opened.key) return 'failed';
       return { key: opened.key, blob, reEncrypt: decrypted.shouldReEncrypt };
     } catch {
-      log('agent credentials: a stored key could not be decrypted');
+      log(`${prefix}: a stored key could not be decrypted`);
       return 'failed';
     }
   };

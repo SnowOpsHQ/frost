@@ -68,6 +68,7 @@ import { createMainInspector } from './inspector/service';
 import { createAiChecksMain } from './ai-checks/main';
 import { createHelpMain } from './help/main';
 import { createDiagnosticsMain } from './diagnostics/main';
+import { setupDataSources } from './data-sources';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -463,6 +464,8 @@ function start(): void {
     const help = createHelpMain({ app, settings: sessionStore.settings, consumeGesture: (windowId) => account.gestures.consume(windowId), log: logSession, diagnostics: createDiagnosticsMain({ app, sessionStore, telemetry: telemetryMain.service, agent, gsc: gsc.service, sync, log: logSession }) });
     // AI checks (specs/ai-checks.feature.md): off by default; only the audit's cookieless served HTML (peeked), on the agent's own route and model.
     const aiChecks = createAiChecksMain({ browser, isBrowseContents, served: () => served, tabUserAgent, tabScripting, agent: agent.checks, sessionStore, log: logSession });
+    // Data sources (specs/data-sources.feature.md): BYO keys and the one data API client, main only; legal gates closed as shipped.
+    const dataSources = setupDataSources({ app, session, safeStorage, log: logSession });
     attachIpcHandler({
       router: appRouter,
       policy: senderPolicy,
@@ -519,6 +522,7 @@ function start(): void {
         seoExport: seoExports,
         tabOverrides: browser.tabOverrides,
         help: help.service,
+        dataSources: dataSources.service,
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented

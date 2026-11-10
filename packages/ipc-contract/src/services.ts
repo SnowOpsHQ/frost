@@ -24,6 +24,7 @@ import type { RankingsService } from './rankings-service';
 import type { SeoExportService } from './seo-export-service';
 import type { TabOverridesService } from './tab-overrides-router';
 import type { HelpService } from './help-service';
+import type { DataSourcesService } from './data-sources-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -215,4 +216,6 @@ export interface IpcServices {
   readonly tabOverrides?: TabOverridesService;
   /** Help, keyboard shortcuts and What's New (Phase 11 Task 11, `help-service.ts`). */
   readonly help?: HelpService;
+  /** Data sources' keys: status, set and clear (Phase 12 Task 1, `data-sources-service.ts`). */
+  readonly dataSources?: DataSourcesService;
 }
