@@ -35,7 +35,8 @@ never is.
   build (`ipc-e2e.feature.md` and the scenarios below), Chromium sandbox on.
 
 ## Semgrep `ipc-sender-guard` rules (Review Focus `semgrep-flags-unguarded-handler`)
-Exercised by **semgrep-rule-test** (fixture) and **semgrep-repo-scan** (the real code is clean).
+Exercised by **semgrep-rule-test** (fixture `semgrep/__fixtures__/ipc-sender-guard.ts`) and
+**semgrep-repo-scan** (the real code is clean).
 Test-only code (`__tests__/`, `*.test.ts`, `apps/desktop/src/test/`) is never bundled and is
 excluded from every rule.
 - **Scenario: semgrep-flags-unguarded-handler** — the fixture's deliberately unguarded handlers

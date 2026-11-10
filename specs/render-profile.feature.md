@@ -323,6 +323,13 @@ Registered with `registerPaletteActions` (`command-palette.spec.ts`) in the Page
 - `cookies-off-sends-no-cookie-header`: cookies off → after reload the server gets no `Cookie` (nor
   does a subresource), a `Set-Cookie` is not stored, and `document.cookie` is `''`; another tab still
   sends its cookies; off again → they are sent.
+- `cookies-off-har-shows-no-cookie-header` (Phase 11 Task 13, with the network export of
+  `devtools.feature.md`): cookies off and reload → the server gets no `Cookie` (page or image) and
+  the HAR export of the new document's requests has no `cookie` header; the control, another tab
+  with cookies on while the block is installed, exports both requests' `cookie` header as
+  `MASKED_VALUE` (never the value). Electron 45 reports `Cookie` to `onSendHeaders` only while a
+  blocking `onBeforeSendHeaders` listener is on the session, so with no tab's cookies off the log
+  (and an export) has no `cookie` request header at all, as with `Referer`.
 - `css-off-disables-stylesheets`: CSS off → the page's stylesheets are disabled (inline style kept);
   off again → they apply.
 - `capture-now-refused-with-emulation`: CSS turned off after a clean audit → Capture now is refused

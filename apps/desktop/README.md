@@ -15,6 +15,11 @@ panel, set up in a Settings view.
 Phase 5 adds the agent, a chat that works on the page you are on, on the model you set up (your own
 key, a gateway key or your ChatGPT plan). Phase 9 adds opt-in AI checks of a page on that same model.
 
+Phase 11 adds practitioner tooling: copies and CSV exports, more highlights, a fuller result
+preview, network export and web storage in the devtools drawer, Inspector search and source views,
+per-tab CSS off, cookies off and location, a screenshot editor, chat history and attached tabs,
+resizable panes, and Help with Export Diagnostics.
+
 ## What it does
 
 ### Browser (Phase 1)
@@ -199,21 +204,25 @@ Acceptance: the feature files named below; how it was built: `docs/plans/phase-2
   ready, identical, or served HTML unavailable with the reason (a fetch redirected elsewhere, such
   as a login page, is unavailable rather than compared). **Fetch again** re-requests it. The panel
   says the site can see the request.
-- **SEO devtools drawer** (`devtools.feature.md`). Mod+Shift+D (reserved), View › SEO Devtools or the
-  palette opens a resizable band under the page area (open, height and tab kept per window). It is
-  read-only: no script runs in the page and no DOM is edited.
+- **SEO devtools drawer** (`devtools.feature.md`). Mod+Shift+D (reserved), View › SEO Devtools or
+  the palette opens a resizable band under the page area (open, height and tab kept per window). It
+  never edits the page's DOM. It runs one script, since Phase 11: the read-only web storage reader,
+  in its own isolated world, in the top frame, only when you open or refresh the Storage tab or
+  reveal a value. Its one write is "Clear this site's data", confirmed in main's dialog.
   - **Network:** the active tab's requests (method, URL as text, type, status, size, a timing
     waterfall, a third-party flag, and a robots.txt verdict for the page origin's crawlable
     requests), with type, third-party, failed and text filters and "Preserve log". `Authorization`,
     `Proxy-Authorization`, `Cookie` and `Set-Cookie` are stored only as `•••`; other headers are
-    allowlisted (the rest only counted) and fetched only when a row is opened; bodies are never read.
-    Recording is always on but small while the drawer is closed everywhere (the newest 100 requests
-    plus the document); open, a document keeps its first 2,000. The log is bounded in bytes (4 MB
-    per tab, 32 MB in all); what does not fit is counted and shown.
+    allowlisted (the rest only counted) and fetched only when a row is opened; bodies are never
+    read. Recording is always on but small while the drawer is closed everywhere (the newest 100
+    requests plus the document); open, a document keeps its first 2,000. The log is bounded in bytes
+    (4 MB per tab, 32 MB in all); what does not fit is counted and shown.
   - **Redirects:** the main-frame redirect chain, each hop's status and key headers.
   - **Console:** the tab's console messages as text, deduplicated with counts, capped.
   - **Storage:** the tab's cookies with values masked until you reveal one (a reveal lasts until the
     tab's next committed navigation), and **Clear this site's data**, confirmed in main's dialog.
+    Since Phase 11 also local and session storage (keys and sizes; a value only when revealed) and,
+    on the Network tab, **Export…** (see Practitioner tooling).
   - **Issues:** every finding of the shown audit in one sortable table; a row opens its panel.
 - **Browser polish** (`browser-polish.feature.md`).
   - **Find in page:** Mod+F (reserved) opens a find bar above the page with a match count;
@@ -478,6 +487,92 @@ Acceptance: `changes-capture.feature.md`, `changes-diff.feature.md`, `changes-pa
     for headings, links, images and meta.
   - Hovering a row outlines it on the page.
 
+### Practitioner tooling (Phase 11)
+Acceptance: `seo-exports.feature.md`, `seo-panels.feature.md`, `seo-content.feature.md`,
+`devtools.feature.md`, `inspector.feature.md`, `render-profile.feature.md` (Tab overrides),
+`screenshot.feature.md` (Editing), `agent-data.feature.md` (Chat history),
+`agent-attach.feature.md`, `seo-sidebar.feature.md` and `agent-panel.feature.md` (Resize),
+`browser-polish.feature.md` (History retention), `help.feature.md` and `diagnostics.feature.md`; how
+it was built: `docs/plans/phase-11-practitioner-tooling.md`.
+
+- **Copying values and tables.** Every copy below is written by main, to main's clipboard, from the
+  tab's ready audit that the panel shows; if the page's audit changed meanwhile, nothing is written
+  ("Nothing copied: the audit changed"). The chrome only names what to copy.
+  - **Values:** the palette's Copy group has 24 of the page's values (among them the clean URL,
+    origin and root domain, title or H1 with the URL, the headings outline, Open Graph and Twitter
+    tags, canonical and hreflang markup, `X-Robots-Tag`, the response headers the audit kept with
+    secrets masked, the robots.txt sitemaps, all JSON-LD, and internal or external URLs).
+  - **CSV tables** (`seoExport`): Images (the panel's current filter, so "No alt" gives the
+    missing-alt list), Headings (On-Page) and Speed (the audit's own measurement; disabled without
+    one) each have **Copy as CSV**; the palette's Copy group offers four: Images, Images missing
+    alt, Headings and Speed. Cells that start like a spreadsheet formula get a leading `'`.
+  - **Context menu:** a right-click on a web page whose audit is ready ends with **Copy SEO Data**:
+    Title, Meta Description, H1, Canonical URL and the Images, Headings and Speed CSVs. A value the
+    audit lacks is shown disabled, as are Images on a page with none and Speed without a speed
+    report (Headings is always enabled); an item picked after the page's audit changed writes
+    nothing.
+  - **Copy JSON-LD** (Content panel, result preview): the page's own JSON-LD blocks that fed the
+    preview, or **Copy suggested JSON-LD**, a minimal graph main builds from the page's validated
+    facts (with your session-only site-name override; `<` written as `\u003c`).
+  - **Open in** gains backlink pages for two public tools, on the same per-host first-use consent.
+- **Highlights.** Besides links and headings, a panel can outline **internal** or **external** links
+  only (Links), **lazy images** (Images; a lazy image in the first viewport is marked as one to
+  fix), a **keyphrase** (Content: one of the page's n-grams or its target query, every whole-word
+  match up to a cap) or **everything at once**. They use the same overlay as before (one host
+  element in a closed shadow root, removed when turned off); main supplies the words to find, never
+  the chrome.
+- **Result preview.** The snippet editor's previews show the site name (WebSite schema, else
+  `og:site_name`, else the host) with a frost-drawn monogram (no favicon is fetched), the schema
+  breadcrumb, a date and a rating, plus Top Stories, Video and Recipe cards labelled as
+  approximations.
+- **Devtools: network export and web storage.**
+  - **Export…** on the Network tab saves the active tab's log as **HAR 1.2** or **CSV**, in main's
+    own save dialog. It holds what the log holds: allowlisted headers, `Authorization`, `Cookie` and
+    the like as `•••`, and **never a body** (the file says so). Every URL in it (requests, query
+    strings, redirects, the page, and the URLs in `Referer`, `Location` and `Link`) has its fragment
+    and user info dropped and **known sensitive parameters redacted, best effort**: tokens, keys,
+    codes, sessions, signatures, emails and long opaque or JWT-shaped values become `REDACTED`. It
+    is a heuristic. A secret under an unknown name or in a path segment is not caught, and some
+    ordinary parameters are redacted too. The file and the Export menu say "Known sensitive URL
+    parameters were redacted, best effort. Review the file before you share it." **Do that before
+    sharing it.**
+  - **Storage** also lists the site's local and session storage: key names and value sizes, plus the
+    origin's storage usage. A value is read only when you reveal that one key, and never kept.
+- **Inspector search and source.** Search the DOM by text or CSS selector (results jump to the
+  tree), and read the page's **rendered source** (the live DOM serialised) and **served source**
+  (the HTML the JavaScript panel's cookieless request got), as inert text with find; **Copy source**
+  is written by main from the text it holds for that same document.
+- **This tab only: CSS off, cookies off, location.** A row in the render-profile bar, separate from
+  the profile and never pinned or captured: **CSS off** disables the top frame's stylesheets only
+  (frames keep their styles, as do inline `style` attributes and a shadow root's own styles);
+  **Cookies off** sends the tab's requests without cookies and keeps none it is sent
+  (`document.cookie` reads empty; the Cookie Store API and service workers are not covered);
+  **Location** answers the page's geolocation request, after you allow it, with one of six cities or
+  your own coordinates. A status-bar chip shows what is on; it ends when the tab closes. While a tab
+  has one on, Capture now and screenshots of it are refused.
+- **Screenshot editor.** **Edit** on a gallery screenshot draws arrows, boxes and one-line text, and
+  crops; **Save as a copy** makes a new screenshot (with its own retention), the original stays.
+- **Agent chats.** Search chats by title and text, rename them, archive and unarchive them (sending
+  to an archived chat unarchives it). The composer's `@` menu attaches up to 3 other open tabs; the
+  agent reads them only through a tool main checks against what you attached, and a tab that
+  navigated elsewhere must be attached again.
+- **Workspace.** Drag (or use the arrow keys on) the edge of the SEO sidebar or the agent pane to
+  resize it; choose which panels stay on the rail ("More panels" lists the rest). History can keep
+  visits forever (the default) or for a set time, optionally keeping project pages; it can be
+  cleared by a time range and filtered by project, with each page's change count. Anything that
+  would delete visits asks first in main's dialog.
+- **Help.** A Help menu (frost Help and Report an Issue open fixed pages of frost's repository in
+  your browser), a **Keyboard Shortcuts** sheet built from the app's own shortcut list (Mod+/),
+  **What's New** once after an update (bundled notes, no network), and a **setup checklist** on the
+  new-tab page that you can hide.
+- **Export Diagnostics…** (Help menu or palette) builds a report for a bug report: versions,
+  platform, the applied migrations, which features are on (never their settings), and main's own
+  recent warnings and errors. Every line is scrubbed when it is recorded and again when the report
+  is built (URLs, emails, file paths, keys, tokens, addresses, host and user names). Scrubbing is a
+  pattern match, so **the report is shown for you to review first**; **Save…** writes main's copy to
+  the file you pick (mode `0600`). It is **never sent anywhere** by frost: nothing uploads it or
+  opens a URL with it.
+
 ## Security model (summary)
 The details, each with its named tests, are in `specs/*.feature.md`.
 - **Two kinds of WebContents.** The chrome (the React UI) is served from `app://app` with a strict
@@ -511,7 +606,34 @@ The details, each with its named tests, are in `specs/*.feature.md`.
   `GscStatus` and aggregated rows, and main's logs go through a redactor. The system browser opens
   only through `openExternalIfAllowed`, on a live click in the window that asked.
 - CI gates: Electronegativity, Semgrep (`ipc-sender-guard`, `webcontents-factory`,
-  `debugger-allowlist`) and the e2e suite (`specs/ci-gates.feature.md`).
+  `debugger-allowlist`, `webrequest-blocking-allowlist`, each with its fixture under
+  `semgrep/__fixtures__/`) and the e2e suite (`specs/ci-gates.feature.md`).
+- **Tab overrides: two stated exceptions (Phase 11, `render-profile.feature.md`).** Both are on only
+  while you turn them on for one tab, and both are shown on the tab's status-bar chip.
+  - **CSS off writes to the page.** Emulation otherwise never writes to the page, and the devtools
+    drawer still never does. CSS off sets `disabled` on the top frame's stylesheets and adopted
+    sheets only, from its own isolated world (`TAB_OVERRIDES_WORLD_ID`, 1701); frames keep their
+    styles, as do inline `style` attributes and a shadow root's own styles. It adds no element or
+    attribute and changes nothing else, but the page can see it
+    (`document.styleSheets[i].disabled`), so its badge says "CSS off (stylesheets)".
+  - **Cookies off is a blocking listener on the browse session.** frost's rule is no blocking
+    `webRequest` listener on the browse session; it now reads "none unless a tab of that session has
+    cookies off". Only then does `browser/cookie-block.ts` (the only module that registers a
+    blocking listener on a browse session; Semgrep `webrequest-blocking-outside-allowlisted-modules`
+    allows it and three modules for other sessions) register a blocking `onBeforeSendHeaders` /
+    `onHeadersReceived` pair on that tab's own session, removing `Cookie` and `Set-Cookie` for the
+    cookies-off tabs' requests only. Electron's filters cannot select a tab, so while the pair is
+    on, every request of that session passes through main (answered at once for other tabs), which
+    slightly slows loading in all tabs; the pair goes when the last cookies-off tab closes or turns
+    it off. Requests with no tab (service workers) keep their cookies, and the Cookie Store API is
+    not covered.
+  - Neither one enters a render profile, a pin, a capture lane or sync, and Capture now and
+    screenshots refuse a tab while one is on (or its page was loaded under one).
+- **Files frost writes where you choose (Phase 11).** The network export and Export Diagnostics are
+  built by main from data main holds and written by main in its own save dialog; the chrome sends
+  only what to export (a tab and a format, or a report id), never the file's text. The network
+  export's URL redaction and the diagnostics scrubber are best effort: review a file before you
+  share it.
 
 - **Change intelligence (Phase 6).**
   - **Append-only:** SQLite triggers refuse `UPDATE`, `DELETE` and `REPLACE` on captured rows
@@ -533,14 +655,16 @@ Everything the page hands over is untrusted.
   never in the page's main world and never in the chrome: the extractor, its security read and the
   highlight overlay in `SEO_WORLD_ID`, `axe-core` in `A11Y_WORLD_ID`, `web-vitals` in
   `SPEED_WORLD_ID`. Each world has its own globals and prototypes, so a page that overrides
-  `document.querySelectorAll`, `Array.prototype` or `JSON`, or defines its own `axe`, changes nothing
-  there, and the page cannot see frost's globals. Both libraries are bundled into main as strings,
-  unmodified, and never reach the chrome's bundle; in the speed world only the browser's own
-  (trusted) `pageshow`, `visibilitychange` and `prerenderingchange` events reach listeners. frost
-  never changes the page's DOM, CSP or globals, with one exception on request: highlight mode
+  `document.querySelectorAll`, `Array.prototype` or `JSON`, or defines its own `axe`, changes
+  nothing there, and the page cannot see frost's globals. Both libraries are bundled into main as
+  strings, unmodified, and never reach the chrome's bundle; in the speed world only the browser's
+  own (trusted) `pageshow`, `visibilitychange` and `prerenderingchange` events reach listeners.
+  frost never changes the page's DOM, CSP or globals, with two exceptions on request: highlight mode
   appends one host element to `<html>` holding its overlay in a closed shadow root styled through
   the CSSOM, removed on toggle off, navigation, tab switch, collapsing the sidebar or leaving its
-  panel.
+  panel; and CSS off (Phase 11, above) disables the top frame's stylesheets while it is on. The
+  devtools drawer's web storage reader (world 1700) and the Inspector's search and rendered source
+  only read.
 - **Bounded in the page.** The extractor caps every list and string while it reads, bounds element
   text reads and the word count, and stops at one deadline (`EXTRACT_BUDGET_MS`): a huge DOM gives
   a `partial` snapshot, not a hang. A run that has not answered within `EXTRACT_TIMEOUT_MS` is
@@ -567,13 +691,17 @@ Everything the page hands over is untrusted.
   rows. Remote images and favicons are never loaded into the chrome (its CSP stays
   `img-src 'self' data:`). Page URLs open only through `browser.openBackgroundTab`, for `http(s)`
   URLs. The chrome has no clipboard access: every copy (Copy as CSV, Copy URL, Copy JSON, the
-  palette's copies, Copy as HTML) is written by main from its own ready audit or stored draft
+  palette's copies, Copy as HTML and, since Phase 11, the CSV exports, Copy SEO Data, Copy JSON-LD
+  and Copy source) is written by main from its own ready audit, stored draft or kept source
   (`seo.copyLinksCsv`, `seo.copyUrl`, `seo.copySchemaJson`, `seo.copyValue`,
-  `content.copySnippetHtml`), never from a string the chrome sends.
+  `content.copySnippetHtml`, `seoExport.copyCsv`, `content.copyPreviewJsonLd`,
+  `inspector.copySource`; the context menu's items call main directly), never from a string the
+  chrome sends.
 - **Response metadata.** Observed on the browse session through one `webRequest` owner (observers
-  only; no request waits for main), with allowlisted headers (no `Set-Cookie`), capped as it
-  arrives. The devtools drawer is another observer of the same owner: secret headers are kept only
-  as `•••`, bodies are never read, and its log is bounded in rows and bytes.
+  only; no request waits for main, except while a tab has cookies off: see Tab overrides above),
+  with allowlisted headers (no `Set-Cookie`), capped as it arrives. The devtools drawer is another
+  observer of the same owner: secret headers are kept only as `•••`, bodies are never read, and its
+  log is bounded in rows and bytes.
 
 ### Render profiles: the per-tab debugger
 - Main drives a profiled tab's emulation through that tab's own `webContents.debugger`: the Chrome
@@ -583,12 +711,15 @@ Everything the page hands over is untrusted.
   `debugger-outside-allowlisted-modules` (`semgrep/debugger-allowlist.yml`) flags any other use of
   a `debugger` property, an alias, a destructured binding or a reflective read of it.
 - It attaches only to a browse-session tab's WebContents (any other is refused before a debugger is
-  touched), only while the tab has a profile; Reset and closing the tab detach it.
-- It sends only the CDP allowlist `RENDER_PROFILE_CDP_METHODS` (`Emulation.*` device metrics,
-  touch and script switches; `Network.*` user agent, network conditions, cache and enable /
-  disable), plus `Target.setAutoAttach` with fixed parameters and `Runtime.runIfWaitingForDebugger`
-  for announced child sessions only (`isAllowedCdpCommand`). Anything else is refused before it
-  reaches the debugger.
+  touched), only while the tab has a profile or (Phase 11) cookies off or a location. It detaches
+  when neither is left (Reset clears the profile only) and when the tab closes. CSS off has no CDP
+  part.
+- It sends only the CDP allowlist `RENDER_PROFILE_CDP_METHODS` (`Emulation.*` device metrics, touch
+  and script switches; `Network.*` user agent, network conditions, cache and enable / disable; since
+  Phase 11 `Emulation.setGeolocationOverride`, `clearGeolocationOverride` and
+  `setDocumentCookieDisabled`), plus `Target.setAutoAttach` with fixed parameters and
+  `Runtime.runIfWaitingForDebugger` for announced child sessions only (`isAllowedCdpCommand`).
+  Anything else is refused before it reaches the debugger.
 - The page cannot see or defeat it: no domain that observes the page is enabled,
   `navigator.webdriver` stays `false`, and no page API reaches the session, so navigating,
   reloading or crossing origins keeps it.
@@ -854,6 +985,18 @@ Acceptance: `specs/sync-config.feature.md`, `specs/sync-engine.feature.md`.
   - **Screenshot files** are not synced, and a file removed by hand shows as missing and is never
     re-created.
   - **Disk space** freed by deletion returns to the disk only after Compact.
+- **Practitioner tooling (Phase 11).**
+  - **Network export redaction is best effort.** Only known parameter names and value shapes are
+    redacted; a secret under another name or in a URL path stays in the file. Electron does not
+    report `Referer` to the log, and reports `Cookie` (kept only as `•••`) only while some tab has
+    cookies off, so an export usually has no `cookie` request header at all. HAR viewers have not
+    been tried with the file's "unknown" body sizes (`-1`).
+  - **Cookies off** does not reach service workers or the Cookie Store API, and a response cached
+    while it was on can be reused later with cookies on ("cache off" or Clear Browsing Data avoids
+    it). **CSS off** reaches the top frame only: frames keep their styles, as do inline `style`
+    attributes and a shadow root's own styles.
+  - **Diagnostics scrubbing** matches shapes: free text in an error message (a name, a sentence) can
+    pass, which is why the report is shown before it is saved.
 
 ## Running, building, testing
 From the repo root (`pnpm install` first):

@@ -62,4 +62,8 @@ Phase 11 Task 1 (SL-013, SL-130; plan Decisions 1–2). Each line maps to one na
   CSV); On-Page's Headings section and the Speed panel (the audit's report, disabled without one) have
   their own. The palette's Copy group offers the four exports (`export-palette.ts`). Status lines are
   frost's own words; nothing from the page is shown in them.
-- **Scenario: context-menu-copy-seo-data** (e2e, `seo-panels.e2e.ts`) — deferred to Task 13.
+- **Scenario: context-menu-copy-seo-data** (e2e, `seo-panels.e2e.ts`, Phase 11 Task 13) — with the
+  tab's audit ready, a right-click on the page ends with Copy SEO Data (after a separator): the
+  `CONTEXT_MENU_COPY_SEO_VALUES` items then the `SEO_EXPORT_KINDS` CSVs, a value or CSV the audit
+  lacks (no meta description, no images) disabled; picking Title, H1 or Headings as CSV writes main's
+  value or CSV to main's clipboard.

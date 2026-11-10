@@ -517,8 +517,9 @@ test('drag-resize-moves-page-view', async () => {
     await expect(separator).toHaveAttribute('aria-valuenow', String(room));
     await expect(separator).toHaveAttribute('aria-valuemax', String(room));
     // The page keeps its minimum (borders are one device pixel: a fraction of a CSS px on a scaled display).
-    await expect.poll(async () => (await viewBounds()).width).toBeGreaterThanOrEqual(PAGE_MIN_WIDTH);
-    expect((await viewBounds()).width).toBeLessThanOrEqual(PAGE_MIN_WIDTH + 2);
+    // Wait for the change itself (the view was already wider than the minimum before End).
+    await expect.poll(async () => (await viewBounds()).width).toBeLessThanOrEqual(PAGE_MIN_WIDTH + 2);
+    expect((await viewBounds()).width).toBeGreaterThanOrEqual(PAGE_MIN_WIDTH);
     const atEnd = await viewBounds();
     // Dragging further does not take more.
     await dragBy(separator, 80);

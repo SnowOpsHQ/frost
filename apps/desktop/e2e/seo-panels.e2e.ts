@@ -1,11 +1,14 @@
 // Specs: specs/seo-sidebar.spec.ts (Links, Images, Social, HIGHLIGHT_MODES, HIGHLIGHT_STYLES), specs/seo-snapshot.spec.ts,
 // specs/seo-limits.spec.ts (SEO_WORLD_ID, SNAPSHOT_LIMITS), specs/seo-rules.spec.ts, specs/browser.spec.ts
-// Acceptance: specs/seo-panels.feature.md (End to end)
+// Acceptance: specs/seo-panels.feature.md (End to end); Phase 11 Task 13: specs/page-commands.spec.ts
+// (CONTEXT_MENU_COPY_SEO_*), specs/seo-exports.spec.ts (SEO_EXPORT_KINDS, HEADINGS_CSV_COLUMNS), acceptance specs/seo-exports.feature.md
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { crc32, deflateSync } from 'node:zlib';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SEO_WORLD_ID, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
+import { CONTEXT_MENU_COPY_SEO_LABELS, CONTEXT_MENU_COPY_SEO_VALUES, CONTEXT_MENU_LABELS } from '@app/specs/page-commands.spec';
+import { HEADINGS_CSV_COLUMNS, SEO_EXPORT_KINDS } from '@app/specs/seo-exports.spec';
 import { HIGHLIGHT_STYLES, LINKS_CSV_COLUMNS } from '@app/specs/seo-sidebar.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
@@ -140,7 +143,7 @@ async function startPanelServer() {
 let app: ElectronApplication;
 let page: Page;
 let site: Awaited<ReturnType<typeof startPanelServer>>;
-const { go, contentsIdAt, menu, run, strip, activeTab, browseContents } = chromeHelpers(
+const { go, contentsIdAt, menu, run, strip, activeTab, browseContents, realClick } = chromeHelpers(
   () => app,
   () => page,
 );
@@ -561,4 +564,62 @@ test('page-text-is-inert-in-new-panels', async () => {
   await expect(page.getByTestId('seo-social-image-url')).toHaveText('javascript:top.__pwned=7');
   await expect(page.getByTestId('seo-social-image').getByTestId('seo-open-url')).toBeDisabled();
   expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+});
+
+test('context-menu-copy-seo-data', async () => {
+  // Main's ready audit first: the menu offers Copy SEO Data only then.
+  const id = await audit(`${site.origin}/links`);
+  // No native menu in the test: record each one main pops up instead of showing it (put back after).
+  await app.evaluate(({ Menu }) => {
+    const record = globalThis as unknown as { __contextMenus: Electron.Menu[]; __popup?: typeof Menu.prototype.popup };
+    record.__contextMenus = [];
+    record.__popup ??= Menu.prototype.popup;
+    Menu.prototype.popup = function (this: Electron.Menu) {
+      record.__contextMenus.push(this);
+    };
+  });
+  try {
+    await app.evaluate(({ clipboard }) => clipboard.writeText('before'));
+    await realClick(id, 'h1', 'right');
+    await expect.poll(() => app.evaluate(() => (globalThis as unknown as { __contextMenus: Electron.Menu[] }).__contextMenus.length)).toBe(1);
+    const shown = await app.evaluate(() => {
+      const menu = (globalThis as unknown as { __contextMenus: Electron.Menu[] }).__contextMenus[0]!;
+      const last = menu.items.at(-1)!;
+      return {
+        last: { id: last.id, label: last.label, separatorBefore: menu.items.at(-2)?.type === 'separator' },
+        items: (last.submenu?.items ?? []).filter((item) => item.type !== 'separator').map((item) => ({ id: item.id, label: item.label, enabled: item.enabled })),
+      };
+    });
+    // The menu's last group: the submenu of values, then the CSVs; what the audit lacks is shown disabled.
+    expect(shown.last).toEqual({ id: 'context-copy-seo', label: CONTEXT_MENU_LABELS['copy-seo'], separatorBefore: true });
+    const item = (id: string) => shown.items.find((i) => i.id === id);
+    expect(shown.items.map((i) => i.id)).toEqual([...CONTEXT_MENU_COPY_SEO_VALUES.map((key) => `context-copy-seo-${key}`), ...SEO_EXPORT_KINDS.map((kind) => `context-copy-seo-csv-${kind}`)]);
+    expect(item('context-copy-seo-title')).toEqual({ id: 'context-copy-seo-title', label: CONTEXT_MENU_COPY_SEO_LABELS.title, enabled: true });
+    expect(item('context-copy-seo-h1')?.enabled).toBe(true);
+    expect(item('context-copy-seo-meta-description')?.enabled).toBe(false);
+    expect(item('context-copy-seo-csv-headings')?.enabled).toBe(true);
+    // The page has no images: that CSV is shown disabled.
+    expect(item('context-copy-seo-csv-images')).toEqual({ id: 'context-copy-seo-csv-images', label: CONTEXT_MENU_COPY_SEO_LABELS.images, enabled: false });
+
+    const pick = (itemId: string) =>
+      app.evaluate((_electron, itemId) => {
+        const picked = (globalThis as unknown as { __contextMenus: Electron.Menu[] }).__contextMenus[0]!.getMenuItemById(itemId);
+        if (!picked) throw new Error(`no context menu item ${itemId}`);
+        picked.click();
+      }, itemId);
+    const clipboardText = () => app.evaluate(({ clipboard }) => clipboard.readText());
+    // Picking a value: main writes it from its own audit.
+    await pick('context-copy-seo-title');
+    await expect.poll(clipboardText).toBe('Links on a page about tea and coffee');
+    await pick('context-copy-seo-h1');
+    await expect.poll(clipboardText).toBe('Links');
+    // The headings CSV, in document order.
+    await pick('context-copy-seo-csv-headings');
+    await expect.poll(async () => (await clipboardText()).split('\r\n')).toEqual([HEADINGS_CSV_COLUMNS.join(','), '1,Links,1', '2,Section,2', '3,Subsection,3', '']);
+  } finally {
+    await app.evaluate(({ Menu }) => {
+      const record = globalThis as unknown as { __popup?: typeof Menu.prototype.popup };
+      if (record.__popup) Menu.prototype.popup = record.__popup;
+    });
+  }
 });
