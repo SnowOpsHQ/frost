@@ -110,3 +110,13 @@ test('ai-answers-reach-through-selects-share-one-width', () => {
   // The Engine select's caveat sits under it, in its column.
   expect(rule('ai-answers.css', '.ai-answers-engine-caveat')).toMatch(/grid-column:\s*2;/);
 });
+
+test('crawl-run-state-wraps-a-long-pause-reason', () => {
+  // A run's state can carry a long pause reason ("Paused: frost could not read the site's robots.txt.
+  // Resume to try again."): in a narrow sheet it wraps under the start URL instead of overflowing the run card.
+  expect(rule('crawl.css', '.crawl-run-head')).toMatch(/flex-wrap:\s*wrap/);
+  const state = rule('crawl.css', '.crawl-run-state');
+  expect(state).not.toMatch(/flex:\s*none/);
+  expect(state).toMatch(/min-width:\s*0/);
+  expect(state).toMatch(/overflow-wrap:\s*anywhere/);
+});

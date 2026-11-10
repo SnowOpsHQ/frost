@@ -185,6 +185,7 @@
 
 .crawl-run-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 10px;
   min-width: 0;
@@ -213,7 +214,9 @@
 }
 
 .crawl-run-state {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--text-muted);
   font-size: 12px;
 }
