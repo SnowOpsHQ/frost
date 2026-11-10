@@ -27,7 +27,9 @@ import type { CrawlScopeRule } from './scope';
 // `maxFiles` and `maxDepth`. URLs go straight to the frontier at depth 1, source `sitemap` (in scope
 // only; never an inlink); at most the run's `maxPages` are seeded. A window that does not answer in time
 // stops seeding with a log line and the run's note (`CRAWL_RUN_NOTES.sitemapTimeout`); any other failure
-// seeds nothing more from that file.
+// seeds nothing more from that file. A sitemap request answered as a slow-down (`backoffAfter` 429 / 503
+// in a row, or `deferred`) stops seeding and says so (`slowDown`): the crawler pauses the run
+// (`slow-down`) before any page is fetched (council review, item 4).
 
 export interface SitemapSeederDeps {
   /** Main's robots.txt fetcher (`robots.get`; for a private start with the exact-origin rule): the `Sitemap:` lines. */
@@ -57,6 +59,8 @@ export interface SitemapSeedReport {
   readonly seeded: number;
   /** The run's note, when seeding stopped early for a reason the user should know (`CRAWL_RUN_NOTES`). */
   readonly note: string | null;
+  /** The site asked frost to slow down on a sitemap request (or a new host was `deferred`): the run pauses (`slow-down`). */
+  readonly slowDown: boolean;
 }
 
 export interface SitemapSeeder {
@@ -123,7 +127,7 @@ export function createSitemapSeeder(deps: SitemapSeederDeps): SitemapSeeder {
 
   return {
     async seed(run) {
-      if (!run.settings.sitemaps) return { seeded: 0, note: null };
+      if (!run.settings.sitemaps) return { seeded: 0, note: null, slowDown: false };
       const budget = Math.min(run.settings.maxPages, SITEMAP_LIMITS.maxUrls);
       let seeded = 0;
       let counted = 0;
@@ -184,9 +188,9 @@ export function createSitemapSeeder(deps: SitemapSeederDeps): SitemapSeeder {
       }
       if (stop === 'timeout') {
         log(`a sitemap window did not answer in time; seeding stopped (run ${run.runId})`);
-        return { seeded, note: CRAWL_RUN_NOTES.sitemapTimeout };
+        return { seeded, note: CRAWL_RUN_NOTES.sitemapTimeout, slowDown: false };
       }
-      return { seeded, note: null };
+      return { seeded, note: null, slowDown: stop === 'slow-down' };
     },
   };
 }

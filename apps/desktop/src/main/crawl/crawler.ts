@@ -242,6 +242,8 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
                 seed: (urls) => seeding.discover(urls, 1, 'sitemap'),
               });
               note = report.note ?? note;
+              // The site asked frost to slow down on its sitemaps: the run pauses before any page is fetched.
+              if (report.slowDown) return await finish(SLOW_DOWN);
             }
           }
           for (;;) {

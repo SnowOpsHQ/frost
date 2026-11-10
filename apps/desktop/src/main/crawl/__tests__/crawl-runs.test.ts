@@ -514,6 +514,46 @@ describe('sitemap seeding', () => {
     expect(off.requested(u.fetcher.fetched)).toEqual([]);
   });
 
+  test('crawl-sitemap-slow-down-pauses-the-run', async () => {
+    // Council review, item 4: the sitemap requests are paced and reported like pages, so five 429s in a row on them say
+    // "slow down" as five on pages do. The run ends paused (`slow-down`) before any page is fetched.
+    const kit = timerClock();
+    const db = tempStore();
+    cleanups.push(db.close);
+    const repo = db.store.siteCrawl;
+    const files = [1, 2, 3, 4, 5].map((i) => `${HOME}s${i}.xml`);
+    const requests: string[] = [];
+    const lane: BoundedFetcher = {
+      async fetch(request) {
+        requests.push(request.url);
+        const busy = files.includes(request.url);
+        const body = encoder.encode(busy ? '' : urlset([`${HOME}a`])) as Uint8Array<ArrayBuffer>;
+        return { url: request.url, outcome: 'response', status: busy ? 429 : 200, finalUrl: request.url, redirects: 0, chain: [], headers: { 'content-type': busy ? 'text/plain' : 'application/xml' }, body, truncated: false, durationMs: 5 };
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    const robotsText = `User-agent: *\nAllow: /\n${files.map((file) => `Sitemap: ${file}`).join('\n')}\n`;
+    const robots: CrawlRobotsSource = { get: async (pageUrl) => ({ url: `${new URL(pageUrl).origin}/robots.txt`, outcome: 'ok', status: 200, finalUrl: `${new URL(pageUrl).origin}/robots.txt`, redirects: 0, body: encoder.encode(robotsText), truncated: false }) };
+    const parseRobots = async (text: string) => {
+      const parsed = parseCrawlRobots({ text });
+      if (!parsed.ok) throw new Error('robots');
+      return parsed.robots;
+    };
+    const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent: () => 'Mozilla/5.0', clock: kit.clock });
+    const sitemaps = createSitemapSeeder({ robots, parseRobots, analyse: async (input) => parseCrawlSitemap(input), now: kit.now });
+    const crawler = createCrawler({ repo, fetcher, analyse: inProcessAnalyse, sitemaps, projectLive: async () => true, now: kit.now });
+    const service = createCrawlService({ repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, now: kit.now, log: () => undefined });
+
+    const runId = await started(service, settingsFor(HOME, { sitemaps: true }));
+    await kit.settle(service.idle());
+    expect(requests).toEqual(files);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'slow-down', counts: { pages: 0, queued: 1 } });
+    expect(await repo.pagesOf(runId, { limit: 10, offset: 0 })).toEqual([]);
+    expect(await repo.frontierEntry(runId, HOME)).toMatchObject({ state: 'queued' });
+    // The back-off is the run's pacing: a resume waits it out.
+    expect(await repo.runPacing(runId)).toEqual([expect.objectContaining({ host: 'example.com', inARow: CRAWL_LIMITS.backoffAfter })]);
+  });
+
   test('crawl-sitemap-falls-back-to-sitemap-xml', async () => {
     const { sitemaps, serve, requested } = seeder({ 'https://example.com/sitemap.xml': urlset([`${HOME}a`]) }, null);
     const u = setup(serve((url) => ({ [HOME]: htmlPage('Home'), [`${HOME}a`]: htmlPage('A') })[url]), { sitemaps });

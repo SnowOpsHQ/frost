@@ -115,7 +115,7 @@ describe('sitemap requests are crawl requests', () => {
       },
       'http://127.0.0.1:3000/',
     );
-    expect(await t.seed()).toEqual({ seeded: 0, note: null });
+    expect(await t.seed()).toEqual({ seeded: 0, note: null, slowDown: false });
     // Not one request reached :9229 (not its sitemap, its redirect target, nor its robots.txt).
     expect(t.net.urls().filter((url) => url.includes(':9229'))).toEqual([]);
     expect(t.net.urls()).toEqual(['http://127.0.0.1:3000/robots.txt', 'http://127.0.0.1:3000/sitemap.xml']);
@@ -132,7 +132,7 @@ describe('sitemap requests are crawl requests', () => {
       },
       'https://example.com/',
     );
-    expect(await delayed.seed()).toEqual({ seeded: 3, note: null });
+    expect(await delayed.seed()).toEqual({ seeded: 3, note: null, slowDown: false });
     const files = delayed.net.requests.filter((request) => request.url.endsWith('.xml'));
     expect(files.map((request) => request.url)).toEqual(['https://example.com/a.xml', 'https://example.com/b.xml', 'https://example.com/c.xml']);
     for (let i = 1; i < files.length; i++) expect(files[i]!.at - files[i - 1]!.at).toBeGreaterThanOrEqual(10_000);
@@ -174,7 +174,7 @@ describe('sitemap requests are crawl requests', () => {
     // Council review, item 2 (RFC 9309 §2.3.1.4): robots.txt that cannot be read (a 5xx here) refuses the sitemap request
     // like any page: the fallback `/sitemap.xml` is never requested, nothing is seeded.
     const t = rig({ 'https://example.com/robots.txt': answer('', 503, { 'content-type': 'text/plain' }), 'https://example.com/sitemap.xml': answer(urlset(['https://example.com/a'])) }, 'https://example.com/');
-    expect(await t.seed()).toEqual({ seeded: 0, note: null });
+    expect(await t.seed()).toEqual({ seeded: 0, note: null, slowDown: false });
     expect(t.net.urls()).toEqual(['https://example.com/robots.txt']);
     expect(t.seeded).toEqual([]);
   });
@@ -231,7 +231,7 @@ describe('robots.txt the worker parses late', () => {
         seed: async (urls) => (seeded.push(...urls), urls.length),
       }),
     );
-    expect(result).toEqual({ seeded: 0, note: null });
+    expect(result).toEqual({ seeded: 0, note: null, slowDown: false });
     expect(seeded).toEqual([]);
     expect(net.urls()).toEqual(['https://example.com/robots.txt']);
   });

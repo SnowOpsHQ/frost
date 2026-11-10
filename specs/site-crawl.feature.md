@@ -373,6 +373,11 @@ the crawl worker and its URLs handed out `sitemapUrlsPerJob` at a time, then rel
   and its files (the check's parser in the crawl worker), and queues their URLs at depth 1, source `sitemap` (no inlink, in
   scope only, tracking parameters stripped), after the start URL; a URL also linked is no orphan, the
   others are; at most the run's `maxPages` URLs are seeded; with `sitemaps` off nothing is requested.
+- `crawl-sitemap-slow-down-pauses-the-run` — (council review, item 4) a sitemap request answered as a
+  slow-down (the `backoffAfter`-th 429 / 503 in a row, or `deferred`) stops seeding and the seeder says
+  so (`SitemapSeedReport.slowDown`): five robots.txt `Sitemap:` files each answering 429 leave the run
+  `paused` (`slow-down`, `CRAWL_SLOW_DOWN_MESSAGE`) with no page fetched (the start URL still queued)
+  and the host's back-off stored with the run's pacing.
 - `crawl-sitemap-falls-back-to-sitemap-xml` — robots.txt without a `Sitemap:` line: `/sitemap.xml` of
   the start's origin. Seeding runs on a fresh start only (a resume continues from the frontier).
 - `crawl-sitemap-private-start-stays-on-its-origin` — a start on `127.0.0.1:3000` whose robots.txt lists
