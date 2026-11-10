@@ -1211,3 +1211,9 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   none`, so no grey ButtonFace ring) and its outline is the SVG circle's `stroke="currentColor"` in
   `--border-field`, so light swatches stay visible; no literal colour added
   (`screenshot-swatch-has-no-button-face-and-keeps-its-outline`).
+- **PR #23 CI (`palette-sits-above-the-page-view`):** the panes' widths follow the row through a
+  `ResizeObserver`, which runs in the next rendering update; React commits the new widths before
+  that frame paints (measured: a frame's `requestAnimationFrame` read shows CSS's narrowing alone,
+  345.4 px, and the read after it the settled 340.2 px, which every later frame keeps), so no user
+  sees the settle, but the test's forced-layout read right after `setZoomFactor` could. The test
+  now lets one rendering update pass before measuring the split; its assertion is unchanged.
