@@ -136,8 +136,10 @@ export const MAX_HISTORY_PAGE = 100;
  * and the ops it was drawn from (JSON). Created by migration `0231_screenshot_edits`
  * (`packages/db/src/phase11-migrations.ts`). Not a change-intelligence table: not in `SYNC_TABLES`
  * (the edited copy's `ci_screenshots` row syncs; the link does not), and not append-only. A row goes
- * when either screenshot's row is deleted (a purge, or a synced tombstone): a trigger on
- * `ci_screenshots` removes it.
+ * when the edited copy's row is deleted (a purge, or a synced tombstone): a trigger on
+ * `ci_screenshots` removes it. It outlives its source: after the source's row is deleted the link
+ * stays, its `source_id` naming a screenshot that no longer exists, so the copy keeps its own
+ * retention lane and its "Edited" label (council round 1).
  */
 export const SCREENSHOT_EDIT_TABLES = ['screenshot_edits'] as const;
 

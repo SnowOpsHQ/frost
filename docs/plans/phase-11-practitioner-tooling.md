@@ -1080,7 +1080,7 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   header size before any decode. Ops are in source pixels with a `size`; the crop is a step, not an
   op; `screenshot_edits` stores the crop and main's canonical ops JSON (≤ 512 KiB). Edit rows are
   removed by an `AFTER DELETE ON ci_screenshots` trigger (so a synced tombstone removes them too), not
-  by `purge.ts`. Security-review rulings: an edited copy has its **own retention lane** (the lane
+  by `purge.ts` (the link goes with its copy, not with its source: see Council round 1). Security-review rulings: an edited copy has its **own retention lane** (the lane
   key gains an "is a copy" flag), so saving an edit never purges its source or a taken screenshot;
   main saves **one edit at a time** (`busy`, appended to `SCREENSHOT_EDIT_RESULTS`); the overlay's
   Zod length cap aborts before the base64 check. An area copy keeps the original selection
@@ -1171,3 +1171,11 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   `stampedOn`/`overridesMoved` beside Phase 10's `readingFor`; `purge.ts` keeps both the
   `screenshot_edits` lane flag and the SERP-reading purge. Main's `AGENT_PROTOCOL_VERSION` is still
   `9`, so Phase 11's `10` stands. The release notes gain the Phase 10 line.
+- **Council round 1: an edited copy keeps its lane when its source is purged.** `0231`'s trigger
+  (edited in place; not on main) now deletes a `screenshot_edits` row only when its copy's row goes
+  (`screenshot_id = OLD.id`), so the link outlives its source: the copy stays in the copy lane and
+  labelled "Edited", and `editedFrom` may name a source that no longer exists (documented in
+  `capture-db.spec.ts`, `screenshot.spec.ts`, `screenshot.feature.md` Retention). Before, with keep 1,
+  taking S1 and S2 and editing S1 into E1, purge 1 took S1 (and E1's link), and purge 2 took S2, a
+  real capture. The gallery chip's tooltip no longer claims the original is kept. Regression:
+  `purged-source-keeps-copy-lane` (`packages/db/src/__tests__/repository.test.ts`).

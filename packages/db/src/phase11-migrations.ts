@@ -20,8 +20,9 @@ export const PHASE11_MIGRATIONS: readonly Migration[] = [
   {
     // Task 7 (Decision 9): the local-only link from an edited screenshot to its source
     // (`capture-db.spec.ts`, `SCREENSHOT_EDIT_TABLES`; `change-intel/schema.ts`, `screenshotEdits`).
-    // Not synced, not append-only. When either screenshot's row is deleted (a purge, or a synced
-    // tombstone), the trigger removes the link.
+    // Not synced, not append-only. When the copy's row is deleted (a purge, or a synced tombstone), the
+    // trigger removes the link. The link outlives its source (council round 1): a copy whose source has
+    // gone stays an edited copy (its own retention lane, labelled Edited), its `source_id` dangling.
     id: '0231_screenshot_edits',
     sql: `
       CREATE TABLE screenshot_edits (
@@ -34,7 +35,7 @@ export const PHASE11_MIGRATIONS: readonly Migration[] = [
       CREATE INDEX screenshot_edits_source_id ON screenshot_edits (source_id);
       CREATE TRIGGER screenshot_edits_follow_screenshots AFTER DELETE ON ci_screenshots
       BEGIN
-        DELETE FROM screenshot_edits WHERE screenshot_id = OLD.id OR source_id = OLD.id;
+        DELETE FROM screenshot_edits WHERE screenshot_id = OLD.id;
       END;
     `,
   },

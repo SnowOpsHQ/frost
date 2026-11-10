@@ -376,4 +376,43 @@ describe('screenshot edits (Phase 11 Task 7)', () => {
     expect(editRows(t)).toEqual([]);
     expect(await t.repo.screenshot(third.source.id)).not.toBeNull();
   });
+
+  test('purged-source-keeps-copy-lane', async () => {
+    // Council round 1: the link outlives its source, so a copy whose source a purge took stays in the
+    // copy lane, still `editedFrom` its (now missing) source, and never pushes out a taken screenshot.
+    const t = openTestDb();
+    const p = (await t.repo.createProject('P', 1))!.id;
+    const keepOne = { mode: 'versions', value: 1 } as const;
+    const s1 = screenshotInput({ pageUrl: PAGE, createdAt: 1_000, projectId: p });
+    const s2 = screenshotInput({ pageUrl: PAGE, createdAt: 2_000, projectId: p });
+    expect(await t.repo.appendScreenshot(s1)).toBe(true);
+    expect(await t.repo.appendScreenshot(s2)).toBe(true);
+    const e1 = { ...screenshotInput({ pageUrl: PAGE, createdAt: 3_000, projectId: p, sha256: sha256('copy:e1') }), sourceId: s1.id, cropJson: null, opsJson: '[]' };
+    expect(await t.repo.appendScreenshotEdit(e1)).toBe(true);
+
+    // Purge 1: the older taken screenshot (E1's source) goes; E1 keeps its link.
+    const first = await t.repo.planPurge({ projectId: p, policy: keepOne, now: 10_000 });
+    expect(first?.screenshotIds).toEqual([s1.id]);
+    expect((await t.repo.executePurge(first!, 'retention', 10_000))?.status).toBe('purged');
+    expect(editRows(t)).toEqual([{ screenshot_id: e1.id, source_id: s1.id, crop: null, ops: '[]', created_at: e1.createdAt }]);
+    expect(await t.repo.screenshot(s1.id)).toBeNull();
+    expect(await t.repo.screenshot(e1.id)).toMatchObject({ id: e1.id, editedFrom: s1.id });
+    expect((await t.repo.screenshots({ pageUrl: PAGE })).screenshots.map((shot) => [shot.id, shot.editedFrom])).toEqual([
+      [e1.id, s1.id],
+      [s2.id, null],
+    ]);
+
+    // Purge 2 deletes nothing more: S2 (a real capture) and E1 are each the newest of their lane.
+    const second = await t.repo.planPurge({ projectId: p, policy: keepOne, now: 20_000 });
+    expect(second?.screenshotIds).toEqual([]);
+    expect(t.raw.prepare('SELECT id FROM ci_screenshots ORDER BY id').all().map((row) => row['id'])).toEqual([s2.id, e1.id]);
+
+    // The copy's own row going still removes its link: a newer copy pushes E1 out of the copy lane.
+    const e2 = { ...screenshotInput({ pageUrl: PAGE, createdAt: 4_000, projectId: p, sha256: sha256('copy:e2') }), sourceId: s2.id, cropJson: null, opsJson: '[]' };
+    expect(await t.repo.appendScreenshotEdit(e2)).toBe(true);
+    const third = await t.repo.planPurge({ projectId: p, policy: keepOne, now: 30_000 });
+    expect(third?.screenshotIds).toEqual([e1.id]);
+    expect((await t.repo.executePurge(third!, 'retention', 30_000))?.status).toBe('purged');
+    expect(editRows(t).map((row) => [row['screenshot_id'], row['source_id']])).toEqual([[e2.id, s2.id]]);
+  });
 });

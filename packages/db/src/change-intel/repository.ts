@@ -127,6 +127,7 @@ export interface AppendScreenshotInput {
 /**
  * A stored screenshot. `editedFrom` (Phase 11 Task 7): the screenshot it is an edited copy of, from
  * the local `screenshot_edits` link (`null`: none; absent in shapes made before it, read as `null`).
+ * The source may no longer exist: the link outlives a purged source (the copy stays an edited copy).
  */
 export type StoredScreenshot = AppendScreenshotInput & { readonly editedFrom?: string | null };
 

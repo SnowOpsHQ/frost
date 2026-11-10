@@ -179,12 +179,16 @@ Implemented by `apps/desktop/src/main/screenshots/` (`stitch.ts`, `page-script.t
   search parameters; `capture_id` null) and a local `screenshot_edits` row naming its source, in one
   transaction that holds only if the source row is still there and its project live (else
   `no-source`). The source file and row never change; the overlay is never stored as sent.
-- The gallery lists the copy like any screenshot, labelled "Edited" (`editedFrom`). Purging either
-  screenshot removes the link (a trigger on `ci_screenshots`, so a synced tombstone does too).
+- The gallery lists the copy like any screenshot, labelled "Edited" (`editedFrom`). Purging the copy
+  removes the link (a trigger on `ci_screenshots`, so a synced tombstone does too). Purging the
+  source does not: the copy stays labelled "Edited", its `editedFrom` naming a source that no longer
+  exists.
 - **Retention:** an edited copy (one a `screenshot_edits` row links) is in a lane of its own beside
   the captured screenshots of its page, kind, profile and search parameters, so saving an edit (which
   runs the project's retention) never purges its source or any taken screenshot; copies are kept
-  among copies. A copy whose source has been purged has lost its link and counts as taken again.
+  among copies. A copy whose source has been purged keeps its link and its lane, so a later purge
+  never takes a taken screenshot in its place (council round 1; `purged-source-keeps-copy-lane`,
+  `packages/db/src/__tests__/repository.test.ts`).
   **Known limit (lead ruling, whole-branch review):** the copy's lane rests on the `screenshot_edits`
   link, which is local-only (never synced). A device that receives the copy's `ci_screenshots` row by
   sync without the link treats it as a taken screenshot of that lane, so its retention can count it

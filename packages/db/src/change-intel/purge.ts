@@ -24,8 +24,9 @@ import { ciSerpReadings } from './workspace-schema';
 // planned again here), checking `isHashReferenced` once more before each unlink.
 //
 // Phase 11 Task 7: deleting a `ci_screenshots` row here also removes the local `screenshot_edits`
-// links naming it (as the edited copy or as its source), in the same transaction, through migration
-// `0231`'s `screenshot_edits_follow_screenshots` trigger; so does a synced tombstone's delete.
+// link of that row as an edited copy, in the same transaction, through migration `0231`'s
+// `screenshot_edits_follow_screenshots` trigger; so does a synced tombstone's delete. A link naming
+// the row as its source stays (council round 1), so the copy keeps its lane below.
 
 /** What to purge: a project's retention policy, or `all` (internal: the `project-deleted` purge). */
 export type PurgePolicy = { readonly mode: 'forever' } | { readonly mode: 'versions' | 'days'; readonly value: number } | { readonly mode: 'all' };
@@ -225,7 +226,8 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       // A screenshot's lane is its page, render profile and search parameters: a phone's and a desktop's never compete.
       // Phase 11 Task 7 (security review): an edited copy (one `screenshot_edits` links) has a lane of
       // its own beside the captured ones, so saving an edit never pushes out its source or any taken
-      // screenshot; copies are kept among copies.
+      // screenshot; copies are kept among copies. The link outlives its source, so a copy whose
+      // source has gone stays in the copy lane.
       .map((row) => ({ id: row.id, group: JSON.stringify([row.pageUrl, row.kind, row.renderProfile, row.searchParams, row.edited !== null]), at: time(row.at), sha256: row.sha256, bytes: row.bytes }));
 
     const captures = purgedCaptures(captureRows, policy, now);

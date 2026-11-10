@@ -155,7 +155,7 @@ function ScreenshotItem({ entry }: { readonly entry: ScreenshotEntry }) {
             {laneLabel(entry)}
           </span>
           {entry.editedFrom !== null ? (
-            <span className="seo-chip changes-shot-edited" data-testid="screenshot-edited" title="An edited copy; the original is kept">
+            <span className="seo-chip changes-shot-edited" data-testid="screenshot-edited" title="An edited copy; saving it left the original unchanged">
               Edited
             </span>
           ) : null}

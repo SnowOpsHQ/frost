@@ -180,7 +180,8 @@ export const ciTombstones = sqliteTable(
 /**
  * Phase 11 Task 7: the local-only link from an edited screenshot to its source (migration
  * `0231_screenshot_edits`, `phase11-migrations.ts`; `capture-db.spec.ts`, `SCREENSHOT_EDIT_TABLES`).
- * Not a `ci_*` table: not synced, not append-only; a trigger removes a row when either screenshot goes.
+ * Not a `ci_*` table: not synced, not append-only; a trigger removes a row when its edited copy goes.
+ * The row outlives its source: `source_id` may name a screenshot that no longer exists.
  */
 export const screenshotEdits = sqliteTable(
   'screenshot_edits',

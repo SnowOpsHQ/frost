@@ -207,8 +207,9 @@ export interface ScreenshotEntry {
   createdAt: number;
   /**
    * Phase 11 Task 7: the screenshot this one is an edited copy of (its row id), from the local-only
-   * `screenshot_edits` table (`capture-db.spec.ts`); `null` for one that was taken, for an edit whose
-   * source has since been purged, and on another device (the link is not synced).
+   * `screenshot_edits` table (`capture-db.spec.ts`); `null` for one that was taken, and on another
+   * device (the link is not synced). The source may no longer exist: an edit whose source has since
+   * been purged still names it (and is still an edited copy).
    */
   editedFrom: string | null;
 }
