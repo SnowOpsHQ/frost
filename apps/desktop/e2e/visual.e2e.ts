@@ -19,6 +19,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { crc32 } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { ACCOUNT_SETTINGS_TEXT, SETTINGS_MENU } from '@app/specs/account-settings.spec';
@@ -65,6 +66,22 @@ const PLATFORM_ARGS = process.platform === 'linux' && process.env['DISPLAY'] ? [
 // The fixture site: frost's own words, nothing that changes between runs.
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+/**
+ * `PNG` with a `tEXt` chunk of `padding` bytes after its header: a valid image of its own byte size.
+ * Page Speed's "Largest requests" sorts by size and keeps equal sizes in load order, so the
+ * guide's images each get a different size and the list's order never follows timing.
+ */
+function paddedPng(padding: number): Buffer {
+  const data = Buffer.concat([Buffer.from('Comment\0', 'latin1'), Buffer.alloc(padding, 0x2e)]);
+  const head = Buffer.alloc(8);
+  head.writeUInt32BE(data.length, 0);
+  head.write('tEXt', 4, 'ascii');
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([Buffer.from('tEXt', 'ascii'), data])) >>> 0, 0);
+  const afterHeader = 8 + 25; // the signature, then IHDR (length, type, 13 bytes, CRC)
+  return Buffer.concat([PNG.subarray(0, afterHeader), head, data, crc, PNG.subarray(afterHeader)]);
+}
+const IMAGES: Readonly<Record<string, Buffer>> = { '/img/jar.png': paddedPng(600), '/img/steps.png': paddedPng(200) };
 const words = (n: number) => Array.from({ length: n }, (_, i) => ['cold', 'brew', 'coffee', 'water', 'grind', 'steep', 'filter', 'jar'][i % 8]).join(' ');
 const ld = (value: unknown) => `<script type="application/ld+json">${JSON.stringify(value)}</script>`;
 
@@ -123,7 +140,7 @@ async function startSite() {
     } else if (pathname === '/start') html('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Agent start</title></head><body><h1>Agent start</h1><p>Where the agent begins.</p></body></html>');
     else if (pathname === '/notify') html('<!doctype html><html lang="en"><title>Page NOTIFY</title><h1>Page NOTIFY</h1></html>');
     // Never cached: Page Speed's request list says "cached" for a cached one, which would follow the order of the tests.
-    else if (pathname.startsWith('/img/')) response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }).end(PNG);
+    else if (pathname.startsWith('/img/')) response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }).end(IMAGES[pathname] ?? PNG);
     else response.writeHead(404, { 'Content-Type': 'text/plain' }).end('not here');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -188,13 +205,19 @@ const CAPTURES = [
   'seo-on-page',
   'seo-schema',
   'seo-page-speed',
+  'seo-page-speed-middle',
+  'seo-page-speed-lower',
   'seo-search-console',
+  'seo-search-console-lower',
   'seo-changes',
+  'seo-changes-lower',
   'devtools-drawer',
   'find-bar',
   'command-palette',
   'settings',
+  'settings-lower',
   'projects',
+  'projects-lower',
   'render-profile',
   'permission-bar',
   'update-bar',
@@ -212,8 +235,17 @@ const baselineFiles = (): string[] => CAPTURES.flatMap((name) => THEMES.map((the
  */
 const VISUAL_CSS = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'visual.css'), 'utf8');
 
-/** Text left out of `settled()`'s comparison: it changes every second while the state is otherwise still. */
-const TICKING = ['.seo-speed-live-text', '[data-testid="seo-speed-metric-value"]', '[data-testid="seo-speed-navigation"]', '[data-testid="seo-speed-largest"]'];
+/**
+ * Text left out of `settled()`'s comparison: Page Speed's measured values, which its live updates
+ * (every SPEED_POLL_MS) may rewrite while the state is otherwise still. visual.css hides each of them.
+ */
+const TICKING = [
+  '.seo-speed-live-text',
+  '[data-testid="seo-speed-metric-value"]',
+  '[data-testid="seo-speed-navigation"] .seo-badge',
+  '[data-testid="seo-speed-navigation"] dd',
+  '[data-testid="seo-speed-large"] .seo-speed-num + .seo-speed-num',
+];
 
 /** What still says it is working: a busy region, a tab's spinner, the audit skeleton, or a "Loading…"-style line. */
 const BUSY_SELECTORS = '[aria-busy="true"], [data-testid="tab-loading"], [data-testid="seo-pending"], [data-testid="gsc-loading"], [data-testid="changes-loading"]';
@@ -270,10 +302,14 @@ async function settled(): Promise<void> {
  * captures run. A missing baseline is written (and its `*-actual.png` kept) by Playwright
  * (`updateSnapshots: 'missing'`); 'every capture has a baseline' fails for it in CI.
  */
-async function capture(name: CaptureName, options: { readonly keepFocus?: boolean } = {}): Promise<void> {
+async function capture(name: CaptureName, options: { readonly keepFocus?: boolean; readonly scroll?: Scroll } = {}): Promise<void> {
   if (!options.keepFocus) await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.mouse.move(Math.round(WINDOW.width / 2), WINDOW.height - 4);
   await settled();
+  if (options.scroll) {
+    await scrollTo(options.scroll);
+    await settled();
+  }
   const key = await app!.evaluate(({ BrowserWindow }, css) => BrowserWindow.getAllWindows()[0]!.webContents.insertCSS(css), VISUAL_CSS);
   try {
     // visual.css's marker: the sheet is in effect.
@@ -283,7 +319,7 @@ async function capture(name: CaptureName, options: { readonly keepFocus?: boolea
       await page.emulateMedia({ colorScheme: scheme });
       expect(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(scheme === 'dark');
       backgrounds.push(await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
-      await expect.soft(page).toHaveScreenshot(`${name}-${scheme}.png`);
+      await expect.soft(page).toHaveScreenshot(`${name}-${scheme}.png`, STRICT);
     }
     expect(backgrounds[0], 'the dark theme repaints the chrome').not.toBe(backgrounds[1]);
   } finally {
@@ -291,6 +327,36 @@ async function capture(name: CaptureName, options: { readonly keepFocus?: boolea
     await page.emulateMedia({ colorScheme: null });
   }
 }
+
+/**
+ * `VISUAL_STRICT=1`: no pixel may differ at all (`maxDiffPixels: 0`), for a local run or an explicit
+ * check of a change that must not move anything; by default up to 0.2 % may (playwright.config.ts).
+ */
+const STRICT = process.env['VISUAL_STRICT'] === '1' ? { maxDiffPixels: 0, maxDiffPixelRatio: 0 } : {};
+
+/**
+ * Where a "-lower" capture looks: `selector`'s scroller (the SEO panel's `.seo-body`, the Settings
+ * content, the Projects sheet) scrolled to its end (`'end'`), or to `top` px. Each capture is the
+ * visible window only; the scroll brings what lies below it into view.
+ */
+type Scroll = { readonly selector: string; readonly to: 'end' } | { readonly selector: string; readonly top: number };
+
+/** Scrolls `scroll.selector` (instantly) and checks it got there. */
+async function scrollTo(scroll: Scroll): Promise<void> {
+  const target = page.locator(scroll.selector);
+  await expect(target).toHaveCount(1);
+  const reached = await target.evaluate((el, top) => {
+    const wanted = top ?? el.scrollHeight;
+    el.scrollTo({ top: wanted, behavior: 'instant' });
+    return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight, wanted };
+  }, 'top' in scroll ? scroll.top : null);
+  expect(reached.max, `${scroll.selector} has something below the fold`).toBeGreaterThan(0);
+  // Within a pixel: a fractional device scale (a local run) rounds the scroll position.
+  expect(Math.abs(reached.top - Math.min(reached.wanted, reached.max)), `${scroll.selector} scrolled to ${reached.wanted}`).toBeLessThanOrEqual(1);
+}
+
+/** The scrollers a "-lower" capture moves: back to the top before each shared-app state. */
+const SCROLLERS = ['.seo-body', '.settings-content', '.projects-main'];
 
 const sidebar = () => page.getByTestId('seo-sidebar');
 const railItem = (panel: string) => page.locator(`[data-testid="seo-rail-item"][data-panel="${panel}"]`);
@@ -332,6 +398,10 @@ test.describe('page surfaces', () => {
     await closeAllTabs();
     if ((await sidebar().getAttribute('data-open')) !== 'true') await page.getByTestId('seo-toggle').click();
     await expect(sidebar()).toHaveAttribute('data-open', 'true');
+    // A "-lower" capture left its scroller at the end.
+    await page.evaluate((scrollers) => {
+      for (const el of document.querySelectorAll(scrollers.join(', '))) el.scrollTo({ top: 0, behavior: 'instant' });
+    }, SCROLLERS);
   });
 
   test('seo-overview', async () => {
@@ -369,9 +439,17 @@ test.describe('page surfaces', () => {
     await expect(page.locator('[data-testid="seo-speed-type"][data-type="document"]')).toHaveAttribute('data-requests', '1');
     await expect(page.getByTestId('seo-speed-ttfb')).not.toHaveText('');
     await expect(page.getByTestId('seo-speed-load')).not.toHaveText('Not yet');
+    // A slow machine fails here, by name, rather than as an image difference: every measured vital
+    // and the verdict are in the good band (loopback pages, no throttling).
+    for (const name of ['lcp', 'cls', 'fcp', 'ttfb']) await expect(metric(name), name).toHaveAttribute('data-band', 'good');
+    await expect(page.getByTestId('seo-speed-verdict')).toHaveAttribute('data-band', 'good');
     // The measured times themselves are hidden by visual.css (their values, meter markers, the
-    // Navigation card's numbers, the "updated … ago" line); `capture` settles first.
+    // Navigation card's numbers, the largest requests' durations, the "updated … ago" line).
     await capture('seo-page-speed');
+    // Below the fold, almost three screens in all: one screen down (the vitals' end, Issues,
+    // Navigation timing), then the end (Requests, Largest requests, Hosts, DOM).
+    await capture('seo-page-speed-middle', { scroll: { selector: '.seo-body', top: 600 } });
+    await capture('seo-page-speed-lower', { scroll: { selector: '.seo-body', to: 'end' } });
   });
 
   test('seo-changes', async () => {
@@ -398,6 +476,8 @@ test.describe('page surfaces', () => {
       await expect(page.getByTestId('changes-version')).toHaveCount(2);
       // The versions' capture times (the history list, the diff's heading, its compare picker) are hidden by visual.css.
       await capture('seo-changes');
+      // The rest of the diff (main content, navigation) and what follows it.
+      await capture('seo-changes-lower', { scroll: { selector: '.seo-body', to: 'end' } });
     } finally {
       site.state.version = 1;
     }
@@ -454,6 +534,8 @@ test.describe('page surfaces', () => {
     await expect(page.getByTestId('settings-content')).not.toContainText('Loading…');
     await expect(page.getByTestId('settings-content')).toContainText(ACCOUNT_SETTINGS_TEXT.unconfigured);
     await capture('settings');
+    // Below AI checks: the rest of that section and Telemetry.
+    await capture('settings-lower', { scroll: { selector: '.settings-content', to: 'end' } });
     await page.getByTestId('settings-close').click();
     await expect(page.getByTestId('settings-view')).toHaveCount(0);
   });
@@ -476,6 +558,8 @@ test.describe('page surfaces', () => {
     await expect(page.getByTestId('projects-page')).toHaveCount(2);
     await expect(page.getByTestId('projects-page').first().getByTestId('projects-page-last')).toHaveText('Not captured yet');
     await capture('projects');
+    // Search queries and Retention and disk usage (the database file's size hidden by visual.css).
+    await capture('projects-lower', { scroll: { selector: '.projects-main', to: 'end' } });
     await page.getByTestId('projects-close').click();
     await expect(sheet).toHaveCount(0);
   });
@@ -658,6 +742,8 @@ test.describe('search console', () => {
     await expect(page.getByTestId('gsc-line')).toHaveCount(1);
     // The dates follow today's date: visual.css hides them (the ticks, "Through …", the freshness line).
     await capture('seo-search-console');
+    // The top queries and the freshness line.
+    await capture('seo-search-console-lower', { scroll: { selector: '.seo-body', to: 'end' } });
   });
 });
 
@@ -722,6 +808,9 @@ test.describe('update bar', () => {
 // The baseline directory against the registry (CAPTURES). Last, so a run's own captures came first.
 
 test('every capture has a baseline', () => {
+  // Every listed name is still captured somewhere in this file (a removed capture leaves its name).
+  const source = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  expect(CAPTURES.filter((name) => !source.includes(`capture('${name}'`)), 'CAPTURES entries no capture() call uses').toEqual([]);
   const expected = baselineFiles();
   const dir = path.dirname(test.info().snapshotPath(expected[0]!, { kind: 'screenshot' }));
   // No orphans (a renamed or removed state's images), here and in CI.

@@ -23,12 +23,16 @@
 /* Search Console: "Through <date>" (a grid row of its own). */
 [data-testid='gsc-through'],
 /* Page Speed: the measured values (a block line each), the live line's "updated … ago" (the last
-   item of its row), a largest request's duration (after its size), the Navigation card's numbers. */
+   item of its row), a largest request's duration (the last item of its meta row: the fixture's
+   requests are never cached nor third-party, so no flag follows it) and the Navigation card's
+   TTFB / DOM ready / Load (each in one of three equal grid columns). */
 [data-testid='seo-speed-metric-value'],
 .seo-speed-live-text,
 [data-testid='seo-speed-large'] .seo-speed-num + .seo-speed-num,
-[data-testid='seo-speed-navigation'] .seo-speed-num,
-[data-testid='seo-speed-navigation'] dd {
+[data-testid='seo-speed-navigation'] dd,
+/* Projects: Retention's database file size (all projects: it grows with whatever the app has
+   stored; the value column of a two-column grid). */
+[data-testid='retention-usage-row'][data-row='database'] dd {
   color: transparent !important;
 }
 
@@ -53,8 +57,8 @@
   visibility: hidden !important;
 }
 
-/* Page Speed: the Navigation card lists only the phases that took time (which ones varies from run
-   to run), so its list is left out and the card keeps one height. */
+/* Page Speed: the Navigation card lists only the phases that took time, each with its duration
+   (which ones varies from run to run), so its list is left out and the card keeps one height. */
 [data-testid='seo-speed-navigation'] .seo-speed-phases {
   display: none !important;
 }

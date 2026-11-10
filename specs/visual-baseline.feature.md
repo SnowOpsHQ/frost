@@ -25,9 +25,17 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
   `@media (prefers-color-scheme: dark)` in `src/renderer/*.css`); `nativeTheme.themeSource` is not
   needed. Every capture checks that `matchMedia('(prefers-color-scheme: dark)')` follows the
   emulation and that the body's computed background differs between light and dark.
+- **Each capture is the visible window only** (1280 × 800). A surface longer than its scroller gets
+  more captures of the same state with that scroller moved (`capture(name, { scroll })`): to its
+  end (`-lower`) and, where the end alone would leave much of the middle out, to a fixed offset
+  (`-middle`). See "What is compared".
 - **Comparator**: `threshold: 0` (any change of a pixel's colour counts; Playwright's default 0.2
-  would let a subtle token colour shift pass) and `maxDiffPixelRatio: 0.002` (at most 0.2 % of the
-  pixels may differ: anti-aliasing jitter, e.g. a select's chevron by one RGB step).
+  would let a subtle token colour shift pass) and `maxDiffPixelRatio: 0.002`: up to 0.2 % of the
+  pixels, 2,048 at 1280 × 800, may differ, for anti-aliasing noise (seen: the Search Console range
+  select's chevron in dark, 2 pixels by one RGB step between two runs on one machine). A green run
+  therefore proves "within 0.2 %", not "identical". **Strict mode**: `VISUAL_STRICT=1` sets
+  `maxDiffPixels: 0` and `maxDiffPixelRatio: 0` for every capture (a local run, or CI with the
+  variable set), so any differing pixel fails and its diff image shows where.
 
 ## States (`CAPTURES` in the test; each from the flow of the suite named)
 | Baseline | Test | State | Flow copied from |
@@ -38,24 +46,41 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `seo-overview` | seo-overview | the guide page, sidebar on Overview (score, issues, AI readiness 3 of 4) | `seo-sidebar` good-page-scores-high |
 | `seo-on-page` | seo-on-page | On-Page facts and headings | `seo-sidebar` |
 | `seo-schema` | seo-schema | Schema: three valid JSON-LD blocks, the tree | `seo-schema` schema-valid-page-shows-clean-tree |
-| `seo-page-speed` | seo-page-speed | Page Speed, live: LCP, CLS, FCP and TTFB measured | `seo-speed` `measure` |
+| `seo-page-speed` | seo-page-speed | Page Speed, live: LCP, CLS, FCP and TTFB measured, all good | `seo-speed` `measure` |
+| `seo-page-speed-middle` | seo-page-speed | the same, `.seo-body` at 600 px: the vitals' end, Issues, Navigation timing, Requests | |
+| `seo-page-speed-lower` | seo-page-speed | the same, `.seo-body` at its end: Requests, Largest requests, Hosts, DOM | |
 | `seo-search-console` | seo-search-console | Search Console connected to the fake Google: this page, 28 days, the clicks chart | `gsc-panel` not-connected, page-totals-and-chart |
+| `seo-search-console-lower` | seo-search-console | the same at its end: the top queries, the freshness line | |
 | `seo-changes` | seo-changes | Changes: two captures, the diff by region | `changes` capture-first-version, diff-by-region |
+| `seo-changes-lower` | seo-changes | the same at its end: the rest of the diff, Screenshots | |
 | `devtools-drawer` | devtools-drawer | the SEO devtools drawer on Console | `devtools` |
 | `find-bar` | find-bar | the find bar, "tea", 1 of 3 | `browser-polish` find-counts-steps-and-clears |
 | `command-palette` | command-palette | the palette with "zoom" typed | `command-palette`, `update` |
 | `settings` | settings | the Settings sheet, every section answered | `settings` |
+| `settings-lower` | settings | the same, `.settings-content` at its end: AI checks' end, Telemetry | |
 | `projects` | projects | the Projects sheet: a project with two pages | `projects` projects-create-and-add-pages |
+| `projects-lower` | projects | the same, `.projects-main` at its end: search queries, Retention and disk usage, Purge log | |
 | `render-profile` | render-profile | phone + mobile UA applied and reloaded, the editor bar open | `render-profile` mobile-preset-viewport-and-ua |
 | `permission-bar` | permission-bar | the notification prompt bar, armed | `permissions` allow-grants-and-is-remembered-e2e |
 | `update-bar` | update-bar | the update bar offering 99.0.0 (signed fake feed over TLS) | `update` update-available-download-verify-show |
 | `agent-empty` | agent-empty | the agent panel open, no chat yet | `agent` `launchWith` |
 | `agent-conversation` | agent-conversation | one scripted turn: a `page_text` tool card, then the answer | `agent` agent-chat-export-and-restore (scripted model seam) |
 
-No state is skipped. The ChatGPT route's conversation is not captured: the scripted-model turn
-already shows the same chat surface without a sign-in. Known limit: the Projects sheet's Retention
-section (below the fold today) shows the database file's size, which varies; a restyle that brings
-it above the fold needs it hidden too.
+25 captures, 50 images. No state is skipped. The ChatGPT route's conversation is not captured: the
+scripted-model turn already shows the same chat surface without a sign-in.
+
+## What is compared
+Only what each capture's window shows (measured locally at 1280 × 800):
+- **Everything** of the states that fit their window, and of the chrome around every state (tab
+  strip, toolbar, bars, rail, status bar, the agent panel).
+- **Page Speed** (`.seo-body` about 1,690 px tall in a 606 px window): the top, 600–1,206 px and the
+  last screen, so every part; **Search Console** (about 1,280 in 636): the top and the end (a 9 px
+  strip between them, inside the queries card, is not); **Changes** (about 1,160 in 636), **Settings** (about 1,170
+  in 624) and **Projects** (about 1,180 in 606): the top and the end, which overlap.
+- **Not compared**: whatever lies below the window in the other states (the Overview's lower issues
+  and Page card, On-Page below Headings, the Schema tree's later blocks, the Projects sheet's list
+  column below its items); the tab's page itself; and the text that visual.css hides (below).
+  Those panels have their own e2e suites for content; a restyle reviewer should open them by hand.
 
 ## Determinism
 - **Fixed names, no ports.** The fixture site answers on `visual.frost-e2e.net` (and
@@ -66,12 +91,23 @@ it above the fold needs it hidden too.
   in them changes but the Changes page's two versions.
 - **Settled before capture.** Each flow waits for what its suite waits for (the audit's URL in
   On-Page, the Changes panel's ready audit, all four measurable vitals, AI readiness `partial`, no
-  Settings section "Loading…", the find count, the armed prompt, …). Then every capture waits until
+  Settings section "Loading…", the find count, the armed prompt, …); Page Speed also asserts that
+LCP, CLS, FCP, TTFB and the verdict are in the good band (`data-band="good"`), so a slow runner
+fails by name rather than as an image difference. Then every capture waits until
   nothing on screen is busy (`aria-busy`, a tab spinner, the audit skeleton, the Search Console or
   Changes loading block, a "Loading… / Reading… / Checking… / Measuring…"-style line) and the
-  chrome's text and `data-state` / `data-status` / `data-band` / `data-outcome` attributes (bar the
-  per-second Page Speed values) have held still for 1.5 s; `toHaveScreenshot` itself waits for two
-  identical frames. A transient message (the palette's status pill) is waited out, not captured.
+  chrome's text and `data-state` / `data-status` / `data-band` / `data-outcome` attributes have held
+  still for 1.5 s (after a scroll, again); `toHaveScreenshot` itself waits for two identical frames.
+  The text left out of that comparison is exactly Page Speed's measured values, which its live
+  updates may rewrite: the live line's text, the vitals' values, the Navigation card's total badge
+  and TTFB / DOM ready / Load values, and the largest requests' durations (all hidden by
+  visual.css). A transient message (the palette's status pill) is waited out, not captured.
+- **Order independence.** In the shared app each state starts from one tab, every sheet, bar and
+  drawer closed, the sidebar open, and the scrollers a capture moves (`.seo-body`,
+  `.settings-content`, `.projects-main`) back at the top.
+- **Distinct sizes.** The guide's two images are valid PNGs of different byte sizes (one padded
+  with a `tEXt` chunk): Page Speed's Largest requests sorts by size and keeps equal sizes in load
+  order, which would follow timing.
 - **No pointer or focus noise.** Focus leaves the chrome (except where the focused field is the
   state: find bar, palette) and the pointer rests on the status bar. `animations: 'disabled'`,
   `caret: 'hide'`.
@@ -88,9 +124,14 @@ it above the fold needs it hidden too.
   - Search Console: "Through <date>", the chart's date ticks, and the freshness line (also clipped to
     one line, as its three dates could change how it wraps);
   - Page Speed: the vitals' values and their meter markers (the zones stay), the "updated … ago"
-    line, the largest requests' durations, and the Navigation card's total, waterfall bars, TTFB /
-    DOM ready / Load; its phase list is left out (which phases took any time varies), so the card
-    keeps one height. The request breakdown (counts and sizes) is compared.
+    line, the largest requests' durations (the last item of their row: the fixture's requests are
+    never cached or third-party), and the Navigation card's total badge (hidden whole; it sits at
+    the end of the card's header), waterfall bars and TTFB / DOM ready / Load (three equal grid
+    columns); its phase list is left out (which phases took any time varies, each with a duration),
+    so the card keeps one height. The request breakdown, the largest requests' URLs, types and
+    sizes, Hosts and DOM are compared;
+  - Projects: Retention's "Database file (all projects)" size, which grows with whatever the app
+    has stored (the value column of a two-column grid).
 
 ## Baseline procedure
 `updateSnapshots` is `'missing'`, in CI too. For a missing baseline Playwright renders the state,
@@ -101,8 +142,9 @@ a missing baseline without rendering anything, so there is no actual to adopt. N
 writes the actual but fails each test that had a missing one, and Playwright replaces the worker
 after a failure, so a baseline run would relaunch the app for every test. A missing baseline still
 fails CI: the last test, **every capture has a baseline**, checks in CI that every capture's two
-images are committed (`git ls-files`; on disk they now all exist). It also fails, locally too, on a
-PNG in the baseline directory that no capture makes (a renamed or removed state). A *different*
+images are committed (`git ls-files`; on disk they now all exist). Everywhere, it also fails on a
+PNG in the baseline directory that no capture makes (a renamed or removed state) and on a
+`CAPTURES` entry that no `capture('<name>'` call in the file uses any more. A *different*
 image fails its own test, with `*-actual.png`, `*-expected.png` and `*-diff.png`. Captures are soft
 assertions and the tests independent (not serial), so one CI run yields every actual. The failed job
 uploads `apps/desktop/test-results/` in the `playwright-report` artifact.
@@ -113,12 +155,18 @@ uploads `apps/desktop/test-results/` in the `playwright-report` artifact.
    difference.)
 2. When the run fails on the visual suite: `gh run download <run-id> -n playwright-report -D <dir>`.
 3. Review: open each `*-diff.png` (or the HTML report in the artifact) and check that only the
-   intended surfaces changed, in both themes. A token-only change must produce no difference at all.
+   intended surfaces changed, in both themes.
 4. Copy each actual to its baseline, dropping `-actual`:
-   `find <dir> -name '*-actual.png' -exec sh -c 'cp "$1" "apps/desktop/e2e/__screenshots__/visual.e2e.ts/$(basename "$1" -actual.png).png"' _ {} \;`
+   `mkdir -p apps/desktop/e2e/__screenshots__/visual.e2e.ts && find <dir> -name '*-actual.png' -exec sh -c 'cp "$1" "apps/desktop/e2e/__screenshots__/visual.e2e.ts/$(basename "$1" -actual.png).png"' _ {} \;`
    (a green run's artifact is not uploaded; after an intended change, only the changed states have
    an actual). Delete the baselines of a removed state.
 5. Commit the PNGs, push, and run CI again: the visual suite passes.
+
+**A change that must not move anything** (a token-only foundation PR): a green run is necessary but
+not sufficient, as up to 0.2 % of each image may differ. Also check that CI's log shows no
+`toHaveScreenshot` difference at all for the visual suite (a passing comparison prints nothing), or
+run the suite with `VISUAL_STRICT=1` (locally against CI-made baselines is not meaningful; in CI,
+e.g. by setting the variable on the e2e step for that run), where any differing pixel fails.
 
 **Local runs**: a local run (Wayland/Hyprland, other fonts and scale) writes missing images and
 compares against them, useful to look at a state or to check that two runs on one machine agree.
@@ -126,9 +174,10 @@ Those images differ from CI's and are **never committed**; delete
 `apps/desktop/e2e/__screenshots__/` and `apps/desktop/test-results/` after looking.
 
 ## End to end (`e2e/visual.e2e.ts`)
-Each state test drives its flow and captures its baselines (table above) in both themes; in each
-capture the media query follows the emulated scheme and the body's background differs between light
-and dark, and the stylesheet's marker is in effect.
+Each state test drives its flow and captures its baselines (table above, `-middle` / `-lower` ones
+included) in both themes; in each capture the media query follows the emulated scheme and the
+body's background differs between light and dark, and the stylesheet's marker is in effect; a
+scrolled capture's scroller has something below the fold and reached its offset.
 - **Scenario: new-tab**, **jump-back-in-and-history** (a fresh profile).
 - **Scenario: seo-overview**, **seo-on-page**, **seo-schema**, **seo-page-speed**, **seo-changes**,
   **devtools-drawer**, **find-bar**, **command-palette**, **settings**, **projects**,
@@ -136,5 +185,5 @@ and dark, and the stylesheet's marker is in effect.
 - **Scenario: agent-empty**, **agent-conversation** (the scripted model seam).
 - **Scenario: seo-search-console** (fake backend and Google).
 - **Scenario: update-bar** (fake feed).
-- **Scenario: every capture has a baseline** — no orphaned PNG; in CI, every `CAPTURES` name's two
-  images committed.
+- **Scenario: every capture has a baseline** — every `CAPTURES` name has a `capture('<name>'` call;
+  no orphaned PNG; in CI, every name's two images committed.
