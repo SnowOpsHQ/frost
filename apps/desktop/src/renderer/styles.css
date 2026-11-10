@@ -9051,8 +9051,10 @@ input {
   padding: 0 20px 20px;
 }
 
+/* Positioned, as `.settings-content`: screen-reader-only text stays inside the scroll box. */
 .projects-list,
 .projects-main {
+  position: relative;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;

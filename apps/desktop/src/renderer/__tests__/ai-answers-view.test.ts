@@ -13,7 +13,7 @@ import type { AiAnswerRecord, AiAnswerSummary, AiAnswersRunAnswer, AiAnswersView
 import { AI_SEARCH_ENGINE_LABELS } from '@app/specs/ai-search.spec';
 import { DATA_SPEND_NOTE, LEGAL_GATE_NOTE } from '@app/specs/data-sources.spec';
 import { aiAnswersPaletteSources } from '../ai-answers-palette';
-import { answerParagraphs, askControl, citationRows, domainGroups, engineChoices, engineLabel, sourcesText, watchedDomainOf } from '../ai-answers-view';
+import { answerParagraphs, askControl, citationRows, domainGroups, engineCaveat, engineChoices, engineLabel, engineShortLabel, sourcesText, watchedDomainOf } from '../ai-answers-view';
 
 const CITATIONS = [
   { url: 'https://tea.example/brewing', title: 'Brewing' },
@@ -59,6 +59,13 @@ describe('the AI answers view, pure', () => {
     expect(answerParagraphs('a\n\n\nb\r\nc  ')).toEqual(['a', 'b', 'c']);
     // ChatGPT is labelled as what it is.
     expect(engineLabel('chatgpt')).toBe('OpenAI web search — may differ from the ChatGPT app');
+    // A select's option names the engine only (the full label was cut); the caveat is a sentence beside it.
+    expect(engineShortLabel('chatgpt')).toBe('OpenAI web search');
+    expect(engineCaveat('chatgpt')).toBe('OpenAI web search may differ from the ChatGPT app.');
+    expect(engineShortLabel('perplexity')).toBe(AI_SEARCH_ENGINE_LABELS.perplexity);
+    expect(engineCaveat('perplexity')).toBeNull();
+    expect(engineCaveat('google-ai-mode')).toBeNull();
+    expect(engineCaveat(null)).toBeNull();
   });
 
   test('ai-answers-links-open-in-tab-only', () => {
@@ -114,7 +121,7 @@ describe('the AI answers view, pure', () => {
       ['chatgpt', true, LEGAL_GATE_NOTE],
       ['google-ai-mode', true, 'frost has no API for that AI engine in this build.'],
     ]);
-    expect(gated.map((choice) => choice.label)).toEqual([AI_SEARCH_ENGINE_LABELS.perplexity, AI_SEARCH_ENGINE_LABELS.chatgpt, AI_SEARCH_ENGINE_LABELS['google-ai-mode']]);
+    expect(gated.map((choice) => choice.label)).toEqual(['Perplexity', 'OpenAI web search', 'Google AI Mode']);
     expect(askControl(view(), '', 'green tea')).toEqual({ disabled: true, note: LEGAL_GATE_NOTE });
     // A gate open: the usable engine is offered; one without its key is not.
     const open = engineChoices(view(true));
@@ -287,6 +294,12 @@ describe('the AI answers sheet', () => {
       ['chatgpt', true],
       ['google-ai-mode', true],
     ]);
+    // The options name the engine only, so none is cut; no engine to ask yet, so no caveat.
+    expect(options.map((option) => option.textContent)).toEqual([AI_ANSWERS_VIEW_TEXT.defaultEngineChoice, 'Perplexity', 'OpenAI web search', 'Google AI Mode']);
+    expect(q('ai-answers-engine-caveat')).toBeNull();
+    // The settings name engines the same way (each "Reach through" row, the default engine's options).
+    expect(all('ai-answers-engine-note-chatgpt')[0]!.closest('li')!.querySelector('span')!.textContent).toBe(`OpenAI web search · ${AI_ANSWERS_VIEW_TEXT.viaLabel}`);
+    expect([...q<HTMLSelectElement>('ai-answers-default-engine')!.options].map((option) => option.textContent)).toEqual([AI_ANSWERS_VIEW_TEXT.noDefaultEngine, 'Perplexity', 'OpenAI web search', 'Google AI Mode']);
     // The settings: the api via of a gated engine is disabled with the note; off stays possible.
     const via = q<HTMLSelectElement>('ai-answers-via-perplexity')!;
     expect([...via.options].map((option) => [option.value, option.disabled])).toEqual([
@@ -295,6 +308,36 @@ describe('the AI answers sheet', () => {
     ]);
     expect(q('ai-answers-engine-note-perplexity')!.textContent).toBe(LEGAL_GATE_NOTE);
     expect(ipcMock.run).not.toHaveBeenCalled();
+  });
+
+  test('ai-answers-engine-caveat-beside-the-select', async () => {
+    // OpenAI web search set up: chosen, its caveat shows beside the select (and describes it); the
+    // confirm and the answer's meta line keep the full label.
+    const chatgptOpen = view(true, {
+      engines: [
+        { engine: 'perplexity', provider: 'perplexity', available: true, hasKey: true, via: null, usable: true },
+        { engine: 'chatgpt', provider: 'openai-search', available: true, hasKey: true, via: null, usable: true },
+        { engine: 'google-ai-mode', provider: null, available: false, hasKey: false, via: null, usable: false },
+      ],
+    });
+    await show(chatgptOpen, 'ask');
+    // The default is Perplexity (the first usable): no caveat.
+    expect(q('ai-answers-engine-caveat')).toBeNull();
+    const select = q<HTMLSelectElement>('ai-answers-engine')!;
+    await act(async () => {
+      select.value = 'chatgpt';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const caveat = q('ai-answers-engine-caveat')!;
+    expect(caveat.textContent).toBe('OpenAI web search may differ from the ChatGPT app.');
+    expect(select.getAttribute('aria-describedby')).toBe(caveat.id);
+    await act(async () => type(q<HTMLInputElement>('ai-answers-query')!, 'green tea'));
+    await act(async () => q('ai-answers-ask')!.click());
+    expect(q('ai-answers-confirm')!.textContent).toContain(AI_SEARCH_ENGINE_LABELS.chatgpt);
+    expect(q('ai-answer-meta')!.textContent).toContain(AI_SEARCH_ENGINE_LABELS.chatgpt);
+    // The list row names the engine only.
+    expect(q('ai-answers-pick')!.textContent).toContain('OpenAI web search · ');
+    expect(q('ai-answers-pick')!.textContent).not.toContain('ChatGPT app');
   });
 
   test('ai-answers-view-shows-cost-note-first', async () => {

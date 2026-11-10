@@ -4,7 +4,7 @@ import { AI_ANSWER_RETENTION_LABELS, AI_ANSWER_RETENTIONS, AI_ANSWERS_LIMITS, AI
 import type { AiAnswerRecord, AiAnswerSummary, AiAnswersView } from '@app/specs/ai-answers.schema';
 import { AI_SEARCH_VIA_SETTINGS, type AiSearchEngine, type AiSearchViaSetting } from '@app/specs/ai-search.spec';
 import { aiAnswersPaletteSources } from '../../ai-answers-palette';
-import { askControl, engineChoices, engineLabel, engineNote, engineToAsk, openInTab, runAnswerText, settingResultText, sourcesText, viaChoiceDisabled, watchedDomainOf, whenText } from '../../ai-answers-view';
+import { askControl, engineCaveat, engineChoices, engineLabel, engineNote, engineShortLabel, engineToAsk, openInTab, runAnswerText, settingResultText, sourcesText, viaChoiceDisabled, watchedDomainOf, whenText } from '../../ai-answers-view';
 import { useSeqChange } from '../../hooks/useSeqChange';
 import { actions } from '../../ipc';
 import { registerPaletteActions } from '../../palette/registry';
@@ -44,9 +44,12 @@ function AskForm({ view, focusSeq, say, onAnswer }: { readonly view: AiAnswersVi
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const noteId = useId();
+  const caveatId = useId();
   const control = askControl(view, engine, query);
   const choices = engineChoices(view);
   const asked = engineToAsk(view, engine);
+  // The options name the engine only (a long label was cut); the caveat its label carries shows beside the select.
+  const caveat = engineCaveat(asked);
   // After the frame's own focus (its heading): parents' effects run after their children's.
   useEffect(() => {
     if (focusSeq !== null) queueMicrotask(() => input.current?.focus());
@@ -87,6 +90,7 @@ function AskForm({ view, focusSeq, say, onAnswer }: { readonly view: AiAnswersVi
           <select
             className="ai-answers-select"
             data-testid="ai-answers-engine"
+            aria-describedby={caveat === null ? undefined : caveatId}
             value={engine}
             onChange={(event) => {
               setEngine(event.target.value as AiSearchEngine | '');
@@ -101,6 +105,11 @@ function AskForm({ view, focusSeq, say, onAnswer }: { readonly view: AiAnswersVi
             ))}
           </select>
         </label>
+        {caveat !== null ? (
+          <p className="ai-answers-note ai-answers-engine-caveat" id={caveatId} data-testid="ai-answers-engine-caveat">
+            {caveat}
+          </p>
+        ) : null}
       </div>
       <p className="ai-answers-note" data-testid="ai-answers-cost-note">
         {TEXT.costNote}
@@ -176,7 +185,7 @@ function Settings({ view, reload, say }: { readonly view: AiAnswersView | null; 
             <option value="">{TEXT.noDefaultEngine}</option>
             {view.engines.map((engine) => (
               <option key={engine.engine} value={engine.engine} disabled={viaChoiceDisabled(engine, 'api')}>
-                {engineLabel(engine.engine)}
+                {engineShortLabel(engine.engine)}
               </option>
             ))}
           </select>
@@ -200,7 +209,7 @@ function Settings({ view, reload, say }: { readonly view: AiAnswersView | null; 
           <li key={engine.engine} className="ai-answers-engine">
             <label className="ai-answers-field">
               <span>
-                {engineLabel(engine.engine)} · {TEXT.viaLabel}
+                {engineShortLabel(engine.engine)} · {TEXT.viaLabel}
               </span>
               <select className="ai-answers-select" data-testid={`ai-answers-via-${engine.engine}`} value={engine.via ?? (engine.usable ? 'api' : 'off')} onChange={(event) => void setting(aiAnswersActions.setVia(engine.engine, event.target.value as AiSearchViaSetting))}>
                 {AI_SEARCH_VIA_SETTINGS.map((via) => (
@@ -360,7 +369,7 @@ export function AiAnswersSheet({ tab, historySeq, onOpen }: HelpSheetProps & { r
                         {row.query}
                       </bdi>
                       <span className="ai-answers-note">
-                        {engineLabel(row.engine)} · {whenText(row.createdAt)} · {sourcesText(row.citationCount)}
+                        {engineShortLabel(row.engine)} · {whenText(row.createdAt)} · {sourcesText(row.citationCount)}
                       </span>
                       {watched !== null && row.citedDomains.includes(watched) ? <span className="visually-hidden">{` (cites ${watched}, ${TEXT.watched})`}</span> : null}
                     </button>

@@ -131,9 +131,9 @@ function bytesText(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-/** A run's size: its page rows and the bytes its fetches read. */
+/** A run's size: the bytes its fetches read (its page count is already in the run's progress line). */
 export function runSizeText(counts: CrawlRunView['counts']): string {
-  return `${plural(counts.pages, 'page')} · ${bytesText(counts.bytes)} fetched`;
+  return `${bytesText(counts.bytes)} fetched`;
 }
 
 /** One run as the sheet lists it: what it says and which controls it offers. */
@@ -179,6 +179,45 @@ export function answerText(answer: CrawlServiceAnswer | null): string | null {
   if (answer.status !== 'refused') return null;
   if (answer.reason === 'unavailable') return answer.note ?? LEGAL_GATE_NOTE;
   return CRAWL_REFUSAL_TEXT[answer.reason];
+}
+
+// ---- The sheet's status line ----------------------------------------------------------------------
+
+/**
+ * A line the sheet says (its `crawl-status`) and, when it is about one run, the states it holds through:
+ * once main's view shows that run in any other state the line is stale and clears (so "Crawl started."
+ * never sits above a run that is Done). `run: null`: it holds until the next line replaces it.
+ */
+export interface CrawlSaid {
+  readonly text: string;
+  readonly run: { readonly id: string; readonly holds: readonly CrawlRunState[] } | null;
+}
+
+export const CRAWL_STARTED_TEXT = 'Crawl started.';
+
+/** What the sheet says for Start's answer: "Crawl started." holds while the run is queued or running. */
+export function startSaid(answer: CrawlServiceAnswer | null): CrawlSaid | null {
+  if (answer?.status === 'started') return { text: CRAWL_STARTED_TEXT, run: { id: answer.runId, holds: ['queued', 'running'] } };
+  return saidOf(answerText(answer), null);
+}
+
+/** What the sheet says for a run action's answer (pause, resume, cancel, delete): it holds while the run stays in `run.state`. */
+export function runActionSaid(answer: CrawlServiceAnswer | null, run: Pick<CrawlRunView, 'id' | 'state'>): CrawlSaid | null {
+  return saidOf(answerText(answer), { id: run.id, holds: [run.state] });
+}
+
+/** A line not about a run (`run: null`), or about one; `null` text says nothing. */
+export function saidOf(text: string | null, run: CrawlSaid['run']): CrawlSaid | null {
+  return text === null ? null : { text, run };
+}
+
+/** Whether `said` still holds in main's view: one about a run clears once the view shows that run outside `holds`. */
+export function crawlSaidHolds(said: CrawlSaid, view: CrawlStatusView | null): boolean {
+  if (said.run === null || view === null) return true;
+  const { id, holds } = said.run;
+  const run = view.runs.find((entry) => entry.id === id);
+  // Not in the view (yet, or any more): nothing has moved on that the line could contradict.
+  return run === undefined || holds.includes(run.state);
 }
 
 /** What the CSV export's answer says. */

@@ -1,6 +1,7 @@
 // Layout regression guards. Context: specs/browser-chrome.feature.md (Layout: the chrome's rows), specs/help.feature.md and
 // specs/account-settings.feature.md (sheets over the page column hide the find bar), specs/agent-data.feature.md
-// (the chat list's and skill library's search fields).
+// (the chat list's and skill library's search fields), specs/data-sources.feature.md, specs/ai-answers.feature.md and
+// specs/site-crawl.feature.md (screen-reader text inside the sheets' scroll boxes; AI answers' "Reach through" selects).
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
@@ -81,4 +82,31 @@ test('screenshot-swatch-has-no-button-face-and-keeps-its-outline', () => {
   expect(swatch).toMatch(/color:\s*var\(--[a-z-]+\);/);
   const editor = readFileSync(`${RENDERER}components/changes/ScreenshotEditor.tsx`, 'utf8');
   expect(editor).toMatch(/<circle[^>]*fill=\{each\}[^>]*stroke="currentColor"/);
+});
+
+test('screen-reader-text-stays-inside-sheet-scroll-boxes', () => {
+  // Text for screen readers only is absolutely positioned. With no positioned ancestor it is laid out
+  // against the window, below the fold of a long sheet: the page itself became scrollable and Settings'
+  // `scrollIntoView` moved the whole app up. Each sheet's scroll box is positioned, so it stays inside.
+  expect(rule('settings.css', '.settings-content')).toMatch(/position:\s*relative;/);
+  expect(rule('help.css', '.help-body')).toMatch(/position:\s*relative;/);
+  expect(rule('styles.css', '.projects-list,\n.projects-main')).toMatch(/position:\s*relative;/);
+  // One visually-hidden pattern for the renderer: 1 px, clipped, nothing showing past it.
+  const hidden = rule('styles.css', '.visually-hidden');
+  for (const declaration of [/position:\s*absolute;/, /width:\s*1px;/, /height:\s*1px;/, /overflow:\s*hidden;/, /clip:\s*rect\(0 0 0 0\);/, /white-space:\s*nowrap;/]) expect(hidden).toMatch(declaration);
+  // Settings' own copy is gone: its sections use `.visually-hidden`.
+  const sources = (readdirSync(RENDERER, { recursive: true }) as string[]).filter((name) => /\.(tsx?|css)$/.test(name) && !name.includes('__tests__'));
+  expect(sources.filter((name) => read(name.replaceAll('\\', '/')).includes('settings-sr'))).toEqual([]);
+  expect(read('settings-data-sources.tsx')).toContain('className="visually-hidden"');
+});
+
+test('ai-answers-reach-through-selects-share-one-width', () => {
+  // Each engine's "Reach through" select sits in a fixed column (the Engine select's 280 px), not sized
+  // by its label, so the rows' selects are one width.
+  const row = rule('ai-answers.css', '.ai-answers-engine');
+  expect(row).toMatch(/display:\s*grid;/);
+  expect(row).toMatch(/grid-template-columns:\s*minmax\(0, 280px\) minmax\(0, 1fr\);/);
+  expect(rule('ai-answers.css', '.ai-answers-form')).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 280px\);/);
+  // The Engine select's caveat sits under it, in its column.
+  expect(rule('ai-answers.css', '.ai-answers-engine-caveat')).toMatch(/grid-column:\s*2;/);
 });

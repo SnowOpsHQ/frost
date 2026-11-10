@@ -623,6 +623,9 @@ describe('rankings components', () => {
     expect($('rankings-api-check-confirm')!.textContent).toContain('This sends 3 requests to SerpApi.');
     expect($('rankings-api-check-confirm')!.textContent).toContain(DATA_SPEND_NOTE);
     expect($('rankings-api-check-send')!.textContent).toBe('Send 3 requests');
+    // Drawn as the app's confirm buttons (never bare text on the notice): Send is the primary action.
+    expect([...$('rankings-api-check-send')!.classList]).toEqual(['panel-button', 'panel-button-primary']);
+    expect([...$('rankings-api-check-cancel')!.classList]).toEqual(['panel-button']);
     await click('rankings-api-check-cancel');
     expect($('rankings-api-check-confirm')).toBeNull();
     expect(fakes.dataSources.checkProjectSearches).not.toHaveBeenCalled();

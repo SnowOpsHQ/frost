@@ -43,9 +43,14 @@ import {
   robotsText,
   pagingOf,
   runCrawlWatch,
+  runActionSaid,
   runRowOf,
   runSizeText,
+  saidOf,
   startControl,
+  startSaid,
+  CRAWL_STARTED_TEXT,
+  crawlSaidHolds,
   treeNodeLabel,
   DEFAULT_PAGES_QUERY,
 } from '../crawl-view';
@@ -149,16 +154,43 @@ describe('the crawl view model', () => {
   });
 
   test('crawl-view-run-size-and-retention-note', () => {
-    expect(runSizeText(run().counts)).toBe('12 pages · 1.5 MB fetched');
-    expect(runSizeText({ pages: 1, queued: 0, refused: 0, failed: 0, bytes: 900 })).toBe('1 page · 0.9 KB fetched');
+    expect(runSizeText(run().counts)).toBe('1.5 MB fetched');
+    expect(runSizeText({ pages: 1, queued: 0, refused: 0, failed: 0, bytes: 900 })).toBe('0.9 KB fetched');
     const row = runRowOf(run(), view());
-    expect(row.size).toBe('12 pages · 1.5 MB fetched');
+    expect(row.size).toBe('1.5 MB fetched');
+    // The page count shows once, in the progress line (the card reads "12 pages recorded · … · 1.5 MB fetched").
+    expect(row.progress).toMatch(/^12 pages recorded · /);
+    expect(`${row.progress} · ${row.size}`.match(/\bpages?\b/g)).toHaveLength(1);
     expect(row.progress).toContain('30 queued');
     expect(row.progress).toContain('2 refused');
     expect(row.progress).toContain('1 failed');
     expect(CRAWL_VIEW_TEXT.retentionNote.toLowerCase()).toContain('deleted per run');
     // A slow-down pause says why.
     expect(runRowOf(run({ reason: 'slow-down' }), view()).state).toContain('slow down');
+  });
+
+  test('crawl-view-status-line-clears-when-the-run-moves-on', () => {
+    // "Crawl started." holds while its run is not in the view yet, queued or running; Done (or any other state) clears it.
+    const started = startSaid({ status: 'started', runId: RUN_ID })!;
+    expect(started.text).toBe(CRAWL_STARTED_TEXT);
+    expect(crawlSaidHolds(started, view({ runs: [] }))).toBe(true);
+    expect(crawlSaidHolds(started, null)).toBe(true);
+    for (const state of ['queued', 'running'] as const) expect(crawlSaidHolds(started, view({ runs: [run({ state })] })), state).toBe(true);
+    for (const state of ['paused', 'done', 'cancelled', 'failed'] as const) expect(crawlSaidHolds(started, view({ runs: [run({ state })] })), state).toBe(false);
+    // Another run's state says nothing about it.
+    expect(crawlSaidHolds(started, view({ runs: [run({ id: '01900000-0000-7000-8000-0000000000a2', state: 'done' }), run({ state: 'running' })] }))).toBe(true);
+    // A run action's refusal holds while the run stays in the state it was asked in.
+    const refused = runActionSaid({ status: 'refused', reason: 'busy' }, run({ state: 'paused' }))!;
+    expect(refused.text).toBe(CRAWL_REFUSAL_TEXT.busy);
+    expect(crawlSaidHolds(refused, view({ runs: [run({ state: 'paused' })] }))).toBe(true);
+    expect(crawlSaidHolds(refused, view({ runs: [run({ state: 'running' })] }))).toBe(false);
+    // Done answers say nothing (the run's card shows the state); a start refusal is not about a run and holds.
+    expect(runActionSaid({ status: 'ok' }, run())).toBeNull();
+    expect(runActionSaid({ status: 'resumed', runId: RUN_ID }, run())).toBeNull();
+    const gate = startSaid({ status: 'refused', reason: 'unavailable', note: LEGAL_GATE_NOTE })!;
+    expect(gate).toEqual({ text: LEGAL_GATE_NOTE, run: null });
+    expect(crawlSaidHolds(gate, view({ runs: [run({ state: 'done' })] }))).toBe(true);
+    expect(saidOf(null, null)).toBeNull();
   });
 
   test('crawl-view-score-label-and-rule-set', () => {
@@ -313,6 +345,8 @@ describe('the crawl view model', () => {
 
 const ipcMock = vi.hoisted(() => ({
   status: { current: null as unknown },
+  /** Answers the pending long-poll with a newer view (set while one waits). */
+  push: null as ((status: unknown) => void) | null,
   pages: vi.fn(),
   structure: vi.fn(),
   start: vi.fn(),
@@ -323,7 +357,14 @@ const never = () => new Promise<never>(() => undefined);
 vi.mock('../ipc', () => ({
   ipc: {
     crawl: {
-      watch: { query: async ({ sinceVersion }: { sinceVersion: number }) => (sinceVersion === 0 ? { version: 1, status: ipcMock.status.current } : never()) },
+      watch: {
+        query: async ({ sinceVersion }: { sinceVersion: number }) =>
+          sinceVersion === 0
+            ? { version: 1, status: ipcMock.status.current }
+            : new Promise((resolve) => {
+                ipcMock.push = (status) => resolve({ version: sinceVersion + 1, status });
+              }),
+      },
       pages: { query: (input: unknown) => ipcMock.pages(input) },
       structure: { query: (input: unknown) => ipcMock.structure(input) },
       start: { mutate: (input: unknown) => ipcMock.start(input) },
@@ -370,6 +411,21 @@ describe('the crawl sheet', () => {
   }
   const q = <T extends Element = HTMLElement>(testId: string) => host.querySelector<T & HTMLElement>(`[data-testid="${testId}"]`);
 
+  test('crawl-sheet-started-line-clears-once-the-run-is-done', async () => {
+    ipcMock.start.mockResolvedValue({ status: 'started', runId: RUN_ID });
+    await show(view({ available: true, runs: [] }));
+    await act(async () => q('crawl-start')!.click());
+    expect(q('crawl-status')!.textContent).toBe(CRAWL_STARTED_TEXT);
+    // The run shows up running: the line stays…
+    await act(async () => ipcMock.push!(view({ available: true, activeRunId: RUN_ID, runs: [run({ state: 'running', reason: null })] })));
+    expect(q('crawl-run-state')!.textContent).toBe('Running');
+    expect(q('crawl-status')!.textContent).toBe(CRAWL_STARTED_TEXT);
+    // …and clears once it is Done.
+    await act(async () => ipcMock.push!(view({ available: true, runs: [run({ state: 'done', reason: null })] })));
+    expect(q('crawl-run-state')!.textContent).toBe('Done');
+    expect(q('crawl-status')!.textContent).toBe('');
+  });
+
   test('crawl-sheet-gated-disabled', async () => {
     await show(view());
     expect(q('crawl-view')).not.toBeNull();
@@ -384,7 +440,7 @@ describe('the crawl sheet', () => {
     expect(q<HTMLButtonElement>('crawl-resume')!.disabled).toBe(true);
     expect(q('crawl-run')!.textContent).toContain(LEGAL_GATE_NOTE);
     // The run's size and "deleted per run"; viewing, exporting and deleting stay.
-    expect(q('crawl-run-size')!.textContent).toBe('12 pages · 1.5 MB fetched');
+    expect(q('crawl-run-size')!.textContent).toBe('1.5 MB fetched');
     expect(q('crawl-retention-note')!.textContent).toBe(CRAWL_VIEW_TEXT.retentionNote);
     expect(q<HTMLButtonElement>('crawl-export')!.disabled).toBe(false);
     expect(q<HTMLButtonElement>('crawl-delete')!.disabled).toBe(false);

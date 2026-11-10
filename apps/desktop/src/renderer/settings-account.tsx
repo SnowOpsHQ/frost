@@ -140,7 +140,7 @@ export function AccountSettings({ state }: { readonly state: AccountState | null
                     {feature.included ? '✓' : '–'}
                   </span>
                   {feature.label}
-                  <span className="settings-sr">{feature.included ? ' (included)' : ' (not included)'}</span>
+                  <span className="visually-hidden">{feature.included ? ' (included)' : ' (not included)'}</span>
                 </li>
               ))}
             </ul>

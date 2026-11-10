@@ -16,9 +16,23 @@ import { parseWebUrl } from '@app/specs/web-url.spec';
 // - which engines may be asked comes from main's view (`available`, `usable`), never from the gate
 //   constants: a gated engine is disabled with `LEGAL_GATE_NOTE`.
 
-/** An engine in words (text labels only). */
+/** An engine in words (text labels only), with its caveat: what an answer's meta line and the confirm say. */
 export function engineLabel(engine: AiSearchEngine): string {
   return AI_SEARCH_ENGINE_LABELS[engine];
+}
+
+const CAVEAT_SEPARATOR = ' — ';
+
+/** An engine's name alone (its label before the caveat): what a select's option and a list row say, so neither is cut. */
+export function engineShortLabel(engine: AiSearchEngine): string {
+  return AI_SEARCH_ENGINE_LABELS[engine].split(CAVEAT_SEPARATOR)[0]!;
+}
+
+/** The caveat an engine's label carries, as a sentence beside the Engine select ("OpenAI web search may differ from the ChatGPT app."); `null`: none. */
+export function engineCaveat(engine: AiSearchEngine | null): string | null {
+  if (engine === null) return null;
+  const [name, ...rest] = AI_SEARCH_ENGINE_LABELS[engine].split(CAVEAT_SEPARATOR);
+  return rest.length === 0 ? null : `${name} ${rest.join(CAVEAT_SEPARATOR)}.`;
 }
 
 export function viaLabel(via: AiSearchVia): string {
@@ -146,7 +160,7 @@ export interface EngineChoice {
 export function engineChoices(view: AiAnswersView | null): EngineChoice[] {
   return (view?.engines ?? []).map((engine) => {
     const note = engineNote(engine);
-    return { engine: engine.engine, label: engineLabel(engine.engine), disabled: !engine.usable, note: engine.usable ? null : note };
+    return { engine: engine.engine, label: engineShortLabel(engine.engine), disabled: !engine.usable, note: engine.usable ? null : note };
   });
 }
 

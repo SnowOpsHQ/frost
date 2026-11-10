@@ -49,7 +49,8 @@ the composition), Task 8's `main/ai-search/service.ts` (`answer`: the view's run
   asks first, as Delete all does. A run's answer that was not stored says why ("Shown, not kept" only
   when the retention is `off`). Cited domains are grouped by `registrableDomain`; the watched domain (by
   default the active tab's) is highlighted. Engines are text labels only; `chatgpt` reads "OpenAI web
-  search — may differ from the ChatGPT app". Gated engines are disabled with `LEGAL_GATE_NOTE`.
+  search — may differ from the ChatGPT app" (a select's option says "OpenAI web search", its caveat
+  beside the select). Gated engines are disabled with `LEGAL_GATE_NOTE`.
 - **Phase 9 independence.** Nothing under Phase 9's AI-readiness score imports `ai-answers*` or
   `main/ai-search/**`.
 
@@ -96,6 +97,10 @@ the composition), Task 8's `main/ai-search/service.ts` (`answer`: the view's run
   calls `run`.
 - **Scenario: ai-answers-gated-providers-disabled** — main's view says unavailable: engines disabled
   with `LEGAL_GATE_NOTE`, Ask disabled.
+- **Scenario: ai-answers-engine-caveat-beside-the-select** — selects and list rows name an engine only
+  ("OpenAI web search"), so no option is cut; with that engine chosen, its caveat ("OpenAI web search
+  may differ from the ChatGPT app.") shows beside the Engine select and describes it; the confirm and an
+  answer's meta line keep the full label.
 - **Scenario: ai-answers-delete-asks-first** — Delete and Delete all each ask first; a shorter retention
   or `off` asks first too (a longer one is saved at once).
 - **Scenario: ai-answers-retention-change-deletes** — which retention changes delete now.

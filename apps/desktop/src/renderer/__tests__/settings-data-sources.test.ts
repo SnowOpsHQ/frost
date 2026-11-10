@@ -246,6 +246,12 @@ describe('settings data sources section', () => {
     // Save on a gated row sends nothing.
     act(() => inside('serpapi', 'data-source-save').click());
     expect(setKeyCalls).toEqual([]);
+    // Clear on a gated row without a key is disabled (styled by `.settings-button[aria-disabled='true']`,
+    // as on an open row): pressing it asks nothing and clears nothing.
+    expect(inside('serpapi', 'data-source-clear').className).toBe('settings-button');
+    act(() => inside('serpapi', 'data-source-clear').click());
+    expect(row('serpapi').querySelector('[data-testid="data-source-clear-question"]')).toBeNull();
+    expect(clearCalls).toEqual([]);
   });
 
   test('settings-data-sources-weak-explains-and-disables', async () => {

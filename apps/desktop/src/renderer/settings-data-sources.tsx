@@ -171,7 +171,7 @@ function DataSourceRow({ row, onChanged }: { readonly row: DataSourceRowView; re
         </div>
         {asking ? <ClearQuestion row={row} onCancel={cancel} onConfirm={clear} /> : null}
         <span className="settings-muted">
-          <span className="settings-sr">{`${TEXT.usageLabel}: `}</span>
+          <span className="visually-hidden">{`${TEXT.usageLabel}: `}</span>
           <span data-testid="data-source-usage">{row.usage}</span>
         </span>
         {message !== null ? (

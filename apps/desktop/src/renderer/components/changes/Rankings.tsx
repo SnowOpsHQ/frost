@@ -170,12 +170,15 @@ function useApiCheck({ projectId, refreshKey, busy, say, onChecked }: { readonly
       <div className="rankings-notice" role="group" aria-label={DATA_CHECK_TEXT.button} data-testid="rankings-api-check-confirm">
         <p className="projects-note">{DATA_CHECK_TEXT.confirm(confirm.requests, DATA_PROVIDER_LABELS[confirm.provider])}</p>
         <p className="projects-note">{DATA_SPEND_NOTE}</p>
-        <button type="button" className="projects-small-button" data-testid="rankings-api-check-send" disabled={checking || busy} onClick={() => void send()}>
-          {DATA_CHECK_TEXT.send(confirm.requests)}
-        </button>{' '}
-        <button type="button" className="projects-small-button" data-testid="rankings-api-check-cancel" disabled={checking} onClick={() => setConfirm(null)}>
-          {DATA_CHECK_TEXT.cancel}
-        </button>
+        {/* The app's confirm buttons (as AI answers' Send / Cancel): Send is the primary action. */}
+        <div className="rankings-notice-actions">
+          <button type="button" className="panel-button panel-button-primary" data-testid="rankings-api-check-send" disabled={checking || busy} onClick={() => void send()}>
+            {DATA_CHECK_TEXT.send(confirm.requests)}
+          </button>
+          <button type="button" className="panel-button" data-testid="rankings-api-check-cancel" disabled={checking} onClick={() => setConfirm(null)}>
+            {DATA_CHECK_TEXT.cancel}
+          </button>
+        </div>
       </div>
     ) : null;
   return { button, note, panel };

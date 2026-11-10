@@ -508,8 +508,13 @@ SL-096/097. Spec: `CRAWL_WATCH`, `CRAWL_STATUS_CLASSES`, `CRAWL_INDEXABLE_FILTER
 - `crawl-view-injected-open-gate` — with `available: true` (injected), Start and Resume are enabled; a
   running crawl disables Start (busy) and offers Pause and Cancel; finished runs offer delete and export.
 - `crawl-view-run-size-and-retention-note` — each run shows its pages, queued, refused and failed counts
-  and its size ("N pages · X MB fetched"); the sheet says crawl data is deleted per run; a slow-down pause
-  says why.
+  and its size ("X MB fetched": the page count shows once, in the progress line); the sheet says crawl
+  data is deleted per run; a slow-down pause says why.
+- `crawl-view-status-line-clears-when-the-run-moves-on` — the sheet's status line about a run holds only
+  while that run stays in the states it was said for: "Crawl started." while the run is not in main's view
+  yet, queued or running; a run action's refusal while the run stays in the state it was asked in. Main's
+  view showing the run in any other state (Done, Paused…) clears it. A line not about a run (a start
+  refusal, a form problem) holds until the next one.
 - `crawl-view-score-label-and-rule-set` — the score column is `CRAWL_SCORE_LABEL`; the rule-set note
   lists the categories used and what is left out with its reason; never "health score".
 - `crawl-view-page-flags-and-open-in-tab` — "links cut at 1 000" and "looks client-rendered"; "Open in
@@ -536,6 +541,8 @@ SL-096/097. Spec: `CRAWL_WATCH`, `CRAWL_STATUS_CLASSES`, `CRAWL_INDEXABLE_FILTER
 - `crawl-sheet-injected-open-view` — rendered with `available: true`: Start and Resume are enabled and
   send main the form's settings and the run id; main's refusal shows as its note; the Pages / Site
   structure switch is pressed buttons; Site structure shows the tree, the histogram and the orphans.
+- `crawl-sheet-started-line-clears-once-the-run-is-done` — after Start, "Crawl started." shows while main's
+  view has the run running and clears once the view shows it Done.
 - `crawl-and-help-sheets-exclude-each-other` — a Help sheet opening closes the crawl sheet, and the crawl
   sheet opening (from a project's "Site crawl") closes the Help sheet; the project's site and, for a
   project covering its subdomains, the `site` scope fill the form.

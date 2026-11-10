@@ -7,17 +7,21 @@ import { crawlPaletteSources } from '../../crawl-palette';
 import {
   CRAWL_INTERVAL_CHOICES,
   CRAWL_SCOPE_LABELS,
-  answerText,
   crawlFormFor,
   crawlRuleSetNote,
+  crawlSaidHolds,
   crawlStartInput,
   openInTab,
   refreshDelay,
+  runActionSaid,
   runCrawlWatch,
   runRowOf,
+  saidOf,
   startControl,
+  startSaid,
   type CrawlForm,
   type CrawlRefreshMark,
+  type CrawlSaid,
 } from '../../crawl-view';
 import { useSeqChange } from '../../hooks/useSeqChange';
 import { actions } from '../../ipc';
@@ -93,7 +97,10 @@ function useCrawlView(live: boolean): CrawlStatusView | null {
   return view;
 }
 
-function StartForm({ view, initial, projectId, say }: { readonly view: CrawlStatusView | null; readonly initial: CrawlForm; readonly projectId: string | null; readonly say: (text: string | null) => void }) {
+/** Sets the sheet's status line (`null`: clears it). */
+type Say = (said: CrawlSaid | null) => void;
+
+function StartForm({ view, initial, projectId, say }: { readonly view: CrawlStatusView | null; readonly initial: CrawlForm; readonly projectId: string | null; readonly say: Say }) {
   const [form, setForm] = useState<CrawlForm>(initial);
   useEffect(() => setForm(initial), [initial]);
   const [busy, setBusy] = useState(false);
@@ -105,13 +112,13 @@ function StartForm({ view, initial, projectId, say }: { readonly view: CrawlStat
     if (control.disabled || busy) return;
     const built = crawlStartInput(form, projectId);
     if (!built.ok) {
-      say(built.problem);
+      say(saidOf(built.problem, null));
       return;
     }
     setBusy(true);
     const answer = await crawlActions.start(built.input);
     setBusy(false);
-    say(answer?.status === 'started' ? 'Crawl started.' : answerText(answer));
+    say(startSaid(answer));
   };
   return (
     <section className="crawl-section crawl-start" aria-labelledby="crawl-start-title">
@@ -193,10 +200,11 @@ function StartForm({ view, initial, projectId, say }: { readonly view: CrawlStat
   );
 }
 
-function RunItem({ run, view, selected, onSelect, say }: { readonly run: CrawlRunView; readonly view: CrawlStatusView; readonly selected: boolean; readonly onSelect: () => void; readonly say: (text: string | null) => void }) {
+function RunItem({ run, view, selected, onSelect, say }: { readonly run: CrawlRunView; readonly view: CrawlStatusView; readonly selected: boolean; readonly onSelect: () => void; readonly say: Say }) {
   const row = runRowOf(run, view);
   const [confirming, setConfirming] = useState(false);
-  const act = async (call: Promise<CrawlServiceAnswer | null>) => say(answerText(await call));
+  // What the action's answer says holds while the run stays in the state it was asked in.
+  const act = async (call: Promise<CrawlServiceAnswer | null>) => say(runActionSaid(await call, run));
   const resumeNoteId = useId();
   return (
     <li className="crawl-run" data-testid="crawl-run" data-selected={selected ? 'true' : undefined}>
@@ -263,7 +271,7 @@ function RunItem({ run, view, selected, onSelect, say }: { readonly run: CrawlRu
 export function CrawlSheet({ tab, historySeq, onOpen }: HelpSheetProps & { readonly tab: (HelpSheetProps['tab'] & { readonly url?: string }) | undefined }) {
   const { open, request } = useCrawlSheet();
   const view = useCrawlView(open);
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<CrawlSaid | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [panel, setPanel] = useState<'pages' | 'structure'>('pages');
   const latestOnOpen = useRef(onOpen);
@@ -286,6 +294,10 @@ export function CrawlSheet({ tab, historySeq, onOpen }: HelpSheetProps & { reado
     setInitial(crawlFormFor(request.startUrl ?? latestTabUrl.current, request.scope ?? 'host'));
     setStatus(null);
   }, [open, request]);
+  // A line about a run clears once main's view moves that run on (start, pause and resume lines never outlive the state they were about).
+  useEffect(() => {
+    if (status !== null && !crawlSaidHolds(status, view)) setStatus(null);
+  }, [status, view]);
   // Another sheet opening closes this one.
   useEffect(() => onSettingsOpened(closeCrawl), []);
   useEffect(() => onScreenshotEditorOpened(closeCrawl), []);
@@ -311,7 +323,7 @@ export function CrawlSheet({ tab, historySeq, onOpen }: HelpSheetProps & { reado
     <HelpSheetFrame testId="crawl-view" title={CRAWL_VIEW_TEXT.title} closeLabel={CRAWL_VIEW_TEXT.close} focusSeq={request?.seq ?? 0} onClose={closeCrawl}>
       <div className="crawl">
         <p className="crawl-status" role="status" aria-live="polite" data-testid="crawl-status">
-          {status}
+          {status?.text}
         </p>
         <StartForm view={view} initial={initial} projectId={request?.projectId ?? null} say={setStatus} />
         <section className="crawl-section" aria-labelledby="crawl-runs-title">

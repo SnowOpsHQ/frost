@@ -65,6 +65,11 @@
   font-size: 12px;
 }
 
+/* The Engine select's caveat ("… may differ from the ChatGPT app."), under the select in its column. */
+.ai-answers-engine-caveat {
+  grid-column: 2;
+}
+
 .ai-answers-field-inline {
   flex-direction: row;
   align-items: center;
@@ -173,9 +178,11 @@
   list-style: none;
 }
 
+/* Each engine's "Reach through" row: the select in a column of one width for every engine (the Engine
+   select's), whatever its label's length; the note beside it. */
 .ai-answers-engine {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
   align-items: end;
   gap: 4px 12px;
 }
