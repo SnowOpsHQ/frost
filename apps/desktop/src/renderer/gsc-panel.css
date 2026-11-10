@@ -1,18 +1,6 @@
 /* The Search Console panel (Phase 4 Task 10, Phase 9 Task 3; specs/gsc-panel.feature.md). Bundled and served from
    app:// (CSP style-src 'self'): no inline styles; the chart is SVG attributes plus these classes. */
 
-:root {
-  --gsc-line: var(--accent);
-  --gsc-grid: #e7ebf1;
-  --gsc-axis: var(--text-faint);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --gsc-grid: #30353e;
-  }
-}
-
 .gsc {
   display: flex;
   flex-direction: column;

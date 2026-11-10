@@ -3,112 +3,6 @@
 
 :root {
   color-scheme: light dark;
-
-  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Inter', Roboto, Ubuntu, Cantarell, 'Noto Sans',
-    'Helvetica Neue', Arial, sans-serif;
-
-  --tabstrip-height: 40px;
-  --toolbar-height: 50px;
-  --status-height: 26px;
-  --radius-control: 9px;
-  --radius-field: 11px;
-
-  --bg-chrome: #f3f5f8;
-  --bg-chrome-edge: #e2e6ec;
-  --bg-strip: #e4e8ee;
-  --bg-tab-hover: rgb(255 255 255 / 0.3);
-  --bg-field: #ffffff;
-  --bg-field-hover: #ffffff;
-  --border-field: #d7dce4;
-  --bg-page: #fbfcfd;
-  --bg-hover: rgb(20 30 50 / 0.07);
-  --bg-active: rgb(20 30 50 / 0.12);
-
-  --text: #1b2230;
-  --text-muted: #5f6b7d;
-  --text-faint: #8d97a6;
-  --icon: #3a4556;
-
-  --accent: #2f6fe4;
-  --accent-soft: rgb(47 111 228 / 0.22);
-  --ok: #1f9d63;
-  --warn: #c2410c;
-  --danger: #d23f3f;
-
-  --start-glow: rgb(82 145 255 / 0.13);
-  --start-mark: #5b8def;
-  --shadow-field: 0 1px 2px rgb(16 24 40 / 0.06);
-
-  --on-accent: #ffffff;
-  --accent-hover: #2560cc;
-  --panel-art: #6b7a90;
-
-  --bg-prompt: #ffffff;
-  --prompt-edge: #dfe4eb;
-  --shadow-prompt: 0 1px 3px rgb(16 24 40 / 0.07);
-
-  /* SEO sidebar (SIDEBAR_PANEL_WIDTH / SIDEBAR_RAIL_WIDTH in specs/seo-sidebar.spec.ts). */
-  --seo-panel-width: 360px;
-  --seo-rail-width: 48px;
-  /* In a narrow window the page keeps at least this much width; the SEO panel gives way. */
-  --page-min-width: 320px;
-  --seo-bg: #f6f7fa;
-  --seo-card: #ffffff;
-  --seo-card-edge: #e3e7ee;
-  --seo-track: #e7ebf1;
-  --seo-skeleton: #e9edf3;
-  --seo-skeleton-shine: #f4f6f9;
-  --caution: #b7791f;
-  --info-tone: #4b72b8;
-  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-chrome: #1d2026;
-    --bg-chrome-edge: #2c3038;
-    --bg-strip: #131519;
-    --bg-tab-hover: rgb(255 255 255 / 0.06);
-    --bg-field: #2a2e36;
-    --bg-field-hover: #30353e;
-    --border-field: #3a3f49;
-    --bg-page: #16181d;
-    --bg-hover: rgb(255 255 255 / 0.07);
-    --bg-active: rgb(255 255 255 / 0.12);
-
-    --text: #e7eaf0;
-    --text-muted: #a3acba;
-    --text-faint: #737d8c;
-    --icon: #c9d0db;
-
-    --accent: #6c9dff;
-    --accent-soft: rgb(108 157 255 / 0.28);
-    --ok: #4cc38a;
-    --warn: #f0995a;
-    --danger: #f07171;
-
-    --start-glow: rgb(108 157 255 / 0.12);
-    --start-mark: #7ea8ff;
-    --shadow-field: none;
-
-    --on-accent: #0e1422;
-    --accent-hover: #86afff;
-    --panel-art: #8f9bad;
-
-    --bg-prompt: #242830;
-    --prompt-edge: #343943;
-    --shadow-prompt: 0 1px 3px rgb(0 0 0 / 0.35);
-
-    --seo-bg: #181a1f;
-    --seo-card: #1f2228;
-    --seo-card-edge: #2c3038;
-    --seo-track: #2b3038;
-    --seo-skeleton: #262a31;
-    --seo-skeleton-shine: #2f343c;
-    --caution: #f0b552;
-    --info-tone: #8fb0e8;
-    --shadow-card: none;
-  }
 }
 
 *,
@@ -5168,34 +5062,6 @@ input {
    PALETTE_PAGE_MIN_VISIBLE px of page left below) and the page area shrinks, which moves the view
    below it. Its height never changes while typing. Light and dark follow the OS. */
 
-:root {
-  --palette-sheet-height: 404px;
-  --palette-page-min-visible: 96px;
-  --palette-sheet-min-height: 180px;
-  --palette-width: 640px;
-  --palette-bg: #ffffff;
-  --palette-edge: #dfe4eb;
-  --palette-sheet: linear-gradient(180deg, var(--bg-chrome) 0%, #eceff4 100%);
-  --palette-shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 10px 28px rgb(16 24 40 / 0.1);
-  --palette-row-active: rgb(47 111 228 / 0.1);
-  --palette-hit: rgb(47 111 228 / 0.16);
-  --palette-kbd-bg: #f1f3f7;
-  --palette-kbd-edge: #d7dce4;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --palette-bg: #23262d;
-    --palette-edge: #353a44;
-    --palette-sheet: linear-gradient(180deg, var(--bg-chrome) 0%, #191b20 100%);
-    --palette-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 30px rgb(0 0 0 / 0.38);
-    --palette-row-active: rgb(108 157 255 / 0.14);
-    --palette-hit: rgb(108 157 255 / 0.22);
-    --palette-kbd-bg: #2c3038;
-    --palette-kbd-edge: #3d424d;
-  }
-}
-
 /* The page area and, while open, the palette's sheet above it (this column carries the page area's
    old flex-item rules in the workspace row). */
 .page-column {
@@ -5578,20 +5444,6 @@ input {
 /* The editor bar gets a grid row of its own under the prompt row (0 high while closed; `.chrome` in
    Layout), so the page area makes room for it: nothing is ever drawn over a tab's view. */
 
-:root {
-  --render-accent: #7a4fe0;
-  --render-soft: rgb(122 79 224 / 0.13);
-  --render-edge: rgb(122 79 224 / 0.55);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --render-accent: #a98bff;
-    --render-soft: rgb(169 139 255 / 0.16);
-    --render-edge: rgb(169 139 255 / 0.55);
-  }
-}
-
 .render-slot {
   min-width: 0;
 }
@@ -5954,26 +5806,6 @@ input {
    Phase 2.5 Task 3 (specs/seo-content.feature.md): the snippet previews and drafts, the target
    query checklist, n-grams and readability. Bars and meters are SVG attributes; nothing here is set
    inline. The previews are frost's own drawing of a result, in a common sans-serif. */
-
-:root {
-  --serp-card: #ffffff;
-  --serp-title: #2450c8;
-  --serp-text: #474e5c;
-  --serp-path: #5d6573;
-  --serp-glyph: #e3e8f1;
-  --serp-glyph-mark: #6b7a90;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --serp-card: #15171b;
-    --serp-title: #93b4ff;
-    --serp-text: #bfc6d2;
-    --serp-path: #9aa3b2;
-    --serp-glyph: #2c3139;
-    --serp-glyph-mark: #a3acba;
-  }
-}
 
 .seo-content {
   display: flex;
@@ -7450,22 +7282,6 @@ input {
    sheet and the new-tab page's "Jump back in". Tab views are drawn above the chrome's DOM, so none of
    these overlays the page: the find bar is a chrome row above the workspace, and while the History
    sheet is open it fills the page column and the page area shrinks to nothing. */
-
-:root {
-  --find-height: 40px;
-  --history-width: 760px;
-  --jump-tile-bg: #ffffff;
-  --jump-tile-edge: #e3e7ee;
-  --jump-monogram-bg: rgb(47 111 228 / 0.12);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --jump-tile-bg: #1f2228;
-    --jump-tile-edge: #2c3038;
-    --jump-monogram-bg: rgb(108 157 255 / 0.18);
-  }
-}
 
 /* ---- Find bar ---- */
 
@@ -9131,11 +8947,6 @@ input {
    and its viewport screenshots are of the page area below the band), and the Changes panel's
    project picker. */
 
-:root {
-  --projects-width: 980px;
-  --projects-run-band: min(300px, 50%);
-}
-
 .page-column:has(> .projects-sheet) > .page-area {
   flex: 0 0 0;
   height: 0;
@@ -10027,12 +9838,20 @@ input {
   border-color: var(--accent);
 }
 
-.shot-editor-swatch[data-color='#e5484d'] { background: #e5484d; }
-.shot-editor-swatch[data-color='#f5a524'] { background: #f5a524; }
-.shot-editor-swatch[data-color='#ffe629'] { background: #ffe629; }
-.shot-editor-swatch[data-color='#30a46c'] { background: #30a46c; }
-.shot-editor-swatch[data-color='#0090ff'] { background: #0090ff; }
-.shot-editor-swatch[data-color='#111111'] { background: #111111; }
+.shot-editor-swatch {
+  position: relative;
+  overflow: hidden;
+}
+
+/* The swatch's colour is an SVG fill from SCREENSHOT_EDIT_COLORS (a presentation attribute, not an
+   inline style), so the stylesheet holds no literal colours for it. */
+.shot-editor-swatch > svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 
 .shot-editor-check {
   display: inline-flex;

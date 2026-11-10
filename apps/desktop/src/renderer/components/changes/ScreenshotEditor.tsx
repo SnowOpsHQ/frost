@@ -246,7 +246,11 @@ function ScreenshotEditor({ entry }: { readonly entry: ScreenshotEntry }) {
           </div>
           <div className="shot-editor-swatches" role="group" aria-label="Colour">
             {SCREENSHOT_EDIT_COLORS.map((each) => (
-              <button key={each} type="button" className="shot-editor-swatch" data-color={each} data-testid="screenshot-editor-color" aria-label={SCREENSHOT_EDIT_COLOR_LABELS[each]} title={SCREENSHOT_EDIT_COLOR_LABELS[each]} aria-pressed={color === each} onClick={() => setColor(each)} />
+              <button key={each} type="button" className="shot-editor-swatch" data-color={each} data-testid="screenshot-editor-color" aria-label={SCREENSHOT_EDIT_COLOR_LABELS[each]} title={SCREENSHOT_EDIT_COLOR_LABELS[each]} aria-pressed={color === each} onClick={() => setColor(each)}>
+                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                  <circle cx="10" cy="10" r="10" fill={each} />
+                </svg>
+              </button>
             ))}
           </div>
           {tool === 'box' ? (

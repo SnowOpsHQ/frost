@@ -6,6 +6,8 @@ import { expect, test } from 'vitest';
 import { PALETTE_PAGE_MIN_VISIBLE, PALETTE_SHEET_HEIGHT, PALETTE_SHEET_MIN_HEIGHT } from '@app/specs/command-palette.spec';
 
 const CSS = readFileSync(fileURLToPath(new URL('../renderer/styles.css', import.meta.url)), 'utf8');
+// The sizes are design tokens (specs/design-tokens.spec.ts): declared in tokens.css, used in styles.css.
+const TOKENS = readFileSync(fileURLToPath(new URL('../renderer/tokens.css', import.meta.url)), 'utf8');
 
 /** The declarations of the first rule whose selector is exactly `selector`. */
 function rule(selector: string): string {
@@ -16,9 +18,9 @@ function rule(selector: string): string {
 }
 
 test('sheet-sizes-match-styles', () => {
-  expect(CSS).toContain(`--palette-sheet-height: ${PALETTE_SHEET_HEIGHT}px;`);
-  expect(CSS).toContain(`--palette-page-min-visible: ${PALETTE_PAGE_MIN_VISIBLE}px;`);
-  expect(CSS).toContain(`--palette-sheet-min-height: ${PALETTE_SHEET_MIN_HEIGHT}px;`);
+  expect(TOKENS).toContain(`--palette-sheet-height: ${PALETTE_SHEET_HEIGHT}px;`);
+  expect(TOKENS).toContain(`--palette-page-min-visible: ${PALETTE_PAGE_MIN_VISIBLE}px;`);
+  expect(TOKENS).toContain(`--palette-sheet-min-height: ${PALETTE_SHEET_MIN_HEIGHT}px;`);
   // The sheet's height is built from exactly those three.
   expect(rule('.palette-sheet')).toMatch(/height:\s*max\(\s*min\(\s*var\(--palette-sheet-height\),\s*calc\(100% - var\(--palette-page-min-visible\)\)\s*\),\s*var\(--palette-sheet-min-height\)\s*\);/);
   expect(PALETTE_SHEET_MIN_HEIGHT).toBeLessThan(PALETTE_SHEET_HEIGHT);

@@ -3,17 +3,6 @@
    styles. Tab views are drawn above the chrome's DOM, so while a Help sheet is open it fills the page
    column and the page area shrinks to nothing (as the History and Settings sheets). */
 
-:root {
-  --help-width: 760px;
-  --setup-check-edge: #c9cfd9;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --setup-check-edge: #454b56;
-  }
-}
-
 .page-column:has(> .help-sheet) > .page-area {
   flex: 0 0 0;
   height: 0;
@@ -38,7 +27,7 @@
 .help {
   display: flex;
   flex-direction: column;
-  width: min(var(--help-width), 100%);
+  width: min(760px, 100%);
   min-height: 0;
 }
 
@@ -273,7 +262,7 @@
   flex: none;
   width: 14px;
   height: 14px;
-  border: 1.5px solid var(--setup-check-edge);
+  border: 1.5px solid var(--settings-switch-off);
   border-radius: 50%;
 }
 

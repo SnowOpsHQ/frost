@@ -189,8 +189,8 @@ named test.
 - **Scenario: consent-remembers-hosts** (`consent.test.ts`) — granted hosts are kept (deduplicated,
   capped at `OPEN_IN_CONSENT_MAX`, malformed storage ignored, storage errors swallowed).
 - **Scenario: sheet-sizes-match-styles** (`apps/desktop/src/__tests__/palette-styles.test.ts`) —
-  `styles.css` declares `PALETTE_SHEET_HEIGHT`, `PALETTE_PAGE_MIN_VISIBLE` and
-  `PALETTE_SHEET_MIN_HEIGHT`, and the sheet's height is built from them.
+  `tokens.css` declares `PALETTE_SHEET_HEIGHT`, `PALETTE_PAGE_MIN_VISIBLE` and
+  `PALETTE_SHEET_MIN_HEIGHT`, and the sheet's height in `styles.css` is built from them.
 - **Scenario: palette-fits-and-closes-for-fullscreen** (`layout.test.ts`) — `paletteFits` is false
   below `PALETTE_SHEET_MIN_HEIGHT`; `closesForFullscreen` is true for a tab in either fullscreen phase.
 - **Scenario: site-files-use-the-page-origin** — robots.txt and sitemap.xml are built on the page's
