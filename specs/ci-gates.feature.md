@@ -6,8 +6,8 @@ Design doc §3 (security model) and §5 (testing & quality gates); Phase 0 Task 
 one named CI step, check or test; any failure fails the workflow.
 
 ## Gates (`.github/workflows/ci.yml`, in order)
-Runs on every pull request and on pushes to `main`; a superseded PR run is cancelled, a `main` run
-never is.
+Runs on every pull request and on pushes to `main`, and on demand (`workflow_dispatch`) for a branch
+without a pull request; a superseded PR run is cancelled, a `main` run never is.
 - **Gate: lint-test-build** — `pnpm turbo run lint test build` (strict TypeScript, vitest suites,
   Forge package).
   - **Scenario: turbo-cache-follows-dependencies** (`ci-workflows.test.ts`) — Turbo's cache never
