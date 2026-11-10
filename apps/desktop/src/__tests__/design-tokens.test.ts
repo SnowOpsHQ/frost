@@ -33,23 +33,25 @@ interface Declaration {
   readonly value: string;
 }
 
-/** The custom-property declarations of `css`, each with its context. (The renderer's CSS has no
- * braces or semicolons inside strings, so a brace walk is enough.) */
-function customProperties(css: string): Declaration[] {
-  const out: Declaration[] = [];
+/** The declarations of `css`, each with its context, and the context of every block. (The
+ * renderer's CSS has no braces or semicolons inside strings, so a brace walk is enough.) */
+function parse(css: string): { declarations: Declaration[]; blocks: string[][] } {
+  const declarations: Declaration[] = [];
+  const blocks: string[][] = [];
   const stack: string[] = [];
   let buffer = '';
   const flush = () => {
     const text = buffer.trim();
     const colon = text.indexOf(':');
-    if (text.startsWith('--') && colon > 0) {
-      out.push({ context: [...stack], property: text.slice(0, colon).trim(), value: text.slice(colon + 1).trim().replace(/\s+/g, ' ') });
+    if (colon > 0) {
+      declarations.push({ context: [...stack], property: text.slice(0, colon).trim(), value: text.slice(colon + 1).trim().replace(/\s+/g, ' ') });
     }
     buffer = '';
   };
   for (const ch of stripComments(css)) {
     if (ch === '{') {
       stack.push(buffer.trim().replace(/\s+/g, ' '));
+      blocks.push([...stack]);
       buffer = '';
     } else if (ch === '}') {
       flush();
@@ -60,13 +62,19 @@ function customProperties(css: string): Declaration[] {
       buffer += ch;
     }
   }
-  return out;
+  return { declarations, blocks };
 }
 
-/** Whether a selector list targets the document element (`:root…` or `html`). */
-const onRoot = (selectors: string) => selectors.split(',').some((s) => /^(:root\b|html$)/.test(s.trim()));
+const customProperties = (css: string) => parse(css).declarations.filter((d) => d.property.startsWith('--'));
 
-const TOKENS = customProperties(read(TOKENS_STYLESHEET));
+/** Whether a selector list may target the document element: a selector that starts with `:root` or
+ * `html` (`html.dark`, `:root[data-theme]`, `:where(:root)`, … too; a descendant of it counts as
+ * well, which is stricter than needed). */
+const onRoot = (selectors: string) =>
+  selectors.split(',').some((s) => /^(?::(?:where|is)\(\s*)?(?::root|html)(?![\w-])/.test(s.trim()));
+
+const TOKENS_CSS = parse(read(TOKENS_STYLESHEET));
+const TOKENS = TOKENS_CSS.declarations;
 const inContext = (context: readonly string[]) =>
   new Map(TOKENS.filter((d) => d.context.join(' > ') === context.join(' > ')).map((d) => [d.property, d.value]));
 const LIGHT = inContext([':root']);
@@ -77,8 +85,13 @@ const KEEPS_LEGACY_VALUE = new Set<string>(SIGNAL_NAMES_WITH_LEGACY_VALUES);
 
 test('tokens-stylesheet-holds-only-root-tokens', () => {
   expect(STYLESHEETS).toContain(TOKENS_STYLESHEET);
-  // Every declaration in tokens.css is on :root, light or dark: no other selector, no other at-rule.
-  for (const d of TOKENS) expect([[':root'], [DARK, ':root']], `${d.property} in ${d.context.join(' > ')}`).toContainEqual(d.context);
+  // tokens.css has :root blocks only, light or dark (no other selector, no other at-rule), and they
+  // hold custom properties only.
+  for (const block of TOKENS_CSS.blocks) expect([[':root'], [DARK], [DARK, ':root']], block.join(' > ')).toContainEqual(block);
+  for (const d of TOKENS) {
+    expect(d.property, d.property).toMatch(/^--/);
+    expect([[':root'], [DARK, ':root']], `${d.property} in ${d.context.join(' > ')}`).toContainEqual(d.context);
+  }
   // Nothing declared twice in one context (a later duplicate would silently win).
   const seen = new Set<string>();
   for (const d of TOKENS) {
@@ -129,6 +142,14 @@ test('legacy-tokens-are-defined', () => {
     if (row.signal === '--text-*') expect(row.legacy).toBe('--font-ui');
     else expect(SIGNAL_NAMES.has(row.signal), `${row.legacy} -> ${row.signal}`).toBe(true);
   }
+});
+
+test('legacy-token-values-are-pinned', () => {
+  // The foundation changes no value: these are main's values before Signal. The values PR updates
+  // this snapshot on purpose, and its diff lists every value it re-points.
+  const pick = (values: Map<string, string>) =>
+    Object.fromEntries(LEGACY_TOKEN_MIGRATION.filter((row) => values.has(row.legacy)).map((row) => [row.legacy, values.get(row.legacy)]));
+  expect({ light: pick(LIGHT), dark: pick(DARK_VALUES) }).toMatchSnapshot();
 });
 
 test('no-other-stylesheet-declares-root-tokens', () => {

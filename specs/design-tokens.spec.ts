@@ -312,6 +312,7 @@ export const LEGACY_TOKEN_MIGRATION = [
 /**
  * The most literal hex colours (`#rgb`, `#rrggbb`, …, outside comments) the renderer's stylesheets
  * other than `TOKENS_STYLESHEET` may hold. A ratchet: lower it as surfaces move onto tokens, never
- * raise it. Counted when every `:root` token moved into `tokens.css`.
+ * raise it. Counted when every `:root` token moved into `tokens.css`. It counts hex only: a colour
+ * written as `rgb()`, `hsl()` or a keyword is for review to catch.
  */
 export const HEX_COLOUR_RATCHET = 53;

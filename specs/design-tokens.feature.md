@@ -15,7 +15,8 @@ Code: `apps/desktop/src/renderer/tokens.css`, imported by `main.tsx`. Each line 
   (whose components import the feature stylesheets). No stylesheet is lazy-loaded.
 - **Foundation: no visual change.** The legacy tokens moved into `tokens.css` with their names,
   values and order unchanged; a rule body anywhere else is untouched. `getComputedStyle` of the
-  document element gives the same value for every legacy name, light and dark, as before.
+  document element gave the same value for every legacy name, light and dark, as before (checked
+  once against a production build); the snapshot below pins those values from here on.
 - **The full Signal vocabulary.** Every `SIGNAL_TOKENS` name is defined: colour, state and elevation
   in light and dark; type (a `font` shorthand, with its letter-spacing in the spec), radius, space,
   size and motion once. Signal-only tokens carry their Signal values and nothing reads them yet.
@@ -36,16 +37,19 @@ Code: `apps/desktop/src/renderer/tokens.css`, imported by `main.tsx`. Each line 
 4. One PR per surface: rules move onto Signal tokens, retired names go.
 
 ## Unit (`apps/desktop/src/__tests__/design-tokens.test.ts`)
-- **Scenario: tokens-stylesheet-holds-only-root-tokens** — `tokens.css` declares only on `:root`
-  (light) and the dark `:root`, never one name twice in a context, and a dark value only overrides
+- **Scenario: tokens-stylesheet-holds-only-root-tokens** — `tokens.css` has only `:root` blocks
+  (light, and dark under the media query) holding only custom properties, never one name twice in a context, and a dark value only overrides
   a light one.
 - **Scenario: signal-tokens-are-defined** — every Signal token is in light; every colour, state and
   elevation token is in dark too, and nothing else is; Signal-only tokens have exactly their spec
   values; `--icon` stays a colour.
 - **Scenario: legacy-tokens-are-defined** — all 89 legacy names are in `tokens.css`, which holds
   nothing beyond legacy and Signal names, and every replacement named is a Signal token.
+- **Scenario: legacy-token-values-are-pinned** — the 89 legacy names keep main's light and dark
+  values (a committed snapshot; the values PR updates it on purpose).
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
-  custom property in a `:root` or `html` rule.
+  custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
+  `:where(:root)`, … included).
 - **Scenario: tokens-load-before-every-other-stylesheet** — `main.tsx` imports `tokens.css` first
   among stylesheets and before `App`.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
