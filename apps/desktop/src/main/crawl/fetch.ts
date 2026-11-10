@@ -20,9 +20,13 @@ import { createCrawlScope, normaliseCrawlUrl, type CrawlScopeRule, type CrawlSco
 // exact-origin rule first, with no request to the new origin; a hop to another host name is never
 // followed (the call ends `redirected`; Task 6b queues the target as a page of its own, under its
 // host's pacing: K-B1); only for a hop on the same host, that origin's robots.txt,
-// bounded by `ROBOTS_FETCH_LIMITS.timeoutMs + CRAWL_ROBOTS_HOOK_MARGIN_MS` (`timeout`, or no answer by
-// then, refuses the hop: `robots-timeout`; the other unknown answers allow it, flagged: the
-// start-origin rule).
+// bounded by `ROBOTS_FETCH_LIMITS.timeoutMs + CRAWL_ROBOTS_HOOK_MARGIN_MS`.
+//
+// robots.txt the crawl cannot read refuses (RFC 9309 §2.3.1.4; council review, item 2): an unknown
+// outcome (`ROBOTS_UNKNOWN_OUTCOMES`, the redirect failures included) or no answer within that wait
+// refuses the page, the start origin's included, or the hop, as `robots-unreachable`; nothing is
+// requested. Only a parsed file that allows the URL, or no file at all (a 4xx), lets it through. The
+// sidebar's rule (an "unknown" verdict, the `robots-txt-unreachable` finding) does not change.
 //
 // Task 6a parses robots.txt through an injected `parseRobots` (default: seo-core's pure
 // `crawlRobotsRules`, on main's thread); Task 6b moves that call into the crawl's worker
@@ -70,7 +74,7 @@ export interface CrawlRobotsState {
   /** The verdict for `CRAWL_ROBOTS_TOKEN`, and Googlebot's from the same file. */
   readonly crawl: CrawlRobotsVerdict;
   readonly googlebot: CrawlRobotsVerdict;
-  /** robots.txt could not be read (an unknown outcome): crawled anyway at the default interval, with the `robots-txt-unreachable` finding. */
+  /** robots.txt could not be read (an unknown outcome, or no answer in time): the page or hop is refused, `robots-unreachable` (RFC 9309 §2.3.1.4). */
   readonly unreachable: boolean;
   /** The site's `Crawl-delay` for the crawl (ms, capped); `null`: none. */
   readonly crawlDelayMs: number | null;
@@ -219,7 +223,7 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
       return { fetch, crawl: verdict(CRAWL_ROBOTS_TOKEN), googlebot: verdict('googlebot'), unreachable: false, crawlDelayMs: rules.crawlDelayMs };
     }
     if (ALLOW_ALL.has(fetch.outcome)) return { fetch, crawl: 'allowed', googlebot: 'allowed', unreachable: false, crawlDelayMs: null };
-    // Unknown (`ROBOTS_UNKNOWN_OUTCOMES`; `pending` never comes from `get`): the start-origin rule.
+    // Unknown (`ROBOTS_UNKNOWN_OUTCOMES`; `pending` never comes from `get`): the caller refuses, `robots-unreachable`.
     return unknownRobots(fetch);
   }
 
@@ -279,10 +283,12 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
         const host = pacingKey(url)!;
         const own = await robotsFor(url, signal);
         if (signal?.aborted) return none('aborted', unknownRobots(null));
-        // No answer in time for the page's own origin: unknown, so the start-origin rule (crawled, flagged).
+        // No answer in time for the page's own origin: unknown, refused as any unreadable robots.txt is.
         const robots = own === 'no-answer' ? unknownRobots(synthesized(url, 'timeout')) : own;
         learnCrawlDelay(host, origin, robots);
+        // Only `allowed` lets the page through: `blocked` (a rule, or a file not parsed in time) and `unknown` refuse it.
         if (robots.crawl === 'blocked') return none('blocked-by-robots', robots);
+        if (robots.crawl !== 'allowed') return none('robots-unreachable', robots);
 
         let refusal: { readonly outcome: CrawlFetchOutcome; readonly url: string } | null = null;
         let finalRobots = robots;
@@ -298,16 +304,17 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
             refusal = { outcome: 'redirected', url: next };
             return false;
           }
-          // 2. Only then robots.txt for the new URL, bounded: `timeout` or no answer refuses the hop. Each wait
-          // names its refusal before it starts, so a hop the fetcher's own cap ends is recorded for what it waited on.
-          refusal = { outcome: 'robots-timeout', url: next };
+          // 2. Only then robots.txt for the new URL, bounded: no answer, or an unknown one, refuses the hop
+          // (`robots-unreachable`). Each wait names its refusal before it starts, so a hop the fetcher's own cap
+          // ends is recorded for what it waited on.
+          refusal = { outcome: 'robots-unreachable', url: next };
           const fetch = await lookup(next, options.signal);
-          if (fetch === 'no-answer' || fetch?.outcome === 'timeout') return false;
+          if (fetch === 'no-answer') return false;
           // 3. A fetched file is parsed within its own wait: no rules in time (or a failed parse) refuses the hop as blocked.
           if (fetch?.outcome === 'ok') refusal = { outcome: 'blocked-by-robots', url: next };
           const state = await readRobots(fetch, next, options.signal);
-          if (state.crawl === 'blocked') {
-            refusal = { outcome: 'blocked-by-robots', url: next };
+          if (state.crawl !== 'allowed') {
+            refusal = { outcome: state.crawl === 'blocked' ? 'blocked-by-robots' : 'robots-unreachable', url: next };
             return false;
           }
           learnCrawlDelay(host, new URL(next).origin, state);

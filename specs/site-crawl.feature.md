@@ -179,9 +179,19 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
 - `crawl-honours-robots` — a URL robots.txt disallows for `frost-crawl` is answered
   `blocked-by-robots` and never requested; the `frost-crawl` group is used, else `*`; a file with
   `User-agent: frost-crawl` / `Disallow: /` blocks every URL although `*` allows them; robots.txt the
-  crawl cannot read (an unknown outcome) lets the page be crawled at the default interval with the
-  `robots-txt-unreachable` flag (the start-origin rule); "no robots.txt" outcomes allow everything.
+  crawl cannot read (an unknown outcome) refuses the page, `robots-unreachable`, never requested
+  (council review, item 2: this replaces the start-origin rule that crawled it, flagged); "no
+  robots.txt" outcomes (a 4xx, a missing file) allow everything.
   Each page carries the crawl's verdict and Googlebot's, from the same file.
+- `crawl-robots-unreachable-refuses-the-page` — (council review, item 2; RFC 9309 §2.3.1.4) robots.txt
+  the crawl cannot read means everything is disallowed, for the crawl only (the sidebar's "unknown"
+  verdict and its `robots-txt-unreachable` finding do not change). Each of `ROBOTS_UNKNOWN_OUTCOMES`
+  (`server-error`, `unreachable`, `timeout`, and the redirect failures `bad-redirect` and
+  `no-location`, which RFC 9309 counts as unreachable), a lookup still unanswered at
+  `ROBOTS_FETCH_LIMITS.timeoutMs` + `CRAWL_ROBOTS_HOOK_MARGIN_MS` (recorded as `timeout`), and a lookup
+  that fails, refuses the page: the start URL on its own origin and a page on another origin alike are
+  recorded `robots-unreachable` (a refusal, counted in `refused`; verdicts `unknown`) and never
+  requested. `unavailable` and `forbidden` (no robots.txt) allow the page.
 - `crawl-robots-parse-has-its-own-wait` — (council review, item 1) the robots lookup's wait
   (`ROBOTS_FETCH_LIMITS.timeoutMs` + `CRAWL_ROBOTS_HOOK_MARGIN_MS`) covers the lookup only; a
   robots.txt fetched `ok` is parsed within a wait of its own, `CRAWL_ROBOTS_PARSE_WAIT_MS`. A
@@ -225,10 +235,12 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
 - `crawl-redirect-robots-timeout-refuses-the-hop` — (each case a same-host `http` → `https` hop, so
   another robots.txt) a redirect target whose robots answer is
   `timeout`, and one whose lookup is still unanswered at `ROBOTS_FETCH_LIMITS.timeoutMs` +
-  `CRAWL_ROBOTS_HOOK_MARGIN_MS`: the hop is refused and the page recorded `robots-timeout`, never a
+  `CRAWL_ROBOTS_HOOK_MARGIN_MS`: the hop is refused and the page recorded `robots-unreachable`, never a
   page fetch `timeout` (the hook's wait is not the page's deadline); a target whose robots answer is
-  `server-error`, `unreachable`, `bad-redirect` or `no-location` (each its own case) follows the
-  start-origin rule: the hop is followed and the page carries the `robots-txt-unreachable` flag.
+  `server-error`, `unreachable`, `bad-redirect` or `no-location` (each its own case) is refused the
+  same way (council review, item 2: the hook's `robots-timeout` is folded into `robots-unreachable`,
+  one rule for every robots.txt the crawl cannot read), and the target is never requested. An answer
+  just inside the limit that allows the hop is followed.
 - `crawl-redirect-robots-parse-stall-refuses-the-hop` — (council review, item 1) a same-host hop whose
   robots.txt is fetched `ok` but whose parse never answers is refused `blocked-by-robots` (the
   fetcher's own hook cap may end the wait first; the refusal is named before the wait starts), and the
@@ -347,6 +359,9 @@ the crawl worker and its URLs handed out `sitemapUrlsPerJob` at a time, then rel
   least 10 s apart; a 503 with `Retry-After: 30` holds the host's next request 30 s.
 - `crawl-sitemap-disallowed-by-robots-is-not-fetched` — a sitemap robots.txt disallows for
   `frost-crawl`, and one on another site, are never requested.
+- `crawl-sitemap-robots-unreachable-is-not-fetched` — (council review, item 2) robots.txt answering
+  503: the fallback `/sitemap.xml` is refused like any page (`robots-unreachable`), never requested;
+  nothing is seeded.
 - `crawl-sitemap-read-once-in-windows`, `crawl-sitemap-window-cache` — a file longer than one window is
   sent to the worker once, parsed once, handed out in windows and released; a window for a file not held
   is refused.

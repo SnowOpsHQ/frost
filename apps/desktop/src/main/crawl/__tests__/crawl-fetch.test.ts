@@ -302,16 +302,55 @@ describe('crawl fetching', () => {
     expect(await settle(run.fetchPage('https://shop.example.com/a'))).toMatchObject({ outcome: 'blocked-by-robots', robots: { crawl: 'blocked' } });
     expect(net.urls()).toEqual([]);
     expect(await settle(run.fetchPage('https://example.com/public'))).toMatchObject({ outcome: 'response', robots: { crawl: 'allowed', googlebot: 'blocked' } });
-    // robots.txt the crawl cannot read: crawled at the default interval, flagged (the start-origin rule).
+    // robots.txt the crawl cannot read: refused, never requested (RFC 9309 §2.3.1.4; council review, item 2).
     const down = await settle(run.fetchPage('https://down.example.com/a'));
-    expect(down).toMatchObject({ outcome: 'response', robots: { crawl: 'unknown', googlebot: 'unknown', unreachable: true, crawlDelayMs: null } });
+    expect(down).toMatchObject({ outcome: 'robots-unreachable', status: null, robots: { crawl: 'unknown', googlebot: 'unknown', unreachable: true, crawlDelayMs: null } });
     expect(down.robots.fetch?.outcome).toBe('server-error');
-    expect(run.politeness.intervalFor('down.example.com')).toBe(1_000);
     // No robots.txt: everything allowed.
     expect(await settle(run.fetchPage('https://none.example.com/a'))).toMatchObject({ outcome: 'response', robots: { crawl: 'allowed', googlebot: 'allowed', unreachable: false } });
-    expect(net.urls()).toEqual(['https://example.com/public', 'https://down.example.com/a', 'https://none.example.com/a']);
+    expect(net.urls()).toEqual(['https://example.com/public', 'https://none.example.com/a']);
     // A public start's lookups are the shared ones (no exact-origin rule).
     expect(robots.lookups.every((lookup) => !lookup.exactOrigin)).toBe(true);
+  });
+
+  test('crawl-robots-unreachable-refuses-the-page', async () => {
+    // Council review, item 2 (RFC 9309 §2.3.1.4): robots.txt the crawl cannot read refuses the page, recorded
+    // `robots-unreachable` and never requested, for the start origin and any other origin alike: every unknown outcome
+    // (`server-error`, `unreachable`, `timeout`, and the redirect failures `bad-redirect` and `no-location`, which RFC 9309
+    // treats as unreachable), a lookup with no answer by the wait, and a lookup that fails. A 4xx (no robots.txt) allows it.
+    expect(ROBOTS_UNKNOWN_OUTCOMES).toEqual(['server-error', 'unreachable', 'timeout', 'bad-redirect', 'no-location']);
+    const routes: Record<string, Route> = {};
+    const answers: Record<string, string | RobotsFetchOutcome | 'never' | { after: number; text: string }> = {};
+    const cases: (RobotsFetchOutcome | 'never')[] = [...ROBOTS_UNKNOWN_OUTCOMES, 'never'];
+    for (const answer of cases) {
+      routes[`https://${answer}.example.com/`] = html();
+      routes[`https://${answer}.example.com/a`] = html();
+      answers[`https://${answer}.example.com`] = answer;
+    }
+    for (const allowed of ['unavailable', 'forbidden'] as const) {
+      routes[`https://${allowed}.example.com/a`] = html();
+      answers[`https://${allowed}.example.com`] = allowed;
+    }
+    const robots = fakeRobots(answers);
+    // A lookup that rejects (the robots fetcher never should): read as `unreachable`.
+    const failing: CrawlRobotsSource = { get: (url, options) => (new URL(url).hostname === 'throws.example.com' ? Promise.reject(new Error('lookup failed')) : robots.source.get(url, options)) };
+    routes['https://throws.example.com/a'] = html();
+    const { net, crawl } = crawler(routes, failing);
+    for (const answer of cases) {
+      // The start URL itself (the start origin's rule), then another page of a run started elsewhere.
+      const own = crawl.forRun(settings(`https://${answer}.example.com/`));
+      const start = await settle(own.fetchPage(`https://${answer}.example.com/`));
+      expect(start, answer).toMatchObject({ outcome: 'robots-unreachable', status: null, startedAt: null, robots: { crawl: 'unknown', googlebot: 'unknown', unreachable: true } });
+      expect(start.robots.fetch?.outcome, answer).toBe(answer === 'never' ? 'timeout' : answer);
+      const other = crawl.forRun(settings('https://www.example.com/', { scope: 'site' }));
+      expect(await settle(other.fetchPage(`https://${answer}.example.com/a`)), answer).toMatchObject({ outcome: 'robots-unreachable', status: null });
+    }
+    const run = crawl.forRun(settings('https://www.example.com/', { scope: 'site' }));
+    expect(await settle(run.fetchPage('https://throws.example.com/a'))).toMatchObject({ outcome: 'robots-unreachable', robots: { unreachable: true } });
+    expect(net.urls()).toEqual([]);
+    // No robots.txt (4xx): everything allowed.
+    for (const allowed of ['unavailable', 'forbidden'] as const) expect(await settle(run.fetchPage(`https://${allowed}.example.com/a`)), allowed).toMatchObject({ outcome: 'response', robots: { crawl: 'allowed' } });
+    expect(net.urls()).toEqual(['https://unavailable.example.com/a', 'https://forbidden.example.com/a']);
   });
 
   test('crawl-robots-parse-has-its-own-wait', async () => {
@@ -537,23 +576,23 @@ describe('crawl fetching', () => {
     const robots = fakeRobots(answers);
     const { net, crawl } = crawler(routes, robots.source);
     const run = crawl.forRun(settings('https://www.example.com/', { scope: 'site' }));
-    // An answered `timeout`: refused, `robots-timeout`.
-    expect(await settle(run.fetchPage('http://t.example.com/a'))).toMatchObject({ outcome: 'robots-timeout', status: 302, refusedUrl: 'https://t.example.com/a', redirectTarget: null });
-    // No answer by the hook's limit: refused at the limit, `robots-timeout`, never a page `timeout`.
+    // An answered `timeout`: refused, `robots-unreachable` (council review, item 2: one rule for every unreadable robots.txt).
+    expect(await settle(run.fetchPage('http://t.example.com/a'))).toMatchObject({ outcome: 'robots-unreachable', status: 302, refusedUrl: 'https://t.example.com/a', redirectTarget: null });
+    // No answer by the hook's limit: refused at the limit, `robots-unreachable`, never a page `timeout`.
     const started = Date.now();
     const never = await settle(run.fetchPage('http://n.example.com/a'));
-    expect(never).toMatchObject({ outcome: 'robots-timeout', refusedUrl: 'https://n.example.com/a' });
+    expect(never).toMatchObject({ outcome: 'robots-unreachable', refusedUrl: 'https://n.example.com/a' });
     expect(Date.now() - started).toBeGreaterThanOrEqual(5_000 + limit);
     // An answer just inside the limit allowing it: followed, the page answered (the hook's wait is not the page's deadline).
     expect(await settle(run.fetchPage('http://late.example.com/a'))).toMatchObject({ outcome: 'response', status: 200, finalUrl: 'https://late.example.com/a' });
     expect(net.urls()).not.toContain('https://t.example.com/a');
     expect(net.urls()).not.toContain('https://n.example.com/a');
-    // Every other unknown outcome, each its own case: the start-origin rule (followed, flagged robots-txt-unreachable).
+    // Every other unknown outcome, each its own case: refused the same way (RFC 9309 §2.3.1.4; redirect failures count
+    // as unreachable), the target never requested.
     for (const outcome of unknown) {
       const page = await settle(run.fetchPage(`http://${outcome}.example.com/a`));
-      expect(page, outcome).toMatchObject({ outcome: 'response', status: 200, finalUrl: `https://${outcome}.example.com/a`, robots: { crawl: 'unknown', unreachable: true } });
-      expect(page.robots.fetch?.outcome, outcome).toBe(outcome);
-      expect(net.urls(), outcome).toContain(`https://${outcome}.example.com/a`);
+      expect(page, outcome).toMatchObject({ outcome: 'robots-unreachable', status: 302, refusedUrl: `https://${outcome}.example.com/a`, redirectTarget: null });
+      expect(net.urls(), outcome).not.toContain(`https://${outcome}.example.com/a`);
     }
   });
 

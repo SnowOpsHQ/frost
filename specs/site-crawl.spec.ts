@@ -145,9 +145,9 @@ export const CRAWL_PACING_LIMITS = {
 
 /**
  * The margin (ms) added to `ROBOTS_FETCH_LIMITS.timeoutMs` (`seo-indexability.spec.ts`) for the
- * redirect hook's robots lookup (Decision 6): the robots fetcher's own `timeout` answer arrives inside
- * it, and a lookup still unanswered at that limit counts as `timeout` (the hop is refused,
- * `robots-timeout`).
+ * crawl's robots lookups, a page's own and the redirect hook's (Decision 6): the robots fetcher's own
+ * `timeout` answer arrives inside it, and a lookup still unanswered at that limit counts as `timeout`
+ * (the page or the hop is refused, `robots-unreachable`).
  */
 export const CRAWL_ROBOTS_HOOK_MARGIN_MS = 1_000;
 
@@ -327,8 +327,16 @@ export type CrawlServiceAnswer =
  *   recorded as links only, never as pages);
  * - `private-redirect`: a redirect hop to a private host (or, for a private start, off its exact
  *   origin) was refused;
- * - `robots-timeout`: a redirect target's robots.txt did not answer within the hook's limit
- *   (`ROBOTS_FETCH_LIMITS.timeoutMs` + `CRAWL_ROBOTS_HOOK_MARGIN_MS`); the hop was refused;
+ * - `robots-unreachable` (council review, item 2; RFC 9309 §2.3.1.4): the robots.txt that applies (the
+ *   page's own origin's, the start origin's included, or a redirect target's) could not be read, so the
+ *   crawl assumes everything is disallowed: the page was never requested, or the hop was refused. Its
+ *   answer was an unknown outcome (`ROBOTS_UNKNOWN_OUTCOMES`: `server-error`, `unreachable`,
+ *   `timeout`, and the redirect failures `bad-redirect` and `no-location`, which RFC 9309 treats as
+ *   unreachable), or no answer came within `ROBOTS_FETCH_LIMITS.timeoutMs` +
+ *   `CRAWL_ROBOTS_HOOK_MARGIN_MS`. A 4xx or a missing file (`ROBOTS_ALLOW_ALL_OUTCOMES`) allows
+ *   everything. This is the crawl's rule only: the sidebar's verdict ("unknown", the
+ *   `robots-txt-unreachable` finding) does not change. It replaces the hook's earlier `robots-timeout`
+ *   (one rule, one outcome);
  * - `private-address`, `too-many-redirects`, `bad-redirect`, `no-location`, `unreachable`, `timeout`:
  *   the fetcher's own outcomes (`fetcher.spec.ts`).
  */
@@ -340,7 +348,7 @@ export const CRAWL_PAGE_OUTCOMES = [
   'blocked-by-robots',
   'out-of-scope',
   'private-redirect',
-  'robots-timeout',
+  'robots-unreachable',
   'private-address',
   'too-many-redirects',
   'bad-redirect',
@@ -358,7 +366,7 @@ export type CrawlPageOutcome = (typeof CRAWL_PAGE_OUTCOMES)[number];
  * - failed: the fetch itself went wrong (`failed`).
  */
 export const CRAWL_FETCHED_OUTCOMES = ['crawled', 'not-html', 'parse-failed', 'redirected'] as const satisfies readonly CrawlPageOutcome[];
-export const CRAWL_REFUSED_OUTCOMES = ['blocked-by-robots', 'out-of-scope', 'private-redirect', 'robots-timeout', 'private-address'] as const satisfies readonly CrawlPageOutcome[];
+export const CRAWL_REFUSED_OUTCOMES = ['blocked-by-robots', 'out-of-scope', 'private-redirect', 'robots-unreachable', 'private-address'] as const satisfies readonly CrawlPageOutcome[];
 export const CRAWL_FAILED_OUTCOMES = ['too-many-redirects', 'bad-redirect', 'no-location', 'unreachable', 'timeout'] as const satisfies readonly CrawlPageOutcome[];
 
 /** A page's robots.txt verdict for one agent (`CRAWL_ROBOTS_TOKEN`, and Googlebot's, computed from the same file). */
@@ -410,6 +418,9 @@ export const CRAWL_PACING_MIGRATION_IDS = ['0246_crawl_run_pacing'] as const;
  * miss there, never add: `h1-missing` and `content-thin` (hidden headings and words count for the
  * crawl), and the structured-data rules, which read JSON-LD only (the served parse reads no
  * microdata or RDFa).
+ *
+ * `robots-txt-unreachable` stays in the list (the plan's list is kept exactly) but no longer fires in a
+ * crawl: a page whose robots.txt the crawl cannot read is refused (`robots-unreachable`), never audited.
  */
 export const CRAWL_RULE_IDS = [
   // title

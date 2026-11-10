@@ -61,7 +61,9 @@ describe('site crawl contract', () => {
     // Every page outcome counts in exactly one of fetched, refused (robots, scope, address) and failed.
     const lists = [CRAWL_FETCHED_OUTCOMES, CRAWL_REFUSED_OUTCOMES, CRAWL_FAILED_OUTCOMES].map((list) => [...list] as string[]);
     expect(lists.flat().sort()).toEqual([...CRAWL_PAGE_OUTCOMES].sort());
-    expect(CRAWL_REFUSED_OUTCOMES).toEqual(expect.arrayContaining(['blocked-by-robots', 'out-of-scope', 'private-redirect', 'robots-timeout']));
+    expect(CRAWL_REFUSED_OUTCOMES).toEqual(expect.arrayContaining(['blocked-by-robots', 'out-of-scope', 'private-redirect', 'robots-unreachable']));
+    // Council review, item 2: one refusal for every robots.txt the crawl cannot read (the hook's old `robots-timeout` folded in).
+    expect(CRAWL_PAGE_OUTCOMES).not.toContain('robots-timeout');
   });
 
   test('crawl-lane-floor-is-the-minimum-interval', () => {

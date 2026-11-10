@@ -169,6 +169,15 @@ describe('sitemap requests are crawl requests', () => {
     await out.seed();
     expect(out.net.urls()).toEqual(['https://example.com/robots.txt']);
   });
+
+  test('crawl-sitemap-robots-unreachable-is-not-fetched', async () => {
+    // Council review, item 2 (RFC 9309 §2.3.1.4): robots.txt that cannot be read (a 5xx here) refuses the sitemap request
+    // like any page: the fallback `/sitemap.xml` is never requested, nothing is seeded.
+    const t = rig({ 'https://example.com/robots.txt': answer('', 503, { 'content-type': 'text/plain' }), 'https://example.com/sitemap.xml': answer(urlset(['https://example.com/a'])) }, 'https://example.com/');
+    expect(await t.seed()).toEqual({ seeded: 0, note: null });
+    expect(t.net.urls()).toEqual(['https://example.com/robots.txt']);
+    expect(t.seeded).toEqual([]);
+  });
 });
 
 describe('robots.txt the worker cannot parse', () => {
@@ -231,7 +240,8 @@ describe('robots.txt the worker parses late', () => {
 describe('the last check before a request', () => {
   test('crawl-before-request-is-asked-in-the-paced-slot', async () => {
     const net = fakeNet({ 'https://example.com/a': answer('<title>a</title>', 200, { 'content-type': 'text/html' }), 'https://example.com/b': answer('<title>b</title>', 200, { 'content-type': 'text/html' }) });
-    const robots: CrawlRobotsSource = { get: async () => null };
+    // No robots.txt (a 404): everything allowed. (No answer at all would refuse every page: `robots-unreachable`.)
+    const robots: CrawlRobotsSource = { get: async () => ({ url: 'https://example.com/robots.txt', outcome: 'unavailable', status: 404, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false }) };
     const run = createCrawlFetcher({ fetcher: createCrawlLane({ hop: net.hop, resolve }), robots, userAgent: () => UA }).forRun(settingsFor('https://example.com/'));
     expect(await settle(run.fetchPage('https://example.com/a'))).toMatchObject({ outcome: 'response' });
     // The second call waits its interval; the project is deleted meanwhile: asked after the wait, nothing is sent.

@@ -206,7 +206,7 @@ export interface BoundedFetchRequest {
    * hop is requested, with the resolved next URL. It answers whether the hop may be followed; `false`
    * (or a rejection) ends the call with the outcome `redirect-refused`, and the next URL is never
    * requested. The caller records why (the crawl: `blocked-by-robots`, `out-of-scope`,
-   * `private-redirect` or `robots-timeout`).
+   * `private-redirect` or `robots-unreachable`).
    *
    * The hook decides scope and the private-address / exact-origin rule **before any request to the new
    * origin** (the fetcher's own DNS resolution excepted), and only when both allow the hop may it look
