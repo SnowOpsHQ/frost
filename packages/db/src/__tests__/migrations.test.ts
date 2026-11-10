@@ -1,6 +1,7 @@
 // Spec: specs/browser-session-db.spec.ts (MIGRATIONS_TABLE, SESSION_TABLES), specs/render-profile.feature.md (pins),
 // specs/seo-content.spec.ts (CONTENT_TABLES), specs/ai-checks.spec.ts (AI_CHECKS_TABLES), specs/workspace-db.spec.ts (WORKSPACE_TABLES),
 // specs/capture-db.spec.ts (SCREENSHOT_EDIT_TABLES; Phase 11 Decision 18: PHASE11_MIGRATIONS after Phase 10's block, 0230 then 0231)
+// specs/site-crawl.spec.ts (SITE_CRAWL_TABLES; Phase 12: 0240/0241 after PHASE11_MIGRATIONS)
 // Acceptance: specs/browser-session-db.feature.md (Migrations)
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,9 +14,11 @@ import { CONTENT_TABLES } from '@app/specs/seo-content.spec';
 import { CHANGE_INTEL_TABLES, SCREENSHOT_EDIT_TABLES } from '@app/specs/capture-db.spec';
 import { AI_CHECKS_TABLES } from '@app/specs/ai-checks.spec';
 import { WORKSPACE_TABLES } from '@app/specs/workspace-db.spec';
+import { SITE_CRAWL_TABLES } from '@app/specs/site-crawl.spec';
 import { seoAiChecks } from '../ai-checks-schema';
 import * as changeIntel from '../change-intel/schema';
 import * as workspace from '../change-intel/workspace-schema';
+import * as siteCrawl from '../site-crawl/schema';
 import { seoSnippetVariants, seoTargetQueries } from '../content-schema';
 import { appSettings } from '../settings-schema';
 import { MIGRATIONS, runMigrations, type Migration } from '../migrations';
@@ -77,7 +80,7 @@ describe('migrations', () => {
   test('migrations-create-schema', () => {
     const db = memory();
     expect(runMigrations(db)).toEqual(MIGRATIONS.map((m) => m.id));
-    expect(tableNames(db)).toEqual([...SESSION_TABLES, ...CHANGE_INTEL_TABLES, MIGRATIONS_TABLE, ...AGENT_TABLES, ...AI_CHECKS_TABLES, ...WORKSPACE_TABLES, ...SCREENSHOT_EDIT_TABLES].sort());
+    expect(tableNames(db)).toEqual([...SESSION_TABLES, ...CHANGE_INTEL_TABLES, MIGRATIONS_TABLE, ...AGENT_TABLES, ...AI_CHECKS_TABLES, ...WORKSPACE_TABLES, ...SCREENSHOT_EDIT_TABLES, ...SITE_CRAWL_TABLES].sort());
     // Phase 2.5 Task 3's Content panel notes are session tables too (`seo-content.feature.md`, content-tables-migrate).
     expect(SESSION_TABLES).toEqual(expect.arrayContaining([...CONTENT_TABLES]));
     for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, renderProfilePins, seoTargetQueries, seoSnippetVariants, appSettings, seoAiChecks, changeIntel.screenshotEdits]) {
@@ -86,7 +89,7 @@ describe('migrations', () => {
     }
     // The schema's indexes exist too.
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row['name']);
-    expect(indexes).toEqual([recentVisits, renderProfilePins, ...Object.values(changeIntel), ...Object.values(workspace)].flatMap((table) => getTableConfig(table).indexes.map((index) => index.config.name)).sort());
+    expect(indexes).toEqual([recentVisits, renderProfilePins, ...Object.values(changeIntel), ...Object.values(workspace), ...Object.values(siteCrawl)].flatMap((table) => getTableConfig(table).indexes.map((index) => index.config.name)).sort());
     expect(recordedIds(db)).toEqual(MIGRATIONS.map((m) => m.id));
   });
 

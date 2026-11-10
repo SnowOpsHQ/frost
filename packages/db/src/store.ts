@@ -12,6 +12,7 @@ import { createHistoryRepository, type HistoryRepository } from './history';
 import { createSettingsRepository, type SettingsRepository } from './settings';
 import { openSessionDatabase, type OpenOptions } from './open';
 import { createSessionRepository, type SessionRepository } from './repository';
+import { createSiteCrawlRepository, type SiteCrawlRepository } from './site-crawl/repository';
 import { createSessionWriter, type SessionWriter, type WriterOptions } from './writer';
 
 // The browser-session store main opens once at startup (spec `browser-session-db.feature.md`).
@@ -42,6 +43,8 @@ export interface SessionStore {
   readonly changeIntel: ChangeIntelRepository;
   /** The AI checks' answers (Phase 9 Task 10), written at once; removed by Clear Browsing Data. */
   readonly aiChecks: AiChecksRepository;
+  /** The site crawler's runs, pages, links and frontier (Phase 12 Task 5), written at once; deleted per run, never by Clear Browsing Data. */
+  readonly siteCrawl: SiteCrawlRepository;
   /** Whether the database is still open (`close()` closes it). */
   readonly isOpen: boolean;
   /**
@@ -75,6 +78,7 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     agentMcp: createAgentMcpRepository(drizzle),
     changeIntel: createChangeIntelRepository(drizzle),
     aiChecks: createAiChecksRepository(drizzle),
+    siteCrawl: createSiteCrawlRepository(drizzle),
     get isOpen() {
       return db.isOpen;
     },
