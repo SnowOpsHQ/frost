@@ -15,9 +15,14 @@ import { CRAWL_INTERVAL_MS, CRAWL_LIMITS, CRAWL_PACING_LIMITS, MAX_CRAWL_DELAY_M
 //
 // The pacing state is the crawl fetcher's, not a run's: within one session it survives a pause, a
 // resume and a new run (`createPacing`, one per crawl fetcher); only the user's interval belongs to the
-// run (`forRun`). Across a restart (a new crawl fetcher) a paused run carries it: `snapshot` gives each
+// run (`forRun`). Across a restart or a crash (a new crawl fetcher) the run carries it: `snapshot` gives each
 // host's next allowed start and back-off (stored on the run, `CRAWL_PACING_LIMITS`), and `restore` seeds a
-// resumed run's pacing from it (whole-branch review, `crawl-pacing-survives-a-restart`). It is bounded: a host's state is forgotten only once no start could be early without it (its longest
+// resumed run's pacing from it (whole-branch review, `crawl-pacing-survives-a-restart`). `changes` counts
+// every change a stored snapshot would miss (council review, item 5): a back-off set or cleared, a
+// `Retry-After`, a `Crawl-delay` learned or changed, and a call started while the host's interval is
+// raised above the run's own (by `Crawl-delay` or back-off), so the crawler stores the snapshot as it
+// changes and a crash or kill never loses it; a plain call at the run's own interval changes nothing
+// (a run with neither stores nothing per page). It is bounded: a host's state is forgotten only once no start could be early without it (its longest
 // possible wait has passed), and past `maxPacedHosts` a new host is refused (`CrawlSlowDownError`)
 // rather than forgetting one too soon. The clock and the timer are injected (tests: a fake clock).
 
@@ -88,7 +93,7 @@ export interface Politeness {
    * Each host whose next start is still ahead or that is backed off: `waitUntil`, the later of its
    * `Retry-After` and its last start plus its effective interval at this run's interval, and its 429 /
    * 503 answers in a row (capped at `backoffAfter`). Host names past `CRAWL_PACING_LIMITS.maxHostChars`
-   * are left out. What a pausing run stores.
+   * are left out. What a run stores as it changes and as it pauses.
    */
   snapshot(): CrawlPacedHost[];
   /**
@@ -97,6 +102,13 @@ export interface Politeness {
    * held state; a host the table has no room for is skipped.
    */
   restore(hosts: readonly CrawlPacedHost[]): void;
+  /**
+   * A counter that moves whenever `snapshot` would answer something a stored one does not hold: a
+   * back-off set or cleared, a `Retry-After` taken, a host's `Crawl-delay` changed, or a call started on
+   * a host whose effective interval is above this run's own. Never moved by `restore` or by a call at the
+   * run's own interval. The crawler stores the snapshot whenever it moved (council review, item 5).
+   */
+  changes(): number;
 }
 
 export interface Pacing {
@@ -154,6 +166,8 @@ export function createPacing(options: { readonly clock?: CrawlClock; readonly ma
   const clock = options.clock ?? systemClock;
   const maxHosts = options.maxHosts ?? CRAWL_LIMITS.maxPacedHosts;
   const states = new Map<string, HostState>();
+  /** `Politeness.changes`: shared by every run of this pacing, as the hosts' state is. */
+  let changes = 0;
 
   /** `host`'s state, created if room can be made safely; `undefined` when every slot is held by a host that cannot be forgotten yet. */
   const stateOf = (host: string): HostState | undefined => {
@@ -184,6 +198,8 @@ export function createPacing(options: { readonly clock?: CrawlClock; readonly ma
     const next = state.waiting.shift()!;
     state.busy = true;
     state.lastStart = at;
+    // A start under a raised interval moves the host's `waitUntil` past what the run's own interval would give.
+    if (intervalOf(state, next.intervalMs) > next.intervalMs) changes += 1;
     next.start();
   };
 
@@ -231,8 +247,10 @@ export function createPacing(options: { readonly clock?: CrawlClock; readonly ma
         setCrawlDelay(host, ms, source = host) {
           const state = stateOf(host);
           if (!state) return;
+          const before = delayOf(state);
           if (ms === null || !Number.isFinite(ms) || ms <= 0) state.crawlDelays.delete(source);
           else state.crawlDelays.set(source, Math.min(MAX_CRAWL_DELAY_MS, ms));
+          if (delayOf(state) !== before) changes += 1;
         },
         report(host, answer) {
           const state = stateOf(host);
@@ -241,8 +259,10 @@ export function createPacing(options: { readonly clock?: CrawlClock; readonly ma
             state.inARow += 1;
             const wait = retryAfterMs(answer.retryAfter, clock.now());
             if (wait > 0) state.retryUntil = Math.max(state.retryUntil, clock.now() + wait);
-          } else if (answer.status !== null) {
+            changes += 1;
+          } else if (answer.status !== null && state.inARow > 0) {
             state.inARow = 0;
+            changes += 1;
           }
           return { inARow: state.inARow, slowDown: state.inARow >= CRAWL_LIMITS.backoffAfter };
         },
@@ -270,6 +290,7 @@ export function createPacing(options: { readonly clock?: CrawlClock; readonly ma
             state.retryUntil = Math.max(state.retryUntil, Math.min(entry.waitUntil, limit));
           }
         },
+        changes: () => changes,
       };
     },
   };

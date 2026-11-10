@@ -331,4 +331,38 @@ describe('crawl politeness', () => {
     expect(pacing.intervalFor('far.example')).toBe(2_000);
     expect(CRAWL_PACING_LIMITS.maxWaitMs).toBe(Math.max(CRAWL_LIMITS.maxRetryAfterMs, Math.max(CRAWL_INTERVAL_MS.max, MAX_CRAWL_DELAY_MS) * 2 ** CRAWL_LIMITS.backoffAfter));
   });
+
+  test('crawl-pacing-changes-only-when-a-snapshot-would', async () => {
+    // Council review, item 5: the crawler stores the snapshot whenever `changes()` moved, so it moves for every change a
+    // stored snapshot would miss, and never for a plain call at the run's own interval (a plain crawl writes no pacing per page).
+    const kit = fakeClock();
+    const run = createPacing({ clock: kit.clock }).forRun(1_000);
+    const plain = async () => {
+      const done = run.schedule('a.example', async () => undefined);
+      await kit.run();
+      await done;
+      run.report('a.example', { status: 200, retryAfter: null });
+    };
+    for (let i = 0; i < 3; i++) await plain();
+    expect(run.changes()).toBe(0);
+    // A 429 (back-off, Retry-After): one change; a start under the raised interval: one; the 200 that clears it: one.
+    run.report('a.example', { status: 429, retryAfter: '60' });
+    expect(run.changes()).toBe(1);
+    await plain();
+    expect(run.changes()).toBe(3);
+    await plain();
+    expect(run.changes()).toBe(3);
+    // A Crawl-delay learned: one change; the same value again: none; each start under it: one (its waitUntil moved).
+    run.setCrawlDelay('a.example', 3_000);
+    run.setCrawlDelay('a.example', 3_000);
+    expect(run.changes()).toBe(4);
+    await plain();
+    await plain();
+    expect(run.changes()).toBe(6);
+    run.setCrawlDelay('a.example', null);
+    expect(run.changes()).toBe(7);
+    // Restoring a stored snapshot is no change (it is what was stored).
+    run.restore([{ host: 'b.example', waitUntil: kit.now() + 5_000, inARow: 1 }]);
+    expect(run.changes()).toBe(7);
+  });
 });

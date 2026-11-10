@@ -367,6 +367,64 @@ describe('crawl runs', () => {
     expect(await repo.getRun(runId)).toMatchObject({ state: 'done' });
   });
 
+  test('crawl-pacing-survives-a-crash', async () => {
+    // Council review, item 5 (K-B1 across a crash): the pacing is stored as it changes, not only when the run pauses. A
+    // 429 with `Retry-After: 60`, then a kill (no pause is written; start-up finds the run `running`), then Resume: the
+    // first request waits until the stored time.
+    const kit = timerClock();
+    const db = tempStore();
+    cleanups.push(db.close);
+    const repo = db.store.siteCrawl;
+    const requests: { url: string; at: number }[] = [];
+    let answer = (url: string): number => (url === `${HOME}p1` ? 429 : 200);
+    const lane: BoundedFetcher = {
+      async fetch(request) {
+        requests.push({ url: request.url, at: kit.now() });
+        const status = answer(request.url);
+        const body = new TextEncoder().encode(request.url === HOME ? '<!doctype html><title>Home</title><a href="/p1">1</a><a href="/p2">2</a>' : '<!doctype html><title>Page</title>') as Uint8Array<ArrayBuffer>;
+        return { url: request.url, outcome: 'response', status, finalUrl: request.url, redirects: 0, chain: [], headers: { 'content-type': 'text/html', ...(status === 429 ? { 'retry-after': '60' } : {}) }, body, truncated: false, durationMs: 5 };
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    const robots: CrawlRobotsSource = { get: async (pageUrl) => ({ url: `${new URL(pageUrl).origin}/robots.txt`, outcome: 'unavailable', status: null, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false }) };
+    /** One app session on the same database; `analyse` stands in for its crawl worker. */
+    const boot = (analyse: CrawlerDeps['analyse']): CrawlService => {
+      const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent: () => 'Mozilla/5.0', clock: kit.clock });
+      const crawler = createCrawler({ repo, fetcher, analyse, projectLive: async () => true, now: kit.now });
+      return createCrawlService({ repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, now: kit.now, log: () => undefined });
+    };
+
+    // The first session is killed while p1's 429 is being parsed: its parse never answers, and nothing more of it runs.
+    let killed!: () => void;
+    const kill = new Promise<void>((resolve) => (killed = resolve));
+    const first = boot(async (job) => {
+      if (job.url !== `${HOME}p1`) return inProcessAnalyse(job);
+      killed();
+      return new Promise<never>(() => undefined);
+    });
+    const runId = await started(first, settingsFor(HOME));
+    await kit.settle(kill);
+    expect(requests.map((r) => r.url)).toEqual([HOME, `${HOME}p1`]);
+    const p1At = requests[1]!.at;
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'running' });
+    // Stored as it changed: the host's Retry-After and its back-off.
+    expect(await repo.runPacing(runId)).toEqual([{ host: 'example.com', waitUntil: p1At + 60_000, inARow: 1 }]);
+
+    // The next start, ten seconds on: the run left `running` is paused (`interrupted`), and Resume waits the stored time.
+    kit.advance(10_000);
+    answer = () => 200;
+    const second = boot(inProcessAnalyse);
+    expect(await second.startup()).toBe(1);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'interrupted' });
+    expect(await second.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(second.idle());
+    expect(requests[2]).toEqual({ url: `${HOME}p1`, at: p1At + 60_000 });
+    // p1's 200 clears the back-off: p2 follows at the run's own interval.
+    expect(requests[3]).toEqual({ url: `${HOME}p2`, at: p1At + 60_000 + 1_000 });
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'done' });
+    expect(await repo.runPacing(runId)).toEqual([]);
+  });
+
   test('crawl-query-variants-counted-from-the-frontier', async () => {
     const variants = (from: number, n: number) => Array.from({ length: n }, (_, i) => `/list?page=${from + i}`);
     const t = setup({ [HOME]: htmlPage('Home', ['/other', ...variants(0, 30)]), [`${HOME}other`]: htmlPage('Other', [...variants(0, 3), ...variants(100, 5)]) });

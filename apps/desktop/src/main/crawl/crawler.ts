@@ -34,9 +34,13 @@ import type { SitemapSeeder } from './sitemaps';
 // queued); `paused` (by the user, a quit, a slow-down) or `cancelled` (by the user, or its project gone)
 // when stopped; `failed` (`error`) when the database fails. Held in memory: the frontier's window, one
 // page's links while they are discovered, the pacing table (K-B3); every page goes to SQLite at once.
-// A run that pauses (any reason) stores its pacing with its end (`Politeness.snapshot`; a finished one
-// clears it), and a resumed run seeds its crawl fetcher's pacing from it before its first request, so a
-// restart never lets a resume reach a host sooner than it asked (`crawl-pacing-survives-a-restart`).
+// A run stores its pacing (`Politeness.snapshot`) as it starts and whenever it changes (`Politeness.changes`:
+// after a fetch call that set or cleared a back-off, took a `Retry-After`, learned a `Crawl-delay`, or
+// started under a raised interval; council review, item 5), and again with its end if it pauses (a
+// finished one clears it). A resumed run seeds its crawl fetcher's pacing from it before its first
+// request, so neither a restart nor a crash or kill lets a resume reach a host sooner than it asked
+// (`crawl-pacing-survives-a-restart`, `crawl-pacing-survives-a-crash`). A run whose hosts never raise
+// their interval writes no pacing per page.
 
 /** What one run's fetching offers the crawler (`CrawlFetcher.forRun`; tests fake it). */
 export interface CrawlerRunFetcher {
@@ -216,6 +220,21 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
           return end;
         };
         const stoppedEnd = (): CrawlRunEnd => STOPPED[stopped ?? 'pause'];
+        /** `Politeness.changes` when the run's pacing was last stored. */
+        let pacingStored = 0;
+        /** Stores the run's pacing when it changed since it was last stored (a crash then loses none of it). */
+        const storePacing = async (): Promise<void> => {
+          const politeness = runFetcher?.politeness;
+          if (!politeness || signal.aborted || politeness.changes() === pacingStored) return;
+          pacingStored = politeness.changes();
+          await repo.updateRun(runId, { pacing: politeness.snapshot() }, now());
+        };
+        /** The run's page fetch, its pacing stored once the call has ended. */
+        const fetchPage = async (fetching: CrawlerRunFetcher, url: string, options: CrawlFetchOptions): Promise<CrawlPageFetch> => {
+          const fetched = await fetching.fetchPage(url, signal, options);
+          await storePacing();
+          return fetched;
+        };
         try {
           runFetcher = deps.fetcher.forRun(settings);
           const scope = runFetcher.scope;
@@ -226,7 +245,10 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
           if (signal.aborted) return await finish(stoppedEnd());
           // A project deleted while this run was being started or resumed: nothing is discovered or fetched.
           if (!(await projectLive())) return await finish(stoppedEnd());
-          await repo.updateRun(runId, { state: 'running', reason: null, finishedAt: null }, now());
+          // Running, with the pacing this crawl fetcher holds now (a resume's restored state, or an earlier run's in this session).
+          pacingStored = runFetcher.politeness?.changes() ?? 0;
+          const pacing = runFetcher.politeness?.snapshot();
+          await repo.updateRun(runId, { state: 'running', reason: null, finishedAt: null, ...(pacing === undefined ? {} : { pacing }) }, now());
           if (fresh) {
             await frontier.discover([scope.start], 0, 'start');
             if (settings.sitemaps && deps.sitemaps && !signal.aborted) {
@@ -237,7 +259,7 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
                 runId,
                 settings,
                 scope,
-                fetch: (url, options) => fetching.fetchPage(url, signal, { ...options, beforeRequest }),
+                fetch: (url, options) => fetchPage(fetching, url, { ...options, beforeRequest }),
                 signal,
                 seed: (urls) => seeding.discover(urls, 1, 'sitemap'),
               });
@@ -257,7 +279,7 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
             // Before each fetch call (and again inside its paced slot, `beforeRequest`): a project deleted here or by sync meanwhile cancels the run.
             if (!(await projectLive())) return await finish(stoppedEnd());
             if (signal.aborted) return await finish(stoppedEnd());
-            const fetched = await untilAborted(runFetcher.fetchPage(entry.url, signal, { beforeRequest }), signal);
+            const fetched = await untilAborted(fetchPage(runFetcher, entry.url, { beforeRequest }), signal);
             if (fetched === ABORTED || fetched.outcome === 'aborted' || signal.aborted) return await finish(stoppedEnd());
             // A host past the pacing table's cap: nothing requested, nothing recorded; the URL stays queued.
             if (fetched.outcome === 'deferred') return await finish(SLOW_DOWN);

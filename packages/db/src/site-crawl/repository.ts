@@ -85,8 +85,9 @@ export interface CrawlRunPatch {
   readonly counts?: Partial<CrawlRunCounts>;
   readonly finishedAt?: number | null;
   /**
-   * A paused run's per-host pacing (`CrawlPacingSnapshotSchema`; whole-branch review): stored for a
-   * resume after a restart; `null` clears it; absent leaves it. Entries the schema refuses are dropped
+   * A run's per-host pacing (`CrawlPacingSnapshotSchema`; whole-branch review, council review item 5):
+   * stored as it changes and as the run pauses, for a resume after a restart or a crash; `null` clears
+   * it; absent leaves it. Entries the schema refuses are dropped
    * and at most `CRAWL_LIMITS.maxPacedHosts` kept, so storing it never fails a run's end.
    */
   readonly pacing?: readonly CrawlPacedHost[] | null;
