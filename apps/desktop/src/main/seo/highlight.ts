@@ -614,7 +614,8 @@ export function paintHighlight(
             if (visited > config.maxTextNodes * 4 || ((visited & 255) === 0 && walkSpent + (performance.now() - sliceStart) > config.budgetMs)) throw STOP;
             if (node.nodeType !== 1) return 1;
             if (SKIP.includes(node.localName ?? '') || node.hasAttribute?.('hidden') === true) return 2;
-            if (config.blocks.includes(node.localName ?? '')) blockBreak = true;
+            // Block breaks matter to `keyphrase` only: `sentences` walks exactly as before (no per-element lookup).
+            if (everyMode && config.blocks.includes(node.localName ?? '')) blockBreak = true;
             return 3;
           },
         })
@@ -644,9 +645,9 @@ export function paintHighlight(
           const owner = blockOf(node);
           if (nodes.length > 0 && owner !== lastBlock) blockBreak = true;
           lastBlock = owner;
+          if (blockBreak) breaks.push(nodes.length);
+          blockBreak = false;
         }
-        if (blockBreak) breaks.push(nodes.length);
-        blockBreak = false;
         nodes.push(node);
         texts.push(take < data.length ? data.slice(0, take) : data);
       }

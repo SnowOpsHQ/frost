@@ -1217,3 +1217,9 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   345.4 px, and the read after it the settled 340.2 px, which every later frame keeps), so no user
   sees the settle, but the test's forced-layout read right after `setZoomFactor` could. The test
   now lets one rendering update pass before measuring the split; its assertion is unchanged.
+- **PR #23 macOS CI (`text-highlight-walk-budgeted`):** Task 2's block-break tracking ran in every
+  text mode: each element the walk accepted paid a `config.blocks.includes(…)` scan and each text
+  node a `breaks` push, though only `keyphrase` uses them. Measured on this machine, 80 runs each:
+  the `sentences` walk took a median 216.8 ms (p95 244.9) against main's 194.4 ms (p95 220.6). The
+  tracking now runs in `keyphrase` only; after it, 214.2 ms against main's 212.4 ms in an interleaved
+  run (equal minimums, 188.9 ms). The test and its bound are unchanged.
