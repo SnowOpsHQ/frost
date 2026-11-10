@@ -32,10 +32,13 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 - **Comparator**: `threshold: 0` (any change of a pixel's colour counts; Playwright's default 0.2
   would let a subtle token colour shift pass) and `maxDiffPixelRatio: 0.002`: up to 0.2 % of the
   pixels, 2,048 at 1280 × 800, may differ, for anti-aliasing noise (seen: the Search Console range
-  select's chevron in dark, 2 pixels by one RGB step between two runs on one machine). A green run
+  select's chevron in dark, 2 pixels by one RGB step between two runs on one machine). Playwright's
+  pixelmatch never counts a pixel it classifies as anti-aliasing (it does not pass `includeAA`), at
+  any threshold. A green run
   therefore proves "within 0.2 %", not "identical". **Strict mode**: `VISUAL_STRICT=1` sets
   `maxDiffPixels: 0` and `maxDiffPixelRatio: 0` for every capture (a local run, or CI with the
-  variable set), so any differing pixel fails and its diff image shows where.
+  variable set), so any pixel pixelmatch counts as differing fails and its diff image shows where.
+  It is not a byte-for-byte proof: a change confined to pixels classified as anti-aliasing passes.
 
 ## States (`CAPTURES` in the test; each from the flow of the suite named)
 | Baseline | Test | State | Flow copied from |
@@ -164,8 +167,9 @@ uploads `apps/desktop/test-results/` in the `playwright-report` artifact.
 
 **A change that must not move anything** (a token-only foundation PR): a green run is necessary but
 not sufficient, as up to 0.2 % of each image may differ and a passing comparison prints nothing.
-Prove it with `VISUAL_STRICT=1`, where any differing pixel fails: in CI, by setting the variable on
-the e2e step for that run (locally against CI-made baselines is not meaningful). A strict failure
+Check it with `VISUAL_STRICT=1`, where any pixel pixelmatch counts as differing fails (anti-aliased
+pixels excepted, see Comparator), alongside a non-visual proof such as a computed-style comparison:
+in CI, by setting the variable on the e2e step for that run (locally against CI-made baselines is not meaningful). A strict failure
 can be the known anti-aliasing noise (the Search Console range select's chevron in dark, 2 pixels by
 one RGB step), so look at its diff image before treating it as a real change.
 
