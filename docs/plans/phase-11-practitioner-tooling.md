@@ -1195,3 +1195,12 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   request for a different range answers `false` at once instead of the first range's answer.
   Regression: `clear-range-other-range-while-clearing-refused`
   (`apps/desktop/src/main/browser/__tests__/browser-polish.test.ts`).
+- **Merge of main with the visual baseline and design tokens (57f93ec):** Phase 11's `help.css`
+  tokens were dropped for existing ones (`--setup-check-edge` → `--settings-switch-off`, same
+  light/dark values; the sheet width is a literal), and the screenshot editor's swatches draw their
+  colour as an SVG `fill` from `SCREENSHOT_EDIT_COLORS`, so no `:root` property lives outside
+  `tokens.css` and the hex ratchet stays at 53. 25 visual baselines were re-adopted from CI run
+  42750958646 (ubuntu/xvfb), each reviewed: the setup checklist (new tab, jump back in, update bar),
+  panel pin buttons, Overview's "Highlight everything", the CSV buttons (Headings, Page Speed), the
+  agent composer's `@` button and 30 px search field, the "This tab only" row, History's filter and
+  clear row, Settings' History section and the status bar no longer clipped under a sheet.
