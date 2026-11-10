@@ -2,7 +2,7 @@
 // specs/command-palette.spec.ts (FEATURE_PANEL_JUMPS, Registration API), specs/seo-sidebar.spec.ts (SEO_PANELS)
 // Acceptance: specs/inspector.feature.md (The panel, Command palette; Scenarios inspector-row-labels,
 // inspector-tree-model, inspector-tree-keys, inspector-details-text, inspector-palette-actions; Phase 11 Task 5:
-// source-lines-are-text, source-window-bounded, INSPECTOR_SOURCE_VIEW; council round 1: find-across-row-boundary)
+// source-lines-are-text, source-window-bounded, INSPECTOR_SOURCE_VIEW; council rounds 1–2: find-across-row-boundary)
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, test, vi } from 'vitest';
@@ -230,6 +230,11 @@ describe('inspector view', () => {
     expect(listed.rows.map((row) => row.text.length)).toEqual([500, 4]);
     expect(findRows(long, listed.rows, 'canonical')).toEqual([0, 1]);
     expect(findRows(long, listed.rows, 'CANONICAL')).toEqual([0, 1]);
+    // Council round 2: a match that overlaps an earlier one and crosses the boundary still counts.
+    const dashes = 'x'.repeat(498) + '---' + 'y'.repeat(10);
+    expect(findRows(dashes, sourceRows(dashes).rows, '--')).toEqual([0, 1]);
+    const aba = 'x'.repeat(496) + 'ababa' + 'y';
+    expect(findRows(aba, sourceRows(aba).rows, 'aba')).toEqual([0, 1]);
     // A match wholly in one row marks that row; regex characters are literal.
     expect(findRows(long, listed.rows, 'ical')).toEqual([1]);
     expect(findRows(long, listed.rows, 'x.c')).toEqual([]);

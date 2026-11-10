@@ -310,9 +310,11 @@ export function findRows(source: string, rows: readonly SourceRow[], query: stri
       if (start >= to) break;
       if (start + text.length > from && found[found.length - 1] !== i) found.push(i);
     }
-    // A later match that ends inside the last marked row marks nothing new: skip past those.
+    // Resume one unit past this match's start, so a match overlapping it is still found (a `g`
+    // pattern alone resumes at its end); a later match that ends inside the last marked row marks
+    // nothing new, so skip past those. Always advances: a match is never empty.
     const marked = rows[found[found.length - 1] ?? 0]!;
-    pattern.lastIndex = Math.max(pattern.lastIndex, marked.start + marked.text.length - match[0].length + 1);
+    pattern.lastIndex = Math.max(from + 1, marked.start + marked.text.length - match[0].length + 1);
   }
   return found;
 }

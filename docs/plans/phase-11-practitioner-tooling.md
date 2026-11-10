@@ -1204,3 +1204,6 @@ Everything in the Phase 0–7 Global Constraints and `CONTRIBUTING.md` still hol
   panel pin buttons, Overview's "Highlight everything", the CSV buttons (Headings, Page Speed), the
   agent composer's `@` button and 30 px search field, the "This tab only" row, History's filter and
   clear row, Settings' History section and the status bar no longer clipped under a sheet.
+- **Council round 2:** Inspector find resumes one unit past each match's start, so a match that
+  overlaps an earlier one and crosses a row boundary still marks both rows (`--` in `x…x---y…`,
+  `aba` in `x…xababa`; `find-across-row-boundary`).

@@ -153,7 +153,7 @@ An Inspector rail item after Changes (`SEO_PANELS`, no rules, no status dot).
   rows rendered at a time, "Show more lines" / "Show earlier lines", never more than `maxRendered`),
   each row React text in `<bdi dir="auto">`, never markup. Find in source searches the source itself
   and marks the rows a match covers (a match across a wrapped row's boundary marks each row it
-  covers; council round 1, `find-across-row-boundary`), and moves between them (Enter, Previous,
+  covers, overlapping matches included; council rounds 1 and 2, `find-across-row-boundary`), and moves between them (Enter, Previous,
   Next); a match outside the rendered rows renders the
   page of rows around it instead. Copy source asks main with the view's `ref`; a `stale` answer reads
   the source again and says so. A source view reads again on a new URL in the same document (an
