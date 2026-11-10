@@ -15,6 +15,7 @@ import {
   TOOL_RESULT_MAX_CHARS,
   type AgentToolName,
 } from '@app/specs/agent-tools.spec';
+import { AI_SEARCH_ENGINES, AI_SEARCH_VIAS } from '@app/specs/ai-search.spec';
 import { PROBE_AGENT_IDS, PROBE_LIMITS } from '@app/specs/visibility-probes.spec';
 import { parseWebUrl } from '@app/specs/web-url.spec';
 
@@ -126,11 +127,24 @@ export const searchIntentTool = defineTool(
   z.strictObject({ query }),
 );
 
+/** The engine the model may name (`AI_SEARCH_ENGINES`); how it is reached is never the model's choice. */
+const aiEngine = z.enum(AI_SEARCH_ENGINES);
+
 export const runAiSearchTool = defineTool(
   'run_ai_search',
-  `Asks an AI answer engine a query and returns its answer with the sources it cited. Use it to see whether and how a site is cited in AI answers. ${UNTRUSTED_OUTPUT_NOTE}`,
-  z.strictObject({ query, locale: locale.optional() }),
+  `Asks an AI answer engine a query and returns its answer with the sources it cited. Use it to see whether and how a site is cited in AI answers. Omit engine to use the one the user set up; the user is asked to allow every call, it spends their own API credit, and at most a few run per turn. ${UNTRUSTED_OUTPUT_NOTE}`,
+  // No locale: neither provider's body takes one in v1 (Task 8 review).
+  z.strictObject({ query, engine: aiEngine.optional().describe('Which AI engine to ask. Omit for the user\'s default.') }),
 );
+
+/**
+ * `run_ai_search`'s input as main approves and runs it (Phase 12 Task 8, plan Decision 8): the
+ * model-facing fields plus `engine` and `via`, both required, filled by main from the user's settings
+ * (`completeToolInput`) before the card is shown and the input hashed. Main's broker and its tool
+ * runner parse `run_ai_search` with this, never with the model-facing schema (which has no `via`).
+ */
+export const runAiSearchApprovedInputSchema = z.strictObject({ query, engine: aiEngine, via: z.enum(AI_SEARCH_VIAS) });
+export type RunAiSearchApprovedInput = z.output<typeof runAiSearchApprovedInputSchema>;
 
 export const gscPerformanceTool = defineTool(
   'gsc_performance',

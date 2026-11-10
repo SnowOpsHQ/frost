@@ -2,6 +2,7 @@ import type { BrowserWindow, WebContentsView } from 'electron';
 import { WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH, type LoadError, type PageBounds, type TabState } from '@app/specs/browser.spec';
 import { DEFAULT_ZOOM, ZOOM_FACTORS } from '@app/specs/page-commands.spec';
 import type { HighlightMode } from '@app/specs/seo-sidebar.spec';
+import type { TabLocation } from '@app/specs/location-profiles.schema';
 
 // The browser controller's tab model (`controller.ts`): what it keeps per tab and the strip state
 // its parts share, plus pure helpers over them. Only Electron *types* are imported.
@@ -57,6 +58,11 @@ export interface Tab {
   /** The tab whose page opened this one (popup placement), if any. */
   readonly openerId: number | null;
   /**
+   * The location profile the tab runs on (Phase 12 Task 10b; `TabState.location`): its view is made on
+   * that profile's in-memory partition. Set at creation, never changed; `null`: the user's own connection.
+   */
+  readonly location: TabLocation | null;
+  /**
    * A restored tab's saved URL and title: loaded when the tab is first shown, and reported as its
    * state until its view commits something (a load in flight has no URL yet).
    */
@@ -91,9 +97,10 @@ export function emptyTabState(id: number, documentSeq = 0): PageState {
 }
 
 /** A new empty tab, not yet in the strip. */
-export function createTab(id: number, openerId: number | null = null): Tab {
+export function createTab(id: number, openerId: number | null = null, location: TabLocation | null = null): Tab {
   return {
     id,
+    location: location && { profileId: location.profileId, label: location.label },
     view: null,
     unlisten: noop,
     crashed: false,

@@ -1,0 +1,23 @@
+{
+  "searchParameters": { "q": "frost browser", "gl": "us", "hl": "en", "type": "search", "engine": "google" },
+  "knowledgeGraph": { "title": "Frost (browser)", "type": "Software", "description": "An SEO browser." },
+  "organic": [
+    { "title": "Frost — the SEO browser", "link": "https://www.example.com/frost", "snippet": "Audit pages as you browse.", "position": 1 },
+    { "title": "Ten frost tips", "link": "https://blog.example.org/frost-tips", "snippet": "Tips for frost users.", "position": 2 },
+    { "title": "Frost history", "link": "https://example.com/history", "snippet": "Where frost came from.", "position": 3, "date": "Nov 1, 2026" },
+    { "title": "Frostline guide", "link": "https://www.frostline.example/", "snippet": "A guide.", "position": 4 },
+    { "title": "Alice on frost", "link": "https://alice.github.io/frost", "snippet": "A personal page.", "position": 5, "sitelinks": [{ "title": "About", "link": "https://alice.github.io/about" }] }
+  ],
+  "peopleAlsoAsk": [
+    { "question": "Is frost a web browser?", "snippet": "Yes.", "title": "Frost FAQ", "link": "https://www.example.com/faq" },
+    { "question": "Does frost run on Linux?", "snippet": "Yes.", "title": "Frost on Linux", "link": "https://blog.example.org/frost-linux" }
+  ],
+  "topStories": [
+    { "title": "Frost 12 ships", "link": "https://news.example.net/frost-12", "source": "Example News", "date": "1 day ago" }
+  ],
+  "relatedSearches": [
+    { "query": "frost browser download" },
+    { "query": "frost browser linux" }
+  ],
+  "credits": 1
+}

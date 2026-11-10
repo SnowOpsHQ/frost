@@ -37,6 +37,9 @@ export const FAKE_SERP_RESULTS: SerpResults = {
 
 export const FAKE_AI_SEARCH_ANSWER: AiSearchAnswer = {
   query: 'running shoes',
+  engine: 'perplexity',
+  via: 'api',
+  note: 'Answered by a fake engine.',
   answer: 'Choose by surface and gait; a fitting helps.',
   citations: [{ url: 'https://reviews.example/best-running-shoes', title: 'The best running shoes, tested' }],
   fetchedAt: FETCHED_AT,
@@ -97,7 +100,7 @@ export function createFakeSerpPort(options: { results?: PortAnswer<SerpResults>;
     },
     aiSearch(query, queryOptions) {
       calls.push({ method: 'aiSearch', query });
-      return answerUnlessAborted(options.aiSearch ?? ok({ ...FAKE_AI_SEARCH_ANSWER, query: query.query }), queryOptions);
+      return answerUnlessAborted(options.aiSearch ?? ok({ ...FAKE_AI_SEARCH_ANSWER, query: query.query, ...(query.engine !== undefined ? { engine: query.engine } : {}), ...(query.via !== undefined ? { via: query.via } : {}) }), queryOptions);
     },
   };
 }

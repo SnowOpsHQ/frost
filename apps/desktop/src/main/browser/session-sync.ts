@@ -26,11 +26,20 @@ export interface SessionSync {
   pause(): void;
 }
 
-/** The strip as saved: each tab's URL and title, in order, and the active tab's index. */
+/**
+ * The strip as saved: each tab's URL and title, in order, and the active tab's index. A location tab
+ * (Phase 12 Task 10b) is never saved: it is ephemeral (its partition is in memory). An active
+ * location tab counts as the nearest saved tab on its left; a strip of location tabs alone saves one
+ * empty tab.
+ */
 function sessionSnapshot(strip: StripState): SavedSession {
+  const kept = strip.tabs.filter((tab) => tab.location === null);
+  if (kept.length === 0) return { tabs: [{ url: '', title: '' }], activeIndex: 0 };
+  const active = strip.tabs.findIndex((tab) => tab.id === strip.activeTabId);
+  const before = active < 0 ? 0 : strip.tabs.slice(0, active + 1).filter((tab) => tab.location === null).length - 1;
   return {
-    tabs: strip.tabs.map((tab) => ({ url: tab.state.url, title: tab.state.title })),
-    activeIndex: Math.max(0, strip.tabs.findIndex((tab) => tab.id === strip.activeTabId)),
+    tabs: kept.map((tab) => ({ url: tab.state.url, title: tab.state.title })),
+    activeIndex: Math.max(0, before),
   };
 }
 

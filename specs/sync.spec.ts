@@ -362,6 +362,43 @@ export const SYNC_TOMBSTONE_TABLE = 'ci_tombstones' as const satisfies SyncTable
 export const SYNC_PURGE_DELETE_ORDER = ['ci_diffs', 'ci_screenshots', 'ci_captures', 'ci_versions'] as const satisfies readonly SyncTableName[];
 
 /**
+ * Rows that stay on this device (Phase 12 Decision 7, lead ruling; Task 10b,
+ * `location-rows-stay-device-local`): a push never copies a row of these tables whose
+ * `search_params` carry a `location` (`serp-search-params.schema.ts`; a location tab's result pages,
+ * Decision 11). `SearchParamsSchema` is a strict object, so an older build would fail to parse a
+ * synced `location` and show the row without its search; until a sync-schema bump (a Phase 7
+ * follow-up) such rows are device-local. A location lane's versions, captures and screenshots all
+ * carry it (the lane key hashes the search parameters), so the lane stays whole here. The push mark
+ * still moves past a skipped row (it is never pushed later either), and a tombstone of a row that was
+ * never pushed deletes nothing elsewhere.
+ */
+export const SYNC_SEARCH_PARAMS_TABLES = ['ci_project_queries', 'ci_versions', 'ci_captures', 'ci_screenshots'] as const satisfies readonly SyncTableName[];
+
+/**
+ * Nor is a `ci_diffs` row pushed whose `to_version_id` names a version kept on this device by the
+ * rule above (a diff into a location lane; its `from_version_id` is of the same lane).
+ */
+export const SYNC_DEVICE_LOCAL_DIFF_TABLE = 'ci_diffs' as const satisfies SyncTableName;
+
+/**
+ * Whether a row's `search_params` (its stored text, or `null`) keeps it on this device: it parses to
+ * an object with a `location` member. Text that does not parse as a JSON object is kept local too
+ * (fail closed: it cannot be shown to carry none). `null` (no search) is pushed.
+ */
+export function searchParamsStayLocal(stored: unknown): boolean {
+  if (stored === null || stored === undefined) return false;
+  if (typeof stored !== 'string') return true;
+  let value: unknown;
+  try {
+    value = JSON.parse(stored);
+  } catch {
+    return true;
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return true;
+  return Object.hasOwn(value, 'location');
+}
+
+/**
  * The replica-only change log: one row (`seq`, `table_name`, `row_id`) for each row a push inserted
  * or changed in the replica. Pull reads it by `seq` (the primary's commit order), not by row time,
  * so a row whose `created_at` / `updated_at` is older than a mark (another device's clock, or a

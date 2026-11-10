@@ -22,7 +22,8 @@ describe('site storage', () => {
   test('cookies-masked-by-default', async () => {
     const { storage, store } = setup();
     const answer = await storage.storage(TAB, PAGE);
-    expect(store.cookies).toHaveBeenCalledWith(PAGE);
+    // Read from the tab's own session (Phase 12 Task 10a: the store is asked with the tab's WebContents id).
+    expect(store.cookies).toHaveBeenCalledWith(PAGE, TAB);
     expect(answer).toEqual({
       status: 'ready',
       origin: 'https://shop.example.com',
@@ -89,7 +90,7 @@ describe('site storage', () => {
     const [first, second] = await Promise.all([confirmed.storage.clearSiteData(TAB, PAGE), confirmed.storage.clearSiteData(TAB, PAGE)]);
     expect([first, second]).toEqual(['cleared', 'cleared']);
     expect(confirmed.confirmClear).toHaveBeenCalledTimes(1);
-    expect(confirmed.clearOrigin).toHaveBeenCalledExactlyOnceWith('https://shop.example.com');
+    expect(confirmed.clearOrigin).toHaveBeenCalledExactlyOnceWith('https://shop.example.com', TAB);
     const after = await confirmed.storage.storage(TAB, PAGE);
     expect(after.status === 'ready' && after.cookies.every((c) => c.value === null)).toBe(true);
 
@@ -141,7 +142,7 @@ describe('site storage', () => {
     answer(true);
     expect(await first).toBe('cleared');
     expect(await same).toBe('cleared');
-    expect(clearOrigin).toHaveBeenCalledExactlyOnceWith('https://shop.example.com');
+    expect(clearOrigin).toHaveBeenCalledExactlyOnceWith('https://shop.example.com', TAB);
     // Once answered, another origin may ask.
     const next = storage.clearSiteData(6, 'https://other.example.org/');
     answer(false);

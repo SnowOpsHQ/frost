@@ -1,6 +1,7 @@
 import { SEARCH_INTENTS, type GscPort, type IntentPort, type PortAnswer, type ProbesPort, type SearchIntent, type SerpPort } from '@app/ai-skills';
 import { GSC_NO_PAGE_REASON, GSC_NOT_PUBLIC_REASON, gscPageUrl, isGscReadablePage, SEARCH_TOOL_LIMITS as L, SEARCH_TOOL_SOURCES, SEARCH_TOOL_TIMEOUT_MS, type SearchToolName } from '@app/specs/agent-search-tools.spec';
 import { AGENT_TOOL_INPUT_LIMITS, UNSAFE_INPUT_CHARS, type ToolErrorCode } from '@app/specs/agent-tools.spec';
+import { AI_SEARCH_LIMITS, AI_SEARCH_TOOL_TIMEOUT_MS, AI_SEARCH_UNAVAILABLE_MESSAGES, isAiSearchEngine, isAiSearchVia, type AiSearchEngine, type AiSearchUnavailableReason, type AiSearchVia } from '@app/specs/ai-search.spec';
 import type { ToolRunContext, ToolRunOutcome } from '../approvals';
 
 // The agent's search tools over the read-only data ports (Phase 5 Task 8; spec
@@ -17,6 +18,17 @@ import type { ToolRunContext, ToolRunOutcome } from '../approvals';
 // the call arrives (`completeToolInput`), so the approval shows the page read. A call that still has
 // none answers `GSC_NO_PAGE_REASON`; a page that isn't public answers `GSC_NOT_PUBLIC_REASON`; the
 // port is asked for neither.
+//
+// `run_ai_search` (Phase 12 Task 8; spec `ai-search.spec.ts`, plan Decision 8) runs only on the
+// user's approval of this call, with the approved input (`runAiSearchApprovedInputSchema`, re-parsed
+// by the runner): its `engine` and `via` go to `port.aiSearch` as they are. Bounded here, before the
+// port is asked (`AI_SEARCH_LIMITS`): at most `maxCallsPerTurn` calls per turn (the broker's turn
+// token); a call past it answers `{ unavailable, state: 'capped' }` and sends nothing. A call counts
+// once it is handed to the port (given back if the port answers `setting-changed`: nothing was
+// sent). The per-engine bound (one call every `perEngineCooldownMs`, across turns) is main's AI
+// search service's own (Task 9 lead ruling: one clock for the agent and the AI answers view); its
+// `cooldown` reaches the model as data like any other reason. The port's `setting-changed` (the
+// engine's via is no longer the approved one; nothing sent) answers `expired`. Citations reach the model as `http(s)` URLs only, deduplicated.
 
 export interface SearchToolPorts {
   readonly serp?: SerpPort | null;
@@ -35,7 +47,7 @@ export interface SearchToolDeps {
 /** The parsed inputs (the tools' schemas in `@app/ai-skills`). */
 export type SearchToolInput =
   | { readonly toolName: 'serp_results'; readonly input: { query: string; locale?: string | undefined; device?: 'desktop' | 'mobile' | undefined } }
-  | { readonly toolName: 'run_ai_search'; readonly input: { query: string; locale?: string | undefined } }
+  | { readonly toolName: 'run_ai_search'; readonly input: { query: string; engine: AiSearchEngine; via: AiSearchVia } }
   | { readonly toolName: 'search_intent'; readonly input: { query: string } }
   | { readonly toolName: 'gsc_performance'; readonly input: { url?: string | undefined; days?: number | undefined } };
 
@@ -124,20 +136,46 @@ function mapSerp(data: unknown) {
   }, 'results');
 }
 
+/** An `http(s)` URL's serialised form without user info, or `null` (any other scheme, credentials, or not a URL). */
+function webLink(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    // `http(s)` only, and never one carrying a user name or password (Task 8 review).
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.username === '' && url.password === '' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function mapAiSearch(data: unknown) {
   if (!isRecord(data) || typeof data.answer !== 'string') return null;
-  const citations = list(data.citations);
-  if (citations === null) return null;
+  const given = list(data.citations);
+  if (given === null) return null;
+  // `http(s)` only, once each (by the URL's serialised form), in the answer's order.
+  const seen = new Set<string>();
+  const citations: { url: string | null; title: string | null }[] = [];
+  for (const citation of given) {
+    const item = isRecord(citation) ? citation : {};
+    const href = webLink(item.url);
+    if (href === null || seen.has(href)) continue;
+    seen.add(href);
+    citations.push({ url: cleanText(href, L.maxUrlChars), title: cleanText(item.title, L.maxTitleChars) });
+  }
   const answer = cleanText(data.answer, L.maxAnswerChars)!;
+  // The source's own totals win when it gives them (the worker already capped and counted, Task 8
+  // review); never below what is counted here.
+  const givenTotal = typeof data.citationsTotal === 'number' && Number.isSafeInteger(data.citationsTotal) && data.citationsTotal >= 0 ? data.citationsTotal : 0;
+  const cutHere = answer.length < cleanText(data.answer, Number.MAX_SAFE_INTEGER)!.length;
   return fitBudget({
     query: cleanText(data.query, L.maxQueryChars),
+    ...(isAiSearchEngine(data.engine) ? { engine: data.engine } : {}),
+    ...(isAiSearchVia(data.via) ? { via: data.via } : {}),
+    ...(typeof data.note === 'string' ? { note: cleanText(data.note, L.maxReasonChars) } : {}),
     answer,
-    answerTruncated: answer.length < cleanText(data.answer, Number.MAX_SAFE_INTEGER)!.length,
-    citations: citations.slice(0, L.maxCitations).map((citation) => {
-      const item = isRecord(citation) ? citation : {};
-      return { url: cleanText(item.url, L.maxUrlChars), title: cleanText(item.title, L.maxTitleChars) };
-    }),
-    citationsTotal: citations.length,
+    answerTruncated: cutHere || data.answerTruncated === true,
+    citations: citations.slice(0, L.maxCitations),
+    citationsTotal: Math.max(citations.length, givenTotal),
     fetchedAt: cleanText(data.fetchedAt, L.maxShortChars),
   }, 'citations', 'answer');
 }
@@ -182,13 +220,16 @@ export function createSearchTools(deps: SearchToolDeps) {
   const setTimer = deps.setTimeout ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
   const clearTimer = deps.clearTimeout ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const ports = deps.ports ?? {};
+  /** `run_ai_search` calls handed to the port, per turn (the broker's token). */
+  const aiCallsByTurn = new WeakMap<object, number>();
+  const aiRefused = (reason: AiSearchUnavailableReason): ToolRunOutcome => ({ ok: true, data: { unavailable: AI_SEARCH_UNAVAILABLE_MESSAGES[reason], state: reason }, source: SEARCH_TOOL_SOURCES.run_ai_search });
 
   /**
    * Asks a port: its answer mapped by `map`, `{ unavailable: reason }` for an `unavailable` answer,
    * else a fixed error. The port's signal aborts on Stop or at the timeout, and the call doesn't
    * wait on a port that ignores it.
    */
-  const ask = <T>(toolName: SearchToolName, query: (signal: AbortSignal) => Promise<PortAnswer<T>>, map: (data: T) => unknown, context: ToolRunContext): Promise<ToolRunOutcome> => {
+  const ask = <T>(toolName: SearchToolName, query: (signal: AbortSignal) => Promise<PortAnswer<T>>, map: (data: T) => unknown, context: ToolRunContext, onUnsent?: () => void): Promise<ToolRunOutcome> => {
     const source = SEARCH_TOOL_SOURCES[toolName];
     if (context.signal.aborted) return Promise.resolve(fail('failed'));
     const controller = new AbortController();
@@ -204,7 +245,8 @@ export function createSearchTools(deps: SearchToolDeps) {
         resolve(outcome);
       };
       const onStop = () => finish(fail('failed'));
-      const timer = setTimer(() => finish(fail('timeout')), SEARCH_TOOL_TIMEOUT_MS);
+      // `run_ai_search` covers a turn's wait, the client's whole timeout and the parse (Task 8 review).
+      const timer = setTimer(() => finish(fail('timeout')), toolName === 'run_ai_search' ? AI_SEARCH_TOOL_TIMEOUT_MS : SEARCH_TOOL_TIMEOUT_MS);
       context.signal.addEventListener('abort', onStop, { once: true });
       let pending: Promise<PortAnswer<T>>;
       try {
@@ -218,6 +260,11 @@ export function createSearchTools(deps: SearchToolDeps) {
           if (done) return;
           if (!isRecord(answer)) return finish(fail('failed'));
           if (answer.status === 'unavailable') {
+            // The AI search setting changed since the approval: nothing was sent, the approval is spent.
+            if (toolName === 'run_ai_search' && answer.state === 'setting-changed') {
+              onUnsent?.();
+              return finish(fail('expired'));
+            }
             const reason = cleanText(answer.reason, L.maxReasonChars);
             // The source's own state code (on-device intent's `model-missing` …), passed on unchanged.
             const state = typeof answer.state === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(answer.state) ? { state: answer.state } : {};
@@ -250,8 +297,18 @@ export function createSearchTools(deps: SearchToolDeps) {
         if (!port) return Promise.resolve(fail('unavailable'));
         // An `act` tool, never grantable: only the user's approval of this call sends the query out.
         if (context.via !== 'approval') return Promise.resolve(fail('not-allowed'));
-        const { query, locale } = call.input;
-        return ask('run_ai_search', (signal) => port.aiSearch({ query, ...(locale !== undefined ? { locale } : {}) }, { signal, tabId: context.tabId }), mapAiSearch, context);
+        const { query, engine, via } = call.input;
+        // Only the approved input carries both (the runner parsed it with the approved schema).
+        if (!isAiSearchEngine(engine) || !isAiSearchVia(via)) return Promise.resolve(fail('invalid-input'));
+        const turnCalls = context.turn !== undefined ? (aiCallsByTurn.get(context.turn) ?? 0) : 0;
+        if (turnCalls >= AI_SEARCH_LIMITS.maxCallsPerTurn) return Promise.resolve(aiRefused('capped'));
+        // Counted now, as it is handed to the port (before anything is awaited).
+        if (context.turn !== undefined) aiCallsByTurn.set(context.turn, turnCalls + 1);
+        // Given back when the port sent nothing because the setting changed (the call answers `expired`).
+        const giveBack = (): void => {
+          if (context.turn !== undefined && aiCallsByTurn.get(context.turn) === turnCalls + 1) aiCallsByTurn.set(context.turn, turnCalls);
+        };
+        return ask('run_ai_search', (signal) => port.aiSearch({ query, engine, via }, { signal, tabId: context.tabId }), mapAiSearch, context, giveBack);
       }
       case 'search_intent': {
         const port = ports.intent;

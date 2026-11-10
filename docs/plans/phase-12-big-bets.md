@@ -483,7 +483,7 @@ and Phase 10 global constraints still holds. In particular, and new for this pha
   tasks add them out of numeric order (Task 2 `0243`, Task 4 `0245`, Task 5 `0240`/`0241`, Task 9
   `0242`, Task 10b `0244`): a task that adds a lower id than one already spread inserts its list
   **before** that id. Final order: `CHANGE_INTEL`, `0200`, `0210`, `0220`–`0223`, `0230`/`0231`,
-  `0240`/`0241`, `0242`, `0243`, `0244`, `0245`. The test-only fixture ids are already `9000_`
+  `0240`/`0241`, `0242`, `0243`, `0244`, `0245`, `0246` (whole-branch review). The test-only fixture ids are already `9000_`
   (Phase 8).
 
   | Id | Creates / changes |
@@ -494,7 +494,8 @@ and Phase 10 global constraints still holds. In particular, and new for this pha
   | `0243_data_api_usage` | `data_api_usage` (provider, month, requests) |
   | `0244_location_profiles` | `location_profiles` (no secrets) |
   | `0245_serp_api_readings` | `ci_serp_api_purges (reading_id PRIMARY KEY, purged_at)`; `DROP TRIGGER ci_serp_readings_capture_gone_only` (Phase 10's `0223` `BEFORE DELETE` guard) and recreates it with two arms (Decision 7) as `ci_serp_readings_delete_guard`; a no-resurrect trigger for recorded ids; `ci_serp_readings_no_update` and `ci_serp_readings_no_replace` untouched |
-  | `0246`–`0249` | reserved |
+  | `0246_crawl_run_pacing` | (whole-branch review) `crawl_runs.pacing`: a paused run's per-host pacing, JSON, bounded by `CHECK` |
+  | `0247`–`0249` | reserved |
   Settings (vendor choice per purpose, engine via and default engine, retention)
   use the existing `app_settings` table (`0005_app_settings`); no migration.
 - **Clean-room:** vendor fixtures are synthetic JSON written from the vendors' public documentation;
@@ -1288,3 +1289,265 @@ Decision 7).
   | # | Question | Task | How to resolve |
   |---|---|---|---|
   | Q9 | `uule` encoding (canonical location names, the length prefix) — undocumented. | D2 | Public write-ups only as data; owner spot checks (K-E); keep behind the experiment flag. |
+
+---
+
+## As built (lead notes, 2026-11-10)
+Where the build differs from the plan above, or settles what it left open. **Lead rulings first**
+(they bind every task):
+- **Legal gates (Decision 2).** The owner's L4–L7 notes do not exist yet ("unclear counts as no"),
+  so, following Phase 10's `RANK_CHECK_AVAILABLE`, every gated feature is built and tested in full
+  but ships **off** behind a named availability constant:
+  - `SERP_API_VENDOR_AVAILABLE` (`specs/data-sources.spec.ts`; per vendor, L4): `serpapi`,
+    `dataforseo`, `serper`, all `false`.
+  - `AI_SEARCH_PROVIDER_AVAILABLE` (`specs/data-sources.spec.ts`; per provider, L5): `perplexity`,
+    `openai-search`, both `false`. While both are off, `run_ai_search` stays unavailable (answered as
+    data, no approval card).
+  - `CRAWL_AVAILABLE` (`specs/site-crawl.spec.ts`; L6): `false`. Gates **starting** a crawl (and
+    resuming one); viewing, exporting and deleting existing runs are not gated.
+  - L7 needs no gate: engine and vendor names are text labels only, no logos or icons.
+- **Main is the authority for a gate.** Each gated main entry (setting a key for a gated provider,
+  any data API request, "Check via API", `run_ai_search`, the AI answers view's run, crawl start and
+  resume) refuses with the outcome `unavailable` and `LEGAL_GATE_NOTE` ("Not available in this build
+  yet: its terms are still under review.") while its gate is closed. Clearing a key is never gated.
+  The renderer never imports the constants to decide: it reads `available` from main's views
+  (`DataSourcesView`, the crawl view, the AI answers view) and hides or disables the control with
+  that note. Renderer unit tests inject views.
+- **Test seam.** Main reads every gate through one object, `legalGates.isOpen(id)`
+  (`apps/desktop/src/main/data-sources/gates.ts`), built from the constants; services take it (or an
+  `isOpen` function) as a dependency, so unit tests open a gate by injection. Each gate keeps one test
+  that pins the shipped constant to `false` and shows main refusing. Gate ids: `LEGAL_GATE_IDS`
+  (`serpapi`, `dataforseo`, `serper`, `perplexity`, `openai-search`, `crawl`). The e2e suite and the
+  lead's UI pass open gates with the unpackaged-only switch `--frost-e2e-open-gates=<id,id,…>`
+  (`LEGAL_GATES_E2E_SWITCH`, in `PACKAGED_FORBIDDEN_SWITCHES`; refused in packaged builds).
+  Flipping a constant to `true` is the change that adds the owner's note under `docs/research/`.
+- **K-A2:** Phase 10 is merged (`ci_serp_readings`, `appendReading`), so Task 4 runs.
+- **Vendor documentation (Q1, Q4, Q5).** Implementers may read the vendors' and providers' public
+  API references to pin endpoints and field names, recording the URL and date in the spec. Fixtures
+  are synthetic (frost's own values). No test or build step contacts a vendor.
+- **Execution.** Two lanes in one worktree: lane A = Tasks 1 → 2 → 3 → 4 → 8 → 9; lane B = Tasks
+  5 → 6a → 6b → 7 → 10a → 10b; then Task 11 and the whole-branch review. One commit per task by the
+  lead.
+- Task 1: Perplexity is pinned to `POST https://api.perplexity.ai/v1/sonar` (the current reference,
+  2026-11-10), not `/chat/completions`; Serper and OpenAI endpoints are the plan's (docs not
+  fetchable: marked unverified in the spec). SerpApi query names are a fixed set
+  (`SERPAPI_QUERY_NAMES`, no `no_cache`), request headers a fixed set, bodies POST-only and capped.
+- Task 1: `DataSourcesView` is `{ protection, providers: { <provider>: { hasKey, available } } }`
+  (protection belongs to the store). `DATA_API_REFUSALS` adds `unavailable` (the legal gate),
+  `busy` (more than `maxWaitingPerProvider` = 4 waiting) and the transport outcomes; a request
+  reserves its `minIntervalMs` turn after the gate check and **before** any key is read;
+  `dataApiRequest` never throws. SerpApi's `api_key` must appear exactly once and nowhere else in
+  the URL, or the request is `not-allowed`. `createCredentialStore` gains an optional `logPrefix`.
+- Task 5: the `CHECK`s live in `0240`'s tables (SQLite cannot add one later); `0241` holds the
+  delete cascade and `*_run_exists` triggers (a late write for a deleted run is refused). The
+  frontier is the seen-set and the authority for in-links and sitemap orphans (`inlinks`,
+  `from_sitemap`); `crawl_pages` has no `inlinks` column. Run deletes are chunked
+  (`CRAWL_LIMITS.deleteChunkRows`) and yield between statements. Counts split `refused` (robots,
+  scope, private address) from `failed`. Start-up moves `running` **and** `queued` runs to
+  `paused`. `allowRedirect(nextUrl, { signal })` races the call's signal (`aborted`).
+- Task 5: the plan's `CRAWL_RULE_IDS` list is kept exactly; the catalogue rules it leaves out
+  (`title-too-wide`, `meta-description-too-wide`, the link, sitemap and hreflang check rules) are
+  recorded with reasons in `CRAWL_EXCLUDED_RULES`.
+- Task 2: `0243` writes the provider list and the request cap as literal `CHECK` text (a test pins
+  them to `DATA_PROVIDERS`); `DATA_USAGE_LIMITS = { monthsKept: 12, maxRequests: 2^31-1 }`. The
+  client counts a request inside the `withKey` closure after every check, just before it is sent;
+  refused requests never count. Each provider view also carries `partial` (some but not all slots
+  set: DataForSEO only), so a half-saved login can be cleared. The SERP vendor choice is its own view
+  (`serpProvider` → `{ provider, choices }`); `resolveDataSerpProvider` answers the stored vendor
+  while offered, else the only one offered, else `null` (never written back). Renderer IPC calls
+  live in `settings-data-sources-actions.ts`; styles in `settings-data-sources.css` (tokens only).
+- Task 6a (security review): pacing is per **host name** (lowercased, trailing dot dropped), not
+  per origin — stricter than K-B1's "per origin"; a redirect to another host name ends the call
+  with the new outcome `redirected` (`redirectTarget`), which 6b queues at depth + 1 under that
+  host's pacing; same-host hops follow at once after the hook. Pacing state (last start, back-off,
+  `Retry-After`, Crawl-delay) lives per crawl fetcher, so within one session it survives pause and
+  resume (across a restart, see the whole-branch review below); the map is
+  capped (`CRAWL_LIMITS.maxPacedHosts` 256) and a host past the cap is `deferred` (the run pauses).
+  The fetcher re-resolves a hop's name after the hook and caps the hook at
+  `FETCHER_LIMITS.maxRedirectHookMs` (8 000 ms). Public scopes allow either scheme but only the
+  start's port or 80/443. Several `Crawl-delay` values: the largest wins (Q13); a later robots
+  lookup without an answer keeps a learned delay. Robots parsing runs behind an injected
+  `parseRobots` (6b moves it into the crawl worker); robots lookups stay on the audit lane.
+- Task 3 (K-A1): no vendor dropped; each fixture maps to a `ready` snapshot whose organic positions
+  equal the vendor's rank field, and at run time organic ranks that are not 1…n answer
+  `invalid-answer`. A snapshot (even `no-results`) needs the vendor's organic container; vendor
+  error bodies answer `vendor-error`, so an error never becomes a "not ranking" point. Keyed
+  vendors (SerpApi, Serper) order sections by `SERP_API_TYPE_MAP`; consecutive DataForSEO elements
+  of one type join into one block; link-less ads are skipped. DataForSEO's country is a pinned
+  `gl → location_code` table (`DATAFORSEO_COUNTRY_LOCATION_CODES`, read 2026-11-10). Serper's
+  shape is unverified (no fetchable reference; desktop only). The SERP worker has an `api` job on
+  an analyzer instance of its own.
+- Task 6b: robots.txt is parsed in the crawl worker (its own `seo-analysis.cjs` instance, jobs
+  `crawl`, `crawl-robots`, `crawl-sitemap`); an `ok` robots.txt that fails to parse is treated as
+  blocking. **K-B2 removed `h1-multiple`, `h1-empty` and `heading-level-skipped`** (CSS-hidden
+  headings count in served HTML, so the crawl would report findings the sidebar does not); one-way
+  misses (`h1-missing`, `content-thin`, schema rules on microdata pages) stay, pinned by
+  `crawl-audit-never-adds-a-finding-on-hidden-or-microdata-pages`. Sitemap requests are crawl
+  requests (`fetchPage`: scope, robots, pacing, redirect hook); seeding runs on a fresh start only.
+  Query variants are counted in the frontier. A project's delete awaits any start or resume in
+  flight, and the project is re-checked inside the paced slot right before each request.
+- Task 10a (security review): each WebContents is classified once, at creation; a location
+  partition must be registered before its first tab. `registerBrowseClassSession` refuses the
+  default session and sessions marked by `markAppSession`, and only `location/**` may call it. A
+  refused cookie block reports the tab's overrides as `failed`. "Clear this site's data" is keyed
+  by session and origin, and answers `failed` when the clear throws.
+- Task 4: the vendor is recorded in the reading's `page_url` (its key-less canonical request URL);
+  `RankPoint` gains optional `source`/`provider`. `checkProjectSearches({ projectId, searchIds?,
+  provider, requests })` is re-planned in main and refused `changed` unless the confirmed vendor
+  and count match; only searches whose request params equal the saved series' are counted
+  (`other-series` / `unsupported` are skipped, never sent). A check stops on 401/402/403/429.
+  `ci_serp_api_purges` also records `purge_id`, `reason`, `project_id` and is append-only; an
+  API-only purge writes no `ci_purges` row (no synced all-zero entry), so it is logged only there.
+  **Deviation (lead ruling):** under `days N` each search key's newest API reading stays, as
+  Phase 6 keeps each lane's newest capture.
+- Task 7: `watch` long-polls a change counter, pending polls counted per window; the sheet refreshes
+  at most every `CRAWL_REFRESH_MS` while a run runs. CSV: dialog first, then a fixed id order
+  streamed in batches, one export at a time. "Looks client-rendered" is a crawled 2xx page under 50
+  served words (no script count stored: Decision 6's "with scripts" is not checked). The Pages
+  table shows both robots verdicts (frost-crawl and Googlebot). No index migration was needed.
+- Task 8 (K-C1): neither provider dropped (Perplexity `citations` / `search_results`; OpenAI
+  `url_citation` annotations). Models pinned: Perplexity `sonar` (its Sonar endpoint is in a
+  deprecation window — a reviewed `DATA_API_REQUESTS` change to the Agent API may follow); OpenAI
+  `gpt-5-mini` / `gpt-5` with `web_search`, `store: false` (the Responses reference itself was not
+  fetchable: unverified). `run_ai_search` takes no locale in v1. With both L5 gates closed it answers
+  `not-available` as data. Answers are parsed in a SERP worker `ai-answer` job of their own;
+  citation URLs with credentials are dropped; totals survive to the model.
+  `dataApiRequest(…, { signal, beforeSend })` lets Stop and a changed setting stop a request that is
+  still waiting its turn (`aborted`, `cancelled`); `run_ai_search` has its own timeout
+  (`AI_SEARCH_TOOL_TIMEOUT_MS`, 50 s). The broker answers `capped` before any card once a turn has
+  2 calls.
+- Task 9: spec in its own files (`specs/ai-answers.*`); `0242` adds `origin`, `answer_truncated`,
+  `citations_total`; `chat_id` stays `null` for agent answers (the tool port carries no chat id).
+  Purged on write, at start-up, on a retention change and daily; at most 1 000 rows. One per-engine
+  clock in `AiSearchService.send()` serves the agent and the view (lead ruling). The via and
+  default-engine settings are set from the AI answers view.
+- Task 10b: removing a profile retires its partition for the run (tabs closed, storage cleared,
+  never prepared again; the proxy is not reset to direct). A sign-in is removed before a profile's
+  proxy changes, or the edit answers `failed`. Lead ruling: **geolocation is denied** in location
+  tabs and other permission decisions there are per location and in memory only (never shared with
+  home). Links opened from a location tab's panels stay in the location; "Open in" tools use the
+  user's own connection. The badge sits in the tab strip only and is never cut. The leak-test
+  design (`location-profiles.feature.md`) puts the fake site's name in `E2E_PUBLIC_HOSTS`, classifies
+  the tripwire's requests (the disclosed audit fetches are allowed; anything else is a leak) and
+  adds a NetLog check for host-resolver jobs.
+- **Whole-branch review (fixes).**
+  - Crawl pacing across a restart: a pausing run (any reason, quit included) stores each paced host's
+    `waitUntil` (the later of `Retry-After` and last start + effective interval) and back-off (capped
+    at `backoffAfter`) on the run, `crawl_runs.pacing` (`CrawlPacingSnapshotSchema`, at most
+    `maxPacedHosts`, JSON ≤ 96 KiB by `CHECK`); a finished run clears it. Resume seeds the crawl
+    fetcher's pacing from it before the first request (never loosening a held state; a stored time is
+    honoured at most `CRAWL_PACING_LIMITS.maxWaitMs` = 320 s ahead, against a clock set back). The
+    column comes from a **new migration `0246_crawl_run_pacing`** (`ALTER TABLE … ADD COLUMN`, spread
+    after `0245`), not an edit of `0240`, so a database that already took `0240` gets it too. The quit
+    path writes the pacing with its immediate pause. Not covered: a crash (no pause is written; the
+    previous pause's pacing, if any, is reused, which is only ever stricter).
+  - The location e2e's WebRTC "not vacuous" probe annotates and skips (with its reason) on a machine
+    whose home tab gathers nothing (macOS Local Network privacy, no interface); it still asserts where
+    anything was gathered.
+  - Location partitions set no spellchecker languages, then disable the spellchecker, once, before
+    the proxy and the browse-class registration, so no dictionary is loaded or downloaded for them.
+  - A mixed purge's `ci_purges.bytes` (synced) leaves out the device-local API readings' bytes:
+    `PurgePlan.apiReadingBytes` (of `bytes`) is subtracted.
+  - A sync pull that wrote `ci_projects` runs, after the crawls' cleanup, the projects' `purgeDeleted`
+    (`StartSyncDeps.projects`, its own `try` and log line), so a tombstoned project's API readings go
+    at once rather than at the next start-up. Like start-up recovery, it may purge captured rows whose
+    synced tombstones have not arrived yet (a pull cut at `SYNC_MAX_PAGES_PER_PASS`): a second
+    `project-deleted` purge record, no data kept that should go.
+  - README and `apps/desktop/README.md` describe the gated data sources, AI answers and crawl.
+- Task 11: two e2e parts (`data-sources`, `ai-answers`; `crawl`, `location`), every gated surface
+  run with `--frost-e2e-open-gates` and also shown off without it. On Linux, Playwright's Electron
+  loader forces `--password-store=basic` (`weak` protection), so key-storing e2e tests load a
+  Linux-only stand-in keychain in main (`e2e/fake-keychain.cjs`, `launchApp(…, { mainPreload })`).
+  **K-D passes:** the tripwire saw only the disclosed audit fetches (robots.txt, served HTML), every
+  origin request carried the proxy's marker (the WebSocket through its tunnel), WebRTC gathered no
+  candidates, and the NetLog showed every location-tab connection going to the proxy. Proxy
+  locations ship. K-B1 measured 999–1002 ms between fetch-call starts at `Crawl-delay: 1`.
+- Merge of main (PR #24, `b55e087`): conflicts in `agent/ports/index.ts`, `clear-browsing-data.ts`
+  (comments), `serp/setup.ts` (main dropped the unused `watchContents`; `analyseApi` kept) and
+  `sync/engine.ts` (main dropped push-side `lost`; the device-local row filter kept). Turbo now has no
+  `typecheck` task (`lint` runs tsc).
+- UI pass (lead, screenshots with the gates opened by the test seam): screen-reader text moved to
+  `.visually-hidden` inside positioned scroll boxes (opening Settings › Data sources had scrolled the
+  whole window); the Check via API confirm got real buttons; the crawl sheet's status line clears as
+  the run moves on and its run card names the page count once; the AI answers engine select uses the
+  short "OpenAI web search" label with the ChatGPT-app caveat beside it. The rank table's position
+  number has its own element (`rankings-position-value`) beside its source label. Visual baselines
+  `settings*` and `projects*` were re-adopted from CI.
+- Follow-ups (not in this phase): the three new workers (crawl, SERP `api`, AI parse) are never
+  ended when idle; crawl robots/sitemap fetches during a location tab's crawl go from the user's own
+  connection (disclosed); the Rankings empty state still names "Capture now" (Phase 10 wording).
+- **Council round 1 (fixes, one commit each).**
+  - 1: the crawl's robots lookup and its worker parse have separate waits (parse:
+    `CRAWL_ROBOTS_PARSE_WAIT_MS`); a robots.txt fetched `ok` whose parse fails or runs out of time
+    refuses the page, hop or sitemap as `blocked-by-robots` (`unparsed`), never as unknown.
+  - 2 (RFC 9309 §2.3.1.4): robots.txt the crawl cannot read (every `ROBOTS_UNKNOWN_OUTCOMES`
+    answer, `bad-redirect` and `no-location` included, or no answer in time) refuses as the new
+    outcome `robots-unreachable`, start origin included, for pages, redirect hops and sitemaps; 4xx and
+    a missing file still allow. The hook's `robots-timeout` is folded into it. Decision 6's
+    start-origin rule ("crawled at the default interval, flagged") is superseded; the sidebar's rule
+    is unchanged and `robots-txt-unreachable` no longer fires in a crawl.
+  - 3: a page stopped after its row but before its completion stays `queued` and is replayed whole on
+    Resume (row and links replaced, counts corrected); a page's discoveries and its frontier `done`
+    are one transaction, so no inlink is counted twice.
+  - 4: a sitemap slow-down (the `backoffAfter`-th 429/503, or `deferred`) ends the run `paused`
+    (`slow-down`) before any page is fetched.
+  - 5: the run's pacing is stored as it starts, as it pauses and after every fetch call that moved
+    `Politeness.changes()` (back-off, `Retry-After`, a learned or changed `Crawl-delay`, a call under a
+    raised interval), so a crash or kill loses none of it (supersedes "Not covered: a crash").
+  - 6: `normaliseCrawlUrl` percent-normalises path and query (RFC 3986 §6.2.2: unreserved escapes
+    decoded, others upper-case hex, `%2F` kept); scope prefixes are normalised the same way and
+    compared case-sensitively; scope check, request URL and frontier key share that form.
+  - 7: `dataApiRequest` re-checks the caller's signal with nothing awaited before the fetch, its
+    transport controller starts aborted if the signal already fired, and a request is counted as it is
+    handed to the fetch (only what is sent is counted).
+  - 8: `AiSearchService.send` claims the engine's slot before any await and holds it until the call
+    ends; a second call to that engine meanwhile answers `cooldown` ("…or is still answering").
+  - 9: the SERP API parser refuses links with a user name or password (ads skipped and counted; an
+    organic result refuses the answer, K-A1).
+  - 10: a `dataforseo-login` containing `:` is refused (RFC 7617 Basic user-id).
+  - 11: a new proxy sign-in whose password fails to store clears both slots, the old password too.
+- **Council round 2 (crawl fixes, one commit each).**
+  - A: `Politeness.schedule(host, fn, signal, before?)` awaits `before` (the project check, the
+    pacing write) inside the host's slot and stamps the start only after it settles, nothing awaited
+    before the request: the interval is measured between network starts.
+  - B: inside the slot, the crawler stores `snapshot(host)` (this start counted as now) before the
+    request whenever the start raises the interval or `changes()` moved; a failed write sends nothing
+    and fails the run (`error`). A crash with a request in flight resumes no sooner than the stored
+    time.
+  - C: the crawl has its own robots lists: `CRAWL_ROBOTS_ALLOW_ALL_OUTCOMES` (`unavailable`,
+    `forbidden`, `too-many-redirects`) and `CRAWL_ROBOTS_UNREADABLE_OUTCOMES`
+    (`ROBOTS_UNKNOWN_OUTCOMES` plus `private-redirect`); a refused robots.txt redirect refuses as
+    `robots-unreachable`. The sidebar's `ROBOTS_ALLOW_ALL_OUTCOMES` is unchanged.
+  - D: `robots-unreachable` for any queued page or same-host hop (start URL, other hosts, redirect
+    targets) writes no row, leaves the entry `queued` and pauses the run with the new reason
+    `robots-unreachable` ("Paused: frost could not read the site's robots.txt. Resume to try
+    again."); sitemaps are still skipped. A Resume within the robots fetcher's 60 s failure cache
+    pauses again at once (documented).
+  - E: a page already recorded and still queued is replayed and completed before `maxPages` applies;
+    the cap holds back only pages with no row.
+  - F: a replayed entry whose new answer has no analysis clears its old links (`putLinks(…, [])`).
+- **Council round 3 (crawl fixes, one commit each).**
+  - G: `robots-unreachable` pauses the run only for the start URL's origin (scheme, host, port), for
+    a queued page or a same-host hop; on any other origin the page is recorded `robots-unreachable`
+    (nothing requested, counted `refused`) and its entry completed, so a host whose robots.txt never
+    answers cannot hold the run paused.
+  - H: `CrawlFetchOptions.beforeHop(host)` is asked in the redirect hook after a same-host hop's
+    robots allow it and its `Crawl-delay` is learned, right before the hop; the crawler stores the
+    pacing there when it changed, and a failed write refuses the hop and fails the run (`error`).
+  - I: sitemap seeding still skips files it cannot read, but passes store failures (a pacing or
+    frontier write) up, failing the run (`error`).
+  - J: `createRun({ …, start })` writes the run and its start URL's frontier entry in one
+    transaction; on Resume, while the start URL has never completed, the crawler queues it again and
+    reseeds sitemaps (idempotent: the frontier dedupes, a seed adds no inlink). No new column.
+  - The migration check: `site-crawl-migrations-create-schema` already inserts every run state, run
+    reason (`robots-unreachable` included), page outcome and frontier state on a fresh database;
+    `0240`'s `CHECK`s are generated from the spec arrays and edited in place while unreleased.
+- **Council round 4 (crawl fixes, one commit each).**
+  - N1: the run pauses `robots-unreachable` on any of the start origins: the typed start origin
+    plus each origin the start landed on (its same-host hop target, the start row's `finalUrl`; its
+    `redirected` target and where that lands, a chain of at most `MAX_START_CHAIN` = 5 URLs), learned
+    as the chain's rows are written and rebuilt from `repo.getPage` on Resume (no new column). Only
+    the pause rule changes, not scope.
+  - N2: on Resume, a run paused `slow-down` whose start URL never completed paused while seeding: it
+    skips reseeding and goes straight to the pages (the stored reason tells it; no new column). A
+    Resume after a `robots-unreachable` pause still reseeds (J).

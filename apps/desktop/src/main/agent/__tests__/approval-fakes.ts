@@ -7,6 +7,13 @@ import { createApprovalBroker, type ApprovalBrokerDeps, type ToolRunContext, typ
 import { createDefaultAgentEntitlements, type AgentEntitlements } from '../entitlements';
 import { createAgentGrants, createMemoryGrantsStore, type AgentGrant } from '../grants';
 import type { AgentChatEvent, AgentToolInvoke } from '../host';
+import { DEFAULT_AI_SEARCH_SETTINGS, type AiSearchContext } from '@app/specs/ai-search.spec';
+
+/**
+ * An AI search context with both providers' gates opened by injection and both keys set (Phase 12
+ * Task 8; the shipped gates are closed: `ai-search-gated-off-never-asks`).
+ */
+export const OPEN_AI_SEARCH_CONTEXT: AiSearchContext = { settings: DEFAULT_AI_SEARCH_SETTINGS, gates: { perplexity: true, 'openai-search': true }, keys: { perplexity: true, 'openai-search': true } };
 
 export function createFakeToolHost() {
   let listener: ((invoke: AgentToolInvoke) => void) | null = null;

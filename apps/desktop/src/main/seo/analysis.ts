@@ -1,6 +1,8 @@
 import type { SeoAudit, SpeedReport } from '@app/seo-core';
 import type { ServedParseInput, ServedParseResult } from '@app/specs/seo-javascript.schema';
 import { ANALYSIS_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
+import type { CrawlPageJob } from '@app/specs/site-crawl.schema';
+import type { CrawlPageResult, CrawlRobotsResult, CrawlSitemapInput, CrawlSitemapResult } from '../crawl/analyse';
 import type { RobotsVerdictsResult } from '../devtools/robots-verdicts';
 import type { ChecksAnalysisResult } from './checks-analyse';
 
@@ -12,7 +14,8 @@ import type { ChecksAnalysisResult } from './checks-analyse';
 // and so does the served HTML's parse (`seo-javascript.feature.md`), as `served` jobs, and the
 // devtools drawer's robots.txt verdicts (`devtools.feature.md`), as `robots` jobs. The link, sitemap
 // and hreflang checks (`seo-checks.feature.md`) use a second analyzer of their own, as `checks` jobs,
-// so a long check never holds up an audit.
+// so a long check never holds up an audit. The site crawl (Phase 12 Task 6b, `site-crawl.feature.md`)
+// has one more of its own (`crawl/index.ts`), for its `crawl`, `crawl-robots` and `crawl-sitemap` jobs.
 
 export type AnalysisResult = { readonly ok: true; readonly audit: SeoAudit } | { readonly ok: false; readonly reason: 'invalid-snapshot' | 'analysis-timeout' | 'analysis-failed' };
 export type SpeedAnalysisResult = { readonly ok: true; readonly report: SpeedReport } | { readonly ok: false; readonly reason: 'invalid-measurement' | 'analysis-timeout' | 'analysis-failed' };
@@ -45,11 +48,17 @@ export interface Analyzer {
   robotsVerdicts(raw: unknown): Promise<RobotsVerdictsResult>;
   /** Validates and runs a checks job (`ChecksJobSchema`, Phase 2.5 Task 7: a sitemap, an alternate, robots.txt) in the worker. Never rejects. */
   analyseCheck(raw: unknown): Promise<ChecksAnalysisResult>;
+  /** Parses and audits one crawled page (`CrawlPageJobSchema`, the crawl rules only) in the worker; `parse-failed` past the timeout. Never rejects. */
+  analyseCrawlPage(job: CrawlPageJob): Promise<CrawlPageResult>;
+  /** Parses one robots.txt for the crawl in the worker (groups, sitemaps, `Crawl-delay`). Never rejects. */
+  crawlRobots(text: string): Promise<CrawlRobotsResult>;
+  /** One sitemap window job for the crawl's seeding (`CrawlSitemapInput`: the file parsed once and kept in the worker, then windows, then released). Never rejects. */
+  crawlSitemap(input: CrawlSitemapInput): Promise<CrawlSitemapResult>;
   /** Terminates the worker (the app is quitting). */
   dispose(): void;
 }
 
-type JobKind = 'audit' | 'speed' | 'served' | 'robots' | 'checks';
+type JobKind = 'audit' | 'speed' | 'served' | 'robots' | 'checks' | 'crawl' | 'crawl-robots' | 'crawl-sitemap';
 type Settled = { readonly ok: boolean; readonly reason?: string };
 
 interface Job {
@@ -61,7 +70,7 @@ interface Job {
 }
 
 /** The reason a job's input is refused with. */
-const INVALID: Readonly<Record<JobKind, string>> = { audit: 'invalid-snapshot', speed: 'invalid-measurement', served: 'parse-failed', robots: 'invalid-job', checks: 'invalid-job' };
+const INVALID: Readonly<Record<JobKind, string>> = { audit: 'invalid-snapshot', speed: 'invalid-measurement', served: 'parse-failed', robots: 'invalid-job', checks: 'invalid-job', crawl: 'parse-failed', 'crawl-robots': 'invalid-job', 'crawl-sitemap': 'invalid-job' };
 
 /** A job kind's successful payload, read from the worker's answer. */
 const PAYLOAD: Readonly<Record<JobKind, (result: Readonly<Record<string, unknown>>) => unknown>> = {
@@ -71,6 +80,9 @@ const PAYLOAD: Readonly<Record<JobKind, (result: Readonly<Record<string, unknown
   robots: (result) => result.verdicts,
   // A checks job answers under its own kind's field: a sitemap, an alternate's head or robots.txt.
   checks: (result) => (result.kind === 'sitemap' || result.kind === 'hreflang' || result.kind === 'robots' ? result[result.kind] : undefined),
+  crawl: (result) => result.page,
+  'crawl-robots': (result) => result.robots,
+  'crawl-sitemap': (result) => (Array.isArray(result.urls) ? result.sitemap : undefined),
 };
 
 /** What the worker answered, if it has the shape of a `kind` job's result. */
@@ -157,6 +169,9 @@ export function createAnalyzer(options: AnalyzerOptions): Analyzer {
       enqueue('served', input, undefined).then((result): ServedParseResult => (result.ok ? (result as ServedParseResult) : { ok: false, reason: result.reason === 'analysis-timeout' ? 'parse-timeout' : 'parse-failed' })),
     robotsVerdicts: (raw) => enqueue('robots', raw, undefined) as Promise<RobotsVerdictsResult>,
     analyseCheck: (raw) => enqueue('checks', raw, undefined) as Promise<ChecksAnalysisResult>,
+    analyseCrawlPage: (job) => enqueue('crawl', job, undefined).then((result): CrawlPageResult => (result.ok ? (result as CrawlPageResult) : { ok: false, reason: result.reason === 'analysis-failed' ? 'analysis-failed' : 'parse-failed' })),
+    crawlRobots: (text) => enqueue('crawl-robots', { text }, undefined) as Promise<CrawlRobotsResult>,
+    crawlSitemap: (input) => enqueue('crawl-sitemap', input, undefined) as Promise<CrawlSitemapResult>,
     dispose() {
       for (const job of queue.splice(0)) job.settle({ ok: false, reason: 'analysis-failed' });
       if (current) finish({ ok: false, reason: 'analysis-failed' }, true);

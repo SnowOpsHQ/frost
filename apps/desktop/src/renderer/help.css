@@ -67,7 +67,9 @@
   background: var(--bg-hover);
 }
 
+/* Positioned, as `.settings-content`: screen-reader-only text stays inside the scroll box. */
 .help-body {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;

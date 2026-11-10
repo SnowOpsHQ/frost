@@ -8,16 +8,19 @@ import type {
   WebRequestFilter,
 } from 'electron';
 
-// Main-frame request observers on the browse session (acceptance `seo-indexability.feature.md`,
-// Response metadata). Electron holds **one** listener per `webRequest` event per session: a second
-// registration silently replaces the first. So this module is the browse session's one owner of
-// `onBeforeRedirect`, `onResponseStarted` and `onErrorOccurred`, and fans each event out to every
+// Main-frame request observers on each browse-class session (acceptance
+// `seo-indexability.feature.md`, Response metadata; `browser-chrome.feature.md`, Session
+// classification: main adds them per session through `browse-session-wiring.ts`). Electron holds
+// **one** listener per `webRequest` event per session: a second registration silently replaces the
+// first. So this module is each such session's one owner of `onBeforeRedirect`,
+// `onResponseStarted` and `onErrorOccurred` (one hub per session), and fans each event out to every
 // observer added with `observeMainFrames`; nothing else may register those three on that session.
 //
 // Ownership of the sessions' `webRequest` events (keep in sync when adding one):
 // - default session (the chrome's): `onBeforeRequest` — `protocol/requests.ts` (who may load
 //   `app://`); `onHeadersReceived` — `security/register.ts` (the app CSP);
-// - browse session (`persist:frost-browser`, the tabs'): `onBeforeRedirect`, `onResponseStarted`,
+// - every browse-class session (the tabs': the browse partition's, and any main registers;
+//   `browse-class.ts`): `onBeforeRedirect`, `onResponseStarted`,
 //   `onErrorOccurred` — here, for main-frame requests only (`MAIN_FRAME_FILTER`). No blocking
 //   listener (`onBeforeRequest`, `onBeforeSendHeaders`, `onHeadersReceived`) is installed on it
 //   **unless a tab of that session has cookies off** (Phase 11 Task 6, `render-profile.feature.md`,

@@ -11,7 +11,9 @@ import { createWindowRegistry } from './app-windows';
 import { createGscMain } from './gsc/main';
 import { contextMenuTemplate, copySeoMenuForContents } from './browser/context-menu';
 import { createBrowserController, type TabContextMenuRequest } from './browser/controller';
-import { hardenBrowseSession } from './browser/guard';
+import { isBrowseClassContents, isBrowseClassSession, onBrowseClassSession } from './browser/browse-class';
+import { browseSessionInstaller } from './browser/browse-session-wiring';
+import { createCookieBlock } from './browser/cookie-block';
 import { confirmClearHistory, confirmClearHistoryRange, confirmHistoryRetention } from './browser/history-dialog';
 import { createHistoryService, createSearchEngineSetting } from './browser/history-service';
 import { createBrowsePermissionHandlers, createPermissionBroker, createPersistentDecisionStore } from './browser/permissions';
@@ -40,9 +42,8 @@ import { SERVED_PARSE_LIMITS } from '@app/specs/seo-javascript.spec';
 import { createServedHtml, PENDING_SERVED, type ServedHtml } from './seo/served';
 import type { ContextSource } from './seo/auditor';
 import { contextSource, knownInput, laterInput } from './seo/context-source';
-import { observeMainFrames, observeRequests } from './browser/web-request';
 import { createDevtoolsService } from './devtools/service';
-import { browseCookies, clearBrowseOrigin, confirmClearSiteData, networkExportIo } from './devtools/site-data';
+import { confirmClearSiteData, networkExportIo, tabSiteData } from './devtools/site-data';
 import { nativeWayland, runVitals, withTimeout, type CollectOptions } from './seo/vitals';
 import { createShownTimes } from './seo/vitals-shown';
 import { SPEED_MEASURE_TIMEOUT_MS } from '@app/specs/seo-speed.spec';
@@ -58,7 +59,9 @@ import { startSyncService } from './sync/service';
 import { createTelemetryMain } from './telemetry/main';
 import { createMainWindow, createTabView, loadRenderer } from './window';
 import { createAgentService } from './agent/wire';
-import { gscAdapter, intentAdapter, probesAdapter, serpAdapter } from './agent/ports';
+import { aiSearchAdapter, gscAdapter, intentAdapter, probesAdapter, serpAdapter } from './agent/ports';
+import { setupAiSearch } from './ai-search';
+import { setupAiAnswers } from './ai-answers';
 import { createMainChanges } from './changes/changes-main';
 import { createMainScreenshots } from './screenshots/electron';
 import { createMainProjects } from './changes/projects-main';
@@ -68,6 +71,10 @@ import { createMainInspector } from './inspector/service';
 import { createAiChecksMain } from './ai-checks/main';
 import { createHelpMain } from './help/main';
 import { createDiagnosticsMain } from './diagnostics/main';
+import { setupDataSources } from './data-sources';
+import { setupCrawl } from './crawl';
+import { createMainCrawlIpc } from './crawl/dialogs';
+import { setupLocations } from './location';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -250,9 +257,9 @@ function start(): void {
     responses,
     robots: () => robots,
     robotsVerdicts: (job) => analyzer.robotsVerdicts(job),
-    cookies: browseCookies,
+    // The Storage tab reads and clears the tab's own session (browse-class only; site-data.ts).
+    ...tabSiteData((contentsId) => tabContents.get(contentsId)),
     confirmClearSiteData: (origin) => confirmClearSiteData(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null, origin),
-    clearOrigin: clearBrowseOrigin,
     liveWindow: (id) => BrowserWindow.fromId(id)?.isDestroyed() === false,
     networkExport: { ...networkExportIo, appVersion: app.getVersion() },
     log: logSession,
@@ -317,6 +324,8 @@ function start(): void {
   const seoExports = createSeoExports({ audit: (tabId) => browser.seo.getAudit(tabId), clipboard });
   const browser = createBrowserController({
     createView: createTabView,
+    // Cookies off (Phase 11 Task 6): the blocking pair only ever on a browse-class session, the tab's own.
+    tabOverrides: { cookieBlock: createCookieBlock({ isBrowseClass: isBrowseClassSession }) },
     openWindow: () => openMainWindow(),
     permissions,
     session: sessionStore.writer,
@@ -346,8 +355,10 @@ function start(): void {
   const changes = createMainChanges({ store: sessionStore.changeIntel, browser, tabContents, log: logSession, searchParamsOf: serpParams.of, readingOf: serpParams.readingOf });
   // Screenshots (specs/screenshot.feature.md): the active tab's own view, captured by main; PNG files named by their hash under the profile directory.
   const screenshots = createMainScreenshots({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, tabContents, log: logSession, searchParamsOf: serpParams.of });
+  // The site crawl (specs/site-crawl.feature.md): a worker of its own, start-up recovery, a quit pauses it; fetching bound after ready. Gated (L6).
+  const crawl = setupCrawl({ app, store: sessionStore, spawnWorker: () => new Worker(path.join(__dirname, 'seo-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } }), log: logSession });
   // Projects (specs/projects.feature.md): pages and queries, and their capture runs in a tab of their own.
-  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of, serpVerdictOf: serpParams.verdictOf, settings: sessionStore.settings });
+  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of, serpVerdictOf: serpParams.verdictOf, settings: sessionStore.settings, crawls: crawl.service });
   // The DOM inspector (specs/inspector.feature.md): reads the active tab's page in its own isolated world; never writes to it.
   // Its Served view reads the audit's served HTML as the worker decoded it (never fetched for it); "Copy source" writes main's own text.
   const inspector = createMainInspector({
@@ -394,12 +405,29 @@ function start(): void {
     // Only the app's own windows (and their DevTools) may load app:// (APP_REQUEST_FILTER in
     // specs/app-protocol.spec.ts); this owns the session's single onBeforeRequest listener.
     restrictAppRequests(session.defaultSession, windows.isAppWebContents);
-    // Tabs' session: no `app:` handler (protocol.handle below is the default session's), per-origin
-    // permission prompts (everything not promptable denied), and every download cancelled with a notice.
+    // Every browse-class session (browser/browse-class.ts: today the browse partition's alone) gets
+    // one installer, run on each as it joins: its main-frame observers (the one owner of its
+    // onBeforeRedirect / onResponseStarted / onErrorOccurred: browser/web-request.ts) and the devtools
+    // drawer's request observers, then no `app:` handler (protocol.handle below is the default
+    // session's), per-origin permission prompts (everything not promptable denied), and every
+    // download cancelled with a notice.
+    onBrowseClassSession(
+      browseSessionInstaller({
+        mainFrames: responses,
+        requests: devtools.observer,
+        hooks: {
+          onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
+          permissions: createBrowsePermissionHandlers({
+            broker: permissions,
+            tabIdOf: (contents) => browser.tabIdOf(contents),
+            isFullscreen: (tabId) => browser.isFullscreen(tabId),
+          }),
+        },
+      }),
+    );
+    // The bounded fetchers' session: the browse partition's alone (Phase 12 Decision 11), never a
+    // class check (browse-class-registry-is-the-only-test).
     const browseSession = session.fromPartition(BROWSE_PARTITION);
-    // The browse session's main-frame observers (the one owner of its onBeforeRedirect /
-    // onResponseStarted / onErrorOccurred: browser/web-request.ts) and its robots.txt fetcher.
-    observeMainFrames(browseSession, responses);
     // One bounded fetcher for every request made on the user's behalf (specs/fetcher.spec.ts), in two
     // lanes over one hop: robots.txt and the served HTML share the `audit` lane's per-origin queues;
     // the link, sitemap and hreflang checks have the `checks` lane, so an audit never waits behind one.
@@ -412,8 +440,9 @@ function start(): void {
     const fetchers = createFetcherLanes({ hop, resolve });
     robots = createRobotsFetcher({ hop, fetcher: fetchers.audit });
     served = createServedHtml({ fetcher: fetchers.audit, parse: (input) => servedAnalyzer.parseServed(input) });
-    observeRequests(browseSession, devtools.observer);
     const robotsFetcher = robots;
+    // The crawl lane over this hop and resolver; robots.txt through the audit lane's robots fetcher (never the crawl lane).
+    crawl.bindFetching({ hop, resolve, robots: robotsFetcher, userAgent: () => browseSession.getUserAgent() });
     checks = createChecks({
       fetch: createCheckFetch(fetchers.checks),
       analyse: (job) => checksAnalyzer.analyseCheck(job),
@@ -427,14 +456,6 @@ function start(): void {
       },
       rescore: (tabId) => void browser.rescoreAudit(tabId),
     });
-    hardenBrowseSession(browseSession, {
-      onDownloadBlocked: (contents) => browser.downloadBlocked(contents),
-      permissions: createBrowsePermissionHandlers({
-        broker: permissions,
-        tabIdOf: (contents) => browser.tabIdOf(contents),
-        isFullscreen: (tabId) => browser.isFullscreen(tabId),
-      }),
-    });
     // The SERP overlay (specs/serp-overlay.feature.md): selector packs, the SERP worker, on-device
     // intent, the visibility probes (their own fetcher lane over this hop and resolver) and each tab's
     // page events, all wired in serp/setup.ts (disposed on will-quit there).
@@ -447,7 +468,7 @@ function start(): void {
     const update = startUpdateService({ app, net, session, shell, log: logSession });
     app.once('will-quit', () => update.dispose());
     // Sync (specs/sync-engine.feature.md): off unless userData/frost-sync.json turns it on; never throws, runs in the background.
-    const sync = startSyncService({ app, safeStorage, sessionFile: sessionStore.file, log: logSession });
+    const sync = startSyncService({ app, safeStorage, sessionFile: sessionStore.file, log: logSession, crawls: crawl.service, projects });
     app.once('will-quit', () => void sync.dispose());
     // The account, sign-in and entitlements (specs/account-signin.feature.md): after ready (the keychain
     // check), before the first window (its gestures are tracked from creation).
@@ -456,12 +477,20 @@ function start(): void {
     telemetryMain.useGestures((windowId) => account.gestures.consume(windowId));
     // Search Console (specs/gsc.feature.md): read-only and not gated (no frost account needed); reuses the account's store and gestures.
     const gsc = await createGscMain(account);
+    // Data sources (specs/data-sources.feature.md): BYO keys and the one data API client, main only; legal gates closed as shipped.
+    const dataSources = setupDataSources({ app, session, safeStorage, log: logSession, usage: sessionStore.dataUsage, settings: sessionStore.settings, checks: { store: sessionStore.changeIntel, parse: (job) => serp.analyseApi(job), afterWrite: (projectId) => projects.afterApiCheck(projectId) } });
+    // AI search (specs/ai-search.feature.md): run_ai_search through the providers' APIs on the user's key; gated off as shipped.
+    const aiSearch = setupAiSearch({ app, dataSources, settings: sessionStore.settings, log: logSession });
+    // AI answers (specs/ai-answers.feature.md): every AI answer kept by its own retention, and the view's own run (gated off as shipped).
+    const aiAnswers = setupAiAnswers({ app, store: sessionStore.aiAnswers, aiSearch, log: logSession });
     // The AI agent (specs/agent-host.feature.md): its SERP, intent, probe and Search Console tools. Not gated: no
     // entitlements port is passed (it must not be wired to the account; specs/entitlements-client.feature.md).
-    const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, consumeGesture: (windowId) => account.gestures.consume(windowId), ports: { serp: serpAdapter(serp.readApi), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) } });
+    const agent = createAgentService({ app, browser, webContents, sessionStore, log: logSession, consumeGesture: (windowId) => account.gestures.consume(windowId), aiSearch, ports: { serp: serpAdapter(serp.readApi, aiSearchAdapter(aiSearch)), intent: intentAdapter(serp.readApi), probes: probesAdapter(serp.readApi), gsc: gscAdapter(gsc.service) } });
     // Help, keyboard shortcuts and What's New (specs/help.feature.md): bundled notes, fixed pages opened on a gesture only.
     const help = createHelpMain({ app, settings: sessionStore.settings, consumeGesture: (windowId) => account.gestures.consume(windowId), log: logSession, diagnostics: createDiagnosticsMain({ app, sessionStore, telemetry: telemetryMain.service, agent, gsc: gsc.service, sync, log: logSession }) });
     // AI checks (specs/ai-checks.feature.md): off by default; only the audit's cookieless served HTML (peeked), on the agent's own route and model.
+    // Location profiles (specs/location-profiles.feature.md): the user's own proxies on in-memory, browse-class partitions; the one proxy `login` listener.
+    const locations = setupLocations({ app, safeStorage, store: sessionStore.locationProfiles, browser, log: logSession });
     const aiChecks = createAiChecksMain({ browser, isBrowseContents, served: () => served, tabUserAgent, tabScripting, agent: agent.checks, sessionStore, log: logSession });
     attachIpcHandler({
       router: appRouter,
@@ -519,6 +548,10 @@ function start(): void {
         seoExport: seoExports,
         tabOverrides: browser.tabOverrides,
         help: help.service,
+        dataSources: dataSources.service,
+        crawl: createMainCrawlIpc(crawl, logSession), // specs/site-crawl.feature.md (Task 7): runs, pages, structure, CSV via main's save dialog.
+        locations: locations.service, // specs/location-profiles.feature.md (Phase 12 Task 10b): profiles (no secret back) and New tab in location.
+        aiAnswers, // specs/ai-answers.feature.md (Phase 12 Task 9): kept AI answers, the view's run, retention and AI search settings.
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
@@ -576,11 +609,7 @@ function start(): void {
   });
 }
 
-/** Whether `contents` is a tab's (on the browse partition's session); fails closed. */
+/** Whether `contents` is a tab's (its session is browse-class: browser/browse-class.ts); fails closed. */
 function isBrowseContents(contents: WebContents): boolean {
-  try {
-    return contents.session === session.fromPartition(BROWSE_PARTITION);
-  } catch {
-    return false;
-  }
+  return isBrowseClassContents(contents);
 }

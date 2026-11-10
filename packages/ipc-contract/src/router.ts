@@ -35,6 +35,10 @@ import { inspectorRouter } from './inspector-router';
 import { seoExportRouter } from './seo-export-router';
 import { tabOverridesRouter } from './tab-overrides-router';
 import { helpRouter } from './help-router';
+import { dataSourcesRouter } from './data-sources-router';
+import { crawlRouter } from './crawl-router';
+import { locationRouter } from './location-router';
+import { aiAnswersRouter } from './ai-answers-router';
 
 // Every procedure starts `publicProcedure.use(enforceSender)` (spec `ipc-sender.feature.md`,
 // `every-procedure-enforces-sender`; Semgrep `ipc-sender-guard` in Task 5).
@@ -319,6 +323,10 @@ export const appRouter = router({
   tabOverrides: tabOverridesRouter,
   // Phase 11 Task 11 (`help.feature.md`): the Help menu's sheets, What's New and Help's fixed pages.
   help: helpRouter,
+  dataSources: dataSourcesRouter, // Phase 12 Task 1 (`data-sources.feature.md`): data source keys (status, set, clear; never a key back).
+  crawl: crawlRouter, // Phase 12 Task 7 (`site-crawl.feature.md`): the site crawl's runs, pages, structure and CSV export.
+  locations: locationRouter, // Phase 12 Task 10b (`location-profiles.feature.md`): location profiles (no secret back) and New tab in location.
+  aiAnswers: aiAnswersRouter, // Phase 12 Task 9 (`ai-answers.feature.md`): kept AI answers, the view's own run, retention and AI search settings.
 });
 
 export type AppRouter = typeof appRouter;

@@ -68,6 +68,15 @@
   font-size: 12px;
 }
 
+/* A notice's buttons (the API check's Send and Cancel), on a row of their own below its text. */
+.rankings-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .rankings-muted {
   color: var(--text-muted);
 }

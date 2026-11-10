@@ -5,6 +5,7 @@ import type { SessionDatabase } from '../client';
 import { capped, chunks, isCount, isId, isJsonOrNull, isOneOf, isRetention, isTime, pageSize } from './checks';
 import { uuidv7 } from './ids';
 import { ciCaptures, ciDiffs, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions, screenshotEdits } from './schema';
+import { ciSerpApiPurges } from './serp-api-schema';
 import { ciSerpReadings } from './workspace-schema';
 
 // Retention's purges (spec `capture-db.feature.md`, Retention planning; the plan's "The purge path").
@@ -17,11 +18,21 @@ import { ciSerpReadings } from './workspace-schema';
 //
 // Phase 10 (`workspace-db.feature.md`, Purge): a capture's SERP reading lives as long as the capture.
 // The purge deletes the purged captures' readings in the same batch, after `ci_captures` (the readings'
-// `_capture_gone_only` guard needs the capture gone first), and `bytes` counts their stored bytes. The
-// readings are not in `CAPTURED_TABLES`, so they get no tombstone, and `ci_purges` keeps its columns.
+// delete guard, `ci_serp_readings_delete_guard` since Phase 12's `0245`, needs the capture gone first),
+// and `bytes` counts their stored bytes. The readings are not in `CAPTURED_TABLES`, so they get no
+// tombstone, and `ci_purges` keeps its columns.
 //
 // After a purge, main unlinks the files of the answer's `plan.unreferencedHashes` (the plan executed,
 // planned again here), checking `isHashReferenced` once more before each unlink.
+//
+// Phase 12 Task 4 (`workspace-db.feature.md`, API readings (Phase 12)): a project's SERP API readings
+// (`source = 'serp-api'`, no capture) follow its policy per search key. The plan carries their ids
+// (`apiReadingIds`) and counts them (`counts.readings`, only when there is one); the stale and
+// emptiness checks see them (so a project with only API readings is purged like any other); the
+// purge records each id in `ci_serp_api_purges` (with the purge's id, reason and project) and then
+// deletes the reading, in the same transaction. `ci_purges` keeps its columns: `readings` is never
+// written there, and a purge of API readings only writes no `ci_purges` row at all (its log is
+// `ci_serp_api_purges`, device-local; the purge log view lists `ci_purges` only).
 //
 // Phase 11 Task 7: deleting a `ci_screenshots` row here also removes the local `screenshot_edits`
 // link of that row as an edited copy, in the same transaction, through migration `0231`'s
@@ -36,6 +47,8 @@ export interface PurgeCounts {
   readonly versions: number;
   readonly diffs: number;
   readonly screenshots: number;
+  /** Phase 12 Task 4: the plan's SERP API readings; present only when there is at least one (never in `ci_purges`). */
+  readonly readings?: number;
 }
 
 /** A dry run: the rows a purge would delete (sorted ids), and what it would free. */
@@ -48,6 +61,8 @@ export interface PurgePlan {
   readonly versionIds: readonly string[];
   readonly diffIds: readonly string[];
   readonly screenshotIds: readonly string[];
+  /** Phase 12 Task 4: the project's `serp-api` readings the policy selects (sorted ids). */
+  readonly apiReadingIds: readonly string[];
   /** Hashes of purged screenshots no remaining row has: the files main may unlink afterwards. */
   readonly unreferencedHashes: readonly string[];
   readonly counts: PurgeCounts;
@@ -59,17 +74,22 @@ export interface PurgePlan {
   readonly bytes: number;
   /** Of `bytes`, the unreferenced files' (their rows' `bytes`). */
   readonly fileBytes: number;
+  /**
+   * Of `bytes`, the API readings' (stored UTF-8 bytes; whole-branch review). Device-local, so never in
+   * `ci_purges.bytes` (synced): a mixed purge logs `bytes - apiReadingBytes`.
+   */
+  readonly apiReadingBytes: number;
 }
 
 export type ExecutePurgeResult = { readonly status: 'purged'; readonly purgeId: string; readonly plan: PurgePlan } | { readonly status: 'stale' } | { readonly status: 'empty' };
 
-/** A `ci_purges` row: the purge log. */
+/** A `ci_purges` row: the purge log (its counts never have `readings`). */
 export interface PurgeRecord {
   readonly id: string;
   readonly reason: PurgeReason;
   readonly projectId: string | null;
   readonly policyJson: string | null;
-  readonly counts: PurgeCounts;
+  readonly counts: Omit<PurgeCounts, 'readings'>;
   readonly bytes: number;
   readonly createdAt: number;
 }
@@ -166,11 +186,37 @@ function purgedScreenshots(rows: readonly ScreenshotRow[], policy: PurgePolicy, 
   return purged;
 }
 
+interface ApiReadingRow {
+  readonly id: string;
+  readonly key: string;
+  readonly at: number;
+}
+
+/**
+ * The project's `serp-api` readings the policy purges, per search key (and key version): `forever`
+ * none; `versions N` all but the N newest of each key; `days N` those observed before `now − N days`
+ * except each key's newest; `all` every one.
+ */
+function purgedApiReadings<T extends ApiReadingRow>(rows: readonly T[], policy: PurgePolicy, now: number): T[] {
+  if (policy.mode === 'forever') return [];
+  if (policy.mode === 'all') return [...rows];
+  const cutoff = now - (policy.mode === 'days' ? policy.value : 0) * DAY_MS;
+  // Newest first per key; `days N` keeps each key's newest whatever its age (Phase 6's "the newest
+  // always stays", lead ruling), `versions N` the N newest.
+  return [...groupBy(rows, (row) => row.key).values()].flatMap((group) =>
+    group.sort(newestFirst).filter((row, rank) => (policy.mode === 'versions' ? rank >= policy.value : rank > 0 && row.at < cutoff)),
+  );
+}
+
 const sorted = (ids: Iterable<string>): string[] => [...new Set(ids)].sort();
 const sameIds = (a: readonly string[], b: unknown): boolean => Array.isArray(b) && a.length === b.length && a.every((id, i) => id === b[i]);
 /** Whether `plan` would delete exactly the rows `fresh` does. */
 const sameRows = (fresh: PurgePlan, plan: PurgePlan): boolean =>
-  sameIds(fresh.captureIds, plan.captureIds) && sameIds(fresh.versionIds, plan.versionIds) && sameIds(fresh.diffIds, plan.diffIds) && sameIds(fresh.screenshotIds, plan.screenshotIds);
+  sameIds(fresh.captureIds, plan.captureIds) &&
+  sameIds(fresh.versionIds, plan.versionIds) &&
+  sameIds(fresh.diffIds, plan.diffIds) &&
+  sameIds(fresh.screenshotIds, plan.screenshotIds) &&
+  sameIds(fresh.apiReadingIds, plan.apiReadingIds);
 const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
 
 export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
@@ -232,6 +278,16 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
 
     const captures = purgedCaptures(captureRows, policy, now);
     const screenshots = purgedScreenshots(screenshotRows, policy, now);
+    // Phase 12 Task 4: the project's API readings (a tampered row, with no well-formed id, is left alone).
+    const apiRows = (
+      await db
+        .select({ id: ciSerpReadings.id, searchKey: ciSerpReadings.searchKey, searchKeyVersion: ciSerpReadings.searchKeyVersion, at: ciSerpReadings.observedAt, bytes: sql<unknown>`length(CAST(${ciSerpReadings.reading} AS BLOB))` })
+        .from(ciSerpReadings)
+        .where(and(eq(ciSerpReadings.projectId, projectId), eq(ciSerpReadings.source, 'serp-api')))
+    )
+      .filter((row) => isId(row.id))
+      .map((row) => ({ id: row.id, key: JSON.stringify([String(row.searchKey), num(row.searchKeyVersion)]), at: time(row.at), bytes: num(row.bytes) }));
+    const apiReadings = purgedApiReadings(apiRows, policy, now);
 
     // A version goes once every capture of it, in any project, goes (and only if the row is there).
     const purgedPerVersion = new Map<string, number>();
@@ -264,9 +320,11 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       versionIds: sorted(versionIds),
       diffIds: sorted(diffIds),
       screenshotIds: sorted(screenshots.map((row) => row.id)),
+      apiReadingIds: sorted(apiReadings.map((row) => row.id)),
       unreferencedHashes: sorted(unreferenced.map(([hash]) => hash)),
     };
     const fileBytes = unreferenced.reduce((sum, [, { bytes }]) => sum + bytes, 0);
+    const apiReadingBytes = apiReadings.reduce((sum, row) => sum + row.bytes, 0);
     let readingBytes = 0;
     for (const part of chunks(plan.captureIds)) {
       const [row] = await db
@@ -279,9 +337,17 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       (await sumOver(ciVersions, sql`length(CAST(${ciVersions.snapshot} AS BLOB))`, plan.versionIds)) +
       (await sumOver(ciDiffs, sql`length(CAST(${ciDiffs.diff} AS BLOB))`, plan.diffIds)) +
       readingBytes +
+      apiReadingBytes +
       fileBytes;
-    const counts = { captures: plan.captureIds.length, versions: plan.versionIds.length, diffs: plan.diffIds.length, screenshots: plan.screenshotIds.length };
-    return { ...plan, counts, bytes, fileBytes };
+    const counts: PurgeCounts = {
+      captures: plan.captureIds.length,
+      versions: plan.versionIds.length,
+      diffs: plan.diffIds.length,
+      screenshots: plan.screenshotIds.length,
+      // Only when there is one: every other plan's counts stay exactly Phase 6's.
+      ...(plan.apiReadingIds.length > 0 ? { readings: plan.apiReadingIds.length } : {}),
+    };
+    return { ...plan, counts, bytes, fileBytes, apiReadingBytes };
   }
 
   return {
@@ -294,7 +360,9 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       if (fresh === null) return null;
       if (!sameRows(fresh, plan)) return { status: 'stale' };
       const { counts } = fresh;
-      if (counts.captures + counts.versions + counts.diffs + counts.screenshots === 0) return { status: 'empty' };
+      if (counts.captures + counts.versions + counts.diffs + counts.screenshots + fresh.apiReadingIds.length === 0) return { status: 'empty' };
+      // The purge log's counts are Phase 6's columns: never the API readings'.
+      const logged = { captures: counts.captures, versions: counts.versions, diffs: counts.diffs, screenshots: counts.screenshots };
 
       const purgeId = uuidv7(now);
       // Children first: a diff, a screenshot and a capture name versions and captures.
@@ -304,9 +372,11 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
         ['ci_captures', ciCaptures, fresh.captureIds],
         ['ci_versions', ciVersions, fresh.versionIds],
       ];
-      const items: BatchItem<'sqlite'>[] = [
-        db.insert(ciPurges).values({ id: purgeId, reason, projectId: fresh.projectId, policy: policyJson(fresh.policy), ...counts, bytes: fresh.bytes, createdAt: now }),
-      ];
+      // An API-only purge writes no `ci_purges` row (a synced, all-zero row would tell other devices
+      // nothing): `ci_serp_api_purges` records it, by this same purge id. A mixed purge's row logs the
+      // captured rows' bytes only: the API readings are device-local (whole-branch review).
+      const capturedRows = logged.captures + logged.versions + logged.diffs + logged.screenshots > 0;
+      const items: BatchItem<'sqlite'>[] = capturedRows ? [db.insert(ciPurges).values({ id: purgeId, reason, projectId: fresh.projectId, policy: policyJson(fresh.policy), ...logged, bytes: Math.max(0, fresh.bytes - fresh.apiReadingBytes), createdAt: now })] : [];
       for (const [tableName, , ids] of order) {
         for (const part of chunks(ids)) items.push(db.insert(ciTombstones).values(part.map((rowId) => ({ id: uuidv7(now), purgeId, tableName, rowId, createdAt: now }))));
       }
@@ -315,6 +385,11 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       }
       // The purged captures' readings, now that the captures are gone (same transaction).
       for (const part of chunks(fresh.captureIds)) items.push(db.delete(ciSerpReadings).where(and(eq(ciSerpReadings.source, 'capture'), inArray(ciSerpReadings.captureId, part))));
+      // Phase 12 Task 4: the API readings, each recorded first (`0245`'s delete guard looks for the record).
+      for (const part of chunks(fresh.apiReadingIds)) {
+        items.push(db.insert(ciSerpApiPurges).values(part.map((readingId) => ({ readingId, purgeId, reason, projectId: fresh.projectId, purgedAt: now }))));
+        items.push(db.delete(ciSerpReadings).where(and(eq(ciSerpReadings.source, 'serp-api'), inArray(ciSerpReadings.id, part))));
+      }
       try {
         await db.batch(items as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
       } catch (error) {

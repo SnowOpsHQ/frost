@@ -16,6 +16,7 @@
  * retargeted to that host, before the overlay stops them; it cannot select, move or end a selection
  * (only trusted input does), and it cannot keep Esc from cancelling (main hears it first).
  */
+import { LOCATION_TAB_REFUSAL_MESSAGE } from './location-profiles.spec';
 import type { ScreenshotKind } from './capture-db.spec';
 import type { SearchParams } from './serp-search-params.schema';
 import type { RenderProfile } from './render-profile.spec';
@@ -94,8 +95,15 @@ export type ScreenshotLimits = { readonly [K in keyof typeof SCREENSHOT_LIMITS]:
  *   stamp is not consulted. The service learns this through `ScreenshotTabs.overridesOn?` (live
  *   overrides or the marker; absent: off) and `ScreenshotTabs.overridesRevision?` (absent: no
  *   revision check). Project runs' tabs have default overrides and are never refused this way.
+ * - `location-tab` (Phase 12 Task 10b, Decision 11; `location-profiles.spec.ts`): the tab goes
+ *   through a location profile's proxy (`TabState.location`) and the page's search parameters do not
+ *   carry `location` (it is not a result page the SERP service read with the tab's location). Location
+ *   reaches a stored row only through its `search_params`, so any other page would read as the user's
+ *   own connection: refused before anything is stored. The service learns the tab's location through
+ *   `ScreenshotTabs.locationOf?` (absent: none), filled from `TabState.location`. A home tab is never
+ *   refused this way.
  */
-export const SCREENSHOT_REFUSALS = ['no-tab', 'not-active', 'no-page', 'busy', 'cancelled', 'too-large', 'capture-failed', 'store-failed', 'no-project', 'tab-emulation-on'] as const;
+export const SCREENSHOT_REFUSALS = ['no-tab', 'not-active', 'no-page', 'busy', 'cancelled', 'too-large', 'capture-failed', 'store-failed', 'no-project', 'tab-emulation-on', 'location-tab'] as const;
 export type ScreenshotRefusal = (typeof SCREENSHOT_REFUSALS)[number];
 
 /** How the Changes panel explains a refusal (frost's own wording). */
@@ -110,6 +118,7 @@ export const SCREENSHOT_REFUSAL_MESSAGES: Readonly<Record<ScreenshotRefusal, str
   'store-failed': 'The screenshot could not be saved.',
   'no-project': 'That project no longer exists.',
   'tab-emulation-on': 'This tab has CSS, cookies or location changed. Set them back to normal, reload the page, then take the screenshot.',
+  'location-tab': LOCATION_TAB_REFUSAL_MESSAGE,
 };
 
 /** Said beside Full page: the page is scrolled to be captured, and the page itself can tell. */

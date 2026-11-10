@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { getToolDefinition } from '@app/ai-skills';
+import { getToolDefinition, runAiSearchApprovedInputSchema } from '@app/ai-skills';
 import {
   APPROVAL_DISPLAY_MAX_CHARS,
   APPROVAL_TIMEOUT_MS,
@@ -25,7 +25,8 @@ import {
   type ToolRunVia,
 } from '@app/specs/agent-approvals.spec';
 import { ToolInputSchema, type JsonValue, type ToolResult } from '@app/specs/agent-protocol.schema';
-import { completeToolInput, invokeTimeAnswer } from '@app/specs/agent-search-tools.spec';
+import { completeToolInput, invokeTimeAnswer, SEARCH_TOOL_SOURCES } from '@app/specs/agent-search-tools.spec';
+import { AI_SEARCH_LIMITS, AI_SEARCH_UNAVAILABLE_MESSAGES, type AiSearchContext } from '@app/specs/ai-search.spec';
 import { mcpServerIdOf, mcpToolLabel } from '@app/specs/agent-mcp.spec';
 import { pageSource } from '@app/specs/agent-page-tools.spec';
 import { AGENT_TOOLS, ATTACHED_TAB_NOT_READY_NOTE, isAgentToolName, isGrantable, isMcpToolName, MAX_ATTACHED_READS_PER_TURN, TOOL_ERROR_CODES, toolRisk, type AgentToolRisk, type ToolErrorCode } from '@app/specs/agent-tools.spec';
@@ -54,6 +55,16 @@ import { wrapToolOutput } from './tool-output';
 // with the **attached tab's** page: its origin keys grants and the private-page rule and is the one
 // the approval card names, and the runner gets the attached tab's id. An `audit` read with no ready
 // audit of the attach URL is answered `not-ready` as it arrives (no card).
+//
+// Phase 12 Task 8 (plan Decision 8, `specs/ai-search.feature.md`): for `run_ai_search` the broker
+// reads the AI search context (`aiSearchContext`: settings, gates, keys) as the call arrives, before
+// anything else is decided. With no usable engine the call is answered as data at once (no card,
+// nothing sent: as shipped, both gates closed, every call). Otherwise `completeToolInput` drops any
+// `via` the model sent and fills `engine` and `via` from the settings, and the input is parsed with
+// `runAiSearchApprovedInputSchema`, so the card, the hash and the run all hold the engine and via.
+// Task 8 review: the model's input is first checked with the model-facing schema (`invalid-input`),
+// and a call past `AI_SEARCH_LIMITS.maxCallsPerTurn` pending, running or run calls of the turn is
+// answered `capped` as data before any card.
 
 /** What a tool run gets besides its input. */
 export interface ToolRunContext {
@@ -201,6 +212,12 @@ export interface ApprovalBrokerDeps {
    * `read_attached_tab` is refused `not-allowed`).
    */
   readonly attachedTabs?: Pick<AttachedTabs, 'resolve' | 'isLive' | 'auditReady'>;
+  /**
+   * The AI search settings, legal gates and keys now (Phase 12 Task 8; `main/ai-search`), read once
+   * per `run_ai_search` call as it arrives. Default: none (every `run_ai_search` is answered
+   * `not-available` as data, with no card). A read that fails counts as none.
+   */
+  readonly aiSearchContext?: () => AiSearchContext | Promise<AiSearchContext>;
 }
 
 export interface ApprovalBroker {
@@ -296,7 +313,8 @@ interface InputParser {
 }
 
 /**
- * `input` re-parsed in main: a catalogue tool's own strict schema (`@app/ai-skills`), or, for an MCP
+ * `input` re-parsed in main: a catalogue tool's own strict schema (`@app/ai-skills`; for
+ * `run_ai_search`, `runAiSearchApprovedInputSchema`), or, for an MCP
  * tool (its server's schema is Task 10's), bounded JSON with no unsafe character in a key or string
  * (`isSafeInputJson`). The canonical input must fit `APPROVAL_DISPLAY_MAX_CHARS`, so the user always
  * sees all of it (a catalogue input always does; a longer MCP input is refused rather than shown
@@ -305,7 +323,8 @@ interface InputParser {
 function reparse(toolName: string, input: unknown, mcpInputAllowed: (toolName: string, input: JsonValue) => boolean): { canonical: string; value: JsonValue } | null {
   // Each tool's schema, seen as a plain parser (their union of output types is too deep to infer).
   const definition = getToolDefinition(toolName) as { readonly inputSchema: InputParser } | undefined;
-  const schema: InputParser | null = definition !== undefined ? definition.inputSchema : isMcpToolName(toolName) ? ToolInputSchema : null;
+  // `run_ai_search` is shown, hashed and run as its approved input (main filled `engine` and `via`).
+  const schema: InputParser | null = toolName === 'run_ai_search' ? runAiSearchApprovedInputSchema : definition !== undefined ? definition.inputSchema : isMcpToolName(toolName) ? ToolInputSchema : null;
   const parsed = schema?.safeParse(input);
   if (parsed === undefined || !parsed.success) return null;
   const canonical = JSON.stringify(parsed.data ?? null);
@@ -558,10 +577,75 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
         fail(call, 'not-allowed');
         return;
       }
+      if (invoke.toolName !== 'run_ai_search') {
+        decideCall(invoke, call, chat, risk, undefined);
+        return;
+      }
+      // `run_ai_search`: the AI search context first (a failed read counts as none: nothing usable).
+      let pending: AiSearchContext | Promise<AiSearchContext> | undefined;
+      try {
+        pending = deps.aiSearchContext?.();
+      } catch {
+        pending = undefined;
+      }
+      if (!(pending instanceof Promise)) {
+        decideCall(invoke, call, chat, risk, pending);
+        return;
+      }
+      void pending.catch((): undefined => undefined).then((context) => {
+        // The turn may have ended while the context was read.
+        if (call.settled) return;
+        if (!chat.active || chats.get(call.chatId) !== chat) {
+          fail(call, 'expired');
+          return;
+        }
+        try {
+          decideCall(invoke, call, chat, risk, context);
+        } catch {
+          fail(call, 'failed');
+        }
+      });
+    } catch {
+      // A dependency threw (the tab lookup, the grants): refused, never left running.
+      fail(call, 'failed');
+    }
+  };
+
+  /** Decides a call that passed the chat's checks: completes and parses its input, then answers, runs or asks. Throws only on a dependency's throw. */
+  const decideCall = (invoke: AgentToolInvoke, call: Call, chat: ChatState, risk: AgentToolRisk, aiSearch: AiSearchContext | undefined): void => {
+    {
       const tabUrl = deps.tabUrl(chat.tabId);
-      // Defaults that depend on the tab (Task 8 review: `gsc_performance`'s page) are filled in
+      const completeContext = aiSearch !== undefined ? { aiSearch } : {};
+      // `run_ai_search` with no usable engine (as shipped: every gate closed) is answered as data now:
+      // no card, nothing sent.
+      if (invoke.toolName === 'run_ai_search') {
+        // The model's input first, against the model-facing schema (any `via` it sent set aside: it is
+        // dropped anyway): an engine outside `AI_SEARCH_ENGINES`, a bad query or an unknown key is
+        // `invalid-input`, never answered as data.
+        const given = typeof invoke.input === 'object' && invoke.input !== null && !Array.isArray(invoke.input) ? (invoke.input as Record<string, unknown>) : null;
+        const { via: _modelVia, ...modelFields } = given ?? {};
+        if (given === null || !getToolDefinition('run_ai_search').inputSchema.safeParse(modelFields).success) {
+          stats.refused += 1;
+          fail(call, 'invalid-input');
+          return;
+        }
+        const answered = invokeTimeAnswer(invoke.toolName, null, invoke.input, completeContext);
+        if (answered !== null) {
+          const result = wrapToolOutput(invoke.toolName, answered.source, answered.data);
+          if (result === null) {
+            fail(call, 'failed');
+            return;
+          }
+          call.settled = true;
+          send(call.chatId, call.callId, call.toolName, result);
+          setStatus(call, 'done');
+          return;
+        }
+      }
+      // Defaults that depend on the tab (Task 8 review: `gsc_performance`'s page) and, for
+      // `run_ai_search`, the engine and via from the user's settings (Phase 12 Task 8) are filled in
       // before the input is parsed, so the approval shows, hashes and runs exactly that input.
-      const input = reparse(invoke.toolName, completeToolInput(invoke.toolName, invoke.input, tabUrl), mcpInputAllowed);
+      const input = reparse(invoke.toolName, completeToolInput(invoke.toolName, invoke.input, tabUrl, completeContext), mcpInputAllowed);
       if (input === null) {
         stats.refused += 1;
         fail(call, 'invalid-input');
@@ -617,7 +701,7 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
       }
       // A call frost answers as it arrives, without asking or running anything (a probe run for a
       // private page: nothing would be fetched, so an approval card would only invite a reflex Allow).
-      const answered = invokeTimeAnswer(invoke.toolName, pageUrl);
+      const answered = invokeTimeAnswer(invoke.toolName, pageUrl, input.value, completeContext);
       if (answered !== null) {
         const result = wrapToolOutput(invoke.toolName, answered.source, answered.data);
         if (result === null) {
@@ -641,11 +725,34 @@ export function createApprovalBroker(deps: ApprovalBrokerDeps): ApprovalBroker {
         void run(call, decided, risk === 'read' ? 'read' : 'grant');
         return;
       }
+      // `run_ai_search` (Task 8 review): no card once `maxCallsPerTurn` calls of this turn are waiting
+      // for the user, running or ran; the call is answered `capped` as data, nothing shown or sent.
+      if (invoke.toolName === 'run_ai_search' && aiSearchCallsThisTurn(chat) >= AI_SEARCH_LIMITS.maxCallsPerTurn) {
+        const result = wrapToolOutput(invoke.toolName, SEARCH_TOOL_SOURCES.run_ai_search, { unavailable: AI_SEARCH_UNAVAILABLE_MESSAGES.capped, state: 'capped' });
+        if (result === null) {
+          fail(call, 'failed');
+          return;
+        }
+        call.settled = true;
+        send(call.chatId, call.callId, call.toolName, result);
+        setStatus(call, 'done');
+        return;
+      }
       ask(call, decided);
-    } catch {
-      // A dependency threw (the tab lookup, the grants): refused, never left running.
-      fail(call, 'failed');
     }
+  };
+
+  /**
+   * This turn's `run_ai_search` calls that asked the user and are pending, running or ran (done, or
+   * failed after it may have sent: counted to be safe); denied and expired ones free their place.
+   */
+  const aiSearchCallsThisTurn = (chat: ChatState): number => {
+    let count = 0;
+    for (const other of activities.get(chat.chatId)?.values() ?? []) {
+      if (other.chat !== chat || other.toolName !== 'run_ai_search' || other.approvalId === null) continue;
+      if (other.status === 'awaiting-approval' || other.status === 'running' || other.status === 'done' || other.status === 'failed') count += 1;
+    }
+    return count;
   };
 
   const unsubscribeTools = deps.host.onToolInvoke(onInvoke);

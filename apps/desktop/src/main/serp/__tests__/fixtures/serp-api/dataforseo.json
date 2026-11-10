@@ -1,0 +1,53 @@
+{
+  "version": "0.1.20261110",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "1.0 sec.",
+  "cost": 0.002,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "11101200-frost-fixture-0001",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "data": { "api": "serp", "function": "live", "se": "google", "se_type": "organic", "keyword": "frost browser", "location_name": "United States", "language_code": "en", "device": "desktop" },
+      "result": [
+        {
+          "keyword": "frost browser",
+          "type": "organic",
+          "se_domain": "google.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "items_count": 12,
+          "item_types": ["paid", "featured_snippet", "organic", "people_also_ask", "video", "discussions_and_forums", "images", "related_searches", "knowledge_graph"],
+          "items": [
+            { "type": "paid", "rank_group": 1, "rank_absolute": 1, "position": "left", "title": "Frost Gear Winter Sale", "domain": "ads.example.net", "url": "https://ads.example.net/frost-gear" },
+            { "type": "featured_snippet", "rank_group": 1, "rank_absolute": 2, "position": "left", "title": "What frost is, in one line", "url": "https://www.icecrystal.example/what-is-frost", "description": "Frost is ice that forms on cold surfaces." },
+            { "type": "organic", "rank_group": 1, "rank_absolute": 3, "position": "left", "title": "Frost — the SEO browser", "domain": "www.example.com", "url": "https://www.example.com/frost", "description": "Audit pages as you browse." },
+            { "type": "organic", "rank_group": 2, "rank_absolute": 4, "position": "left", "title": "Ten frost tips", "domain": "blog.example.org", "url": "https://blog.example.org/frost-tips" },
+            { "type": "people_also_ask", "rank_group": 1, "rank_absolute": 5, "position": "left", "items": [
+              { "type": "people_also_ask_element", "title": "Is frost a web browser?", "expanded_element": [{ "type": "people_also_ask_expanded_element", "url": "https://www.example.com/faq", "title": "Frost FAQ" }] },
+              { "type": "people_also_ask_element", "title": "Does frost run on Linux?" }
+            ] },
+            { "type": "organic", "rank_group": 3, "rank_absolute": 6, "position": "left", "title": "Frost history", "domain": "example.com", "url": "https://example.com/history" },
+            { "type": "video", "rank_group": 1, "rank_absolute": 7, "position": "left", "items": [
+              { "type": "video_element", "title": "Frost in ten minutes", "url": "https://video.example.net/watch?v=frost10", "source": "Example Video" }
+            ] },
+            { "type": "discussions_and_forums", "rank_group": 1, "rank_absolute": 8, "position": "left", "items": [
+              { "type": "discussions_and_forums_element", "title": "What I learned using frost", "url": "https://forum.example.net/t/frost" }
+            ] },
+            { "type": "organic", "rank_group": 4, "rank_absolute": 9, "position": "left", "title": "Frostline guide", "domain": "www.frostline.example", "url": "https://www.frostline.example/" },
+            { "type": "images", "rank_group": 1, "rank_absolute": 10, "position": "left", "title": "Images for frost browser", "url": "https://www.google.com/search?q=frost+browser&tbm=isch", "items": [
+              { "type": "images_element", "alt": "Frost window screenshot", "url": "https://img.example.net/frost-1", "image_url": "https://img.example.net/frost-1.png" },
+              { "type": "images_element", "alt": "Frost sidebar", "url": "https://img.example.net/frost-2" }
+            ] },
+            { "type": "organic", "rank_group": 5, "rank_absolute": 11, "position": "left", "title": "Alice on frost", "domain": "alice.github.io", "url": "https://alice.github.io/frost" },
+            { "type": "related_searches", "rank_group": 1, "rank_absolute": 12, "position": "left", "items": ["frost browser download", "frost browser linux"] },
+            { "type": "knowledge_graph", "rank_group": 1, "rank_absolute": 13, "position": "right", "title": "Frost (browser)", "url": "https://frost.example.com/", "items": null }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -2,6 +2,8 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { webContents as electronWebContents, type WebContents } from 'electron';
 import type { SerpReadApi, SerpService } from '@app/ipc-contract';
+import type { SerpApiJob } from '@app/specs/serp-api.schema';
+import { SERP_API_LIMITS } from '@app/specs/serp-api.spec';
 import type { BrowserState } from '@app/specs/browser.spec';
 import type { BoundedFetcher } from '@app/specs/fetcher.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
@@ -20,6 +22,7 @@ import { createProbeParser } from './probe-parser';
 import { createProbes } from './probes';
 import { runSerpRead } from './read-script';
 import { createSerpAnalyzer } from './serp-analyzer';
+import type { SerpApiJobAnswer } from './serp-api-parse';
 import { createSerpService, type Serp, type SerpTabs } from './service';
 
 // Wires the SERP overlay for main (spec `serp-service.spec.ts`; acceptance `serp-overlay.feature.md`,
@@ -49,6 +52,8 @@ import { createSerpService, type Serp, type SerpTabs } from './service';
 // - "Open in" an AI engine (Phase 10 Task 10, `destinations.ts`): the tab's own search at a fixed
 //   destination, for the active tab only, opened through main's `openBackgroundTab` (none given:
 //   `no-tab`), on the user's action only;
+// - the data APIs' answers (Phase 12 Task 3, `serp-api.spec.ts`): mapped in an analysis worker of
+//   their own (job kind `api`), so a burst of tab readings never drops one (`analyseApi`);
 // - disposal on `will-quit`.
 
 /** The parts of Electron's `app` the setup uses. */
@@ -87,6 +92,7 @@ export interface SerpSetupOptions {
   readonly fetcher?: BoundedFetcher;
   readonly spawnAnalysis?: () => AnalysisWorker;
   readonly spawnProbes?: () => AnalysisWorker;
+  readonly spawnApi?: () => AnalysisWorker;
   readonly classifier?: IntentClassifier;
   readonly bundled?: PackFiles;
   readonly openContents?: () => readonly WebContents[];
@@ -99,6 +105,8 @@ export interface SerpSetup {
   readonly readApi: SerpReadApi;
   /** Clear Browsing Data: every reading, outline and intent answer goes, and every probe run is cancelled. */
   onClearBrowsingData(): void;
+  /** Maps a data API's answer in the SERP worker (job kind `api`; `checkSearchViaApi`'s `parse`). Never rejects. */
+  analyseApi(job: SerpApiJob): Promise<SerpApiJobAnswer>;
   /** Stops the service, the probes, the analysis and probe workers and the intent process (run on `will-quit`). */
   dispose(): void;
 }
@@ -133,6 +141,11 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
   const probeParser = createProbeParser({
     spawn: options.spawnProbes ?? (() => new Worker(path.join(__dirname, 'serp-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } })),
   });
+  // A data API's answer (at most 2 MB of vendor JSON) is parsed in a worker of its own, with the probes' heap.
+  const apiAnalyzer = createSerpAnalyzer({
+    timeoutMs: SERP_API_LIMITS.parseTimeoutMs,
+    spawn: options.spawnApi ?? (() => new Worker(path.join(__dirname, 'serp-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } })),
+  });
   const classifier = options.classifier ?? createIntent({ userData: options.userData, fetcher, isPackaged: app.isPackaged, switches: { has: (name) => options.switches.hasSwitch(name) }, log });
 
   // The tabs' pages, by WebContents id (browse-session tabs only).
@@ -146,7 +159,9 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
       if (!contents) return null;
       const profile = tab.renderProfile;
       const preset = profile && profile.status !== 'failed' ? profile.profile.device : 'none';
-      return { contentsId: contents.id, url: contents.getURL(), documentSeq: tab.documentSeq, loading: tab.loading, device: SERP_DEVICE_OF_PRESET[preset], page: contents };
+      // A location tab's (Phase 12 Task 10b): its results are asked from that place, through its proxy.
+      const location = tab.location ? { via: 'proxy' as const, label: tab.location.label } : null;
+      return { contentsId: contents.id, url: contents.getURL(), documentSeq: tab.documentSeq, loading: tab.loading, device: SERP_DEVICE_OF_PRESET[preset], location, page: contents };
     },
     tabOf(contentsId) {
       const contents = pages.get(contentsId);
@@ -220,6 +235,7 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
     serp.dispose();
     probes.dispose();
     analyzer.dispose();
+    apiAnalyzer.dispose();
     probeParser.dispose();
     classifier.dispose();
   };
@@ -232,5 +248,5 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
     probes.cancelAll();
     probes.clearCache();
   };
-  return { service, readApi, onClearBrowsingData, dispose };
+  return { service, readApi, onClearBrowsingData, analyseApi: (job) => apiAnalyzer.analyseApi(job), dispose };
 }

@@ -94,8 +94,19 @@ function inflate(bytes: Uint8Array): { ok: true; bytes: Uint8Array; gzip: boolea
 /** The text is fed to the parser in pieces of this many bytes (decoded as UTF-8, streaming). */
 const FEED_BYTES = 256 * 1024;
 
-/** Reads one sitemap file (`SitemapJob`). Never throws. */
-export function parseSitemap(job: SitemapJob): SitemapParse {
+/**
+ * Where a sitemap's `<loc>` URLs are gathered (Phase 12 Task 6b, the site crawl's seeding): the
+ * counted `<url>` entries numbered `skip` to `skip + take - 1`, each as a document key (`http(s)`, no
+ * fragment), pushed to `into`. The checks pass none.
+ */
+export interface SitemapLocs {
+  readonly skip: number;
+  readonly take: number;
+  readonly into: string[];
+}
+
+/** Reads one sitemap file (`SitemapJob`); with `locs`, also gathers those `<loc>` URLs. Never throws. */
+export function parseSitemap(job: SitemapJob, locs?: SitemapLocs): SitemapParse {
   // The page is listed under its own URL or its effective canonical.
   const pageKeys = new Set([keyOf(job.pageUrl), job.canonicalUrl ? keyOf(job.canonicalUrl) : null].filter((key): key is string => key !== null));
   let type: SitemapParse['type'] = null;
@@ -169,6 +180,10 @@ export function parseSitemap(job: SitemapJob): SitemapParse {
       entry = null;
       if (type === 'urlset') {
         if (counted >= job.urlBudget) throw new Stop('too-many-urls');
+        if (locs && done.loc !== null && counted >= locs.skip && counted < locs.skip + locs.take) {
+          const key = keyOf(done.loc);
+          if (key !== null && key.length <= SITEMAP_LIMITS.maxLocChars) locs.into.push(key);
+        }
         counted += 1;
         if (!listed && done.loc !== null && pageKeys.has(keyOf(done.loc) ?? '')) listed = true;
       } else if (done.loc !== null && children.length < SITEMAP_LIMITS.maxFiles) {

@@ -6,7 +6,7 @@ import type { JsonValue } from '@app/specs/agent-protocol.schema';
 import type { ChatgptE2eSeam } from '@app/specs/agent-chatgpt-e2e.schema';
 import { isMcpToolName } from '@app/specs/agent-tools.spec';
 import { startLoopback } from '../account/loopback';
-import { createApprovalBroker, unavailableToolRunner, type ApprovalBroker, type ToolRunner } from './approvals';
+import { createApprovalBroker, unavailableToolRunner, type ApprovalBroker, type ApprovalBrokerDeps, type ToolRunner } from './approvals';
 import { createChatgptAuthInUserData, type ChatgptAuth } from './chatgpt';
 import { createChatgptRoute, type ChatgptRoute } from './chatgpt/route';
 import { createMemoryChatgptStore } from './chatgpt/e2e-seam';
@@ -85,6 +85,8 @@ export interface CreateAgentDeps {
   readonly chatgptE2e?: ChatgptE2eSeam | null;
   /** The chats' attached tabs (Phase 11 Task 9): the broker resolves `read_attached_tab` refs here. Default: none. */
   readonly attachedTabs?: Pick<AttachedTabs, 'resolve' | 'isLive' | 'auditReady'>;
+  /** The AI search settings, gates and keys now (Phase 12 Task 8): the broker completes `run_ai_search` from them. Default: none (`not-available`). */
+  readonly aiSearchContext?: ApprovalBrokerDeps['aiSearchContext'];
 }
 
 export interface Agent {
@@ -170,6 +172,7 @@ export function createAgent(deps: CreateAgentDeps): Agent {
     ...(runner ? { runner } : {}),
     tabUrl: deps.tabUrl ?? (() => null),
     ...(deps.attachedTabs ? { attachedTabs: deps.attachedTabs } : {}),
+    ...(deps.aiSearchContext ? { aiSearchContext: deps.aiSearchContext } : {}),
     log,
     ...(mcp ? { mcpLabel: (toolName: string) => mcp.labelOf(toolName), mcpInputAllowed: (toolName: string, input: JsonValue) => mcp.inputAllowed(toolName, input) } : {}),
   });

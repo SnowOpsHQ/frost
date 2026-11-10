@@ -622,7 +622,8 @@ describe('every tool', () => {
     for (const [tool, input] of [
       ['serp_results', { query: 'tea' }],
       ['search_intent', { query: 'tea' }],
-      ['run_ai_search', { query: 'tea' }],
+      // The approved input (Phase 12 Task 8: main filled `engine` and `via`).
+      ['run_ai_search', { query: 'tea', engine: 'perplexity', via: 'api' }],
       ['gsc_performance', {}],
       ['mcp__srv__tool', {}],
     ] as const) {

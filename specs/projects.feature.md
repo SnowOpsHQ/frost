@@ -234,6 +234,35 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   starts are suspended until frost restarts (memory only), heard as the run ends (the run service's
   `onEnded`, ruling: not sampled at a tick). No login item, no background process, no server.
 
+## Checking searches via a data API (Phase 12 Task 4)
+Plan: `docs/plans/phase-12-big-bets.md`, Decision 7 and Task 4; the procedure, the confirm and the
+legal gate are in `data-sources.feature.md` (Check via API); the readings' storage, retention and
+purge in `workspace-db.feature.md` (API readings (Phase 12)) and `retention.feature.md`.
+- The project's Rankings view has a **Check via API** button, shown only while main's
+  `dataSources.checkPlan` answers anything but `unavailable` (no vendor's legal gate open, as
+  shipped: no button). It is enabled only when the plan is `ready`; otherwise it is disabled with the
+  reason in words (`DATA_CHECK_REFUSAL_MESSAGES`: "Add a key in Settings › Data sources.", "Choose a
+  provider in Settings › Data sources.", no saved searches). Disabled while a capture run is under way.
+- Pressing it shows the confirm in the view ("This sends N requests to <provider>." and
+  `DATA_SPEND_NOTE`); Send calls `dataSources.checkProjectSearches` with that vendor and count; Cancel
+  sends nothing. The outcome is said in the polite live region and the table is read again.
+- Each API reading is one point of its saved search's own series (the same search key as its tab
+  captures), and each point says where it came from: "Tab capture" or "<Vendor> API"
+  (`DATA_CHECK_TEXT`; the vendor named by the reading's `page_url`, `serpApiProviderOfPageUrl`).
+- A project with only API readings is no exception: its retention, its deletion and the startup retry
+  of a failed deletion all see them (`deletedProjectsWithRows`), and its retention runs after a check
+  writes, as after a capture run. Retention applies per search key: Keep N days keeps each search's
+  newest API reading whatever its age (as each page keeps its newest version), Keep the last N keeps
+  the N newest of each search. A purge of API readings only is not listed in the purge log (no
+  `ci_purges` row is written for it; `ci_serp_api_purges` records it on this device).
+- The palette offers "Check searches via <provider>" (`apps/desktop/src/renderer/data-sources-palette.ts`)
+  for the project last opened, only while main's `dataSources.serpProvider` names a vendor: it opens
+  that project's Rankings view on the same confirm (it never sends by itself).
+- Scenario: rank-point-shows-source (`apps/desktop/src/renderer/__tests__/rankings-components.test.ts`)
+  — the table's latest position and each point of a series are labelled "Tab capture" or "SerpApi API".
+- Scenario: api-check-button-follows-main (`rankings-components.test.ts`) — hidden on `unavailable`,
+  disabled with the reason on `no-key` / `no-provider`, the confirm before any call, Cancel sends nothing.
+
 ## The service
 - Every method answers; none rejects. A refusal is typed (`PROJECT_REFUSALS`, `RUN_REFUSALS`); a
   database failure is `store-failed` and one log line with its code, never its message.

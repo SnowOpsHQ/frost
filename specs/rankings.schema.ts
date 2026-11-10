@@ -21,6 +21,7 @@
 import { z } from 'zod';
 import { MAX_STORED_URL_LENGTH } from './browser-session-db.spec';
 import { RETENTION_MODES, UUIDV7_PATTERN } from './capture-db.spec';
+import { DATA_SERP_PROVIDERS, type DataSerpProvider } from './data-sources.spec';
 import { utf8Bytes } from './rankings-url.spec';
 import {
   COMPARE_MOVEMENTS,
@@ -28,6 +29,7 @@ import {
   RANK_CSV_KINDS,
   RANK_LIMITS,
   RANK_OUTCOMES,
+  RANK_POINT_PROVIDERS,
   RANK_RANGES,
   RANKINGS_REFUSALS,
   SERP_FILTER_PARAMS,
@@ -35,6 +37,7 @@ import {
   type CompareAnswer,
   type CopyCsvAnswer,
   type RankPoint,
+  type RankPointProvider,
   type RankRow,
   type RankSeriesAnswer,
   type RankTableAnswer,
@@ -140,6 +143,9 @@ export const RankPointSchema = z.strictObject({
     .array(z.string().refine((type) => FEATURE_TYPES.has(type), { message: 'not a SERP feature type' }))
     .max(SERP_FEATURE_TYPES.length)
     .readonly(),
+  // Phase 12 Task 4: a SERP API reading's point, and its vendor (absent: a tab capture's).
+  source: z.literal('serp-api').optional(),
+  provider: z.enum(RANK_POINT_PROVIDERS).optional(),
 }) satisfies z.ZodType<RankPoint>;
 
 const competitorPoints = z.record(domain, RankPointSchema.nullable()).refine((points) => Object.keys(points).length <= MAX_PROJECT_COMPETITORS, { message: 'too many competitors' });
@@ -232,4 +238,7 @@ export const SaveCsvAnswerSchema = z.discriminatedUnion('status', [z.strictObjec
 // ---- Compile-time proofs: Phase 3's schemas fit the Zod-free shapes -----------------------------
 
 void (SearchParamsSchema satisfies z.ZodType<SearchParamsShape>);
+// Phase 12 Task 4: a rank point's vendors are exactly the SERP vendors (each list assignable to the other).
+void ((): readonly DataSerpProvider[] => RANK_POINT_PROVIDERS);
+void ((): readonly RankPointProvider[] => DATA_SERP_PROVIDERS);
 void (SerpSnapshotSchema satisfies z.ZodType<SerpSnapshotShape>);

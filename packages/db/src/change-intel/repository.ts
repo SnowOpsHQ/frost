@@ -47,13 +47,16 @@ import {
 import { uuidv7 } from './ids';
 import { createPurgeOperations, type PurgeOperations } from './purge';
 import { createReadingOperations, isCaptureReading, readingRow, type CaptureReadingInput, type ReadingOperations } from './readings';
+import { createApiReadingOperations, type ApiReadingOperations } from './serp-api-readings';
 import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions, screenshotEdits } from './schema';
 import { createWorkspaceOperations, type WorkspaceOperations } from './workspace';
 import { ciEntryTags, ciProjectCompetitors, ciSerpReadings } from './workspace-schema';
+import { crawlRuns } from '../site-crawl/schema';
 
 export type { ExecutePurgeResult, PurgeCounts, PurgePlan, PurgePolicy, PurgeRecord } from './purge';
 export type { AppendReadingInput, CaptureReadingInput, ReadingDateRow, ReadingOperations, ReadingSearch, ReadingsCountFilter, ReadingsFilter, StoredReading } from './readings';
 export type { Competitor, EntryTag, ProjectWorkspace, SetEntryTagsInput, WorkspaceOperations } from './workspace';
+export type { ApiReadingOperations, AppendApiReadingInput } from './serp-api-readings';
 
 // The change-intelligence repository (Phase 6 Task 1; spec `capture-db.spec.ts`; acceptance
 // `capture-db.feature.md`): the only reads and writes of the `ci_*` tables. Zod-free and dumb about
@@ -255,7 +258,7 @@ export interface ChangeIntelUsage {
   readonly readingBytes: number;
 }
 
-export interface ChangeIntelRepository extends PurgeOperations, ReadingOperations, WorkspaceOperations {
+export interface ChangeIntelRepository extends PurgeOperations, ReadingOperations, ApiReadingOperations, WorkspaceOperations {
   /** Appends a capture (and a new version and its diff when the snapshot changed) in one transaction; `null` for invalid input. */
   appendCapture(input: AppendCaptureInput): Promise<AppendCaptureResult | null>;
   appendScreenshot(input: AppendScreenshotInput): Promise<boolean>;
@@ -288,7 +291,7 @@ export interface ChangeIntelRepository extends PurgeOperations, ReadingOperation
   tombstoneProject(id: string, now: number): Promise<boolean>;
   /** Live projects, Unfiled first, then by creation. */
   projects(): Promise<Project[]>;
-  /** Tombstoned projects that still have captures or screenshots (a `project-deleted` purge that did not run), oldest deletion first. */
+  /** Tombstoned projects that still have captures, screenshots or (Phase 12) crawl runs or SERP API readings (a delete that did not finish), oldest deletion first. */
   deletedProjectsWithRows(): Promise<string[]>;
   /** A live project. */
   project(id: string): Promise<Project | null>;
@@ -506,7 +509,7 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
 
   const readingTaken = async (id: string): Promise<boolean> => (await db.select({ id: ciSerpReadings.id }).from(ciSerpReadings).where(eq(ciSerpReadings.id, id)).limit(1)).length > 0;
 
-  const repository: Omit<ChangeIntelRepository, keyof PurgeOperations | keyof ReadingOperations | keyof WorkspaceOperations> = {
+  const repository: Omit<ChangeIntelRepository, keyof PurgeOperations | keyof ReadingOperations | keyof ApiReadingOperations | keyof WorkspaceOperations> = {
     async appendCapture(input) {
       const valid = validCapture(input);
       if (valid === null) return null;
@@ -824,7 +827,9 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         .where(
           and(
             sql`${ciProjects.deletedAt} IS NOT NULL`,
-            sql`(EXISTS (SELECT 1 FROM ci_captures c WHERE c.project_id = ${ciProjects.id}) OR EXISTS (SELECT 1 FROM ci_screenshots s WHERE s.project_id = ${ciProjects.id}))`,
+            // Phase 12 Task 6b: a crawl's runs too (a project whose only data is a crawl; `site-crawl/schema.ts`).
+            // Phase 12 Task 4: its SERP API readings too (a project whose only data is API readings).
+            sql`(EXISTS (SELECT 1 FROM ci_captures c WHERE c.project_id = ${ciProjects.id}) OR EXISTS (SELECT 1 FROM ci_screenshots s WHERE s.project_id = ${ciProjects.id}) OR EXISTS (SELECT 1 FROM ${crawlRuns} r WHERE r.project_id = ${ciProjects.id}) OR EXISTS (SELECT 1 FROM ci_serp_readings a WHERE a.project_id = ${ciProjects.id} AND a.source = 'serp-api'))`,
           ),
         )
         .orderBy(asc(ciProjects.deletedAt), asc(ciProjects.id))
@@ -999,5 +1004,5 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
     },
   };
 
-  return { ...repository, ...createPurgeOperations(db), ...createReadingOperations(db), ...createWorkspaceOperations(db) };
+  return { ...repository, ...createPurgeOperations(db), ...createReadingOperations(db), ...createApiReadingOperations(db), ...createWorkspaceOperations(db) };
 }

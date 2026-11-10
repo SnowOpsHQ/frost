@@ -51,6 +51,12 @@ export interface TabOverridesStore {
   wire(tab: Tab, view: TabView): () => void;
   /** The tab's view is gone (closed, crashed away): its cookie block goes with its WebContents. */
   released(tab: Tab): void;
+  /**
+   * Whether the tab has cookies off but the cookie block refused its WebContents (its session is not
+   * browse-class, or the pair could not be registered): its cookies flow, so the controller reports
+   * `TabState.overridesStatus` `failed` (the chip's "not applied" and `TAB_OVERRIDES_FAILED_NOTE`).
+   */
+  cookiesFailed(tab: Tab): boolean;
 }
 
 interface Entry {
@@ -64,6 +70,8 @@ interface Entry {
   contents: TabContents | null;
   /** The WebContents id registered with the cookie block, if any. */
   blocked: number | null;
+  /** Cookies are off but the cookie block refused the tab's WebContents. */
+  cookiesFailed: boolean;
   /** The tab's view has committed a main-frame document (it shows a page, loaded or loading). */
   committed: boolean;
 }
@@ -93,7 +101,7 @@ export function createTabOverrides(options: TabOverridesOptions): TabOverridesSt
   const entryOf = (tab: Tab): Entry => {
     let entry = entries.get(tab);
     if (!entry) {
-      entry = { overrides: DEFAULT_TAB_OVERRIDES, revision: 0, marker: false, nav: null, loading: null, contents: null, blocked: null, committed: false };
+      entry = { overrides: DEFAULT_TAB_OVERRIDES, revision: 0, marker: false, nav: null, loading: null, contents: null, blocked: null, cookiesFailed: false, committed: false };
       entries.set(tab, entry);
     }
     return entry;
@@ -111,17 +119,25 @@ export function createTabOverrides(options: TabOverridesOptions): TabOverridesSt
     void cssOff(contents as unknown as CssOffTarget, off);
   };
 
-  /** The cookie block for the tab's current WebContents, as its overrides say. */
-  const syncCookies = (entry: Entry): void => {
+  /**
+   * The cookie block for the tab's current WebContents, as its overrides say. Answers whether the
+   * tab's `cookiesFailed` changed (the block refused its WebContents, or no longer does).
+   */
+  const syncCookies = (entry: Entry): boolean => {
+    const before = entry.cookiesFailed;
     const target = entry.overrides.cookiesDisabled ? blockTarget(entry.contents) : null;
     if (target === null) {
       if (entry.blocked !== null) options.cookieBlock.remove(entry.blocked);
       entry.blocked = null;
-      return;
+      entry.cookiesFailed = false;
+      return before !== entry.cookiesFailed;
     }
     if (entry.blocked !== null && entry.blocked !== target.id) options.cookieBlock.remove(entry.blocked);
-    options.cookieBlock.add(target.id, target.session);
-    entry.blocked = target.id;
+    // Only an explicit `false` is a refusal.
+    const applied = options.cookieBlock.add(target.id, target.session) !== false;
+    entry.blocked = applied ? target.id : null;
+    entry.cookiesFailed = !applied;
+    return before !== entry.cookiesFailed;
   };
 
   return {
@@ -150,6 +166,8 @@ export function createTabOverrides(options: TabOverridesOptions): TabOverridesSt
       return entry ? { tabOverrides: entry.overrides, loadedUnderOverrides: entry.marker, overridesRevision: entry.revision } : { tabOverrides: DEFAULT_TAB_OVERRIDES, loadedUnderOverrides: false, overridesRevision: 0 };
     },
 
+    cookiesFailed: (tab) => entries.get(tab)?.cookiesFailed === true,
+
     wire(tab, view) {
       const entry = entryOf(tab);
       const contents = view.webContents;
@@ -157,7 +175,7 @@ export function createTabOverrides(options: TabOverridesOptions): TabOverridesSt
       entry.nav = null;
       entry.loading = null;
       entry.committed = false;
-      syncCookies(entry);
+      if (syncCookies(entry)) options.changed();
       const emitter = contents as unknown as NodeJS.EventEmitter;
       const owns = (): boolean => entries.get(tab) === entry && entry.contents === contents;
       const listeners: [string, (...args: never[]) => void][] = [
@@ -228,6 +246,7 @@ export function createTabOverrides(options: TabOverridesOptions): TabOverridesSt
       if (!entry) return;
       if (entry.blocked !== null) options.cookieBlock.remove(entry.blocked);
       entry.blocked = null;
+      entry.cookiesFailed = false;
       entry.contents = null;
       entry.nav = null;
       entry.loading = null;

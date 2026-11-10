@@ -17,6 +17,10 @@ import { createPackStore, type PackFiles } from '../pack-store';
 import { analyseSerp } from '../serp-analyse';
 import { createSerpService, type SerpTab, type SerpTabs } from '../service';
 import { encode, packObject, signBytes, signedPack, testKey } from './pack-keys';
+import type { SearchLocation } from '@app/specs/serp-search-params.schema';
+import { SearchParamsSchema } from '@app/specs/serp-search-params.schema';
+import { laneKeyFor } from '../../changes/snapshot';
+import { searchKeyOf } from '../../changes/search-key';
 
 afterEach(() => vi.useRealTimers());
 
@@ -34,7 +38,7 @@ const answer = (n = 3) => ({
 
 /** Tabs the test drives: each with its page (a fake `executeJavaScriptInIsolatedWorld` target). */
 function fakeTabs() {
-  const list = new Map<number, { contentsId: number; url: string; documentSeq: number; loading: boolean; device: SerpDevice; page: { executeJavaScriptInIsolatedWorld: () => Promise<unknown> } }>();
+  const list = new Map<number, { contentsId: number; url: string; documentSeq: number; loading: boolean; device: SerpDevice; location?: SearchLocation | null; page: { executeJavaScriptInIsolatedWorld: () => Promise<unknown> } }>();
   let active: number | null = null;
   const tabs: SerpTabs = {
     tab: (tabId) => {
@@ -46,8 +50,8 @@ function fakeTabs() {
   };
   return {
     tabs,
-    add(tabId: number, url: string, options: { device?: SerpDevice; loading?: boolean; active?: boolean } = {}) {
-      list.set(tabId, { contentsId: 100 + tabId, url, documentSeq: 1, loading: options.loading ?? false, device: options.device ?? 'desktop', page: { executeJavaScriptInIsolatedWorld: async () => undefined } });
+    add(tabId: number, url: string, options: { device?: SerpDevice; loading?: boolean; active?: boolean; location?: SearchLocation } = {}) {
+      list.set(tabId, { contentsId: 100 + tabId, url, documentSeq: 1, loading: options.loading ?? false, device: options.device ?? 'desktop', ...(options.location ? { location: options.location } : {}), page: { executeJavaScriptInIsolatedWorld: async () => undefined } });
       if (options.active ?? active === null) active = tabId;
       return list.get(tabId)!;
     },
@@ -629,5 +633,30 @@ describe('SERP service', () => {
     const waiting = s.serp.watch(1, s.serp.state(1).version);
     s.serp.dispose();
     await expect(waiting).resolves.toMatchObject({ tabId: 1 });
+  });
+
+  // Phase 12 Task 10b (specs/location-profiles.feature.md, serp-params-carry-the-tabs-location; plan Decision 7):
+  // a location tab's result page carries its location, so its lane and its search key are its own.
+  test('serp-params-carry-the-tabs-location', async () => {
+    const s = setup();
+    const berlin: SearchLocation = { via: 'proxy', label: 'Berlin' };
+    s.t.add(1, 'about:blank');
+    s.t.add(2, 'about:blank', { location: berlin, active: false });
+    await load(s, 1, GOOGLE);
+    await load(s, 2, GOOGLE);
+    const home = s.serp.state(1).serp;
+    const located = s.serp.state(2).serp;
+    expect(home.status === 'ready' && home.snapshot.params).not.toHaveProperty('location');
+    expect(located.status === 'ready' && located.snapshot.params).toMatchObject({ query: 'running shoes', location: berlin });
+    // What the worker analysed already carried it.
+    expect(s.analyzer.analyse.mock.calls[1]![1]).toMatchObject({ params: { location: berlin } });
+    const homeParams = SearchParamsSchema.parse(home.status === 'ready' && home.snapshot.params);
+    const locatedParams = SearchParamsSchema.parse(located.status === 'ready' && located.snapshot.params);
+    // Its own Phase 6 lane and Phase 10 search key, never the home connection's.
+    expect(laneKeyFor(GOOGLE, null, locatedParams)).not.toBe(laneKeyFor(GOOGLE, null, homeParams));
+    expect(searchKeyOf(locatedParams, {})).not.toBe(searchKeyOf(homeParams, {}));
+    // Pending (still loading) and in-page moves keep it too.
+    s.t.add(3, GOOGLE_2, { loading: true, active: false, location: berlin });
+    expect(valid(s.serp.state(3)).serp).toMatchObject({ status: 'pending', params: { location: berlin } });
   });
 });

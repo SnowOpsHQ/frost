@@ -17,6 +17,10 @@ export const SETTINGS_TITLE = 'Settings' as const;
 export const SETTINGS_SECTIONS = [
   { id: 'account', label: 'Account' },
   { id: 'search-console', label: 'Search Console' },
+  // Phase 12 Task 2 (`data-sources.feature.md`, Settings › Data sources): keys, usage and the cost note.
+  { id: 'data-sources', label: 'Data sources' },
+  // Phase 12 Task 10b (`location-profiles.feature.md`): location profiles (the user's own proxies) and their sign-ins.
+  { id: 'locations', label: 'Locations' },
   // Phase 9 Task 11 (`ai-checks.feature.md`, UI): the AI checks mode and its cost note.
   { id: 'ai-checks', label: 'AI checks' },
   { id: 'telemetry', label: 'Telemetry' },

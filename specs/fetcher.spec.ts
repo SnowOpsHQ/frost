@@ -68,6 +68,16 @@
  * per-origin queues of its own, so a link check never makes a probe wait. A site can then see up to
  * three lanes' requests at once.
  *
+ * **The crawl lane (Phase 12, Decision 6).** A fourth instance, outside `FETCHER_LANES` like the SERP
+ * lane, serves the site crawler (`site-crawl.spec.ts`): created by `apps/desktop/src/main/crawl/` over
+ * the same hop and resolver, with `CRAWL_FETCHER_LIMITS` and per-origin queues of its own. Its
+ * `perOriginIntervalMs` is the **floor** (`CRAWL_INTERVAL_MS.min`), a second guarantee only: the
+ * crawl's own pacing submits one fetch call per origin at a time and waits the effective interval
+ * (the user's choice, `Crawl-delay`, back-off, `Retry-After`) before the next. Every crawl request is
+ * made with `page` = the run's start URL, so the private-address rule above applies unchanged, and
+ * passes `allowRedirect` (below), so every redirect hop passes the crawl's policy before it is
+ * requested. A site can then see up to four lanes' requests at once.
+ *
  * Sites can see these requests: every surface that makes them says so (`FETCH_DISCLOSURE`).
  */
 
@@ -87,6 +97,13 @@ export const FETCHER_LIMITS = {
   maxQueuedPerOrigin: 1_000,
   /** Response headers kept per call (`BoundedFetchResult.headers`), each value cut to this (unless the call says otherwise). */
   maxHeaderValueChars: 1_024,
+  /**
+   * The longest one `allowRedirect` answer may take (ms, per hop; Phase 12 Task 6a review): a hook
+   * still unanswered then refuses the hop (`redirect-refused`). At least the crawl hook's own robots.txt
+   * wait (`ROBOTS_FETCH_LIMITS.timeoutMs` + `CRAWL_ROBOTS_HOOK_MARGIN_MS`, 6 s), so the crawl's answer
+   * always arrives first.
+   */
+  maxRedirectHookMs: 8_000,
 } as const;
 
 /**
@@ -97,6 +114,17 @@ export const CHECKS_FETCHER_LIMITS = {
   perOriginConcurrency: 2,
   perOriginIntervalMs: 250,
   maxQueuedPerOrigin: 1_000,
+} as const;
+
+/**
+ * The crawl lane's per-origin queue (see Lanes): one fetch call in flight per origin, starts at least
+ * 500 ms apart (the floor; `CRAWL_INTERVAL_MS.min` in `site-crawl.spec.ts`), and a short queue (the
+ * crawl submits one call per origin at a time; robots.txt lookups go through main's robots fetcher).
+ */
+export const CRAWL_FETCHER_LIMITS = {
+  perOriginConcurrency: 1,
+  perOriginIntervalMs: 500,
+  maxQueuedPerOrigin: 4,
 } as const;
 
 /** The fetcher instances main runs, and each one's per-origin queue limits (see Lanes). */
@@ -116,9 +144,13 @@ export type FetchMethod = (typeof FETCH_METHODS)[number];
  * - `private-address`: the first URL is on a private host and the page is not (nothing requested);
  * - `too-many-redirects`, `bad-redirect`, `no-location`, `private-redirect`: see the rules above;
  * - `unreachable`: a network error; `timeout`: the deadline passed;
- * - `aborted`: the caller's `signal` aborted; `busy`: the origin's queue was full (nothing requested).
+ * - `aborted`: the caller's `signal` aborted; `busy`: the origin's queue was full (nothing requested);
+ * - `redirect-refused` (Phase 12 Task 6a): the call's `allowRedirect` hook refused a redirect hop (the
+ *   next URL was never requested; `status` and `finalUrl` are the redirect's, and the refused hop is
+ *   not in `chain`). Only a call that passes the hook (the crawl lane, and the crawl's exact-origin
+ *   robots.txt lookups) can end so.
  */
-export const FETCH_OUTCOMES = ['response', 'not-web', 'private-address', 'too-many-redirects', 'bad-redirect', 'no-location', 'private-redirect', 'unreachable', 'timeout', 'aborted', 'busy'] as const;
+export const FETCH_OUTCOMES = ['response', 'not-web', 'private-address', 'too-many-redirects', 'bad-redirect', 'no-location', 'private-redirect', 'redirect-refused', 'unreachable', 'timeout', 'aborted', 'busy'] as const;
 export type FetchOutcome = (typeof FETCH_OUTCOMES)[number];
 
 /**
@@ -167,6 +199,28 @@ export interface BoundedFetchRequest {
   readonly separateHeaders?: readonly string[];
   /** Aborts the call (queued or running): `aborted`. */
   readonly signal?: AbortSignal;
+  /**
+   * The redirect-policy hook (Phase 12 Decision 6; the crawl lane's, absent elsewhere: other lanes
+   * behave as without it). Consulted in the redirect branch for every hop, after the fetcher's own
+   * checks of its `Location` (`maxRedirects`, `bad-redirect`, the private-address rule) and before the
+   * hop is requested, with the resolved next URL. It answers whether the hop may be followed; `false`
+   * (or a rejection) ends the call with the outcome `redirect-refused`, and the next URL is never
+   * requested. The caller records why (the crawl: `blocked-by-robots`, `out-of-scope`,
+   * `private-redirect` or `robots-unreachable`).
+   *
+   * The hook decides scope and the private-address / exact-origin rule **before any request to the new
+   * origin** (the fetcher's own DNS resolution excepted), and only when both allow the hop may it look
+   * up that origin's robots.txt. The time it spends is not counted in the page fetch's own `timeoutMs`
+   * (the deadline is paused while it runs); the hook bounds its own wait, and a hook past its time
+   * refuses the hop. The fetcher also caps it (`FETCHER_LIMITS.maxRedirectHookMs`: unanswered then, a
+   * refusal), and once the hook allows a hop to a name it resolves the name again before requesting it
+   * (an answer that turned private while the hook ran refuses the hop, `private-redirect`).
+   *
+   * `signal` aborts when the call's own `signal` does (the hook passes it to its robots lookup). The
+   * fetcher races the hook against the call's signal: an abort while the hook runs ends the call at
+   * once with `aborted` (never `redirect-refused`), and the hook's later answer is ignored.
+   */
+  readonly allowRedirect?: (nextUrl: string, options: { readonly signal: AbortSignal }) => Promise<boolean>;
 }
 
 /** A redirect the call followed. */

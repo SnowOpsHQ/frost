@@ -296,7 +296,9 @@ test('rank-ignores-serp-api-or-capture-alike', () => {
   const capture = observe(snapshot, NOW - DAY, { source: 'capture' });
   const api = observe(snapshot, NOW, { source: 'serp-api' });
   const { readingId: _a, at: _x, ...fromCapture } = rankOf(capture, SITE);
-  const { readingId: _b, at: _y, ...fromApi } = rankOf(api, SITE);
+  // Phase 12 Task 4: the point only says where it came from (`source`); its position is the same.
+  const { readingId: _b, at: _y, source, ...fromApi } = rankOf(api, SITE);
+  expect(source).toBe('serp-api');
   expect(fromApi).toEqual(fromCapture);
   const rows = rankTable([capture, api], { site: SITE }).rows;
   expect(rows).toHaveLength(1);
@@ -435,4 +437,26 @@ describe('rank-row-from-parts', () => {
     // Total: garbage never throws.
     for (const garbage of [null, 1, {}, { searchKey: KEY, recent: 'x', points: 7 }]) expect(() => rankRowOf(garbage as never, garbage as never)).not.toThrow();
   });
+});
+
+test('rank-point-carries-its-source', () => {
+  // spec: projects.feature.md — Checking searches via a data API (Phase 12 Task 4): each point says where
+  // it came from; a tab capture's point is Phase 10's exactly (no `source` key), an API point names its vendor.
+  const snapshot = page(2);
+  const capture = observe(snapshot, NOW - DAY);
+  const api = observe(snapshot, NOW, { source: 'serp-api', provider: 'serpapi' });
+  const unknown = observe(snapshot, NOW + 1, { source: 'serp-api' });
+  const forged = observe(snapshot, NOW + 2, { source: 'serp-api', provider: 'evil' as never });
+  expect(Object.keys(rankOf(capture, SITE))).not.toContain('source');
+  expect(rankOf(capture, null)).not.toHaveProperty('source');
+  expect(rankOf(api, SITE)).toMatchObject({ source: 'serp-api', provider: 'serpapi', outcome: 'ranked', position: 2 });
+  expect(rankOf(api, null)).toMatchObject({ source: 'serp-api', provider: 'serpapi', outcome: 'no-site' });
+  expect(rankOf(unknown, SITE)).toMatchObject({ source: 'serp-api' });
+  expect(rankOf(unknown, SITE)).not.toHaveProperty('provider');
+  expect(rankOf(forged, SITE)).not.toHaveProperty('provider');
+  // One series, each point with its own source.
+  const [row] = rankTable([capture, api], { site: SITE }).rows;
+  expect(row!.points.map((p) => p.source ?? 'capture')).toEqual(['capture', 'serp-api']);
+  expect(row!.latest).toMatchObject({ readingId: api.id, source: 'serp-api', provider: 'serpapi' });
+  expect(row!.previous).not.toHaveProperty('source');
 });

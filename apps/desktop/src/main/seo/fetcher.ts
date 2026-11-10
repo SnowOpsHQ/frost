@@ -10,7 +10,9 @@ import { parseWebUrl } from '@app/specs/web-url.spec';
 // followed (at most `maxRedirects`, `http(s)` only, never to a private host unless the page is on
 // one), the body read up to `maxBytes`, everything under one `timeoutMs` deadline from the call, and
 // requests queued per origin (`perOriginConcurrency`, `perOriginIntervalMs`, `maxQueuedPerOrigin`).
-// The body is kept as bytes, never decoded here.
+// A call may pass a redirect-policy hook (`allowRedirect`, the crawl's): asked for every hop after
+// the checks above and before the hop is requested, with the deadline paused while it runs; a
+// refusal ends the call `redirect-refused`. The body is kept as bytes, never decoded here.
 
 /** One HTTP exchange: a redirect (not followed), or a response whose body can be read. */
 export type HopResult =
@@ -275,7 +277,19 @@ export function createBoundedFetcher(options: BoundedFetcherOptions): BoundedFet
     current = first.href;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+    // One deadline from the call; paused while a redirect-policy hook runs (its time is not the call's).
+    let left = timeoutMs;
+    let armedAt = now();
+    let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => controller.abort('timeout'), left);
+    const pauseDeadline = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      left -= now() - armedAt;
+    };
+    const resumeDeadline = () => {
+      armedAt = now();
+      timer = setTimeout(() => controller.abort('timeout'), Math.max(0, left));
+    };
     const onCallerAbort = () => controller.abort('aborted');
     if (request.signal?.aborted) onCallerAbort();
     else request.signal?.addEventListener('abort', onCallerAbort, { once: true });
@@ -318,6 +332,35 @@ export function createBoundedFetcher(options: BoundedFetcherOptions): BoundedFet
             if (refused === 'stopped') return ended(why());
             if (refused === 'unresolved') return ended('unreachable');
             if (refused === 'private') return ended('private-redirect');
+          }
+          // The caller's redirect policy (the crawl's), after the fetcher's own checks and before the
+          // hop is requested; raced against the caller's abort, outside the call's deadline.
+          if (request.allowRedirect) {
+            if (controller.signal.aborted) return ended(why());
+            pauseDeadline();
+            // The hook's own cap (`maxRedirectHookMs`): unanswered by then, the hop is refused.
+            let capTimer: ReturnType<typeof setTimeout> | undefined;
+            const capped = new Promise<false>((resolve) => {
+              capTimer = setTimeout(() => resolve(false), limits.maxRedirectHookMs);
+            });
+            let allowed: boolean | 'stopped';
+            try {
+              allowed = await Promise.race([request.allowRedirect(next.href, { signal: controller.signal }).then((answer) => answer === true), capped, deadline]);
+            } catch {
+              allowed = false;
+            } finally {
+              clearTimeout(capTimer);
+            }
+            if (allowed === 'stopped' || controller.signal.aborted) return ended(why());
+            if (!allowed) return ended('redirect-refused');
+            resumeDeadline();
+            // The name is resolved again after the hook: an answer that turned private while it ran refuses the hop.
+            if (mustResolve(next.hostname)) {
+              const refused = await resolvedPrivate(next.hostname, deadline);
+              if (refused === 'stopped') return ended(why());
+              if (refused === 'unresolved') return ended('unreachable');
+              if (refused === 'private') return ended('private-redirect');
+            }
           }
           chain.push({ url: cutUrl(current), status: result.status, location: cutUrl(next.href) });
           current = next.href;

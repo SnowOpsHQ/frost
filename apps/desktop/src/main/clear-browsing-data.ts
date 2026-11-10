@@ -1,11 +1,11 @@
-import { dialog, session, type BaseWindow } from 'electron';
+import { dialog, type BaseWindow } from 'electron';
 import { CLEAR_BROWSING_DATA } from '@app/specs/browser-session-db.spec';
-import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import { browseClassSessions } from './browser/browse-class';
 
 // Clear Browsing Data… (spec `browser-session-db.feature.md`, Clear browsing data): the
 // application menu's item asks first, in a native message box main shows, then clears the visits,
 // every permission decision (stored and in memory) with the prompt back-off, the render profiles
-// pinned to sites (stored and in memory), the browse partition's storage and cache, and the SEO
+// pinned to sites (stored and in memory), every browse-class session's storage and cache, and the SEO
 // auditor's robots.txt answers and recorded responses, and the AI checks' answers; main adds the rest
 // of what a visit left behind (`ClearBrowsingDataParts`, and `index.ts`'s wiring: agent grants, closed
 // tabs, the devtools logs, the Inspector's kept source, the served HTML, running and cached checks, SERP readings). It keeps the Content panel's target queries
@@ -85,9 +85,21 @@ export async function confirmClearBrowsingData(parent: BaseWindow | null): Promi
   return checkboxChecked ? 'with-content-notes' : true;
 }
 
-/** Clears the browse partition's storage (cookies, local storage, IndexedDB, service workers …), then its HTTP cache. */
+/**
+ * Clears every browse-class session's storage (cookies, local storage, IndexedDB, service workers …),
+ * then its HTTP cache (`browser/browse-class.ts`: the browse partition's, and any main registered).
+ * One session failing does not keep the others from being cleared; the first failure is rethrown
+ * once all have been tried.
+ */
 export async function clearBrowseStorage(): Promise<void> {
-  const browse = session.fromPartition(BROWSE_PARTITION);
-  await browse.clearStorageData();
-  await browse.clearCache();
+  let failure: { readonly error: unknown } | null = null;
+  for (const browse of browseClassSessions()) {
+    try {
+      await browse.clearStorageData();
+      await browse.clearCache();
+    } catch (error) {
+      failure ??= { error };
+    }
+  }
+  if (failure) throw failure.error;
 }

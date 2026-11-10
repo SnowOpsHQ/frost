@@ -61,7 +61,8 @@ test; unless named otherwise it is in `packages/db/src/change-intel/__tests__/wo
     condition an `INSERT OR REPLACE` with a fresh reading id and a taken capture id would remove the
     original behind the delete guard's back;
   - `ci_serp_readings_capture_gone_only` (`BEFORE DELETE`: abort unless `OLD.source = 'capture'` and
-    no `ci_captures` row has `id = OLD.capture_id`). Phase 12's `0245` drops this one by name.
+    no `ci_captures` row has `id = OLD.capture_id`). Phase 12's `0245` drops this one by name and
+    replaces it with `ci_serp_readings_delete_guard` (API readings (Phase 12), below).
 
 ## Repository
 - **Readings** (`readings.ts`). `appendReading(input)` refuses a `serp-api` reading in this phase
@@ -146,12 +147,56 @@ test; unless named otherwise it is in `packages/db/src/change-intel/__tests__/wo
   pulled here takes the defaults. Readings, competitors and tags are device-local; a follow-up extends
   `SYNC_TABLES` (and its replica). Sync has no "what syncs" wording to update today.
 
+## API readings (Phase 12)
+Phase 12 Task 4 (`docs/plans/phase-12-big-bets.md`, Decision 7 and Task 4; `data-sources.feature.md`,
+Check via API). Values: `SERP_API_READINGS_TABLES`, `SERP_API_READINGS_MIGRATION_IDS`. Implemented by
+`packages/db/src/change-intel/serp-api-migrations.ts`, `serp-api-schema.ts`, `serp-api-readings.ts`, and
+`purge.ts` / `repository.ts`; tests in `packages/db/src/change-intel/__tests__/serp-api-readings.test.ts`
+unless named otherwise.
+- **Migration `0245_serp_api_readings`** (spread in `MIGRATIONS` in id order after Phase 12's `0243`,
+  and after `0244` once present): creates `ci_serp_api_purges (reading_id TEXT PRIMARY KEY NOT NULL
+  CHECK (length(reading_id) = 36), purge_id, reason (PURGE_REASONS), project_id, purged_at)` with
+  the index `ci_serp_api_purges_project_id_purged_at`; drops Phase 10's
+  `ci_serp_readings_capture_gone_only`; creates `ci_serp_readings_delete_guard` (`BEFORE DELETE ON
+  ci_serp_readings`: abort unless (`OLD.source = 'capture'` and no `ci_captures` row has `id =
+  OLD.capture_id`) **or** (`OLD.source = 'serp-api'` and `OLD.id` is in `ci_serp_api_purges`)) and
+  `ci_serp_readings_no_resurrect` (`BEFORE INSERT ON ci_serp_readings`: abort when `NEW.id` is in
+  `ci_serp_api_purges`). The purge record itself is append-only: `ci_serp_api_purges_no_update` and
+  `ci_serp_api_purges_no_delete` (a recorded id stays recorded). `ci_serp_readings_no_update` and
+  `ci_serp_readings_no_replace` are untouched; `0223` is never edited. Plain portable SQL.
+- **Writes.** Phase 10's public `appendReading` still refuses every source but `capture`, and
+  `appendCapture` still writes `capture` readings only. A `serp-api` reading is written **only** by
+  `appendApiReading(input)` (`serp-api-readings.ts`): `source = 'serp-api'`, `capture_id` `NULL`, a
+  live project, the reading's own checks (`isCaptureReading`), `page_url` a stored URL or `NULL`; never
+  over an existing id or a recorded one (`false`, nothing written).
+- **Purge.** `planPurge` also selects the project's `serp-api` readings by its policy, **per search
+  key** (`search_key`, `search_key_version`): `forever` none; `versions N` all but the N newest of
+  each key (newest by `observed_at`, then `id`); `days N` those observed before `now − N days`, except
+  each key's newest, which always stays (Phase 6's rule for captures; lead ruling, a deviation from the
+  plan's "older than N days"); `all` (the project deleted) every one. The plan carries their ids (`apiReadingIds`, sorted), counts them
+  in `counts.readings` (present **only** when at least one is selected, so every other count stays as
+  it was) and their stored bytes in `bytes` (and apart, in `apiReadingBytes`). `executePurge`'s stale check compares `apiReadingIds`, its
+  emptiness check counts them (an API-only plan is purged, not `empty`), and in the same transaction
+  it records each id in `ci_serp_api_purges` (with the purge's id, reason and project) and then deletes
+  those readings. `counts.readings` is never written to `ci_purges` (its columns are Phase 6's) nor to
+  `PurgeRecord.counts`, and a purge that removes **only** API readings writes no `ci_purges` row at all
+  (no all-zero row is synced): `ci_serp_api_purges` is its only, device-local, log, and the purge log
+  view (`ci_purges`) does not list it. A purge that also removes captured rows writes its `ci_purges`
+  row, and its records carry that row's id; that row's `bytes` is `bytes − apiReadingBytes` (the
+  device-local API readings' bytes never reach the synced log; whole-branch review).
+- **Orphans.** `deleteOrphanReadings` sweeps `source = 'capture'` rows only; the reads never skip a
+  `serp-api` reading for having no capture.
+- **Deleted projects.** `deletedProjectsWithRows` also lists a tombstoned project that still has
+  `serp-api` readings, so the startup retry (`purgeDeleted`) finishes its deletion.
+
 ## Scenarios
 - **Scenario: workspace-migrations-apply-in-order** — `0220`–`0223` run after `0041` and after
   Phase 9's `0210`, in `WORKSPACE_MIGRATION_IDS` order; their SQL is portable; the tables and columns
   match the Drizzle schema; `migrations-are-forward-only` stays green.
-- **Scenario: serp-readings-triggers-named** — the three reading triggers exist by name in
-  `sqlite_master`, with the competitors' and tags' `mutable` guards.
+- **Scenario: serp-readings-triggers-named** — after `0245`: `ci_serp_readings_no_update`,
+  `ci_serp_readings_no_replace`, `ci_serp_readings_delete_guard` and `ci_serp_readings_no_resurrect`
+  exist by name in `sqlite_master` (`ci_serp_readings_capture_gone_only` is gone), with the
+  competitors' and tags' `mutable` guards.
 - **Scenario: serp-readings-are-append-only** — raw `UPDATE`, `UPDATE OR REPLACE`, `REPLACE`,
   `INSERT OR REPLACE`, `INSERT`, `INSERT OR IGNORE` and `INSERT … ON CONFLICT DO NOTHING / DO UPDATE`
   over an existing id, or with a new id over a taken capture id, abort and change nothing.
@@ -161,8 +206,36 @@ test; unless named otherwise it is in `packages/db/src/change-intel/__tests__/wo
 - **Scenario: serp-reading-deleted-only-without-its-capture** — a reading whose capture exists cannot
   be deleted; once the capture is purged it can; a `serp-api` row (planted with raw SQL) is never
   deleted by the guard.
-- **Scenario: serp-api-reading-refused-in-phase-10** — `appendReading` with `source: 'serp-api'`
-  answers `false` and writes nothing.
+- **Scenario: serp-api-reading-only-through-appendApiReading** (replaces Phase 10's
+  `serp-api-reading-refused-in-phase-10`) — `appendReading` with `source: 'serp-api'` (with or
+  without a capture id) and `appendCapture` still refuse it, writing nothing; `appendApiReading`
+  writes it (`capture_id` `NULL`), refusing a bad reading, a project that is not live, a taken id and
+  a recorded one.
+- **Scenario: serp-api-reading-deleted-only-by-a-recorded-purge** — a raw `DELETE` of a `serp-api`
+  reading aborts until its id is in `ci_serp_api_purges`; then it succeeds. The record can be
+  neither updated nor deleted.
+- **Scenario: serp-api-reading-never-resurrected** — inserting a reading (raw, or through
+  `appendApiReading`) with a recorded id aborts.
+- **Scenario: capture-reading-guard-unchanged** — Phase 10's capture arm is as before: a capture
+  reading whose capture exists is never deleted, once its capture is gone it can be, and a recorded
+  id does not open a capture reading.
+- **Scenario: orphan-sweep-skips-api-readings** — `deleteOrphanReadings` (one project's, and all)
+  never deletes a `serp-api` reading; the reads answer it.
+- **Scenario: purge-applies-retention-to-api-readings** — `versions N` keeps the N newest of each
+  search key, `days N` removes those older than N days but each key's newest, `forever` none, a
+  project's deletion (`all`) every one; each purged id is recorded with its purge, reason and project;
+  an API-only purge writes no `ci_purges` row; another project's stay.
+- **Scenario: api-only-project-obeys-retention** — a project with `serp-api` readings and no capture:
+  each mode's plan selects what it should, `executePurge` purges it (never `empty`), and a plan made
+  stale by a new API reading is `stale`; its retention purge writes no `ci_purges` row.
+- **Scenario: api-only-purge-counts-show-readings** — `counts.readings` is present only when the
+  plan selects an API reading; the `ci_purges` row and `PurgeRecord.counts` have no `readings`.
+- **Scenario: mixed-purge-logs-only-captured-bytes** — a purge of captured rows and API readings
+  answers a plan whose `bytes` counts both and whose `apiReadingBytes` is the readings' stored bytes;
+  its `ci_purges` row (and `PurgeRecord.bytes`) records `bytes − apiReadingBytes`.
+- **Scenario: api-only-project-delete-retried-after-restart** — a tombstoned project with only
+  `serp-api` readings is listed by `deletedProjectsWithRows` until its `project-deleted` purge runs,
+  which writes no `ci_purges` row.
 - **Scenario: reading-goes-in-with-its-capture** — both `appendCapture` branches store the reading
   with the capture (its id, project, page URL and time); a `stale` append writes no reading; an
   invalid reading refuses the append; `readings`, `readingSearches` and `reading` answer it.

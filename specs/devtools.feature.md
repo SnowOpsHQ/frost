@@ -193,12 +193,15 @@ line maps to one named test.
 - **Scenario: cookie-reveal-stamped-with-commit** — a Reveal asked while a navigation is in flight
   (the commit lands while main reads the cookie store) does not show in the new document.
 - **Scenario: clear-site-data-confirms** — main asks first; Cancel clears nothing (`cancelled`);
-  confirmed, the origin's data is cleared from the browse partition (`CLEAR_SITE_DATA.dataTypes`,
-  that origin only) and reveals are forgotten (`cleared`); a tab without a web page is `refused`
-  without asking.
+  confirmed, the origin's data is cleared from the tab's own (browse-class) session
+  (`CLEAR_SITE_DATA.dataTypes`, that origin only) and reveals are forgotten (`cleared`); a tab
+  without a web page is `refused` without asking.
 - **Scenario: clear-site-data-one-dialog-per-origin** — while a dialog is up, a request for the same
-  origin shares its answer and one for another origin answers `busy` (nothing asked, nothing
-  cleared).
+  session and origin shares its answer and one for another origin, or the same origin on another
+  session, answers `busy` (nothing asked, nothing cleared; Phase 12 Task 10a).
+- **Scenario: clear-site-data-failure-is-failed** — confirmed, but clearing throws: the answer is
+  `failed` (never `cleared`), reveals are forgotten, and the Storage tab says it could not be cleared
+  (Phase 12 Task 10a).
 
 ## URL redaction (`main/devtools/__tests__/url-redact.test.ts`, pure)
 - **Scenario: denylisted-names** — every `EXPORT_REDACTED_QUERY_PARAMS` name has its value replaced

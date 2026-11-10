@@ -1,5 +1,4 @@
-import { session as electronSession, type WebContents } from 'electron';
-import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import type { WebContents } from 'electron';
 import {
   CDP_PROTOCOL_VERSION,
   CHILD_FRAME_TYPES,
@@ -9,11 +8,13 @@ import {
   isAllowedCdpMethod,
   TARGET_AUTO_ATTACH_PARAMS,
 } from '@app/specs/render-profile.spec';
+import { isBrowseClassContents } from './browse-class';
 import { childFrameCommands, workerCommands, type CdpCommand } from './render-profile-cdp';
 
 // The one module that touches a tab's `webContents.debugger` (Global Constraints: debugger use is
 // main-only and per tab; Semgrep `debugger-outside-allowlisted-modules` flags it anywhere else but the
-// devtools drawer's recorder). It refuses any WebContents that is not on the browse partition, attaches
+// devtools drawer's recorder). It refuses any WebContents whose session is not browse-class
+// (`browse-class.ts`: the browse partition's, or one main registered), attaches
 // to a tab's own WebContents (CDP in-process, no remote-debugging port), and sends only
 // `RENDER_PROFILE_CDP_METHODS`, plus the two session methods under their rules (`isAllowedCdpCommand`):
 // auto-attach, so every cross-site frame and dedicated worker of the tab is announced paused and gets
@@ -55,16 +56,6 @@ export class CdpMethodRefused extends Error {
   }
 }
 
-/** Whether `contents` is a tab's: on the browse partition's session (fails closed). */
-function isBrowseContents(contents: DebuggerHost): boolean {
-  try {
-    const browse = electronSession.fromPartition(BROWSE_PARTITION);
-    return contents.session != null && contents.session === browse;
-  } catch {
-    return false;
-  }
-}
-
 interface Child {
   readonly kind: 'frame' | 'worker' | 'other';
 }
@@ -76,12 +67,13 @@ function kindOf(type: unknown): Child['kind'] {
 }
 
 /**
- * A render-profile debugger for `contents` (a tab's WebContents; any other is refused, throwing).
+ * A render-profile debugger for `contents` (a tab's WebContents, on any browse-class session; any
+ * other is refused, throwing).
  * `detached(reason)` is called when the debugger detaches without frost asking (Chromium closed the
  * session); never for `detach()`.
  */
 export function createProfileDebugger(contents: DebuggerHost, detached: (reason: string) => void): ProfileDebugger {
-  if (!isBrowseContents(contents)) throw new Error('render profiles apply to browse-session tabs only');
+  if (!isBrowseClassContents(contents)) throw new Error('render profiles apply to browse-session tabs only');
   let disposed = false;
   /** Set while frost detaches, so its own detach is not reported as unexpected. */
   let detaching = false;

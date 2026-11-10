@@ -3,7 +3,7 @@
 // · specs/agent-tools.spec.ts (AGENT_TOOLS, toolRisk, AGENT_TOOL_INPUT_LIMITS, EXECUTE_JS_MAX_SOURCE_CHARS)
 // Acceptance: specs/agent-approvals.feature.md (Scenarios: policy)
 import { describe, expect, test } from 'vitest';
-import { getToolDefinition } from '@app/ai-skills';
+import { getToolDefinition, runAiSearchApprovedInputSchema } from '@app/ai-skills';
 import {
   APPROVAL_DISPLAY_MAX_CHARS,
   approvalOriginFor,
@@ -163,7 +163,7 @@ describe('approval policy', () => {
       execute_javascript: { code: fill(EXECUTE_JS_MAX_SOURCE_CHARS) },
       serp_results: { query: fill(L.maxQueryChars), locale: 'es-419', device: 'mobile' },
       search_intent: { query: fill(L.maxQueryChars) },
-      run_ai_search: { query: fill(L.maxQueryChars), locale: 'es-419' },
+      run_ai_search: { query: fill(L.maxQueryChars) },
       gsc_performance: { url: url(L.maxUrlChars), days: L.maxGscDays },
       visibility_probes: {},
       run_visibility_probes: {},
@@ -174,7 +174,11 @@ describe('approval policy', () => {
       expect(parsed.success, name).toBe(true);
       expect(JSON.stringify(parsed.data).length, name).toBeLessThanOrEqual(APPROVAL_DISPLAY_MAX_CHARS);
     }
-    // Code of escaped line breaks and tabs fits too.
+    // run_ai_search's approved input (main adds `engine` and `via`, Phase 12 Task 8) fits too.
+    const approved = runAiSearchApprovedInputSchema.safeParse({ query: fill(L.maxQueryChars), engine: 'google-ai-mode', via: 'api' });
+    expect(approved.success).toBe(true);
+    expect(JSON.stringify(approved.data).length).toBeLessThanOrEqual(APPROVAL_DISPLAY_MAX_CHARS);
+        // Code of escaped line breaks and tabs fits too.
     const code = getToolDefinition('execute_javascript').inputSchema.parse({ code: '\n\t'.repeat(EXECUTE_JS_MAX_SOURCE_CHARS / 2) });
     expect(JSON.stringify(code).length).toBeLessThanOrEqual(APPROVAL_DISPLAY_MAX_CHARS);
   });

@@ -1,0 +1,58 @@
+/* Settings › Locations (Phase 12 Task 10b; specs/location-profiles.feature.md): a row per profile on
+   the Telemetry section's row style (`settings.css`), and a form drawn from the existing field
+   tokens. Bundled and served from app:// (CSP style-src 'self'): no inline styles, no new tokens or
+   colours. */
+
+.settings-location-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-location-head .settings-status {
+  margin: 0;
+  font-size: 12px;
+}
+
+.settings-location-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-location-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.settings-location-field {
+  display: flex;
+  flex: 1 1 160px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-location-port {
+  flex: 0 1 96px;
+}
+
+.settings-location-input {
+  height: 32px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-control);
+  background: var(--bg-field);
+  color: var(--text);
+  font: inherit;
+  user-select: text;
+}
+
+.settings-location-input:disabled {
+  opacity: 0.55;
+}

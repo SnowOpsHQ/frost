@@ -20,7 +20,7 @@ import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { SerpSnapshotSchema, type SerpSnapshot } from '@app/specs/serp-snapshot.schema';
 import { SERP_RESULT_TYPES } from '@app/specs/serp-selector-pack.spec';
 import { MAX_SERP_FILTERS_JSON_BYTES, MAX_SERP_READING_JSON_BYTES, SEARCH_KEY_VERSION } from '@app/specs/workspace-db.spec';
-import { CAPTURE_BUSY, CHANGES_READ_API, type CaptureAnswer, type RegionAnswer } from '@app/specs/changes.schema';
+import { CAPTURE_BUSY, CAPTURE_REFUSAL_MESSAGES, CAPTURE_REFUSALS, CHANGES_READ_API, type CaptureAnswer, type RegionAnswer } from '@app/specs/changes.schema';
 import { DEFAULT_RENDER_PROFILE, DEFAULT_TAB_OVERRIDES, type AuditRenderProfile, type RenderProfile, type TabOverrides } from '@app/specs/render-profile.spec';
 import type { TabState } from '@app/specs/browser.spec';
 import { auditOf, readyReading, regionAnswer, regionText } from './fakes';
@@ -911,5 +911,55 @@ describe('capture refuses with tab overrides (Phase 11 Task 6, Decision 8)', () 
     state.overridesOn = false;
     captured(await service.capture(1));
     expect(count(rows)).toBe(1);
+  });
+});
+
+// Phase 12 Task 10b (specs/changes.spec.ts CAPTURE_REFUSALS `location-tab`; specs/location-profiles.feature.md,
+// location-tab-captures-only-result-pages; plan Decision 11): a location tab's capture records its location only
+// through its search parameters, so any other page there is refused.
+describe('capture on a location tab (Phase 12 Task 10b)', () => {
+  const BERLIN = { profileId: '01920000-0000-7000-8000-0000000000c1', label: 'Berlin' };
+  const LOCATED: SearchParams = { ...PARAMS, location: { via: 'proxy', label: 'Berlin' } };
+  /** `changesTabs` over a browser state whose tab 1 is a location tab (or not), as main builds it. */
+  const tabsWith = (location: typeof BERLIN | null) => {
+    const contents = { executeJavaScriptInIsolatedWorld: vi.fn(async () => null), getURL: () => PAGE };
+    const response: SeoAuditResponse = { status: 'ready', url: PAGE, audit: auditOf(PAGE), renderProfile: null };
+    const tab = { id: 1, tabOverrides: DEFAULT_TAB_OVERRIDES, loadedUnderOverrides: false, overridesRevision: 0, ...(location ? { location } : {}) };
+    return changesTabs({ getState: () => ({ activeTabId: 1, tabs: [tab] }), seo: { getAudit: () => response } }, (id) => (id === 1 ? contents : null), { loadedAt: () => null, watch: () => undefined });
+  };
+
+  test('location-tab-captures-only-result-pages', async () => {
+    expect(CAPTURE_REFUSALS).toContain('location-tab');
+    expect(CAPTURE_REFUSAL_MESSAGES['location-tab']).toBe('This tab goes through a location proxy. Only its search result pages can be captured for now.');
+    const tabs = tabsWith(BERLIN);
+    expect(tabs.locationOf!(1)).toEqual(BERLIN);
+    expect(tabs.locationOf!(9)).toBeNull();
+    // An ordinary article in the location tab: refused, nothing read, nothing stored.
+    const { service, state, extract, rows } = setup({ tabs });
+    state.params = null;
+    expect(refused(await service.capture(1))).toBe('location-tab');
+    expect(extract).not.toHaveBeenCalled();
+    // A result page read without the tab's location (it would read as the user's own connection): refused too.
+    state.params = PARAMS;
+    expect(refused(await service.capture(1))).toBe('location-tab');
+    // Given parameters (a run target) without a location: refused.
+    expect(refused(await service.capture(1, { searchParams: PARAMS }))).toBe('location-tab');
+    expect(rows('ci_captures')).toHaveLength(0);
+    expect(rows('ci_versions')).toHaveLength(0);
+    // Its result page, whose parameters carry the location: captured, into a lane of its own.
+    state.params = LOCATED;
+    captured(await service.capture(1));
+    const [row] = rows('ci_captures');
+    expect(JSON.parse(String(row!['search_params']))).toMatchObject({ location: { via: 'proxy', label: 'Berlin' } });
+    expect(row).toMatchObject({ lane_key: laneKeyFor(PAGE, null, LOCATED) });
+  });
+
+  test('location-tab-refusal-leaves-home-tabs-alone', async () => {
+    const { service, state, rows } = setup({ tabs: tabsWith(null) });
+    state.params = null;
+    captured(await service.capture(1));
+    state.params = PARAMS;
+    captured(await service.capture(1));
+    expect(rows('ci_captures')).toHaveLength(2);
   });
 });

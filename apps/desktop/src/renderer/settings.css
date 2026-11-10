@@ -99,7 +99,11 @@
   font-weight: 600;
 }
 
+/* The sheet's scroll box is positioned, so text kept for screen readers only (`.visually-hidden`,
+   absolutely positioned) is laid out inside it: never past the window, where it made the page itself
+   scroll and `scrollIntoView` moved the whole app up. */
 .settings-content {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -285,15 +289,6 @@
 
 .settings-feature[data-included='false'] .settings-feature-mark {
   color: var(--text-faint);
-}
-
-.settings-sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 .settings-actions {

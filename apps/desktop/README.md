@@ -574,6 +574,52 @@ it was built: `docs/plans/phase-11-practitioner-tooling.md`.
   the file you pick (mode `0600`). It is **never sent anywhere** by frost: nothing uploads it or
   opens a URL with it.
 
+### Locations (Phase 12)
+- **Location profiles** (Settings › Locations): a name, a proxy type (HTTP, HTTPS or SOCKS5), host
+  and port, and for HTTP(S) an optional username and password. At most 20. Profiles are stored in the
+  local database **without** their sign-in; the username and password go to
+  `location-credentials.json` in your profile directory, encrypted with the OS keychain (`os`
+  protection only, as the agent's keys), and never come back to the window: Settings shows only
+  "Sign-in saved". Chromium does not authenticate SOCKS5 proxies, so a SOCKS5 profile has none. An
+  HTTP proxy receives the sign-in unencrypted: Use an HTTPS proxy when it needs a sign-in.
+- **Location tabs** ("New tab" on a profile, or "New tab in location: …" in the palette) browse
+  **through your own proxy**, on an in-memory session of their own (`frost-location-<id>`): its proxy
+  is set before its first tab exists, with no fallback to a direct connection, and it gets every
+  protection a normal tab's session has (permission prompts, downloads blocked, `file:` refused,
+  Clear Browsing Data). WebRTC in a location tab uses proxied UDP only. A page's pop-ups and links
+  opened from its panels (the sidebar, SERP result destinations) open in the same location; "Open in"
+  tools open on your own connection. The tab shows the location's name as a badge at all times (the
+  title is cut first).
+- **Permissions**: location tabs never get your device location (geolocation is denied there), and
+  every other permission is asked afresh in each location: answers given there are kept only in
+  memory until frost quits or the location is edited, are never saved, and your answers elsewhere
+  are not used there.
+- **Not kept**: a location tab is not kept in history, not saved in the session, and Reopen Closed
+  Tab brings it back only until frost quits. Editing or removing a location closes its tabs and clears
+  its session.
+- **Proxy sign-in**: frost answers a sign-in request only when it comes from that location's own
+  proxy (its host and port) for one of that location's tabs, once per request; a website's own
+  password prompt, or any other request, is cancelled.
+- **What is not proxied**: pages on localhost, loopback and link-local addresses are reached directly
+  (Chromium's implicit bypass), and frost's own requests for a location tab still go from your own
+  connection: robots.txt, the served HTML, the visibility probes, link, sitemap and hreflang checks,
+  a site crawl started from a location tab, and "Open in" tools.
+- **Captures**: a search result page read in a location tab records the location in its search
+  parameters, so its readings, history lane and rankings series are its own. Capture and screenshots
+  refuse any other page in a location tab for now (it would read as your own connection). Rows that
+  carry a location stay on this device: sync never sends them.
+
+### Data sources, AI answers and the site crawl (Phase 12)
+Built, and shipped turned off until the project's terms review is done: the app shows each control
+disabled with the note "Not available in this build yet: its terms are still under review.", and
+main refuses the request whatever the window asks. Settings › Data sources holds your own keys (SerpApi, DataForSEO or Serper for result pages;
+Perplexity or OpenAI web search for AI answers), protected by the OS keychain as the agent's keys
+are. With them, "Check via API" reads a project's searches through the chosen vendor, the AI answers view keeps what
+those engines answered with their citations, and the site crawl fetches a site's served HTML (robots.txt
+honoured, one request per host at a time, slower when the site asks) and audits each page. All of it
+is user-initiated, uses your own keys (the crawl needs none) and stays local: API readings, AI answers
+and crawl data are kept on this device and never synced.
+
 ## Security model (summary)
 The details, each with its named tests, are in `specs/*.feature.md`.
 - **Two kinds of WebContents.** The chrome (the React UI) is served from `app://app` with a strict

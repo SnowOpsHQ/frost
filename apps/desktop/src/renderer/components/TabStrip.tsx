@@ -4,6 +4,7 @@ import { AlertIcon, CloseIcon, FrostMark, GlobeIcon, PlusIcon } from '../icons';
 import { actions } from '../ipc';
 import { TabProfileBadge } from './RenderProfile';
 import { tabLabel } from '../tab-label';
+import { locationBadge } from '../location-view';
 import { tablistFocusTarget } from '../tablist-keys';
 
 // The tab strip of the browser chrome (spec `tabs.feature.md`). Styling is the bundled styles.css
@@ -18,6 +19,8 @@ import { tablistFocusTarget } from '../tablist-keys';
 function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const label = tabLabel(tab);
+  // Phase 12 Task 10b: a location tab always shows where it browses from.
+  const location = locationBadge(tab);
   useEffect(() => {
     if (active) ref.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [active]);
@@ -76,6 +79,11 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
         <span className="tab-label" data-testid="tab-label">
           {label}
         </span>
+        {location ? (
+          <span className="tab-location" data-testid="tab-location" title={location.title}>
+            {location.text}
+          </span>
+        ) : null}
         {tab.renderProfile ? <TabProfileBadge state={tab.renderProfile} /> : null}
         {tab.permissionPrompt && !active ? (
           <span className="tab-attention" data-testid="tab-permission-dot">

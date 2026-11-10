@@ -42,7 +42,8 @@ export type SetRetentionInput = z.infer<typeof SetRetentionInputSchema>;
 // ---- Answers -----------------------------------------------------------------------------------
 
 const refused = z.strictObject({ status: z.literal('refused'), reason: z.enum(RETENTION_REFUSALS) });
-const counts = z.strictObject({ captures: count, versions: count, diffs: count, screenshots: count });
+/** A purge's counts; `readings` (Phase 12 Task 4: the plan's SERP API readings) only when at least one. */
+const counts = z.strictObject({ captures: count, versions: count, diffs: count, screenshots: count, readings: count.min(1).optional() });
 
 export const SetRetentionAnswerSchema = z.discriminatedUnion('status', [z.strictObject({ status: z.literal('ok') }), refused]) satisfies z.ZodType<SetRetentionAnswer>;
 

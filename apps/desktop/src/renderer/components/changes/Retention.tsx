@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react';
 import { RETENTION_MODES, type RetentionMode } from '@app/specs/capture-db.spec';
-import { RETENTION_LABELS, RETENTION_REFUSAL_MESSAGES, RETENTION_VALUE_BOUNDS, USAGE_NOTE, type PurgeLogEntry, type RetentionPreviewAnswer, type UsageAnswer } from '@app/specs/retention.spec';
+import { RETENTION_LABELS, RETENTION_REFUSAL_MESSAGES, RETENTION_VALUE_BOUNDS, USAGE_NOTE, purgesNothing, type PurgeLogEntry, type RetentionPreviewAnswer, type UsageAnswer } from '@app/specs/retention.spec';
 import { ipc } from '../../ipc';
 import { notifyProjectsChanged } from './projects-sheet';
 import {
@@ -113,7 +113,8 @@ export function Retention({
 
   const bounded = form.mode === 'forever' ? null : RETENTION_VALUE_BOUNDS[form.mode];
   const unsaved = retentionFormChanged(form, retention);
-  const nothing = preview?.status === 'ok' && preview.counts.captures + preview.counts.versions + preview.counts.diffs + preview.counts.screenshots === 0;
+  // API readings (Phase 12 Task 4) count: an API-only plan enables Purge now.
+  const nothing = preview?.status === 'ok' && purgesNothing(preview.counts);
   const rows = usage?.status === 'ok' ? usageRows(usage.usage) : null;
 
   return (

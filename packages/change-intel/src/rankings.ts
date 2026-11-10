@@ -9,6 +9,7 @@ import {
   RANK_HISTORY_CSV_COLUMNS,
   RANK_LIMITS,
   RANK_OUTCOMES,
+  RANK_POINT_PROVIDERS,
   SEARCH_KEY_VERSION,
   SERP_FEATURE_TYPES,
   rangeStart,
@@ -151,12 +152,24 @@ function pageOf(observation: Readonly<Record<string, unknown>>): number {
 }
 
 /** `site`'s point on one reading (Decision 6); total over any input. */
+/**
+ * Where a point came from (Phase 12 Task 4): `{ source: 'serp-api' }` and its vendor (one of
+ * `RANK_POINT_PROVIDERS`, else left out) for a SERP API reading; nothing for a tab capture's, so
+ * Phase 10's points stay exactly as they were.
+ */
+function sourceOf(record: Readonly<Record<string, unknown>>): Pick<RankPoint, 'source' | 'provider'> {
+  if (record.source !== 'serp-api') return {};
+  const provider = RANK_POINT_PROVIDERS.find((known) => known === record.provider);
+  return provider === undefined ? { source: 'serp-api' } : { source: 'serp-api', provider };
+}
+
 export function rankOf(observation: SerpObservation, site: SiteMatch | null): RankPoint {
   const record = optionsOf(observation);
   const base = {
     readingId: typeof record.id === 'string' ? record.id : '',
     at: typeof record.observedAt === 'number' ? record.observedAt : 0,
     page: pageOf(record),
+    ...sourceOf(record),
   };
   const results = readyResults(record.snapshot);
   const organic = results === null ? [] : results.filter(isOrganic);

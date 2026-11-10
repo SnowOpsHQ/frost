@@ -25,6 +25,7 @@ import { isPublicPage } from './agent-approvals.spec';
 import { PROBE_AGENT_IDS, PROBE_LIMITS } from './visibility-probes.spec';
 import { modelPageUrl } from './agent-page-tools.spec';
 import { AGENT_TOOL_INPUT_LIMITS, TOOL_RESULT_MAX_CHARS } from './agent-tools.spec';
+import { AI_SEARCH_UNAVAILABLE_MESSAGES, CLOSED_AI_SEARCH_CONTEXT, resolveAiSearch, type AiSearchContext } from './ai-search.spec';
 
 /** The tools this covers (`AGENT_TOOL_NAMES`' search tools). */
 export const SEARCH_TOOL_NAMES = ['serp_results', 'search_intent', 'run_ai_search', 'gsc_performance'] as const;
@@ -102,15 +103,35 @@ export function isGscReadablePage(url: unknown): boolean {
   return page !== null && isPublicPage(page);
 }
 
+/** What `completeToolInput` may read besides the tab (Phase 12 Task 8): the AI search settings, gates and keys now. */
+export interface CompleteToolInputContext {
+  /** Absent: AI search is not wired (`CLOSED_AI_SEARCH_CONTEXT`: nothing usable). */
+  readonly aiSearch?: AiSearchContext;
+}
+
 /**
  * A tool call's input with the defaults main fills in as the call arrives (before the broker parses,
- * shows and hashes it), so what is approved is what runs: `gsc_performance` without a `url` gets the
- * chat tab's page (`gscPageUrl(tabUrl)`, when the tab shows a web page) and without `days`
- * `defaultGscDays`. Any other input is returned as it is (the tool's schema still checks it).
+ * shows and hashes it), so what is approved is what runs:
+ * - `gsc_performance` without a `url` gets the chat tab's page (`gscPageUrl(tabUrl)`, when the tab
+ *   shows a web page) and without `days` `defaultGscDays`;
+ * - `run_ai_search` (Phase 12 Task 8, plan Decision 8): any `via` the model sent is dropped, then
+ *   `engine` and `via` are set from `resolveAiSearch(input, context.aiSearch)` (the engine named, else
+ *   the default engine setting, else the first usable; the via always the engine's setting now). With
+ *   no usable engine the input is returned without a `via` and without a new `engine`: the broker
+ *   answers it as data before any card (`invokeTimeAnswer`). Main parses the completed input with
+ *   `runAiSearchApprovedInputSchema` (`@app/ai-skills`), so the hash covers both fields.
+ * Any other input is returned as it is (the tool's schema still checks it).
  */
-export function completeToolInput(toolName: string, input: unknown, tabUrl: string | null): unknown {
-  if (toolName !== 'gsc_performance' || typeof input !== 'object' || input === null || Array.isArray(input)) return input;
+export function completeToolInput(toolName: string, input: unknown, tabUrl: string | null, context: CompleteToolInputContext = {}): unknown {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return input;
   const given = input as Record<string, unknown>;
+  if (toolName === 'run_ai_search') {
+    // The model never chooses the via: whatever it sent is dropped before anything else.
+    const { via: _modelVia, ...rest } = given;
+    const resolved = resolveAiSearch(rest, context.aiSearch ?? CLOSED_AI_SEARCH_CONTEXT);
+    return resolved.ok ? { ...rest, engine: resolved.engine, via: resolved.via } : rest;
+  }
+  if (toolName !== 'gsc_performance') return input;
   const page = Object.hasOwn(given, 'url') ? null : gscPageUrl(tabUrl);
   return {
     ...given,
@@ -171,13 +192,20 @@ export const PROBE_TOOL_REASONS = {
 } as const;
 
 /**
- * What main answers for a call as it arrives, without asking or running it, or `null`: a
- * `run_visibility_probes` call for a page that isn't public (`isPublicPage`). Nothing would be
- * fetched anyway (the tool refuses such pages too), so asking the user to approve it would only
- * teach them to click Allow.
+ * What main answers for a call as it arrives, without asking or running it, or `null`:
+ * - a `run_visibility_probes` call for a page that isn't public (`isPublicPage`). Nothing would be
+ *   fetched anyway (the tool refuses such pages too), so asking the user to approve it would only
+ *   teach them to click Allow;
+ * - (Phase 12 Task 8) a `run_ai_search` call `resolveAiSearch` finds no usable engine for (`input` as
+ *   the model sent it, `aiSearch` the context now; absent: nothing usable, so as shipped every call):
+ *   `{ unavailable: <AI_SEARCH_UNAVAILABLE_MESSAGES[reason]>, state: reason }` from
+ *   `SEARCH_TOOL_SOURCES.run_ai_search`, with no card and nothing sent.
  */
-export function invokeTimeAnswer(toolName: string, pageUrl: string | null): { readonly source: string; readonly data: unknown } | null {
+export function invokeTimeAnswer(toolName: string, pageUrl: string | null, input?: unknown, context: CompleteToolInputContext = {}): { readonly source: string; readonly data: unknown } | null {
   if (toolName === 'run_visibility_probes' && pageUrl !== null && !isPublicPage(pageUrl)) return { source: PROBE_TOOL_SOURCE, data: { unavailable: PROBE_TOOL_REASONS.privatePage } };
+  if (toolName === 'run_ai_search') {
+    const resolved = resolveAiSearch(input, context.aiSearch ?? CLOSED_AI_SEARCH_CONTEXT);
+    if (!resolved.ok) return { source: SEARCH_TOOL_SOURCES.run_ai_search, data: { unavailable: AI_SEARCH_UNAVAILABLE_MESSAGES[resolved.reason], state: resolved.reason } };
+  }
   return null;
 }
-

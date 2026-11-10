@@ -10,6 +10,7 @@
  * lane (`capture-db.spec.ts`): a new version when the page changed, else one more capture of the
  * lane's latest version.
  */
+import { LOCATION_TAB_REFUSAL_MESSAGE } from './location-profiles.spec';
 import type { CaptureSnapshot, ChangeCounts, DiffRegion, PageRegion, SnapshotDiff } from './capture.spec';
 import type { SearchParams } from './serp-search-params.schema';
 import type { RenderProfile } from './render-profile.spec';
@@ -39,8 +40,15 @@ import { SEO_RULE_SPECS, type SeoCategory, type SeoRuleId } from './seo-rules.sp
  *   revision check), both filled from `TabState`.
  *   The lane key never reads the overrides, so a capture's lane is unchanged by them. Project runs
  *   open their own tabs with default overrides and are never refused this way.
+ * - `location-tab` (Phase 12 Task 10b, Decision 11; `location-profiles.spec.ts`): the tab goes
+ *   through a location profile's proxy (`TabState.location`) and the page's search parameters do not
+ *   carry `location` (it is not a result page the SERP service read with the tab's location). Location
+ *   reaches a stored row only through its `search_params`, so any other page would read as the user's
+ *   own connection: refused before anything is stored. The service learns the tab's location through
+ *   `ChangesTabs.locationOf?` (absent: none), filled from `TabState.location`. A home tab is never
+ *   refused this way.
  */
-export const CAPTURE_REFUSALS = ['no-tab', 'not-active', 'no-audit', 'busy', 'no-project', 'extract-failed', 'invalid-page', 'store-failed', 'tab-emulation-on'] as const;
+export const CAPTURE_REFUSALS = ['no-tab', 'not-active', 'no-audit', 'busy', 'no-project', 'extract-failed', 'invalid-page', 'store-failed', 'tab-emulation-on', 'location-tab'] as const;
 export type CaptureRefusal = (typeof CAPTURE_REFUSALS)[number];
 
 /** How the Changes panel explains a refusal (frost's own wording). */
@@ -54,6 +62,7 @@ export const CAPTURE_REFUSAL_MESSAGES: Readonly<Record<CaptureRefusal, string>> 
   'invalid-page': 'This page could not be turned into a capture.',
   'store-failed': 'The capture could not be saved.',
   'tab-emulation-on': 'This tab has CSS, cookies or location changed. Set them back to normal, reload the page, then capture it.',
+  'location-tab': LOCATION_TAB_REFUSAL_MESSAGE,
 };
 
 /** The refusal a capture answers while another capture of the same tab runs. */

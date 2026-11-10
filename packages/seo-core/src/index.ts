@@ -162,6 +162,12 @@ export {
   type UncompressedResource,
   type VitalReading,
 } from './performance';
+// The site crawl's robots.txt reading (Phase 12 Task 6a): Crawl-delay and the crawl's verdicts, for the bare token.
+export { crawlDelayFor, crawlRobotsParse, crawlRobotsRules, crawlRobotsRulesOf, type CrawlRobotsParse, type CrawlRobotsRules } from './crawl/crawl-delay';
+// The site crawl's served-HTML audit (Phase 12 Task 6b): the snapshot adapter, the context from the fetch, the crawl rule set.
+export { servedToPageSnapshot, type ServedFetchTiming } from './crawl/served-to-page';
+export { crawlContext, crawlResponse, type CrawlFetchFacts } from './crawl/crawl-context';
+export { CRAWL_RULES, crawlAudit } from './crawl/crawl-rules';
 export { pageUrls, socialPreview, type SocialCard, type SocialImage, type SocialPreview, type SocialSource, type SocialValue } from './social';
 export type {
   CappedText,

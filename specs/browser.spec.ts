@@ -19,6 +19,7 @@ import { TabOverridesSchema, TabRenderProfileSchema } from './render-profile.sch
 import { RENDER_PROFILE_STATUSES } from './render-profile.spec';
 import { BrowserPolishStateShape } from './browser-polish.schema';
 import { DEFAULT_SEARCH_ENGINE, searchEngine } from './browser-polish.spec';
+import { TabLocationSchema } from './location-profiles.schema';
 
 /**
  * Session partition of every tab view. Separate from the app UI's default session: it has no
@@ -26,6 +27,34 @@ import { DEFAULT_SEARCH_ENGINE, searchEngine } from './browser-polish.spec';
  * deny-by-default permissions with per-origin prompts (`permissions.spec.ts`, Task 4).
  */
 export const BROWSE_PARTITION = 'persist:frost-browser' as const;
+
+/**
+ * The **browse class** (Phase 12 Task 10a; `browser-chrome.feature.md`, Session classification): the
+ * sessions whose WebContents are tabs. "Is this a tab's session?" has one answer, main's registry
+ * `apps/desktop/src/main/browser/browse-class.ts` (`isBrowseClassSession`, `browseClassSessions`,
+ * `onBrowseClassSession`, `registerBrowseClassSession`), and every consumer asks it:
+ * - the app-wide guard's classification (a browse-class WebContents gets the browse guard, anything
+ *   else the app pin; `security/register.ts`), main's own tab check, the render-profile debugger,
+ *   the devtools Storage tab (the tab's **own** session, from its WebContents), Clear Browsing Data
+ *   (every browse-class session) and the cookies-off pair (`cookie-block.ts`, on the tab's own
+ *   session, only a browse-class one);
+ * - every per-session wiring (the main-frame and request observers, `hardenBrowseSession` with the
+ *   permission handlers and the download notice) is one installer, run once on each browse-class
+ *   session: the ones present when it is added and every one registered later.
+ *
+ * Members: the partitions listed here, always (resolved from main once the app is ready), plus the
+ * sessions main registers at run time with `registerBrowseClassSession`, which only
+ * `apps/desktop/src/main/location/**` may call (Task 10b: one in-memory `frost-location-<profileId>`
+ * partition per location profile, registered at first use, before its first tab). An app session (the
+ * default session, or the app windows' marked by `registerSecurity`) is never registered. Nothing
+ * else is ever browse-class; a session that is missing, throws or is not a member is app content
+ * (fail closed). A WebContents is classified once, at its creation, for its life: a tab created on a
+ * partition before that partition was registered stays app content. The bounded fetchers (`netHop`, `netResolver`: robots.txt, served HTML, checks,
+ * probes, the crawl lane) stay on `BROWSE_PARTITION` alone (Phase 12 Decision 11). No module under
+ * `apps/desktop/src/main/` but the registry and that fetcher setup looks a browse session up by
+ * partition or compares a session to one (`browse-class-registry-is-the-only-test`).
+ */
+export const BROWSE_CLASS_PARTITIONS: readonly [typeof BROWSE_PARTITION] = [BROWSE_PARTITION] as const;
 
 // Schemes a tab may load or navigate to, and the shared `http(s)` checks: Zod-free in `web-url.spec.ts`.
 export { BROWSABLE_SCHEMES, type BrowsableScheme } from './web-url.spec';
@@ -79,7 +108,8 @@ export const MAX_PENDING_WATCHES = 4;
 
 /**
  * webPreferences of every tab view, set **explicitly** by `createTabView()`: the four hardened
- * values of `HARDENED_WEB_PREFERENCES` plus the browse partition, **no `preload`** (browsed
+ * values of `HARDENED_WEB_PREFERENCES` plus the browse partition (the default: the caller may name
+ * another browse-class partition, `BROWSE_CLASS_PARTITIONS`, and only `partition` changes), **no `preload`** (browsed
  * content never gets the IPC bridge), and `disableDialogs` (a page's `alert` / `confirm` /
  * `prompt` never open a native dialog owned by frost with no origin on it; a deliberate Phase 1
  * limit, `browse-guard.feature.md`). Exactly these keys: nothing that loosens the view
@@ -219,7 +249,9 @@ export const TabStateSchema = z.strictObject({
    * whole-branch review): `applying` while their commands are unanswered, `failed` when the debugger
    * could not be attached or refused one (the page then runs without them, and the render-profile
    * bar and the status-bar chip say so, with or without a profile), else `active` (also when no
-   * override has a CDP part: CSS off is a page script).
+   * override has a CDP part: CSS off is a page script). Also `failed` while cookies are off but the
+   * HTTP cookie block refused the tab (its session is not browse-class, or the blocking pair could not
+   * be registered: Phase 12 Task 10a), so the UI never claims "cookies off" while cookies flow.
    */
   overridesStatus: z.enum(RENDER_PROFILE_STATUSES),
   /**
@@ -240,6 +272,16 @@ export const TabStateSchema = z.strictObject({
    * the result is stored.
    */
   overridesRevision: z.int().nonnegative(),
+  /**
+   * The tab's location (Phase 12 Task 10b, `location-profiles.spec.ts`): the location profile whose
+   * in-memory partition and proxy the tab runs on, and its label, **set when the tab is created and
+   * never changed** (a tab cannot move between partitions). Absent or `null`: the user's own
+   * connection (main omits it for such a tab). The tab badge always shows it; the SERP service adds
+   * it to a result page's search parameters (`{ via: 'proxy', label }`); Capture and screenshots
+   * refuse `location-tab` on any other page; the tab is never written to history or the saved
+   * session.
+   */
+  location: TabLocationSchema.nullable().optional(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 

@@ -101,6 +101,9 @@ export function servedFailure(fetched: BoundedFetchResult): ServedState | null {
       return unavailable('not-fetched');
     case 'aborted':
       return unavailable('unreachable');
+    // The served fetch passes no redirect-policy hook (only the crawl does): a refused redirect is a bad one.
+    case 'redirect-refused':
+      return unavailable('bad-redirect', fetched.status, fetched.finalUrl);
     default:
       return unavailable(fetched.outcome, fetched.status, fetched.finalUrl);
   }

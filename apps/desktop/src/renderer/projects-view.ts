@@ -54,6 +54,7 @@ import {
   formatBytes,
   plural,
   purgeCountsText,
+  purgesNothing,
   type CompactAnswer,
   type PurgeLogEntry,
   type PurgeNowAnswer,
@@ -524,7 +525,8 @@ export function previewText(answer: RetentionPreviewAnswer | null): string {
   if (answer.status === 'refused') return retentionRefusal(answer);
   if (answer.policy.mode === 'forever') return 'Keep everything: purging removes nothing.';
   const { counts } = answer;
-  if (counts.captures + counts.versions + counts.diffs + counts.screenshots === 0) return 'Purging now would remove nothing.';
+  // API readings (Phase 12 Task 4) count: a plan with only those is not "nothing".
+  if (purgesNothing(counts)) return 'Purging now would remove nothing.';
   return `Purging now would remove ${purgeCountsText(counts)} (≈ ${formatBytes(answer.bytes)}).`;
 }
 

@@ -712,7 +712,13 @@ export const CLEAR_SITE_DATA = {
   confirmIndex: 1,
   dataTypes: ['cookies', 'localStorage', 'indexedDB', 'serviceWorkers', 'fileSystems', 'cache', 'backgroundFetch'],
 } as const;
-export const CLEAR_SITE_DATA_RESULTS = ['cleared', 'cancelled', 'refused', 'busy'] as const;
+/**
+ * What "Clear this site's data" did: `cleared`; `cancelled` (the user said no); `refused` (no web
+ * page); `busy` (another clear is being asked about: one dialog at a time, shared only by a request for
+ * the same tab session and origin, Phase 12 Task 10a); `failed` (confirmed, but clearing the tab's
+ * session threw: some or none of the data may be gone).
+ */
+export const CLEAR_SITE_DATA_RESULTS = ['cleared', 'cancelled', 'refused', 'busy', 'failed'] as const;
 export type ClearSiteDataResult = (typeof CLEAR_SITE_DATA_RESULTS)[number];
 
 // ---- Issues ------------------------------------------------------------------------------------

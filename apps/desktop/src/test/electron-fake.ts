@@ -32,6 +32,8 @@ export class FakeWebContents extends EventEmitter {
   setWindowOpenHandler = vi.fn((handler: (details: HandlerDetails) => WindowOpenHandlerResponse) => {
     this.windowOpenHandler = handler;
   });
+  /** `setWebRTCIPHandlingPolicy` (Phase 12 Task 10b: location tabs). */
+  setWebRTCIPHandlingPolicy = vi.fn((_policy: string) => {});
   readonly getLastWebPreferences: () => WebPreferences;
   /** The WebContents' session, as `contents.session` (undefined unless a test gives one). */
   readonly session: FakeSession | undefined;

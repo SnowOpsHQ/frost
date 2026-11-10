@@ -1,5 +1,5 @@
-import { app, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
-import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import { app, type BrowserWindow, type Session, type WebContents } from 'electron';
+import { isBrowseClassContents, markAppSession } from '../browser/browse-class';
 import { guardBrowseContents, type BrowseGuardHooks } from '../browser/guard';
 import { openExternalIfAllowed, trackUserGesture } from './gesture';
 import { isAllowedAppNavigation, isAppUrl, isPermissionGranted, withAppCsp } from './policy';
@@ -62,6 +62,8 @@ function resolveOptions(options: SecurityOptions | undefined): SecurityOptions {
  */
 export function registerSecurity(session: Session, win: BrowserWindow, options?: SecurityOptions): void {
   const resolved = resolveOptions(options);
+  // The app windows' session is an app session: it can never be registered as browse-class.
+  markAppSession(session);
 
   session.setPermissionRequestHandler((_contents, permission, callback) => callback(isPermissionGranted(permission)));
   session.setPermissionCheckHandler((_contents, permission) => isPermissionGranted(permission));
@@ -87,8 +89,9 @@ export function registerSecurity(session: Session, win: BrowserWindow, options?:
 
 /**
  * Guards every WebContents created from now on, so none is ever left on Electron defaults. Each is
- * classified at creation by session: browse-partition contents (tabs) get the browse guard
- * (`browser/guard.ts`), everything else the app pin below. This is the only place WebContents
+ * classified at creation by session, asking the browse-class registry (`browser/browse-class.ts`):
+ * browse-class contents (tabs) get the browse guard (`browser/guard.ts`), everything else the app
+ * pin below. This is the only place WebContents
  * guard options come from: calling it again with equal options is a no-op, with different options
  * it throws.
  */
@@ -98,7 +101,8 @@ export function registerAppWideGuards(options: SecurityOptions = {}): void {
     return;
   }
   const listener = (_event: unknown, contents: WebContents) => {
-    if (isBrowseContents(contents)) guardBrowseOnce(contents, options);
+    // Classified here, at creation, once: the registry records the answer for the WebContents' life.
+    if (isBrowseClassContents(contents)) guardBrowseOnce(contents, options);
     else guardWebContents(contents, options);
   };
   appWide = { options, listener };
@@ -121,20 +125,6 @@ function refuseBadCertificates(): void {
     event.preventDefault();
     callback();
   });
-}
-
-/**
- * Classifies a new WebContents by its session (spec `browser-chrome.feature.md`): `true` only for
- * the browse partition's session. Anything else — the default session, another partition, a
- * missing or throwing `session` — is app content and keeps the app pin (fail closed).
- */
-function isBrowseContents(contents: WebContents): boolean {
-  try {
-    const ses: unknown = contents.session;
-    return ses !== undefined && ses !== null && ses === electronSession.fromPartition(BROWSE_PARTITION);
-  } catch {
-    return false;
-  }
 }
 
 function guardBrowseOnce(contents: WebContents, options: SecurityOptions): void {

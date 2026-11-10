@@ -21,6 +21,7 @@ import {
   type SerpObservation,
   type SiteMatch,
 } from '@app/specs/rankings.spec';
+import { serpApiProviderOfPageUrl } from '@app/specs/serp-api.spec';
 import { SearchParamsSchema } from '@app/specs/serp-search-params.schema';
 import { MAX_PROJECT_COMPETITORS, MAX_PROJECT_TAGS, MAX_READINGS_PER_READ, SEARCH_KEY_VERSION } from '@app/specs/workspace-db.spec';
 import path from 'node:path';
@@ -46,6 +47,9 @@ import { siteMatchOf } from './workspace';
 // - CSV is formatted here (`rank-csv.ts`, `csvCell`) and goes to main's clipboard, or to the file the
 //   user picks in main's own save dialog (`rank-dialogs.ts`), written owner-only. No path ever comes
 //   from the renderer.
+// Phase 12 Task 4: a SERP API reading (`source = 'serp-api'`, no capture) is one more point of its
+// search's series, never an orphan; its point says so (`source`) and names the vendor its `page_url`
+// gives (`serpApiProviderOfPageUrl`).
 // Every method answers: a database failure is `store-failed` and one log line (the error's code or
 // name, never its message).
 
@@ -121,8 +125,10 @@ function observationOf(row: unknown, projectId: string): SerpObservation | null 
     observedAt: stored.observedAt,
   });
   if (!checked.success || checked.data.projectId !== projectId) return null;
-  const { id, searchKey, searchKeyVersion, params, filters, observedAt, source, snapshot } = checked.data;
-  return { id, searchKey, searchKeyVersion, params, filters, observedAt, source, snapshot };
+  const { id, searchKey, searchKeyVersion, params, filters, observedAt, source, snapshot, pageUrl } = checked.data;
+  // Phase 12 Task 4: an API reading names its vendor by its `page_url` (the vendor's canonical request URL).
+  const provider = source === 'serp-api' ? serpApiProviderOfPageUrl(pageUrl) : null;
+  return { id, searchKey, searchKeyVersion, params, filters, observedAt, source, ...(provider !== null ? { provider } : {}), snapshot };
 }
 
 /** Newest first by `(observedAt, id)`, as the repository answers. */

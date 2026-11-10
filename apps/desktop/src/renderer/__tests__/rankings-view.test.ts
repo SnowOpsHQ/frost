@@ -40,6 +40,7 @@ import {
   resultPageUrl,
   rowsForTag,
   saveCsvText,
+  rankSourceLabel,
   seriesRows,
   tagOptions,
   trendPoints,
@@ -233,9 +234,16 @@ describe('rankings view', () => {
     // The series: newest first, date, position, URL.
     const series = seriesRows([point({ readingId: 'r1', at: 1_000, position: 5 }), point({ readingId: 'r2', at: 2_000, outcome: 'not-found', position: null, url: null, alsoIn: ['video'] })]);
     expect(series).toEqual([
-      { readingId: 'r2', when: formatWhen(2_000), position: '> 10', url: RANK_VIEW_TEXT.none, alsoIn: `${RANK_VIEW_TEXT.alsoIn} ${SERP_RESULT_TYPE_LABELS.video}` },
-      { readingId: 'r1', when: formatWhen(1_000), position: '5', url: 'https://example.com/a', alsoIn: '' },
+      { readingId: 'r2', when: formatWhen(2_000), position: '> 10', url: RANK_VIEW_TEXT.none, alsoIn: `${RANK_VIEW_TEXT.alsoIn} ${SERP_RESULT_TYPE_LABELS.video}`, source: 'Tab capture' },
+      { readingId: 'r1', when: formatWhen(1_000), position: '5', url: 'https://example.com/a', alsoIn: '', source: 'Tab capture' },
     ]);
+    // Phase 12 Task 4 (rank-point-shows-source): an API point names its vendor ("<Vendor> API").
+    expect(seriesRows([point({ readingId: 'r3', source: 'serp-api', provider: 'dataforseo' }), point({ readingId: 'r4', source: 'serp-api' })]).map((r) => r.source)).toEqual(['Data API', 'DataForSEO API']);
+    expect(rankSourceLabel(null)).toBe('');
+    expect(rankSourceLabel(point({ source: 'serp-api', provider: 'serper' }))).toBe('Serper API');
+    expect(rankSourceLabel(point({ source: 'serp-api', provider: 'toString' as never }))).toBe('Data API');
+    expect(rankRowView(row({ latest: point({ source: 'serp-api', provider: 'serpapi' }) }), []).source).toBe('SerpApi API');
+    expect(rankRowView(row({ latest: null }), []).source).toBe('');
     // Refusals and export outcomes in words.
     expect(rankingsRefusalText({ status: 'ok' })).toBeNull();
     expect(rankingsRefusalText({ status: 'refused', reason: 'not-found' })).toBe(RANKINGS_REFUSAL_MESSAGES['not-found']);

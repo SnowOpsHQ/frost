@@ -6,12 +6,16 @@ import { createAgentSkillsRepository, type AgentSkillsRepository } from './agent
 import { createAgentSkillPrefsRepository, type AgentSkillPrefsRepository } from './agent-skill-prefs';
 import { createAgentMcpRepository, type AgentMcpRepository } from './agent-mcp';
 import { createAiChecksRepository, type AiChecksRepository } from './ai-checks';
+import { createAiAnswersRepository, type AiAnswersRepository } from './ai-answers';
 import { createChangeIntelRepository, type ChangeIntelRepository } from './change-intel/repository';
+import { createDataUsageRepository, type DataUsageRepository } from './data-usage';
+import { createLocationProfilesRepository, type LocationProfilesRepository } from './location-profiles';
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
 import { createHistoryRepository, type HistoryRepository } from './history';
 import { createSettingsRepository, type SettingsRepository } from './settings';
 import { openSessionDatabase, type OpenOptions } from './open';
 import { createSessionRepository, type SessionRepository } from './repository';
+import { createSiteCrawlRepository, type SiteCrawlRepository } from './site-crawl/repository';
 import { createSessionWriter, type SessionWriter, type WriterOptions } from './writer';
 
 // The browser-session store main opens once at startup (spec `browser-session-db.feature.md`).
@@ -42,6 +46,14 @@ export interface SessionStore {
   readonly changeIntel: ChangeIntelRepository;
   /** The AI checks' answers (Phase 9 Task 10), written at once; removed by Clear Browsing Data. */
   readonly aiChecks: AiChecksRepository;
+  /** The site crawler's runs, pages, links and frontier (Phase 12 Task 5), written at once; deleted per run, never by Clear Browsing Data. */
+  readonly siteCrawl: SiteCrawlRepository;
+  /** The data API usage counter (Phase 12 Task 2): requests per provider per UTC month; never by Clear Browsing Data. */
+  readonly dataUsage: DataUsageRepository;
+  /** Location profiles (Phase 12 Task 10b): label and proxy per profile, no secret; never synced, never by Clear Browsing Data. */
+  readonly locationProfiles: LocationProfilesRepository;
+  /** The AI answers (Phase 12 Task 9), written at once, kept by their own retention; device-local, never by Clear Browsing Data. */
+  readonly aiAnswers: AiAnswersRepository;
   /** Whether the database is still open (`close()` closes it). */
   readonly isOpen: boolean;
   /**
@@ -75,6 +87,10 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     agentMcp: createAgentMcpRepository(drizzle),
     changeIntel: createChangeIntelRepository(drizzle),
     aiChecks: createAiChecksRepository(drizzle),
+    siteCrawl: createSiteCrawlRepository(drizzle),
+    dataUsage: createDataUsageRepository(drizzle),
+    locationProfiles: createLocationProfilesRepository(drizzle),
+    aiAnswers: createAiAnswersRepository(drizzle),
     get isOpen() {
       return db.isOpen;
     },

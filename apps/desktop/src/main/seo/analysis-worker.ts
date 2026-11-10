@@ -1,5 +1,6 @@
 import { parentPort } from 'node:worker_threads';
 import type { ServedParseInput } from '@app/specs/seo-javascript.schema';
+import { analyseCrawlPage, parseCrawlRobots, parseCrawlSitemap } from '../crawl/analyse';
 import { robotsVerdicts } from '../devtools/robots-verdicts';
 import { analyseSnapshot, analyseSpeed } from './analyse';
 import { analyseCheck } from './checks-analyse';
@@ -12,8 +13,10 @@ import { parseServedHtml } from './served-parse';
 // or `{ id, kind, raw }` for another job kind: `speed`, a live speed measurement
 // (`seo-speed.feature.md`); `served`, served HTML bytes to parse (`seo-javascript.feature.md`);
 // `robots`, the devtools drawer's robots.txt verdict job (`devtools.feature.md`); `checks`, a link,
-// sitemap or hreflang check's job (`seo-checks.feature.md`, sent to a worker of its own). All it
-// sends back is `{ id, result }`.
+// sitemap or hreflang check's job (`seo-checks.feature.md`, sent to a worker of its own); `crawl`,
+// `crawl-robots` and `crawl-sitemap`, the site crawl's page, robots.txt and sitemap jobs
+// (`site-crawl.feature.md`, sent to a worker of the crawl's own; `crawl/analyse.ts`). All it sends back
+// is `{ id, result }`.
 
 /** The job's result, by its kind. */
 function resultOf(message: { readonly kind?: unknown; readonly raw: unknown; readonly context?: unknown }): unknown {
@@ -26,6 +29,12 @@ function resultOf(message: { readonly kind?: unknown; readonly raw: unknown; rea
       return robotsVerdicts(message.raw);
     case 'checks':
       return analyseCheck(message.raw);
+    case 'crawl':
+      return analyseCrawlPage(message.raw);
+    case 'crawl-robots':
+      return parseCrawlRobots(message.raw);
+    case 'crawl-sitemap':
+      return parseCrawlSitemap(message.raw);
     default:
       return analyseSnapshot(message.raw, message.context);
   }

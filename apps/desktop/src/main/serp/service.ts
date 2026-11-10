@@ -2,7 +2,7 @@ import type { SerpProbesService, SerpReadApi, SerpService } from '@app/ipc-contr
 import type { IntentAnswer } from '@app/specs/intent-classifier.spec';
 import type { PackUpdateOutcome } from '@app/specs/serp-selector-pack.spec';
 import type { EngineLayout, SelectorEngine } from '@app/specs/serp-selector-pack.schema';
-import type { SearchParams } from '@app/specs/serp-search-params.schema';
+import type { SearchLocation, SearchParams } from '@app/specs/serp-search-params.schema';
 import { serpFiltersOf } from '@app/specs/rankings-url.spec';
 import { sortedJson } from '@app/specs/rankings.spec';
 import type { PackStatus, SerpState, SerpTabState } from '@app/specs/serp-service.schema';
@@ -55,6 +55,18 @@ export interface SerpTab {
   readonly device: SerpDevice;
   /** Where the reader and the outlines run (its WebContents). */
   readonly page: SerpReadTarget;
+  /**
+   * Where its results are asked from when not the user's own connection (Phase 12 Task 10b: a
+   * location tab's `{ via: 'proxy', label }`, set at the tab's creation): added to every result page's
+   * parameters after `matchSerp`, so its readings, lane and search key are its own. Absent: home.
+   */
+  readonly location?: SearchLocation | null;
+}
+
+/** `match` with the tab's location in its parameters (Phase 12 Decision 7); `match` as it is for a home tab. */
+function located(match: SerpMatch | null, tab: Pick<SerpTab, 'location'>): SerpMatch | null {
+  if (!match || !tab.location) return match;
+  return { ...match, params: { ...match.params, location: { via: tab.location.via, label: tab.location.label } } };
 }
 
 export interface SerpTabs {
@@ -325,7 +337,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
     if (!entry || !isCurrent(entry, tab, pack)) {
       // A reading of something the tab no longer shows goes (removed from the page if it is still that document).
       if (entry && !passive) retire(entry);
-      const match = disposed ? null : matchSerp(tab.url, pack.pack, tab.device);
+      const match = disposed ? null : located(matchSerp(tab.url, pack.pack, tab.device), tab);
       if (!match) return { serp: { status: 'not-serp', tabId, url: tab.url.length <= SERP_PARAM_LIMITS.maxUrlChars ? tab.url : '' }, entry: null, engine: null };
       if (tab.loading || passive) return { serp: { status: 'pending', tabId, documentSeq: tab.documentSeq, url: tab.url, params: match.params }, entry: null, engine: match.engine };
       entry = begin(tabId, tab, match, pack, null);
@@ -525,7 +537,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       const tab = tabId === null ? null : tabs.tab(tabId);
       const pack = readyPack();
       if (tabId === null || !tab || tab.contentsId !== contentsId || !pack) return;
-      const match = matchSerp(tab.url, pack.pack, tab.device);
+      const match = located(matchSerp(tab.url, pack.pack, tab.device), tab);
       if (match) {
         begin(tabId, tab, match, pack, null);
         return;
@@ -551,7 +563,7 @@ export function createSerpService(options: SerpServiceOptions): Serp {
       const pack = readyPack();
       if (tabId === null || !tab || tab.contentsId !== contentsId || !pack) return;
       const entry = entries.get(tabId);
-      const match = matchSerp(url, pack.pack, tab.device);
+      const match = located(matchSerp(url, pack.pack, tab.device), tab);
       // The same search at another URL (a fragment, a tracking token): the reading stays. Not when a
       // known filter changed (canonical params leave filters out): a capture would file old results under it.
       if (

@@ -35,6 +35,8 @@ export interface ClosedTabStack {
   size(): number;
   /** Empties the stack; answers whether it held anything. */
   clear(): boolean;
+  /** Drops every entry `match` picks (a location profile's, once it is edited or removed); whether any went. */
+  drop(match: (closed: ClosedTab) => boolean): boolean;
 }
 
 export function createClosedTabStack(max: number = CLOSED_TABS_MAX): ClosedTabStack {
@@ -51,6 +53,12 @@ export function createClosedTabStack(max: number = CLOSED_TABS_MAX): ClosedTabSt
       const had = stack.length > 0;
       stack.length = 0;
       return had;
+    },
+    drop(match) {
+      const kept = stack.filter((closed) => !match(closed));
+      const dropped = kept.length !== stack.length;
+      stack.splice(0, stack.length, ...kept);
+      return dropped;
     },
   };
 }

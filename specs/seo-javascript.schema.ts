@@ -136,6 +136,12 @@ export interface ServedParseInput {
   readonly body: Uint8Array;
   /** Parse as a browser with scripting on (default) or off (a render profile with JavaScript off). */
   readonly scriptingEnabled?: boolean;
+  /**
+   * Leave out the parse's extra text (Phase 12 Task 6b, the site crawl's job): no `sourceText` (and
+   * no `sourceTruncated`) beside the snapshot and no `leadText` in it, so a crawl result holds no more
+   * than the snapshot. Default `false` (the sidebar's served audit and the Inspector keep both).
+   */
+  readonly skipExtraText?: boolean;
 }
 /**
  * The parse job's answer. `sourceText` (Phase 11 Task 5): the decoded text the parse read, cut at

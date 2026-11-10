@@ -1,6 +1,6 @@
 # Feature: browser chrome and a hardened page view
 
-Spec: `specs/browser.spec.ts` (`BROWSE_PARTITION`, `BROWSABLE_SCHEMES`, `BROWSE_BLANK_URL`,
+Spec: `specs/browser.spec.ts` (`BROWSE_PARTITION`, `BROWSE_CLASS_PARTITIONS`, `BROWSABLE_SCHEMES`, `BROWSE_BLANK_URL`,
 `TAB_VIEW_WEB_PREFERENCES`, `BrowserStateSchema`, `PageBoundsSchema`, `WATCH_TIMEOUT_MS`,
 `APP_WINDOW_TITLE`) + `ipc-sender.spec.ts`. Design doc §3 and §4 Phase 1. Each line maps to one
 named test.
@@ -17,17 +17,94 @@ frost's start view (wordmark + "Search or enter address") and the address bar is
 Electronegativity sees them.
 - **Scenario: tab-view-prefs-equal-spec** — the `WebContentsView` options' `webPreferences`
   `toEqual(TAB_VIEW_WEB_PREFERENCES)`.
-- **Scenario: tab-view-uses-browse-partition** — `partition` is `BROWSE_PARTITION`.
+- **Scenario: tab-view-uses-browse-partition** — `partition` is `BROWSE_PARTITION` when the caller
+  names none (the controller's tabs). A caller may name another browse-class partition (Task 10b);
+  only `partition` differs, the hardened values stay literals in `window.ts`.
 - **Scenario: tab-view-has-no-preload** — no `preload` key at all.
 - **Scenario: tab-view-disables-dialogs** — `disableDialogs` is `true` (`browse-guard.feature.md`,
   JavaScript dialogs).
 
+## Session classification: the browse-class registry (`apps/desktop/src/main/browser/__tests__/browse-class.test.ts`; installers: `browse-class-installers.test.ts`)
+"Is this a tab's session?" has one answer: `browser/browse-class.ts` (`BROWSE_CLASS_PARTITIONS` in
+`browser.spec.ts`). Its members are the `BROWSE_CLASS_PARTITIONS` sessions (today only
+`BROWSE_PARTITION`'s) and the sessions main registers with `registerBrowseClassSession` (Task 10b's
+location partitions); a missing, throwing or unregistered session is app content (fail closed).
+With only `BROWSE_PARTITION` registered, behaviour is exactly Phase 11's.
+- **Scenario: browse-class-registry-is-the-only-test** — a source scan of `apps/desktop/src/main/`
+  (tests excluded):
+  - only `browser/browse-class.ts`, `window.ts` (`createTabView`'s default partition) and `index.ts`
+    (the bounded fetchers' session) name `BROWSE_PARTITION` / `BROWSE_CLASS_PARTITIONS`; no file
+    holds a string or template with both `frost-` and `browser`, or imports `browser.spec` as a
+    namespace or dynamically;
+  - only `browse-class.ts` and `location/**` (Task 10b) name `registerBrowseClassSession`, and only
+    `browse-class.ts` makes a registry;
+  - `index.ts` looks the browse partition up exactly once, bound to one name used only in
+    `netHop(net, …)`, `netResolver(…)` and `….getUserAgent()`; `window.ts` looks no session up;
+  - outside the registry, no `===` / `!==` / `==` / `!=` or `Object.is` with a session operand
+    (`…session`, `…Session`, `ses`, `fromPartition(…)`) unless the other side is `null` /
+    `undefined` / a boolean; no `.has` / `.includes` / `.indexOf` / `.get` / `.find` / `.some`
+    keyed by one; and no member picked out of `browseClassSessions()` (an index, `.at`, `.find`,
+    destructuring). The five exceptions, per-session bookkeeping that must each still exist:
+    `cookie-block.ts` `current === session` (the tab is already on this session),
+    `tabsOf.get(session)` (each session's cookies-off tabs), `tabsOf.has(session)` (whether a
+    session has its pair); `web-request.ts` `hubs.get(session)` (each session's observer hub);
+    `security/register.ts` `downloadsRefused.has(session)` (the app session's download refusal,
+    added once). A companion test runs every pattern against known violations.
+- **Scenario: registry-membership** — the browse partition's session is browse-class; the default
+  session, another partition's, `null`, `undefined` and a non-session object are not; a registered
+  session is, from its registration on; registering twice (or registering the browse session) is a
+  no-op; `browseClassSessions()` lists the browse session first, then the registered ones in order.
+- **Scenario: registry-refuses-app-sessions** — `registerBrowseClassSession` throws for the default
+  session, for a session marked with `markAppSession` (`registerSecurity` marks the app windows'),
+  and for a non-object, running no installer on it; a browse-class session cannot be marked.
+- **Scenario: classified-at-creation** — a WebContents is classified once, when first asked about
+  (its creation: main's `web-contents-created` listeners), and the record holds for its life: a tab
+  created on a partition before that partition is registered keeps the app pin, is not a tab to
+  `isBrowseClassContents` and gets no render-profile debugger even after the registration; one
+  created after it is a tab.
+- **Scenario: every-browse-installer-runs-per-session** — main's browse-session wiring (the
+  main-frame observers, the request observers, `hardenBrowseSession` with the permission handlers
+  and the download notice) is one installer added with `onBrowseClassSession`: it runs once on the
+  browse session when added, and once on a second session when that one is registered (each
+  `webRequest` observer event registered once, the permission request / check / device handlers
+  set once, `file:` handled once, one `will-download` listener whose blocked download reaches the
+  notice); an installer added later runs on both at once; nothing runs twice on a session.
+- **Scenario: browse-class-installer-failure-fails-closed** — an installer that throws on a session
+  being registered leaves that session out of the class (its WebContents keep the app pin) and
+  the error reaches the caller; registering it again runs only the installers that had not run. An
+  installer that throws on a member when added is not kept (a session registered later does not
+  get it); adding it again runs it only where it has not run.
+- **Scenario: render-profile-debugger-accepts-browse-class** — a render-profile debugger is created
+  for a tab on any browse-class session (a registered second one included) and refused (throws,
+  nothing attached) for any other session.
+- **Scenario: devtools-storage-uses-the-tabs-session** — the Storage tab's cookies and "Clear this
+  site's data" use the tab's own `contents.session` (a registered second session's tab reads and
+  clears that session only, never the browse partition's); a WebContents whose session is not
+  browse-class reads no cookies and clears nothing.
+- **Scenario: devtools-clear-keyed-by-session-and-origin** — a "Clear this site's data" in flight is
+  shared only by a tab of the same session and origin; the same origin on another session answers
+  `busy`; a clear that throws (or a tab whose session is not browse-class) answers `failed`, never
+  `cleared` (`CLEAR_SITE_DATA_RESULTS`, `devtools.spec.ts`).
+- **Scenario: cookie-block-per-browse-class-session** — cookies off on a tab of a registered second
+  session registers that session's own `onBeforeSendHeaders` / `onHeadersReceived` pair (one each),
+  removed when its last cookies-off tab turns it off or closes; the browse session's pair is
+  unaffected throughout; a session that is not browse-class never gets a pair, and that tab's
+  `overridesStatus` is `failed` (the chip's "not applied", `TAB_OVERRIDES_FAILED_NOTE`) until cookies
+  are back on.
+- **Scenario: cookie-block-refusal-is-reported** — `CookieBlock.add` answers `true` when the tab's
+  block is in effect and `false` when its session is not browse-class or the pair could not be
+  registered (nothing half-registered is left).
+- **Scenario: clear-browse-storage-covers-every-browse-class-session** — Clear Browsing Data clears
+  the storage, then the cache, of every browse-class session (a registered one too), never the
+  default session's.
+
 ## Session-classified guard (`apps/desktop/src/main/browser/__tests__/guard.test.ts`)
-The app-wide `web-contents-created` guard classifies each WebContents **at creation** by session:
-browse-session contents get the browse guard; everything else — the default session, any other
-partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail closed).
-- **Scenario: browse-contents-get-browse-guard** — a WebContents on `BROWSE_PARTITION`'s session
-  may navigate (any frame) and be redirected to `http:`/`https:`/`about:blank`.
+The app-wide `web-contents-created` guard classifies each WebContents **at creation** by session,
+asking the browse-class registry: browse-class contents get the browse guard; everything else — the
+default session, any other partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail
+closed).
+- **Scenario: browse-contents-get-browse-guard** — a WebContents on a browse-class session
+  (`BROWSE_PARTITION`'s) may navigate (any frame) and be redirected to `http:`/`https:`/`about:blank`.
 - **Scenario: browse-guard-drops-non-web-navigation** — `file:`, `app://app/`, `javascript:`,
   `data:`, `chrome:`, `vscode:` navigations and redirects are prevented (main frame and subframes),
   even after an activation input; nothing is opened externally. (`mailto:` on a gesture goes to the
@@ -36,10 +113,10 @@ partition, a missing/throwing `session` — keeps the Phase 0 app pin (fail clos
   denied for every URL and opens neither a tab nor anything external (gesture-backed popups:
   `browse-guard.feature.md`).
 - **Scenario: browse-guard-refuses-webview** — `will-attach-webview` is prevented.
-- **Scenario: other-sessions-keep-app-pin** — default-session contents, another partition's, and
-  contents whose `session` is missing or throws are pinned to `app://` as in Phase 0.
+- **Scenario: other-sessions-keep-app-pin** — default-session contents, another (unregistered)
+  partition's, and contents whose `session` is missing or throws are pinned to `app://` as in Phase 0.
 - **Scenario: browse-session-denies-permissions** — without permission handlers
-  (`hardenBrowseSession`'s `permissions` hook), the browse session's permission request,
+  (`hardenBrowseSession`'s `permissions` hook), a browse-class session's permission request,
   permission check and device-permission handlers deny everything. With them, requests become
   per-origin prompts (`permissions.feature.md`); device permissions stay denied either way.
 

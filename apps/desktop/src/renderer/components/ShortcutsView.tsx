@@ -12,6 +12,8 @@ import { registerPaletteActions } from '../palette/registry';
 import { askSettingsToClose, onSettingsOpened } from '../settings-open';
 import { useSeqChange } from '../hooks/useSeqChange';
 import { closeProjects, onProjectsOpened } from './changes/projects-sheet';
+import { closeCrawl, onCrawlOpened } from './crawl/crawl-sheet';
+import { closeAiAnswers, onAiAnswersOpened } from './ai-answers/ai-answers-sheet';
 import { closeScreenshotEditor, onScreenshotEditorOpened } from '../screenshot-editor';
 import { createWatchStore } from '../settings-store';
 import { markSetupStep } from './SetupChecklist';
@@ -73,6 +75,8 @@ export function useHelpSheet(sheet: HelpSheet, { tab, historySeq, onOpen }: Help
     if (!askSettingsToClose()) return false;
     closeProjects();
     closeScreenshotEditor();
+    closeCrawl();
+    closeAiAnswers();
     latestOnOpen.current();
     setState((was) => ({ open: true, focusSeq: was.focusSeq + 1 }));
     return true;
@@ -89,6 +93,8 @@ export function useHelpSheet(sheet: HelpSheet, { tab, historySeq, onOpen }: Help
   useEffect(() => onScreenshotEditorOpened(close), [close]);
   // Every open request, the first one included (a request counter's first value is not history here).
   useEffect(() => onProjectsOpened(close), [close]);
+  useEffect(() => onCrawlOpened(close), [close]);
+  useEffect(() => onAiAnswersOpened(close), [close]);
   const menu = useSyncExternalStore(helpMenuStore.subscribe, helpMenuStore.current);
   const seenMenu = useRef<number | undefined>(undefined);
   useEffect(() => {

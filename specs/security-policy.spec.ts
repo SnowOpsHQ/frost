@@ -137,7 +137,9 @@ export const APP_CSP = Object.entries(APP_CSP_DIRECTIVES)
 // `frost-e2e-agent-script` too (Phase 5 Task 6a): the agent's scripted-model seam (`AGENT_E2E_SCRIPT_SWITCH`, `agent-session.spec.ts`).
 // `frost-e2e-chatgpt` too (ChatGPT plan Task 6): the seam that points the ChatGPT sign-in and the
 // plan's Responses requests at a local fake (`CHATGPT_E2E_SWITCH`, `agent-chatgpt-e2e.schema.ts`).
-export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts', 'frost-e2e-serp-pack-key', 'frost-e2e-serp-pack-url', 'frost-e2e-intent-fake', 'frost-e2e-agent-script', 'frost-e2e-chatgpt', 'frost-update-feed', 'frost-update-public-key', 'frost-update-test-cert'] as const;
+// `frost-e2e-data-api` too (Phase 12 Task 1): the seam that sends data API requests to loopback fakes (`DATA_API_E2E_SWITCH`, `data-sources.spec.ts`).
+// `frost-e2e-open-gates` too (Phase 12 Task 1): the seam that opens listed legal gates for the e2e suite (`LEGAL_GATES_E2E_SWITCH`, `data-sources.spec.ts`).
+export const PACKAGED_FORBIDDEN_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'host-resolver-rules', 'frost-e2e-public-hosts', 'frost-e2e-serp-pack-key', 'frost-e2e-serp-pack-url', 'frost-e2e-intent-fake', 'frost-e2e-agent-script', 'frost-e2e-chatgpt', 'frost-e2e-data-api', 'frost-e2e-open-gates', 'frost-update-feed', 'frost-update-public-key', 'frost-update-test-cert'] as const;
 export const PACKAGED_FORBIDDEN_ARGV = /^--?(remote-debugging-|inspect)/i;
 
 /**

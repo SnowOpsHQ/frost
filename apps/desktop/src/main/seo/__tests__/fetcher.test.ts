@@ -13,6 +13,8 @@ import { PACKAGED_FORBIDDEN_SWITCHES } from '@app/specs/security-policy.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { createRobotsFetcher } from '../robots-fetch';
 import { createServedHtml } from '../served';
+import { ROBOTS_FETCH_LIMITS } from '@app/specs/seo-indexability.spec';
+import { CRAWL_ROBOTS_HOOK_MARGIN_MS } from '@app/specs/site-crawl.spec';
 
 const encoder = new TextEncoder();
 function body(chunks: (string | number)[], read = { count: 0 }): AsyncIterable<Uint8Array> {
@@ -311,6 +313,109 @@ describe('bounded fetcher', () => {
     expect(answered).toBe(false);
     expect(shared.load('https://example.com').queued).toBe(1);
     expect(urls()).toEqual(['https://example.com/page']);
+  });
+
+  // Spec: specs/fetcher.spec.ts (BoundedFetchRequest.allowRedirect, `redirect-refused`); specs/site-crawl.feature.md
+  // (The redirect-policy hook); plan Decision 6 (Phase 12 Task 6a).
+  test('fetcher-redirect-hook', async () => {
+    const routes: Record<string, HopResult | (() => Promise<HopResult>)> = {
+      'https://example.com/a': redirect('/b', 302),
+      'https://example.com/b': ok('done'),
+      'https://example.com/private': redirect('http://10.0.0.1/', 302),
+      'https://example.com/far': redirect('https://unresolved.example.net/', 302),
+    };
+    const { hop, urls } = fakeHop(routes);
+    const resolve: Resolve = async (host) => {
+      if (host === 'example.com') return ['93.184.216.34'];
+      throw new Error('ERR_NAME_NOT_RESOLVED');
+    };
+    const fetcher = createBoundedFetcher({ hop, resolve, limits: { perOriginIntervalMs: 0 } });
+    // Without a hook: followed as before.
+    expect(await fetcher.fetch({ url: 'https://example.com/a', page: PAGE })).toMatchObject({ outcome: 'response', redirects: 1 });
+    // Allowed: followed; the hook sees the resolved next URL and a signal.
+    const asked: string[] = [];
+    const allow = vi.fn(async (next: string, options: { signal: AbortSignal }) => {
+      asked.push(next);
+      expect(options.signal.aborted).toBe(false);
+      return true;
+    });
+    expect(await fetcher.fetch({ url: 'https://example.com/a', page: PAGE, allowRedirect: allow })).toMatchObject({ outcome: 'response', redirects: 1, finalUrl: 'https://example.com/b' });
+    expect(asked).toEqual(['https://example.com/b']);
+    // Refused (false, or a rejection): `redirect-refused`, the redirect's status and URL, the next URL never requested.
+    for (const refuse of [async () => false, async () => Promise.reject(new Error('no'))]) {
+      const before = urls().length;
+      const refused = await fetcher.fetch({ url: 'https://example.com/a', page: PAGE, allowRedirect: refuse });
+      expect(refused).toMatchObject({ outcome: 'redirect-refused', status: 302, finalUrl: 'https://example.com/a', redirects: 0, chain: [] });
+      expect(urls().slice(before)).toEqual(['https://example.com/a']);
+    }
+    // The fetcher's own checks come first: a private or unresolvable target never reaches the hook.
+    const never = vi.fn(async () => true);
+    expect(await fetcher.fetch({ url: 'https://example.com/private', page: PAGE, allowRedirect: never })).toMatchObject({ outcome: 'private-redirect' });
+    expect(await fetcher.fetch({ url: 'https://example.com/far', page: PAGE, allowRedirect: never })).toMatchObject({ outcome: 'unreachable' });
+    expect(never).not.toHaveBeenCalled();
+    // The hook's time is not the call's deadline: a hook taking longer than timeoutMs, then allowing, still ends in a response.
+    const slow = fetcher.fetch({ url: 'https://example.com/a', page: PAGE, timeoutMs: 1_000, allowRedirect: () => new Promise((resolve) => setTimeout(() => resolve(true), 5_000)) });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(slow).resolves.toMatchObject({ outcome: 'response', status: 200 });
+    // …while the time before and after it still counts: a hop slower than what is left times out.
+    routes['https://example.com/late'] = redirect('/slow', 302);
+    routes['https://example.com/slow'] = () => new Promise<HopResult>(() => undefined);
+    const late = fetcher.fetch({ url: 'https://example.com/late', page: PAGE, timeoutMs: 1_000, allowRedirect: () => new Promise((resolve) => setTimeout(() => resolve(true), 3_000)) });
+    await vi.advanceTimersByTimeAsync(3_999);
+    let settled = false;
+    void late.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(late).resolves.toMatchObject({ outcome: 'timeout' });
+    // An abort while the hook runs ends the call at once with `aborted` (never `redirect-refused`); its later answer is ignored.
+    const controller = new AbortController();
+    let hookSignal: AbortSignal | null = null;
+    const aborted = fetcher.fetch({
+      url: 'https://example.com/a',
+      page: PAGE,
+      signal: controller.signal,
+      allowRedirect: (_next, options) => {
+        hookSignal = options.signal;
+        return new Promise((resolve) => setTimeout(() => resolve(false), 10_000));
+      },
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    controller.abort();
+    await expect(aborted).resolves.toMatchObject({ outcome: 'aborted' });
+    expect(hookSignal!.aborted).toBe(true);
+  });
+
+  // Spec: specs/fetcher.spec.ts (FETCHER_LIMITS.maxRedirectHookMs, allowRedirect); specs/site-crawl.spec.ts
+  // (CRAWL_ROBOTS_HOOK_MARGIN_MS); Phase 12 Task 6a security review.
+  test('fetcher-redirect-hook-is-capped-and-re-resolved', async () => {
+    expect(FETCHER_LIMITS.maxRedirectHookMs).toBeGreaterThanOrEqual(ROBOTS_FETCH_LIMITS.timeoutMs + CRAWL_ROBOTS_HOOK_MARGIN_MS);
+    const { hop, urls } = fakeHop({
+      'https://example.com/a': redirect('/b', 302),
+      'https://example.com/b': ok('done'),
+      'https://example.com/flip': redirect('https://flip.example.com/x', 302),
+      'https://flip.example.com/x': ok('reached'),
+    });
+    // flip.example.com answers public for the fetcher's first check, private once the hook has run.
+    let flips = 0;
+    const resolve: Resolve = async (host) => (host === 'flip.example.com' ? (++flips === 1 ? ['93.184.216.40'] : ['10.0.0.7']) : ['93.184.216.34']);
+    const fetcher = createBoundedFetcher({ hop, resolve, limits: { perOriginIntervalMs: 0 } });
+    // A hook that never answers: refused at the cap, the next URL never requested (and never a page timeout).
+    const stuck = fetcher.fetch({ url: 'https://example.com/a', page: PAGE, timeoutMs: 1_000, allowRedirect: () => new Promise<boolean>(() => undefined) });
+    await vi.advanceTimersByTimeAsync(FETCHER_LIMITS.maxRedirectHookMs - 1);
+    let settled = false;
+    void stuck.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(stuck).resolves.toMatchObject({ outcome: 'redirect-refused', status: 302 });
+    expect(urls()).not.toContain('https://example.com/b');
+    // Allowed by the hook, but the name turned private meanwhile: resolved again, refused before the hop.
+    const hook = vi.fn(async () => true);
+    expect(await fetcher.fetch({ url: 'https://example.com/flip', page: PAGE, allowRedirect: hook })).toMatchObject({ outcome: 'private-redirect', status: 302 });
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(flips).toBe(2);
+    expect(urls()).not.toContain('https://flip.example.com/x');
   });
 });
 
