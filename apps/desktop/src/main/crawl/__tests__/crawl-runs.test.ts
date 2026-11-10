@@ -21,6 +21,8 @@ import { createSitemapSeeder } from '../sitemaps';
 import { fakeClock, fakeFetcher, htmlPage, inProcessAnalyse, settingsFor, tempStore, timerClock, type FakePage } from './run-fakes';
 
 const HOME = 'https://example.com/';
+/** Windows CI runners sync each database write to disk slowly (see the two tests that skip it). */
+const WINDOWS = process.platform === 'win32';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
@@ -984,7 +986,10 @@ describe('crawl runs', () => {
     expect(await t.repo.listRuns({ projectId: project })).toEqual([]);
   });
 
-  test('crawl-in-memory-state-bounded', async () => {
+  // Skipped on Windows: the crawl's store is a database file there too, and Windows CI runners
+  // sync every one of this test's thousands of writes to disk (over 20 minutes, against a few
+  // seconds elsewhere). What it checks is platform-independent and runs on Linux and macOS.
+  test.skipIf(WINDOWS)('crawl-in-memory-state-bounded', async () => {
     // K-B3: a 10 000-page fake site on 300 hosts of one site (each page links ten children, its parent and the start),
     // fetched through the real per-host pacing (more hosts than `maxPacedHosts`) on a fake clock; the worker is faked
     // (no parse). This counts the crawler's own structures at every page's peak and end, never the heap.
@@ -1308,7 +1313,10 @@ describe('sitemap seeding', () => {
     expect(await u.repo.orphansOf(runId, { limit: 10, offset: 0 })).toEqual([`${HOME}a`]);
   });
 
-  test('crawl-sitemap-read-once-in-windows', async () => {
+  // Skipped on Windows: the crawl's store is a database file there too, and Windows CI runners
+  // sync every one of this test's thousands of writes to disk (over 20 minutes, against a few
+  // seconds elsewhere). What it checks is platform-independent and runs on Linux and macOS.
+  test.skipIf(WINDOWS)('crawl-sitemap-read-once-in-windows', async () => {
     // A file longer than one window is parsed once in the worker and handed out in windows, then released.
     const listed = Array.from({ length: CRAWL_LIMITS.sitemapUrlsPerJob + 300 }, (_, i) => `${HOME}w${i}`);
     const { sitemaps, serve, jobs } = seeder({ 'https://example.com/sitemap.xml': urlset(listed) }, null);
