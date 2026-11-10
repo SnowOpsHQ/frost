@@ -99,8 +99,6 @@ export interface SerpSetup {
   readonly readApi: SerpReadApi;
   /** Clear Browsing Data: every reading, outline and intent answer goes, and every probe run is cancelled. */
   onClearBrowsingData(): void;
-  /** Watches a browse-session tab's page (anything else is ignored; done for every new WebContents already). */
-  watchContents(contents: WebContents): void;
   /** Stops the service, the probes, the analysis and probe workers and the intent process (run on `will-quit`). */
   dispose(): void;
 }
@@ -234,5 +232,5 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
     probes.cancelAll();
     probes.clearCache();
   };
-  return { service, readApi, onClearBrowsingData, watchContents, dispose };
+  return { service, readApi, onClearBrowsingData, dispose };
 }

@@ -31,7 +31,6 @@ import {
   type ChatgptSignOutResult,
 } from '@app/specs/agent-chatgpt.spec';
 import {
-  MCP_NO_SANDBOX_SENTENCE,
   MCP_SAVE_MESSAGES,
   MCP_SETTINGS_WORDS,
   MCP_START_MESSAGES,
@@ -1074,4 +1073,4 @@ export type AgentSaveMcpServerRequest =
 export const mcpSaveMessage = (result: McpSaveResult): string => MCP_SAVE_MESSAGES[result] ?? MCP_SAVE_MESSAGES.failed;
 export const mcpStartMessage = (result: McpStartResult): string | null => (Object.hasOwn(MCP_START_MESSAGES, result) ? MCP_START_MESSAGES[result] : null);
 export const mcpTokenMessage = (result: McpTokenResult): string => MCP_TOKEN_MESSAGES[result] ?? MCP_TOKEN_MESSAGES.failed;
-export { MCP_NO_SANDBOX_SENTENCE, MCP_SETTINGS_WORDS, MCP_UNTRUSTED_LABEL };
+export { MCP_SETTINGS_WORDS, MCP_UNTRUSTED_LABEL };

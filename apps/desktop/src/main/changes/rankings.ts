@@ -32,7 +32,7 @@ import { siteMatchOf } from './workspace';
 // The rankings service (Phase 10 Task 5; spec `rankings.spec.ts`, `rankings.schema.ts`; acceptance
 // `rankings.feature.md`, Router and Export): the rank table, a search's series, its reading dates, a
 // comparison of two readings and the CSV exports, over `@app/db`'s readings (`workspace-db.feature.md`)
-// and `@app/change-intel`'s pure read model (`rankTable`, `rankSeries`, `compareSerps`, `rankCsvRows`).
+// and `@app/change-intel`'s pure read model (`rankRowOf`, `rankSeries`, `compareSerps`, `rankCsvRows`).
 // - Every read is of one **live** project (`store.project`; else `not-found`), and no reading is read by
 //   id alone: `compare` refuses a reading of any other project.
 // - Before reading, the project's capture-sourced orphans are swept (`deleteOrphanReadings(projectId)`;

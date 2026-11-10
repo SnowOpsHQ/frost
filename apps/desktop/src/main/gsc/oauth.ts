@@ -154,9 +154,7 @@ export interface GscAuth {
 
 interface Pending {
   readonly owner: string;
-  readonly state: string;
   readonly verifier: string;
-  readonly challenge: string;
   phase: 'awaiting' | 'exchanging';
   loopback: Loopback | null;
 }
@@ -190,7 +188,6 @@ export async function createGscAuth(deps: GscAuthDeps): Promise<GscAuth> {
   let disposed = false;
   let refreshing: { readonly refreshToken: string; readonly run: Promise<TokenResult> } | null = null;
   const inflight = new Set<Promise<unknown>>();
-  const revoking = new Set<Promise<void>>();
 
   const track = <T>(work: Promise<T>): Promise<T> => {
     inflight.add(work);
@@ -263,8 +260,6 @@ export async function createGscAuth(deps: GscAuthDeps): Promise<GscAuth> {
     const run = send(deps.fetch, config.endpoints.revokeUrl, { method: 'POST', headers: FORM_HEADERS(), body: new URLSearchParams({ token }).toString() }, timeouts).then((outcome) => {
       if (outcome.kind === 'network' || outcome.status < 200 || outcome.status > 299) log('gsc: revoking a token failed');
     });
-    revoking.add(run);
-    void run.finally(() => revoking.delete(run));
     return track(run);
   };
 
@@ -458,7 +453,7 @@ export async function createGscAuth(deps: GscAuthDeps): Promise<GscAuth> {
       const challenge = challengeOf(verifier);
       const state = createState();
       remember(verifier, challenge, state);
-      const p: Pending = { owner: user, state, verifier, challenge, phase: 'awaiting', loopback: null };
+      const p: Pending = { owner: user, verifier, phase: 'awaiting', loopback: null };
       pending = p;
       error = null;
       changed();

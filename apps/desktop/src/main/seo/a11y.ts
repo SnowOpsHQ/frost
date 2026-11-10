@@ -155,7 +155,6 @@ export const AXE_PROBE = "typeof axe === 'object' && axe !== null && typeof axe.
 /** axe's source as injected: its value is never read back (`void 0`: no large result to convert). */
 export const AXE_SCRIPT = `${AXE_SOURCE}\n;void 0;`;
 
-/** The run script: `runAxe` with frost's limits, tags, disabled rules, options and impacts. */
 /** The run script: `runAxe` with frost's limits, tags, disabled rules, options, impacts, chunks and its own deadline (`budgetMs`). */
 export function buildRunScript(budgetMs: number = A11Y_PAGE_BUDGET_MS): string {
   return `(${runAxe.toString()})(${JSON.stringify(A11Y_LIMITS)}, ${JSON.stringify(A11Y_RUN_TAGS)}, ${JSON.stringify(A11Y_DISABLED_RULES)}, ${JSON.stringify(A11Y_RUN_OPTIONS)}, ${JSON.stringify(A11Y_IMPACTS)}, ${A11Y_RULE_CHUNKS}, ${budgetMs}, (${summariseAxe.toString()}))`;

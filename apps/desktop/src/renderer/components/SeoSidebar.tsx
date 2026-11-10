@@ -10,6 +10,7 @@ import {
   PIN_PANEL_TITLES,
   RAIL_TOOLTIP_DELAY_MS,
   SEO_PANELS,
+  SEO_RERUNNABLE_REASONS,
   SEO_UNAVAILABLE_MESSAGES,
   type PanelStatus,
   type SeoPanelId,
@@ -50,8 +51,8 @@ import { Inspector } from './changes/Inspector';
 // panel's width is the user's (its separator, `sidebar-layout.ts`), and the rail shows the pinned
 // panels, the others in its "More panels" menu (an open one shows on the rail while open).
 
-/** Reasons a fresh run may fix (the page was slow or answered garbage); the others need the page itself to change. */
-const RETRYABLE: ReadonlySet<string> = new Set(['timeout', 'invalid-snapshot', 'extraction-failed', 'analysis-timeout', 'analysis-failed']);
+/** Reasons a fresh run may fix (`SEO_RERUNNABLE_REASONS`, shared with the palette's "Run the audit again"). */
+const RETRYABLE: ReadonlySet<string> = new Set(SEO_RERUNNABLE_REASONS);
 
 /** Whether the audit can be run again now (a page is shown and no run is pending). */
 function canRerun(response: SeoAuditResponse | null): boolean {

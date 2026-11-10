@@ -50,8 +50,8 @@ input {
 
 .chrome {
   display: grid;
-  /* Rows: tab strip, toolbar, permission prompt, render-profile editor bar, find bar, the workspace
-     stack (the workspace, then the devtools drawer), status bar. The prompt row is empty (0 high)
+  /* Rows: tab strip, toolbar, permission prompt, render-profile editor bar, find bar, update notice,
+     the workspace stack (the workspace, then the devtools drawer), status bar. The prompt row is empty (0 high)
      unless the active tab shows a permission prompt; the editor bar's row is empty unless it is open
      (render-profile.feature.md); the find bar's unless the active tab's is open
      (browser-polish.feature.md); the update notice's unless it has something to show

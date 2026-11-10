@@ -5,8 +5,7 @@
    and `not-checked` are drawn neutral: never the pass colour. Site text (the /llms.txt title, robots.txt
    rules) is isolated by `.seo-page-text`. */
 
-.ai-score,
-.ai-tile-score {
+.ai-score {
   display: flex;
   align-items: center;
   gap: 14px;

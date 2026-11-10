@@ -88,7 +88,7 @@ import type { McpManager } from './mcp';
 import type { AttachedTabs } from './tools/attached-tabs';
 
 // The agent's chat session manager (Phase 5 Task 6a; spec `specs/agent-session.spec.ts`; acceptance
-// `specs/agent-session.feature.md`, Session). Main keeps the chats (in memory until Task 9) and runs
+// `specs/agent-session.feature.md`, Session). Main keeps the chats (stored since Task 9, `chat-history.ts`) and runs
 // one turn at a time, app-wide: it registers the turn with the approval broker, posts `chat.start`
 // with frost's system prompt, the configured model and the chat's history, and follows the turn's
 // `chat.*` events, the broker's tool activity and results, and the host's status into the panel's

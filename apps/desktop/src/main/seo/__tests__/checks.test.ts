@@ -21,7 +21,7 @@ function audit(links: PageLink[], hreflang: HreflangReport = { entries: [], tota
   return { status: 'ready', url, audit: { url, takenAt: 1, page: { linkList: links }, indexability: { hreflang, canonical: { effective: null } } } as unknown as SeoAudit };
 }
 
-const response = (status: number, changes: Partial<CheckFetchResult> = {}): CheckFetchResult => ({ outcome: 'response', status, finalUrl: '', redirects: 0, body: new Uint8Array(0), truncated: false, headers: { contentType: null, contentEncoding: null, link: null }, ...changes });
+const response = (status: number, changes: Partial<CheckFetchResult> = {}): CheckFetchResult => ({ outcome: 'response', status, finalUrl: '', redirects: 0, body: new Uint8Array(0), truncated: false, headers: { contentType: null, link: null }, ...changes });
 
 /** A fetch answering `routes[url]` (default 200) after `delayMs`, recording each request; aborts answer `aborted`. */
 function fakeFetch(routes: Record<string, (options: CheckFetchOptions) => CheckFetchResult> = {}, delayMs = 10) {
@@ -299,7 +299,7 @@ describe('sitemaps and hreflang', () => {
   test('hreflang-run-statuses', async () => {
     const entry = (value: string, resolved: string, self = false) => ({ value, href: resolved, resolved, source: 'html' as const, valid: true, self, relative: false, duplicate: false });
     const hreflang: HreflangReport = { entries: [entry('en', PAGE, true), entry('de', 'https://example.com/de'), entry('fr', 'https://example.com/fr'), entry('es', 'https://example.com/es'), entry('it', 'http://192.168.0.9/it')], total: 5, hasXDefault: false, hasSelf: true };
-    const html = (body: string) => () => response(200, { body: encode(body), headers: { contentType: 'text/html; charset=utf-8', contentEncoding: null, link: null } });
+    const html = (body: string) => () => response(200, { body: encode(body), headers: { contentType: 'text/html; charset=utf-8', link: null } });
     const net = fakeFetch({
       'https://example.com/de': html(`<head><link rel="alternate" hreflang="en" href="${PAGE}"><link rel="alternate" hreflang="de" href="/de"></head>`),
       'https://example.com/fr': html('<head><link rel="alternate" hreflang="fr" href="/fr"></head>'),
