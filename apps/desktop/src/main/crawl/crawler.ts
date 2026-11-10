@@ -34,9 +34,10 @@ import type { SitemapSeeder } from './sitemaps';
 // completion (its discoveries and its frontier entry marked done: `CrawlFrontier.complete`) is one write
 // (council review, item 3), so a page stopped after its row but before its completion stays queued and
 // Resume replays it whole: its row and links are replaced (one row, its links once), the run's counts
-// take the replaced row out first, and its discoveries are counted once. The run ends
+// take the replaced row out first, and its discoveries are counted once. Such a replay comes before the
+// `maxPages` cap, which counts new pages only (council review round 2, item E). The run ends
 // `done` when the frontier is empty or `maxPages` rows are recorded (`max-pages` with URLs still
-// queued); `paused` (by the user, a quit, a slow-down) or `cancelled` (by the user, or its project gone)
+// queued); `paused` (by the user, a quit, a slow-down, unreadable robots.txt) or `cancelled` (by the user, or its project gone)
 // when stopped; `failed` (`error`) when the database fails. Held in memory: the frontier's window, one
 // page's links while they are discovered, the pacing table (K-B3); every page goes to SQLite at once.
 // A run stores its pacing (`Politeness.snapshot`) as it starts, whenever it changes (`Politeness.changes`:
@@ -300,12 +301,15 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
           }
           for (;;) {
             if (signal.aborted) return await finish(stoppedEnd());
-            if (counts.pages >= settings.maxPages) {
+            const entry = await frontier.next();
+            if (entry === null) return await finish({ state: 'done', reason: null });
+            // A resumed run may replay a page whose row was written before it stopped (its completion was not): that row
+            // is already counted, so the replay comes before the cap on new pages (council review round 2, item E).
+            const replaced = fresh ? null : await repo.getPage(runId, entry.url);
+            if (replaced === null && counts.pages >= settings.maxPages) {
               const queued = await frontier.queued();
               return await finish({ state: 'done', reason: queued > 0 ? 'max-pages' : null });
             }
-            const entry = await frontier.next();
-            if (entry === null) return await finish({ state: 'done', reason: null });
             // Before each fetch call (and again inside its paced slot, `beforeRequest`): a project deleted here or by sync meanwhile cancels the run.
             if (!(await projectLive())) return await finish(stoppedEnd());
             if (signal.aborted) return await finish(stoppedEnd());
@@ -346,10 +350,8 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
               }
             } else outcome = fetched.outcome;
 
-            // One row per page, written as the page ends. A resumed run may replay a page whose row was written
-            // before it stopped (its completion was not): the row is replaced, and counted once.
+            // One row per page, written as the page ends. A replayed page's row (`replaced`) is replaced, and counted once.
             const row = rowOf(entry.url, entry.depth, fetched, outcome, page);
-            const replaced = fresh ? null : await repo.getPage(runId, entry.url);
             if (signal.aborted) return await finish(stoppedEnd());
             if (await repo.putPage(row)) {
               const was = (set: ReadonlySet<string>): number => (replaced !== null && set.has(replaced.outcome) ? 1 : 0);

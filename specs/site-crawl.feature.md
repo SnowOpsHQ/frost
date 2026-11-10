@@ -333,6 +333,10 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   the row is replaced (one row per URL), its links replaced, the run's counts take the replaced row out
   before adding the new one, and its discoveries are recorded once — a completed page is never replayed
   and a page not completed has discovered nothing, so no `(page, link)` discovery adds an inlink twice.
+- (Council review round 2, item E) The replay comes **before** the `maxPages` cap, which counts new
+  pages only: a page that already has a row and is still queued (always the oldest queued entry, since
+  one page is in flight at a time) is replayed and completed even when the run's rows have reached
+  `maxPages`; only a page with no row is held back by the cap.
 - The frontier (SQLite) is the queue, the seen-set, the authority for inlinks and sitemap orphans, and
   for the per-path query-variant cap: a resumed run, or a new crawler after a restart, counts what the
   run holds. A known URL is recorded again (an inlink) at any depth or query; a new one only within
@@ -381,6 +385,11 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   discovers and fetches `/child`, and the run ends with one row per page, the links stored once, counts
   equal to the rows and each inlink counted once. A Pause while the page's discoveries are written
   finds the page complete (`done`): Resume never fetches it again.
+- `crawl-page-cap-replays-a-recorded-page` — (council review round 2, item E) `maxPages: 1`, paused
+  right after the start's `putPage`: the run is `paused` with the start's row written and the start
+  still `queued`. Resume fetches the start again and completes it (its one link stored, `/child`
+  discovered: `queued`, depth 1, one inlink); the cap then ends the run `done` (`max-pages`, 1 page,
+  1 queued) with `/child` never fetched and no row for it.
 - `crawl-pause-and-resume-by-the-user` — Pause stops the run (`paused`, `user`) and awaits it; only
   Resume continues it; Pause or Cancel of a run that is not running answers `not-running`.
 - `crawl-never-resumes-on-start` — a paused run stays paused through a restart's recovery, a status
