@@ -174,8 +174,11 @@ export async function createSecretStore(options: CreateSecretStoreOptions): Prom
     fs.chmodSync(dir, SECRETS_DIR_MODE);
   };
 
-  /** Whether `value` reached the disk. */
-  const persist = async (name: SecretName, value: string): Promise<boolean> => {
+  /**
+   * Whether `value` reached the disk. `sameValue`: the file already holds `value` (it is only being
+   * written again with the current key), so a failure leaves that file in place.
+   */
+  const persist = async (name: SecretName, value: string, sameValue = false): Promise<boolean> => {
     const file = fileOf(name);
     const temp = `${file}.${randomBytes(6).toString('hex')}${SECRET_TEMP_SUFFIX}`;
     try {
@@ -188,8 +191,12 @@ export async function createSecretStore(options: CreateSecretStoreOptions): Prom
       fs.renameSync(temp, file);
       return true;
     } catch (error) {
-      // Never leave an older value on disk to come back at the next start.
       removeFile(temp);
+      if (sameValue) {
+        log(`secret store: could not write ${name} again (${errorCode(error)}); the stored one is kept`);
+        return false;
+      }
+      // Never leave an older value on disk to come back at the next start.
       removeFile(file);
       log(`secret store: could not write ${name} (${errorCode(error)}); kept for this run only`);
       return false;
@@ -244,7 +251,7 @@ export async function createSecretStore(options: CreateSecretStoreOptions): Prom
         values.set(name, loaded.value);
         if (loaded.reEncrypt) {
           log(`secret store: ${name} is written again with the current key`);
-          await persist(name, loaded.value);
+          await persist(name, loaded.value, true);
         }
         return loaded.value;
       }, null);

@@ -33,9 +33,9 @@ const isExecutable = (file: string): boolean => {
 export const SANDBOX_PROBE_MAX_BUFFER = 64 * 1024;
 
 /** Runs a sandbox probe (`bwrap --version`, `bwrap --help`): its exit code and stdout, or `null` when it could not run, timed out or printed too much. */
-export function runProbe(command: string, args: readonly string[], pathEnv: string): Promise<{ readonly code: number | null; readonly stdout: string } | null> {
+export function runProbe(command: string, args: readonly string[], pathEnv: string, timeoutMs = 3_000): Promise<{ readonly code: number | null; readonly stdout: string } | null> {
   return new Promise((resolve) => {
-    execFile(command, [...args], { timeout: 3_000, maxBuffer: SANDBOX_PROBE_MAX_BUFFER, windowsHide: true, shell: false, env: { PATH: pathEnv } }, (error, stdout) => {
+    execFile(command, [...args], { timeout: timeoutMs, maxBuffer: SANDBOX_PROBE_MAX_BUFFER, windowsHide: true, shell: false, env: { PATH: pathEnv } }, (error, stdout) => {
       if (error && typeof (error as { code?: unknown }).code !== 'number') resolve(null);
       else resolve({ code: error ? Number((error as { code?: unknown }).code) : 0, stdout: String(stdout) });
     });

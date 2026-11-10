@@ -424,6 +424,9 @@ export function createProbes(options: ProbesOptions): Probes {
     entry.finishedAt = now();
     entry.rows = entry.rows.map((row) => (row.outcome === 'pending' ? { ...row, outcome: 'stopped' } : row));
     if (entry.llmsTxt.outcome === 'pending') entry.llmsTxt = { ...entry.llmsTxt, outcome: 'stopped' };
+    // A robots.txt still being read is not listed: its answer is dropped once the run has stopped, and a
+    // file has no `stopped` outcome to wait under.
+    entry.robotsTxt = entry.robotsTxt.filter((file) => file.outcome !== 'pending');
   };
 
   const entryOfContents = (contentsId: number): Entry | undefined => [...entries.values()].find((entry) => entry.contentsId === contentsId);

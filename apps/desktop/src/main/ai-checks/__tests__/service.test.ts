@@ -9,12 +9,13 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { openSessionStore, type SessionStore } from '@app/db';
 import type { BoundedFetchRequest, BoundedFetchResult } from '@app/specs/fetcher.spec';
 import { AI_CHECK_EXTRACT_TAGS, AI_CHECK_LIMITS, AI_CHECK_SYSTEM_PROMPT, type AiCheckErrorCode } from '@app/specs/ai-checks.spec';
-import { AiCheckInputSchema, AiChecksStateSchema } from '@app/specs/ai-checks.schema';
+import { AiCheckInputSchema, AiCheckOutputSchema, AiChecksStateSchema } from '@app/specs/ai-checks.schema';
 import type { ServedFetch, ServedState } from '@app/specs/seo-javascript.schema';
 import type { AgentCheckEvent, AgentCheckStart } from '../../agent/host';
 import type { AgentCheckModel, AgentCheckPort } from '../../agent/check-port';
 import { createServedHtml, type ServedHtml } from '../../seo/served';
 import { parseServedHtml } from '../../seo/served-parse';
+import { inertText, parseAiCheckOutput } from '../output';
 import { createAiChecksService, type AiChecksTabs } from '../service';
 
 const PAGE = 'https://www.example.com/tea';
@@ -558,6 +559,16 @@ describe('ai checks service', () => {
     h.agent.finish(`\`\`\`json\n${JSON.stringify(ANSWER)}\n\`\`\``);
     await h.settle();
     expect(h.view()).toMatchObject({ status: 'ready', result: { output: ANSWER } });
+  });
+
+  test('output-drops-the-arabic-letter-mark', () => {
+    // U+061C is a bidi control like U+200E and U+200F (as `PRINTABLE_TEXT` in specs/projects.spec.ts has it).
+    expect(inertText('a\u061cb', 10)).toBe('a b');
+    const parsed = parseAiCheckOutput(JSON.stringify({ ...ANSWER, qualityReason: 'Clear\u061c steps.' }));
+    expect(parsed?.qualityReason).toBe('Clear steps.');
+    // Text that was not cleaned is not a valid answer.
+    expect(AiCheckOutputSchema.safeParse({ ...parsed, qualityReason: 'Clear\u061c steps.' }).success).toBe(false);
+    expect(AiCheckOutputSchema.safeParse(parsed).success).toBe(true);
   });
 
   test('output-capped-and-inert', async () => {

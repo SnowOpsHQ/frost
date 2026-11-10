@@ -151,6 +151,19 @@ describe('runs', () => {
     expect(net.asked).toHaveLength(8);
   });
 
+  test('link-run-again-checks-the-current-links', async () => {
+    // A page that changed its links without a new document or URL (an app that renders in place), audited again.
+    const { checks, net, tab } = setup(audit([link('https://example.com/old')]));
+    checks.checkLinks(1);
+    await vi.runAllTimersAsync();
+    expect(checks.state(1).links.results.map((r) => r.url)).toEqual(['https://example.com/old']);
+    tab.current = { ...tab.current!, audit: audit([link('https://example.com/new')]) };
+    checks.checkLinks(1);
+    await vi.runAllTimersAsync();
+    expect(checks.state(1).links.results.map((r) => r.url)).toEqual(['https://example.com/new']);
+    expect(net.asked.map((a) => a.url)).toEqual(['https://example.com/old', 'https://example.com/new']);
+  });
+
   test('link-run-temporary-not-cached', async () => {
     const net = fakeFetch({ 'https://example.com/busy': () => response(429), 'https://example.com/down': () => response(503), 'https://example.com/gone': () => response(500) });
     const { checks } = setup(audit([link('https://example.com/busy'), link('https://example.com/down'), link('https://example.com/gone')]), { fetch: net.fetch });

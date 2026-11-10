@@ -292,6 +292,27 @@ describe('secret store', () => {
     expect(base.encryptStringAsync).toHaveBeenCalledOnce();
   });
 
+  test('secret-reencrypt-failure-keeps-the-file', async () => {
+    // The keychain reads the old blob but refuses to write (a prompt denied): the value on disk is the
+    // current one, so it stays; only a failed write of a new value removes the file.
+    const old = Buffer.concat([Buffer.from('OLD:'), encrypt(SECRET)]);
+    writeFileSync(path.join((realFs.mkdirSync(dir, { recursive: true }), dir), 'account.bin'), old);
+    const log = vi.fn();
+    const safeStorage: SafeStorageLike = {
+      ...fakeSafeStorage(),
+      encryptStringAsync: vi.fn(async () => Promise.reject(new Error('denied'))),
+      decryptStringAsync: async (encrypted) => ({ shouldReEncrypt: true, result: decrypt(encrypted.subarray(4)) }),
+    };
+    const store = await create({ safeStorage, log });
+    expect(await store.read('account')).toBe(SECRET);
+    await store.whenIdle();
+    expect(safeStorage.encryptStringAsync).toHaveBeenCalledExactlyOnceWith(SECRET);
+    expect(files()).toEqual(['account.bin']);
+    expect(readFileSync(path.join(dir, 'account.bin')).equals(old)).toBe(true);
+    // The next run still has it.
+    expect(await (await create({ safeStorage, log })).read('account')).toBe(SECRET);
+  });
+
   test('secret-writes-are-ordered', async () => {
     // The encryptor answers in reverse order of the calls: the disk still follows the calls.
     const base = fakeSafeStorage();

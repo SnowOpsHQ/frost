@@ -117,6 +117,8 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - `link-run-robots-blocked` — disallowed same-origin links are `blocked` and not fetched.
 - `link-run-cached` — a later document's run reuses definite answers, per URL and user agent;
   "Check again" on the same page asks afresh.
+- `link-run-again-checks-the-current-links` — "Check again" checks the links of the audit shown now,
+  not those of the page's first run (a page may change its links without a new document or URL).
 - `link-run-temporary-not-cached` — 429 and 503 are `temporary`: never cached, never broken.
 - `clear-browsing-data-cancels-checks` — Clear Browsing Data cancels running checks (their requests aborted).
 - `sitemap-listed-unknown-when-incomplete` — a failed file or a cap hit leaves "listed" unknown

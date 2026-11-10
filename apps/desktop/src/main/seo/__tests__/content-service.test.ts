@@ -191,6 +191,18 @@ describe('content service', () => {
     expect(service.targetQueryOf(URL_A)).toBeNull();
   });
 
+  test('failed-notes-read-keeps-the-known-query', async () => {
+    const { service, notes } = setup();
+    await notes.setTargetQuery(URL_A, 'green tea', 1);
+    await service.notes(URL_A);
+    expect(service.targetQueryOf(URL_A)).toBe('green tea');
+    // The database fails one read (busy, closed): the answer is empty, and what was known stays known.
+    const read = vi.spyOn(notes, 'notes').mockRejectedValueOnce(new Error('database is locked'));
+    expect(await service.notes(URL_A)).toEqual({ query: '', variants: [], generation: 0 });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(service.targetQueryOf(URL_A)).toBe('green tea');
+  });
+
   test('copy-snippet-html-variant', async () => {
     const { service, clipboard, audit } = setup();
     const shown = { url: audit.url, takenAt: audit.takenAt };

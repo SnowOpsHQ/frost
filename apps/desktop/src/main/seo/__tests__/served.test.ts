@@ -118,12 +118,16 @@ describe('served HTML', () => {
 
   test('served-long-url-is-not-a-redirect', async () => {
     // The fetcher cuts `finalUrl` to `maxUrlChars`; a longer page that answered without a redirect is still that page.
-    const long = `${PAGE}?q=${'a'.repeat(SNAPSHOT_LIMITS.maxUrlChars)}`;
-    const { served, parsed } = setup((request) => result({ url: request.url.slice(0, SNAPSHOT_LIMITS.maxUrlChars), finalUrl: request.url.slice(0, SNAPSHOT_LIMITS.maxUrlChars) }));
+    // Long in its path: cut there, the base would lose the page's own directory.
+    const long = `https://example.com/${'a/'.repeat(SNAPSHOT_LIMITS.maxUrlChars / 2)}guide/page`;
+    const html = new TextEncoder().encode('<html><head><title>Long</title></head><body><a href="next">Next</a></body></html>');
+    const { served, parsed } = setup((request) => result({ url: request.url.slice(0, SNAPSHOT_LIMITS.maxUrlChars), finalUrl: request.url.slice(0, SNAPSHOT_LIMITS.maxUrlChars), body: html }));
     const state = await served.get(1, long, null);
     expect(state).toMatchObject({ status: 'ready', fetch: { redirects: 0 } });
     expect(ServedStateSchema.safeParse(state).success).toBe(true);
-    expect(parsed).toHaveBeenCalledTimes(1);
+    // The document's links resolve against the whole URL, not the cut one; what is stored and shown is cut.
+    expect(parsed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ url: long }));
+    if (state.status === 'ready') expect(state.fetch.finalUrl).toBe(long.slice(0, SNAPSHOT_LIMITS.maxUrlChars));
   });
 
   test('served-redirected-elsewhere', async () => {

@@ -96,7 +96,8 @@ the procedures' inputs, `TabRenderProfileSchema`). Phase 2.5 Task 1. Each line m
   else `browser.openBackgroundTab` opens does not inherit (`inherit` left out or `false`): the
   palette's "Open in" tools, help pages, and the site's robots.txt and sitemap — those are files a
   crawler fetches, but opening one in a tab is for reading it, and frost's robots.txt verdicts come
-  from its own fetcher, not from a tab. (`popup-inherits-tab-profile`, `tools-do-not-inherit`)
+  from its own fetcher, not from a tab. (`popup-inherits-tab-profile`, `tools-do-not-inherit`,
+  `sidebar-page-urls-inherit-the-tab-profile`)
 
 ## Visible state
 - The overridden state is always visible: the tab shows a badge (with the profile in its tooltip and
