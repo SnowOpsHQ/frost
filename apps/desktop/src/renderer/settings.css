@@ -19,8 +19,10 @@
   height: 0;
 }
 
-/* The find bar's row is hidden while Settings shows (as while History does). */
-.chrome:has(.settings-sheet) > .find-slot {
+/* The find bar is hidden while Settings shows (as while History does). Its slot stays: it is one of the
+   chrome's grid rows, and dropping it would move every later row up one track (the workspace into an
+   `auto` row and the status bar into the page's). */
+.chrome:has(.settings-sheet) > .find-slot > * {
   display: none;
 }
 

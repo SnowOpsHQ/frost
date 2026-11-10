@@ -169,6 +169,18 @@ input {
   height: 100%;
 }
 
+/* The last two rows are pinned, counted from the end: if a slot above them ever leaves the layout
+   (display: none), the slots after it move up into an `auto` row, never the workspace into an
+   `auto` row (sized to its content) or the status bar into the page's row. Keep the slots
+   themselves in the layout; hide what is inside them. */
+.chrome > .workspace-stack {
+  grid-row: -3;
+}
+
+.chrome > .status-bar {
+  grid-row: -2;
+}
+
 /* ---- Tab strip ---------------------------------------------------------------------------- */
 
 /* The active tab is cut from the toolbar's colour and flows into it; the others sit on the darker

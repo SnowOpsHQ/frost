@@ -19,7 +19,9 @@
   height: 0;
 }
 
-.chrome:has(.help-sheet) > .find-slot {
+/* The find bar is hidden while a Help sheet shows (as while History does). Its slot stays: it is one of
+   the chrome's grid rows, and dropping it would move every later row up one track. */
+.chrome:has(.help-sheet) > .find-slot > * {
   display: none;
 }
 

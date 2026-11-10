@@ -820,6 +820,11 @@
 
 .agent-text-field {
   flex: 1;
+  /* `flex: 1` grows the field along a row; in a column (the composer, the chat list's tools, the skill
+     library, a chat's rename) it would flex the height from 0 instead, squashing the field to its
+     text. Hold it at the fields' 30 px either way. */
+  min-height: 30px;
+  max-height: 30px;
   user-select: text;
 }
 
