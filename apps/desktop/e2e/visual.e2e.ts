@@ -1,0 +1,648 @@
+// Specs: specs/visual-baseline.feature.md (the surfaces, themes, masks, determinism rules and the baseline procedure)
+// Acceptance: specs/visual-baseline.feature.md (End to end)
+//
+// The screenshot baseline: every main surface of the chrome page (`app://app/`), in light and dark,
+// compared with `toHaveScreenshot` against `e2e/__screenshots__/visual.e2e.ts/<state>-<theme>.png`.
+// Only the chrome is captured; a tab's page is a native view no page screenshot includes.
+//
+// Linux only, and the baselines come from CI only (`xvfb-run` on ubuntu-24.04): a local run writes
+// missing images (`updateSnapshots: 'missing'`) for looking at, but they differ from CI's and are
+// never committed. To add or update baselines, follow "Baseline procedure" in the spec: run CI on
+// the branch, download the `playwright-report` artifact, copy each `*-actual.png` to its baseline
+// path, review, commit.
+import { X509Certificate, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
+import { SETTINGS_MENU } from '@app/specs/account-settings.spec';
+import { AGENT_E2E_SCRIPT_SWITCH } from '@app/specs/agent-session.spec';
+import { HISTORY_MENU_ID, JUMP_BACK_IN_TITLE } from '@app/specs/browser-polish.spec';
+import { COMMAND_PALETTE_MENU_ID } from '@app/specs/command-palette.spec';
+import { DEVTOOLS_MENU_ID } from '@app/specs/devtools.spec';
+import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
+import { GSC_PANEL_COPY } from '@app/specs/gsc-panel.spec';
+import { PERMISSION_PROMPT_ACTIONS } from '@app/specs/permissions.spec';
+import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
+import { UPDATE_FEED_SWITCH, UPDATE_PREFS_FILE, UPDATE_PUBLIC_KEY_SWITCH, UPDATE_TEST_CERT_SWITCH, updateAvailableText } from '@app/specs/update-client.spec';
+import { updatePlatformKey } from '@app/specs/update-manifest.spec';
+import { artifactBytes, manifestFor, sha256Hex, signEnvelope, startFakeFeed, testSigningKey, type FakeFeed } from '../src/main/update/__tests__/fake-feed';
+import { accountHelpers, fakeAccountEnv } from './account-helpers';
+import { startFakeBackend, type FakeBackend } from './fake-backend';
+import { startFakeGoogle, type FakeGoogle } from './fake-google';
+import { closeApp, launchApp } from './harness';
+import { chromeHelpers } from './helpers';
+import { selfSignedCertificate } from './tls';
+
+test.skip(process.platform !== 'linux', 'The screenshot baseline is Linux-only (CI renders it under xvfb); macOS and Windows skip it.');
+
+/** The window's content size every capture is taken at (CSS px; `scale: 'css'`). */
+const WINDOW = { width: 1280, height: 800 } as const;
+const THEMES = ['light', 'dark'] as const;
+
+/**
+ * The fixture site's public-looking names (`--host-resolver-rules` maps them, port included, to the
+ * loopback server): every URL the chrome shows is the same in every run, with no random port.
+ * `PERM_HOST` is also treated as a secure origin (`--unsafely-treat-insecure-origin-as-secure`), so
+ * a page on it may ask for a permission; `HOST`'s pages are the plain http pages they look like.
+ */
+const HOST = 'visual.frost-e2e.net';
+const PERM_HOST = 'permissions.frost-e2e.net';
+const ORIGIN = `http://${HOST}`;
+const PERM_ORIGIN = `http://${PERM_HOST}`;
+const AUDIT_WAIT = AUDIT_DEBOUNCE_MS + EXTRACT_TIMEOUT_MS + 5_000;
+
+/** As seo-speed.e2e.ts: through X11 on Linux (some Wayland compositors give Chromium no paint timing). */
+const PLATFORM_ARGS = process.platform === 'linux' && process.env['DISPLAY'] ? ['--ozone-platform=x11'] : [];
+
+// ---------------------------------------------------------------------------------------------
+// The fixture site: frost's own words, nothing that changes between runs.
+
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+const words = (n: number) => Array.from({ length: n }, (_, i) => ['cold', 'brew', 'coffee', 'water', 'grind', 'steep', 'filter', 'jar'][i % 8]).join(' ');
+const ld = (value: unknown) => `<script type="application/ld+json">${JSON.stringify(value)}</script>`;
+
+/** The SEO surfaces' page (seo-sidebar.e2e.ts's good page, seo-schema.e2e.ts's structured data): a few findings, every panel filled. */
+const GUIDE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Cold-brew coffee at home: a simple guide</title>
+<meta name="description" content="How to make smooth cold-brew coffee at home: the ratio, the grind, steeping times and storage, with no special kit.">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="canonical" href="${ORIGIN}/guide"><meta property="og:url" content="${ORIGIN}/guide">
+<meta property="og:title" content="Cold-brew coffee at home"><meta property="og:description" content="The ratio, the grind and the steeping time.">
+<meta property="og:image" content="${ORIGIN}/img/cover.png"><meta name="twitter:card" content="summary_large_image">
+${ld({ '@context': 'https://schema.org', '@type': 'Organization', '@id': `${ORIGIN}/#org`, name: 'Frost Test Kitchen', url: `${ORIGIN}/`, logo: `${ORIGIN}/img/logo.png` })}
+${ld({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: ['Home', 'Guides', 'Cold brew'].map((name, i) => ({ '@type': 'ListItem', position: i + 1, name, item: `${ORIGIN}/${['', 'guides', 'guide'][i]}` })) })}
+${ld({ '@context': 'https://schema.org', '@type': 'Product', name: 'Cold-brew jar', image: `${ORIGIN}/img/jar.png`, description: 'A one-litre jar with a fine filter.', sku: 'CB-1', brand: { '@type': 'Brand', name: 'Frost' }, offers: { '@type': 'Offer', price: '24.00', priceCurrency: 'EUR', availability: 'https://schema.org/InStock', url: `${ORIGIN}/guide` } })}
+</head><body><header><nav aria-label="Site"><a href="/">Home</a> <a href="/guides/">Guides</a></nav></header>
+<main><h1>Cold-brew coffee at home</h1><p>${words(420)}</p><h2>What you need</h2><h3>Grind</h3><h3>Ratio</h3><h2>Storing it</h2>
+<img src="/img/jar.png" alt="A jar of cold brew" width="320" height="200"><img src="/img/steps.png" width="160" height="100"></main>
+<footer><p>Written by the frost test kitchen.</p></footer>
+<script>console.log('cold brew ready'); console.log('cold brew ready'); console.warn('steep for twelve hours');</script></body></html>`;
+
+/** The Changes page's two versions (changes.e2e.ts): v2 edits the title, a paragraph and a navigation link. */
+const VERSIONS = {
+  1: { title: 'Cold brew at home: a starter guide', paragraph: 'Steep coarse ground coffee in cold water for twelve hours, then strain it through a paper filter.', nav: 'Pricing' },
+  2: { title: 'Cold brew at home: the complete guide', paragraph: 'Steep coarse ground coffee in cold water for sixteen hours, then strain it through a paper filter.', nav: 'Plans and pricing' },
+} as const;
+const changesPage = (version: 1 | 2) => {
+  const v = VERSIONS[version];
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${v.title}</title>
+<meta name="description" content="How to make cold brew coffee at home with coarse grounds, cold water and a paper filter.">
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body><header><nav aria-label="Site"><a href="/pricing">${v.nav}</a> <a href="/about">About</a></nav></header>
+<main><h1>Cold brew at home</h1><p>${v.paragraph}</p><p>Keep the concentrate in the fridge for up to a week and dilute it to taste.</p></main>
+<footer><p>Written by the frost test kitchen.</p></footer></body></html>`;
+};
+
+/** projects.e2e.ts's pages. */
+const projectPage = (name: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${name} guide</title>
+<meta name="description" content="The ${name} guide: how to brew it at home, step by step, with the gear you already have.">
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body><main><h1>The ${name} guide</h1><p>Grind the beans, heat the water, and pour slowly over the grounds for the ${name} method.</p></main></body></html>`;
+
+async function startSite() {
+  const state = { version: 1 as 1 | 2 };
+  const server = createServer((request, response) => {
+    const pathname = new URL(request.url ?? '/', 'http://x').pathname;
+    const html = (body: string) => response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(body);
+    if (pathname === '/robots.txt') response.writeHead(200, { 'Content-Type': 'text/plain' }).end('User-agent: *\nAllow: /\n');
+    else if (pathname === '/guide') html(GUIDE);
+    else if (pathname === '/changes') html(changesPage(state.version));
+    else if (pathname === '/alpha' || pathname === '/beta') html(projectPage(pathname.slice(1)));
+    // browser-polish.e2e.ts's find page and titled history pages; agent.e2e.ts's start page.
+    else if (pathname === '/find') html(`<!doctype html><html lang="en"><title>Find page</title><body><p>Green tea is calm.</p><p>Black TEA is bold.</p><p>White tea is light.</p></body></html>`);
+    else if (pathname.startsWith('/h/')) {
+      const name = pathname.slice(3);
+      html(`<!doctype html><html lang="en"><title>${name.charAt(0).toUpperCase()}${name.slice(1)} page</title><p>${name}</p></html>`);
+    } else if (pathname === '/start') html('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Agent start</title></head><body><h1>Agent start</h1><p>Where the agent begins.</p></body></html>');
+    else if (pathname === '/notify') html('<!doctype html><html lang="en"><title>Page NOTIFY</title><h1>Page NOTIFY</h1></html>');
+    else if (pathname.startsWith('/img/')) response.writeHead(200, { 'Content-Type': 'image/png' }).end(PNG);
+    else response.writeHead(404, { 'Content-Type': 'text/plain' }).end('not here');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    port,
+    state,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+let site: Awaited<ReturnType<typeof startSite>>;
+/** The launch arguments that put the fixture site on its fixed names. */
+const siteArgs = () => [`--host-resolver-rules=MAP ${HOST} 127.0.0.1:${site.port},MAP ${PERM_HOST} 127.0.0.1:${site.port}`, `--${E2E_PUBLIC_HOSTS_SWITCH}=${HOST},${PERM_HOST}`];
+
+test.beforeAll(async () => {
+  site = await startSite();
+});
+
+test.afterAll(async () => {
+  await site?.close();
+});
+
+// ---------------------------------------------------------------------------------------------
+// The app under capture, and the helpers every state shares.
+
+let app: ElectronApplication | undefined;
+let page: Page;
+const { go, contentsIdAt, menu, press, run, activeTab, closeAllTabs, chromeCaughtUp } = chromeHelpers(
+  () => app!,
+  () => page,
+);
+
+/** Launches the app (`PLATFORM_ARGS` first) and gives its window `WINDOW`'s content size. */
+async function launch(args: readonly string[] = [], options: Parameters<typeof launchApp>[1] = {}): Promise<void> {
+  ({ app, page } = await launchApp([...PLATFORM_ARGS, ...args], options));
+  await page.waitForLoadState('domcontentloaded');
+  await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setContentSize(size.width, size.height), WINDOW);
+  if (process.env['CI']) {
+    // CI (xvfb, no window manager): the window really has that size.
+    await expect.poll(() => page.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual(WINDOW);
+  } else {
+    // A tiling window manager (Hyprland) resizes the window when it likes, even after this: lay the
+    // chrome out at WINDOW whatever the window's size (as seo-sidebar.e2e.ts's narrow-window test does).
+    await page.setViewportSize(WINDOW);
+  }
+}
+
+/** Masked in every capture: the audit footer's clock time and read duration. */
+const alwaysMasked = (): Locator[] => [page.getByTestId('seo-duration')];
+
+/**
+ * Captures the chrome page as `<name>-light.png` and `<name>-dark.png`. Focus leaves the chrome
+ * (unless `keepFocus`: the state is about a focused field) and the pointer rests on the status
+ * bar, so no focus ring or hover depends on what the flow clicked last. The theme is the chrome's
+ * emulated `prefers-color-scheme`; each capture checks the media query and the body's colour
+ * really follow it. Soft: a missing or different image fails the test but the other captures run.
+ *
+ * A missing baseline: Playwright writes the rendering as the baseline and as `*-actual.png`
+ * (`updateSnapshots: 'missing'`, playwright.config.ts) and passes; in CI the capture fails here
+ * instead, so the actual reaches the `playwright-report` artifact and the run is red.
+ */
+async function capture(name: string, options: { readonly mask?: readonly Locator[]; readonly keepFocus?: boolean } = {}): Promise<void> {
+  if (!options.keepFocus) await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.mouse.move(Math.round(WINDOW.width / 2), WINDOW.height - 4);
+  const backgrounds: string[] = [];
+  for (const scheme of THEMES) {
+    const file = `${name}-${scheme}.png`;
+    await page.emulateMedia({ colorScheme: scheme });
+    expect(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(scheme === 'dark');
+    backgrounds.push(await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
+    if (process.env['CI']) expect.soft(existsSync(test.info().snapshotPath(file, { kind: 'screenshot' })), `baseline ${file} is missing (specs/visual-baseline.feature.md, Baseline procedure)`).toBe(true);
+    await expect.soft(page).toHaveScreenshot(file, { mask: [...alwaysMasked(), ...(options.mask ?? [])] });
+  }
+  expect(backgrounds[0], 'the dark theme repaints the chrome').not.toBe(backgrounds[1]);
+  await page.emulateMedia({ colorScheme: null });
+}
+
+const sidebar = () => page.getByTestId('seo-sidebar');
+const railItem = (panel: string) => page.locator(`[data-testid="seo-rail-item"][data-panel="${panel}"]`);
+
+/** Opens the sidebar on `panel` (seo-sidebar.e2e.ts). */
+async function showPanel(panel: string): Promise<void> {
+  if ((await sidebar().getAttribute('data-open')) !== 'true' || (await page.getByTestId('seo-panel').getAttribute('data-panel')) !== panel) await railItem(panel).click();
+  await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', panel);
+}
+
+/**
+ * Waits until the sidebar's audit has settled: the rail's dots, the score and the audit footer
+ * unchanged for 1.5 s (a served-HTML fetch or the speed measurement can land after the first answer).
+ */
+async function settled(): Promise<void> {
+  let last = '';
+  let since = Date.now();
+  await expect
+    .poll(
+      async () => {
+        const now = await page.evaluate(() =>
+          [
+            [...document.querySelectorAll('[data-testid="seo-rail-item"]')].map((item) => item.getAttribute('data-status') ?? '-').join(','),
+            document.querySelector('[data-testid="seo-score"]')?.textContent ?? '',
+            document.querySelector('[data-testid="seo-duration"]')?.textContent ?? '',
+          ].join('|'),
+        );
+        if (now !== last) [last, since] = [now, Date.now()];
+        return Date.now() - since;
+      },
+      { timeout: 30_000, intervals: [250] },
+    )
+    .toBeGreaterThanOrEqual(1_500);
+}
+
+/** Loads `pathname` of `origin` in the active tab and waits for its settled audit (On-Page shows its URL: seo-sidebar.e2e.ts). */
+async function audit(pathname: string, origin = ORIGIN): Promise<number> {
+  const url = `${origin}${pathname}`;
+  await go(url);
+  await showPanel('on-page');
+  await expect(page.getByTestId('seo-fact-url')).toHaveText(url, { timeout: AUDIT_WAIT });
+  await settled();
+  return contentsIdAt(url);
+}
+
+// ---------------------------------------------------------------------------------------------
+// One app for the states a loaded page shares: each test starts from one tab on the guide.
+
+test.describe('page surfaces', () => {
+  test.beforeAll(async () => {
+    await launch([...siteArgs(), `--unsafely-treat-insecure-origin-as-secure=${PERM_ORIGIN}`]);
+  });
+
+  test.afterAll(async () => {
+    await closeApp(app);
+    app = undefined;
+  });
+
+  /** Back to one tab, every sheet, bar and drawer closed, the sidebar open (each state is independent of the order). */
+  test.beforeEach(async () => {
+    if ((await page.getByTestId('command-palette').count()) > 0) await page.getByTestId('command-palette-input').press('Escape');
+    for (const sheet of ['settings', 'history', 'projects']) if ((await page.getByTestId(`${sheet}-view`).count()) > 0) await page.getByTestId(`${sheet}-close`).click();
+    if ((await page.getByTestId('devtools').count()) > 0) await menu(DEVTOOLS_MENU_ID);
+    if (await page.getByTestId('render-profile-bar').isVisible()) await page.getByTestId('render-profile-close').click();
+    await closeAllTabs();
+    if ((await sidebar().getAttribute('data-open')) !== 'true') await page.getByTestId('seo-toggle').click();
+    await expect(sidebar()).toHaveAttribute('data-open', 'true');
+  });
+
+  test('seo-overview', async () => {
+    await audit('/guide');
+    await showPanel('overview');
+    await expect(page.getByTestId('seo-score')).toBeVisible();
+    await capture('seo-overview');
+  });
+
+  test('seo-on-page', async () => {
+    await audit('/guide');
+    await showPanel('on-page');
+    await expect(page.getByTestId('seo-heading')).toHaveCount(5);
+    await capture('seo-on-page');
+  });
+
+  test('seo-schema', async () => {
+    await audit('/guide');
+    await showPanel('schema');
+    await expect(page.getByTestId('seo-schema-block')).toHaveCount(3);
+    await capture('seo-schema');
+  });
+
+  test('seo-page-speed', async () => {
+    // seo-speed.e2e.ts's `measure`: the panel's live measurement of this URL.
+    await audit('/guide');
+    await showPanel('speed');
+    await expect(page.getByTestId('seo-audit-url')).toHaveAttribute('title', `⁨${ORIGIN}/guide⁩`, { timeout: AUDIT_WAIT });
+    await expect(page.getByTestId('seo-speed')).toHaveAttribute('data-source', 'live', { timeout: AUDIT_WAIT });
+    const metric = (name: string) => page.locator(`[data-testid="seo-speed-metric"][data-metric="${name}"]`);
+    await expect.poll(async () => (await metric('fcp').getAttribute('data-value')) ?? '', { timeout: 15_000 }).not.toBe('');
+    await expect(page.locator('[data-testid="seo-speed-type"][data-type="document"]')).toHaveAttribute('data-requests', '1');
+    // Measured times differ from run to run: their values, bars and the "updated … ago" line.
+    await capture('seo-page-speed', {
+      mask: [page.getByTestId('seo-speed-metric-value'), page.locator('[data-testid="seo-speed-metric"] svg'), page.getByTestId('seo-speed-live'), page.getByTestId('seo-speed-breakdown'), page.getByTestId('seo-speed-waterfall')],
+    });
+  });
+
+  test('seo-changes', async () => {
+    // changes.e2e.ts: a first capture, the page changes, a second capture shows the diff.
+    const panel = page.getByTestId('changes');
+    const captureButton = page.getByTestId('changes-capture');
+    site.state.version = 1;
+    try {
+      await audit('/changes');
+      await showPanel('changes');
+      await expect(panel).toHaveAttribute('data-audit', 'ready', { timeout: AUDIT_WAIT });
+      await expect(captureButton).toBeEnabled({ timeout: AUDIT_WAIT });
+      await captureButton.click();
+      await expect(page.getByTestId('changes-capture-status')).toHaveAttribute('data-outcome', 'first');
+      site.state.version = 2;
+      const before = await panel.getAttribute('data-audit-at');
+      await page.getByTestId('reload').click();
+      await expect(panel).not.toHaveAttribute('data-audit-at', before ?? '', { timeout: AUDIT_WAIT });
+      await expect(panel).toHaveAttribute('data-audit', 'ready', { timeout: AUDIT_WAIT });
+      await expect(captureButton).toBeEnabled({ timeout: AUDIT_WAIT });
+      await captureButton.click();
+      await expect(page.getByTestId('changes-capture-status')).toHaveAttribute('data-outcome', 'new');
+      await expect(page.getByTestId('changes-diff')).toHaveAttribute('data-state', 'ready');
+      await expect(page.getByTestId('changes-version')).toHaveCount(2);
+      await settled();
+      // The versions' capture times: in the history list, the diff's heading and its compare picker.
+      await capture('seo-changes', { mask: [page.getByTestId('changes-version-time'), page.locator('.changes-pair-time'), page.getByTestId('changes-compare')] });
+    } finally {
+      site.state.version = 1;
+    }
+  });
+
+  test('devtools-drawer', async () => {
+    // devtools.e2e.ts: the drawer from its menu item, on its Console tab.
+    await audit('/guide');
+    await menu(DEVTOOLS_MENU_ID);
+    await expect(page.getByTestId('devtools')).toBeVisible();
+    await page.locator('[data-testid="devtools-tab"][data-tab="console"]').click();
+    await expect(page.getByTestId('devtools-panel')).toHaveAttribute('data-tab', 'console');
+    await expect(page.getByTestId('devtools-console-row')).toHaveCount(2);
+    await expect(page.getByTestId('devtools-console-count')).toHaveText('×2');
+    await capture('devtools-drawer');
+    await menu(DEVTOOLS_MENU_ID);
+    await expect(page.getByTestId('devtools')).toHaveCount(0);
+  });
+
+  test('find-bar', async () => {
+    // browser-polish.e2e.ts: Mod+F in the page, three matches.
+    const id = await audit('/find');
+    await app!.evaluate(({ webContents }, id) => webContents.fromId(id)!.focus(), id);
+    await press(id, 'F', ['mod']);
+    await expect(page.getByTestId('find-bar')).toBeVisible();
+    await expect(page.getByTestId('find-input')).toBeFocused();
+    await page.getByTestId('find-input').fill('tea');
+    await expect(page.getByTestId('find-count')).toHaveText('1 of 3');
+    await capture('find-bar', { keepFocus: true });
+    await page.getByTestId('find-input').press('Escape');
+    await expect(page.getByTestId('find-bar')).toHaveCount(0);
+  });
+
+  test('command-palette', async () => {
+    // command-palette.e2e.ts / update.e2e.ts: the menu item, then a query.
+    await audit('/guide');
+    await menu(COMMAND_PALETTE_MENU_ID);
+    await expect(page.getByTestId('command-palette')).toBeVisible();
+    await page.getByTestId('command-palette-input').fill('zoom');
+    await expect(page.getByTestId('command-palette-option').first()).toBeVisible();
+    await expect(page.locator('[data-testid="command-palette-option"][aria-selected="true"]')).toHaveCount(1);
+    await capture('command-palette', { keepFocus: true });
+    await page.getByTestId('command-palette-input').press('Escape');
+    await expect(page.getByTestId('command-palette')).toHaveCount(0);
+  });
+
+  test('settings', async () => {
+    // settings.e2e.ts: the Settings menu item.
+    await audit('/guide');
+    await menu(SETTINGS_MENU.id);
+    await expect(page.getByTestId('settings-view')).toBeVisible();
+    await capture('settings');
+    await page.getByTestId('settings-close').click();
+    await expect(page.getByTestId('settings-view')).toHaveCount(0);
+  });
+
+  test('projects', async () => {
+    // projects.e2e.ts: the sheet from the Changes panel, a project with two pages added.
+    await audit('/alpha');
+    await showPanel('changes');
+    await page.getByTestId('changes-open-projects').click();
+    const sheet = page.getByTestId('projects-view');
+    await expect(sheet).toBeVisible();
+    await page.getByTestId('projects-create-name').fill('Coffee site');
+    await page.getByTestId('projects-create').click();
+    await expect(page.getByTestId('projects-name')).toHaveText('Coffee site');
+    for (const url of [`${ORIGIN}/alpha`, `${ORIGIN}/beta`]) {
+      await page.getByTestId('projects-page-url').fill(url);
+      await page.getByTestId('projects-page-add').click();
+      await expect(page.getByTestId('projects-status')).toHaveText('Page added.');
+    }
+    await expect(page.getByTestId('projects-page')).toHaveCount(2);
+    await expect(page.getByTestId('projects-page').first().getByTestId('projects-page-last')).toHaveText('Not captured yet');
+    await capture('projects');
+    await page.getByTestId('projects-close').click();
+    await expect(sheet).toHaveCount(0);
+  });
+
+  test('render-profile', async () => {
+    // render-profile.e2e.ts: the phone preset and the mobile user agent, applied and reloaded; the editor bar open again.
+    const id = await audit('/guide');
+    await page.getByTestId('render-profile-toggle').click();
+    const bar = page.getByTestId('render-profile-bar');
+    await expect(bar).toBeVisible();
+    await bar.getByTestId('render-device').selectOption('phone');
+    await bar.getByTestId('render-user-agent').selectOption('mobile');
+    await bar.getByTestId('render-apply').click();
+    await page.getByTestId('render-profile-close').click();
+    await expect(bar).toBeHidden();
+    await expect(activeTab().getByTestId('tab-render-profile')).toHaveAttribute('data-status', 'active');
+    await page.getByTestId('render-frame-reload').click();
+    await expect(page.getByTestId('render-frame-reload')).toHaveCount(0);
+    await expect.poll(() => app!.evaluate(({ webContents }, id) => webContents.fromId(id)!.isLoading(), id)).toBe(false);
+    await expect(page.getByTestId('render-frame-summary')).toHaveText('Phone 412×915 · Mobile browser');
+    await settled();
+    await page.getByTestId('render-profile-toggle').click();
+    await expect(bar).toBeVisible();
+    await capture('render-profile');
+    await page.getByTestId('render-profile-close').click();
+  });
+
+  test('permission-bar', async () => {
+    // permissions.e2e.ts: a page asks for notifications; the bar, armed.
+    const id = await audit('/notify', PERM_ORIGIN);
+    await expect(activeTab()).toHaveAttribute('title', 'Page NOTIFY');
+    const asked = run(id, 'Notification.requestPermission()').catch(() => undefined);
+    const prompt = page.getByTestId('permission-prompt');
+    await expect(prompt).toBeVisible();
+    await expect(page.getByTestId('permission-prompt-text')).toHaveText(`${PERM_HOST} wants to ${PERMISSION_PROMPT_ACTIONS.notifications}`);
+    await expect(prompt).toHaveAttribute('data-armed', 'true');
+    await capture('permission-bar');
+    await page.getByTestId('permission-block').click();
+    await expect(prompt).toHaveCount(0);
+    await asked;
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// A fresh profile: the new tab before and after some browsing, and History.
+
+test.describe('new tab and history', () => {
+  test.beforeAll(async () => {
+    await launch(siteArgs());
+    await chromeCaughtUp();
+  });
+
+  test.afterAll(async () => {
+    await closeApp(app);
+    app = undefined;
+  });
+
+  test('new-tab', async () => {
+    // A fresh profile's empty tab: the start view, no tiles yet, the sidebar's hint.
+    await expect(page.getByTestId('start-view')).toBeVisible();
+    await expect(page.getByTestId('seo-empty')).toBeVisible();
+    await expect(page.getByTestId('jump-back-in')).toHaveCount(0);
+    await capture('new-tab');
+  });
+
+  test('history', async () => {
+    // browser-polish.e2e.ts: some visits, then the new tab's "Jump back in" and the History sheet.
+    for (const name of ['kiwi', 'lime', 'kiwi', 'kiwi', 'mango']) {
+      await go(`${ORIGIN}/h/${name}`);
+      await contentsIdAt(`${ORIGIN}/h/${name}`);
+      await expect(activeTab()).toHaveAttribute('title', `${name.charAt(0).toUpperCase()}${name.slice(1)} page`);
+    }
+    await menu('new-tab');
+    await expect(page.getByTestId('jump-back-in')).toContainText(JUMP_BACK_IN_TITLE);
+    await expect(page.getByTestId('jump-tile')).toHaveCount(3);
+    await capture('new-tab-jump-back-in');
+
+    await menu(HISTORY_MENU_ID);
+    await expect(page.getByTestId('history-view')).toBeVisible();
+    await expect(page.getByTestId('history-row')).toHaveCount(3);
+    await capture('history', { mask: [page.locator('.history-time')] });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The agent panel on the scripted model seam (agent.e2e.ts): empty, then one turn with a tool call.
+
+test.describe('agent panel', () => {
+  let scripts: string;
+
+  test.beforeAll(async () => {
+    scripts = await mkdtemp(path.join(tmpdir(), 'frost-e2e-visual-agent-'));
+    const file = path.join(scripts, 'script.json');
+    await writeFile(file, JSON.stringify({ steps: [{ toolCalls: [{ toolName: 'page_text', input: {} }] }, { text: ['The page says where the agent begins.'] }] }));
+    await launch([...siteArgs(), `--${AGENT_E2E_SCRIPT_SWITCH}=${file}`, '--password-store=basic']);
+    // agent.e2e.ts's `launchWith`: the page, the SEO sidebar's panel collapsed, the agent panel open.
+    await go(`${ORIGIN}/start`);
+    await contentsIdAt(`${ORIGIN}/start`);
+    if ((await sidebar().getAttribute('data-open')) === 'true') await page.getByTestId('seo-toggle').click();
+    await page.getByTestId('agent-toggle').click();
+    await expect(page.getByTestId('agent-panel')).toHaveAttribute('data-open', 'true');
+    await expect(page.getByTestId('agent-input')).toBeFocused();
+  });
+
+  test.afterAll(async () => {
+    await closeApp(app);
+    app = undefined;
+    if (scripts) await rm(scripts, { recursive: true, force: true });
+  });
+
+  test('agent-empty', async () => {
+    await expect(page.getByTestId('agent-message')).toHaveCount(0);
+    await capture('agent-empty');
+  });
+
+  test('agent-conversation', async () => {
+    // agent.e2e.ts's agent-chat-export-and-restore turn: a read tool on a public page, then the answer.
+    const input = page.getByTestId('agent-input');
+    await expect(input).toBeEnabled();
+    await input.fill('What does this page say?');
+    await input.press('Enter');
+    await expect(page.locator('[data-testid="agent-message"][data-kind="user"]').last()).toHaveText('What does this page say?');
+    await expect(page.getByTestId('agent-tool-card').first()).toHaveAttribute('data-status', 'done');
+    await expect(page.getByTestId('agent-assistant-text').last()).toHaveText('The page says where the agent begins.');
+    await expect(page.getByTestId('agent-send')).toBeVisible();
+    await capture('agent-conversation');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Search Console, connected to the fake Google (gsc-panel.e2e.ts).
+
+test.describe('search console', () => {
+  let backend: FakeBackend;
+  let google: FakeGoogle;
+  let profile: string;
+  const { recordOpenExternal, connectInSettings } = accountHelpers(
+    () => app!,
+    () => page,
+  );
+
+  test.beforeAll(async () => {
+    backend = await startFakeBackend();
+    google = await startFakeGoogle();
+    google.sites = [{ siteUrl: `${ORIGIN}/`, permissionLevel: 'siteOwner' }];
+    profile = await mkdtemp(path.join(tmpdir(), 'frost-e2e-visual-gsc-'));
+    await launch(siteArgs(), { userDataDir: profile, env: fakeAccountEnv(backend, google) });
+    await recordOpenExternal();
+    await chromeCaughtUp();
+  });
+
+  test.afterAll(async () => {
+    await closeApp(app);
+    app = undefined;
+    await backend?.close();
+    await google?.close();
+    if (profile) await rm(profile, { recursive: true, force: true });
+  });
+
+  test('seo-search-console', async () => {
+    await audit('/guide');
+    await showPanel('search-console');
+    const panel = page.getByTestId('gsc-panel');
+    await expect(panel).toHaveAttribute('data-state', 'not-connected');
+    await expect(page.getByTestId('gsc-notice-title')).toHaveText(GSC_PANEL_COPY['not-connected'].title);
+    // Connect from the panel's own button, in Settings.
+    await page.getByTestId('gsc-action').click();
+    await expect(page.getByTestId('settings-view')).toBeVisible();
+    await connectInSettings();
+    await page.getByTestId('settings-close').click();
+    await expect(page.getByTestId('settings-view')).toHaveCount(0);
+    // This page, 28 days, the clicks chart: the fake's three days of rows.
+    await page.locator('[data-testid="gsc-scope"][data-scope="page"]').click();
+    await page.locator('[data-testid="gsc-range"][data-days="28"]').click();
+    await expect(panel).toHaveAttribute('data-state', 'data');
+    await expect(panel).toHaveAttribute('data-pending', 'false');
+    const clicks = page.locator('[data-testid="gsc-tile"][data-metric="clicks"]');
+    if ((await clicks.getAttribute('aria-pressed')) !== 'true') await clicks.click();
+    await expect(page.getByTestId('gsc-total-clicks')).toHaveText('60');
+    await expect(page.getByTestId('gsc-line')).toHaveCount(1);
+    // The dates follow today's date.
+    await capture('seo-search-console', { mask: [page.getByTestId('gsc-through'), page.getByTestId('gsc-freshness'), page.getByTestId('gsc-x-tick')] });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The update bar offering a version (update.e2e.ts, its fake feed over TLS).
+
+test.describe('update bar', () => {
+  const UPDATE_HOST = 'updates.frost-e2e.net';
+  const VERSION = '99.0.0';
+  const KEY = testSigningKey('e2e-visual-update-key');
+  const TLS = selfSignedCertificate();
+  const PIN = new X509Certificate(TLS.cert).fingerprint256.replace(/:/g, '').toLowerCase();
+  const PLATFORM = updatePlatformKey(process.platform, process.arch);
+  const BYTES = artifactBytes(256 * 1024, 11);
+  let feed: FakeFeed;
+  let profile: string;
+
+  test.beforeAll(async () => {
+    test.skip(PLATFORM === null, 'no update artifact kind for this platform');
+    feed = await startFakeFeed({ tls: TLS });
+    const artifact = `https://${UPDATE_HOST}:${feed.port}/frost-artifact`;
+    feed.route('/feed.json', { body: signEnvelope(manifestFor(VERSION, Date.now(), { [PLATFORM!]: { url: artifact, sha256: sha256Hex(BYTES), size: BYTES.length } }, { notes: 'frost 99.0.0\n\n- Fixes.' }), KEY) });
+    // Automatic checks off: only the palette's "Check for Updates" checks.
+    profile = await mkdtemp(path.join(tmpdir(), 'frost-e2e-visual-update-'));
+    await writeFile(path.join(profile, UPDATE_PREFS_FILE), JSON.stringify({ format: 1, installId: randomUUID(), checks: 'off' }), { mode: 0o600 });
+    await launch(
+      [
+        `--host-resolver-rules=MAP ${UPDATE_HOST} 127.0.0.1`,
+        `--${E2E_PUBLIC_HOSTS_SWITCH}=${UPDATE_HOST}`,
+        `--${UPDATE_PUBLIC_KEY_SWITCH}=${KEY.keyId}:${KEY.spki}`,
+        `--${UPDATE_TEST_CERT_SWITCH}=${PIN}`,
+        `--${UPDATE_FEED_SWITCH}=https://${UPDATE_HOST}:${feed.port}/feed.json`,
+      ],
+      { userDataDir: profile },
+    );
+    await expect(page.getByTestId('update-slot')).toHaveAttribute('data-update-status', 'off');
+  });
+
+  test.afterAll(async () => {
+    await closeApp(app);
+    app = undefined;
+    await feed?.close();
+    if (profile) await rm(profile, { recursive: true, force: true });
+  });
+
+  test('update-bar', async () => {
+    await menu(COMMAND_PALETTE_MENU_ID);
+    await expect(page.getByTestId('command-palette')).toBeVisible();
+    await page.getByTestId('command-palette-input').fill('check for updates');
+    await expect(page.locator('[data-testid="command-palette-option"][aria-selected="true"]')).toHaveAttribute('data-action', 'update.check');
+    await page.getByTestId('command-palette-input').press('Enter');
+    await expect(page.getByTestId('command-palette')).toHaveCount(0);
+    await expect(page.getByTestId('update-bar')).toHaveAttribute('data-kind', 'available');
+    await expect(page.getByTestId('update-text')).toContainText(updateAvailableText(VERSION));
+    // The palette's own status pill says so for PALETTE_STATUS_MS: captured once it has gone.
+    await expect(page.getByTestId('command-palette-status')).toHaveAttribute('data-shown', 'false');
+    await capture('update-bar');
+  });
+});
