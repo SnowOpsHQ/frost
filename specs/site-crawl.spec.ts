@@ -309,7 +309,9 @@ export type CrawlRunState = (typeof CRAWL_RUN_STATES)[number];
  *   pauses ("`CRAWL_ROBOTS_UNREACHABLE_MESSAGE`") and Resume tries the page again. On any other origin
  *   (another host's page, a hop to another scheme or port) the page is recorded `robots-unreachable`
  *   and completed instead (council review round 3, item G), so a host whose robots.txt never answers
- *   cannot hold the run paused for good.
+ *   cannot hold the run paused for good. "The start URL's origin" includes each origin the start landed
+ *   on (its same-host hop target, its `redirected` target and where that lands; council review round 4,
+ *   item N1), learned from the start's rows and rebuilt from them on Resume; scope is unchanged.
  */
 export const CRAWL_RUN_REASONS = ['user', 'quit', 'interrupted', 'slow-down', 'max-pages', 'project-deleted', 'error', 'robots-unreachable'] as const;
 export type CrawlRunReason = (typeof CRAWL_RUN_REASONS)[number];

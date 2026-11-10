@@ -28,9 +28,13 @@ import type { SitemapSeeder } from './sitemaps';
 //   URL's origin records nothing either: the URL stays queued and the run pauses (`robots-unreachable`;
 //   council review round 2, item D), so a brief robots.txt failure (a 429 cached for a minute) never
 //   completes the rest of the queue as refused. Resume asks again. A page replayed after a stop keeps the
-//   row it had until a replay completes it. On any other origin (another host's page, a hop to another
-//   scheme or port) it is a refusal like the others: recorded `robots-unreachable` and completed (council
-//   review round 3, item G), so a host whose robots.txt never answers cannot block the run for good.
+//   row it had until a replay completes it. The start origins are the typed one and each origin the start
+//   landed on (its same-host hop target, its `redirected` target and where that lands, up to
+//   `MAX_START_CHAIN` URLs; council review round 4, item N1), learned from the start's rows as they are
+//   written and rebuilt from them on Resume; a page of that chain pauses the run on any origin. On any other
+//   origin (another host's page, a hop to another scheme or port) it is a refusal like the others: recorded
+//   `robots-unreachable` and completed (council review round 3, item G), so a host whose robots.txt never
+//   answers cannot block the run for good. Scope is not changed by any of this.
 // Nothing is written once the run is stopped: every write follows a check of its signal, and a fetch or
 // a parse still under way when it stops is left to end on its own (its answer is dropped). A page's
 // completion (its discoveries and its frontier entry marked done: `CrawlFrontier.complete`) is one write
@@ -132,6 +136,10 @@ const TERMINAL: ReadonlySet<CrawlRunState> = new Set(['done', 'cancelled', 'fail
 const REFUSED: ReadonlySet<string> = new Set(CRAWL_REFUSED_OUTCOMES);
 const FAILED: ReadonlySet<string> = new Set(CRAWL_FAILED_OUTCOMES);
 const HTML: ReadonlySet<string> = new Set(SERVED_HTML_TYPES);
+/** Outcomes whose row's `finalUrl` is where the page landed (an answer, or a `redirected` row's target), not a refused hop's target. */
+const LANDED: ReadonlySet<CrawlPageOutcome> = new Set<CrawlPageOutcome>(['crawled', 'not-html', 'parse-failed', 'redirected']);
+/** At most this many URLs (the start URL and the `redirected` targets after it) make up the start's chain (council review round 4, item N1). */
+const MAX_START_CHAIN = 5;
 const ABORTED = Symbol('aborted');
 
 /** `promise`'s value, or `ABORTED` as soon as `signal` aborts (the promise is left to settle on its own). */
@@ -301,9 +309,34 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
         try {
           runFetcher = deps.fetcher.forRun(settings);
           const scope = runFetcher.scope;
-          const startOrigin = originOf(scope.start);
           frontier = createFrontier({ repo, runId, scope });
+          // The start origins (council review round 4, item N1): the typed one, and each origin the start landed on (its
+          // same-host hop target, its `redirected` target and where that lands in turn). A site usually redirects the URL
+          // as typed (`http` to `https`, the apex to `www`), so the pages sit on the landing origin, not the typed one.
+          const startOrigins = new Set<string>();
+          const typed = originOf(scope.start);
+          if (typed !== null) startOrigins.add(typed);
+          /** The start URL and its `redirected` targets (normalised), at most `MAX_START_CHAIN`. */
+          const startChain = new Set<string>([scope.start]);
+          /** Learns where a start-chain page landed from its row; answers the next link of the chain (a `redirected` target), or `null`. */
+          const learnLanding = (url: string, row: Pick<CrawlPageRow, 'outcome' | 'finalUrl'>): string | null => {
+            if (!startChain.has(url) || !LANDED.has(row.outcome) || row.finalUrl === null) return null;
+            const origin = originOf(row.finalUrl);
+            if (origin !== null) startOrigins.add(origin);
+            if (row.outcome !== 'redirected') return null;
+            const next = normaliseCrawlUrl(row.finalUrl);
+            if (next === null || startChain.has(next) || startChain.size >= MAX_START_CHAIN) return null;
+            startChain.add(next);
+            return next;
+          };
           Object.assign(counts, await repo.pageCounts(runId));
+          // A resume (perhaps after a restart) rebuilds the start origins from the start's row and its `redirected` targets' rows.
+          if (!fresh) {
+            for (let url: string | null = scope.start; url !== null; ) {
+              const row = await repo.getPage(runId, url);
+              url = row === null ? null : learnLanding(url, row);
+            }
+          }
           // A resume (perhaps after a restart, with a new crawl fetcher): no host is reached sooner, or less backed off, than when it paused.
           if (!fresh && runFetcher.politeness) runFetcher.politeness.restore(await repo.runPacing(runId));
           if (signal.aborted) return await finish(stoppedEnd());
@@ -354,11 +387,15 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
             if (fetched === ABORTED || fetched.outcome === 'aborted' || signal.aborted) return await finish(stoppedEnd());
             // A host past the pacing table's cap: nothing requested, nothing recorded; the URL stays queued.
             if (fetched.outcome === 'deferred') return await finish(SLOW_DOWN);
-            // robots.txt the crawl cannot read on the start URL's origin (the page's, or a same-host hop's): nothing recorded, the URL
-            // stays queued, the run pauses; Resume asks again. A replayed page's earlier row is left as it was (still counted,
-            // replaced once completed). Another origin's is recorded as a refusal below and its entry completed (council review
-            // round 3, item G): a lasting failure there would otherwise be handed out first on every Resume and block the run.
-            if (fetched.outcome === 'robots-unreachable' && originOf(fetched.refusedUrl ?? entry.url) === startOrigin) return await finish(ROBOTS_UNREACHABLE);
+            // robots.txt the crawl cannot read on a start origin (the page's, or a same-host hop's), or for a page of the start's
+            // chain: nothing recorded, the URL stays queued, the run pauses; Resume asks again. A replayed page's earlier row is
+            // left as it was (still counted, replaced once completed). Another origin's is recorded as a refusal below and its
+            // entry completed (council review round 3, item G): a lasting failure there would otherwise be handed out first on
+            // every Resume and block the run.
+            if (fetched.outcome === 'robots-unreachable') {
+              const where = originOf(fetched.refusedUrl ?? entry.url);
+              if (startChain.has(entry.url) || (where !== null && startOrigins.has(where))) return await finish(ROBOTS_UNREACHABLE);
+            }
 
             let outcome: CrawlPageOutcome;
             let page: CrawlPageAnalysis | null = null;
@@ -391,6 +428,8 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
 
             // One row per page, written as the page ends. A replayed page's row (`replaced`) is replaced, and counted once.
             const row = rowOf(entry.url, entry.depth, fetched, outcome, page);
+            // Where a start-chain page landed is a start origin from now on (round 4, item N1); its `redirected` target joins the chain.
+            learnLanding(entry.url, row);
             if (signal.aborted) return await finish(stoppedEnd());
             if (await repo.putPage(row)) {
               const was = (set: ReadonlySet<string>): number => (replaced !== null && set.has(replaced.outcome) ? 1 : 0);

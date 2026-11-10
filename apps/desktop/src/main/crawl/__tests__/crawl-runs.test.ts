@@ -588,6 +588,114 @@ describe('crawl runs', () => {
     expect(await repo.getRun(hopRun.id)).toMatchObject({ state: 'paused', reason: 'robots-unreachable' });
   });
 
+  test('crawl-robots-unreachable-pauses-on-the-start-landing-origin', async () => {
+    // Council review round 4, item N1: the start URL as typed is rarely where the site lives. `http://example.com/` hops to
+    // `https://example.com/` (same host), and the project's "Crawl site" button starts at `https://<apex>/` with `site`
+    // scope, whose answer redirects to `www` (another host: a `redirected` row, its target queued). Every page then sits
+    // on an origin other than the typed one, so with only that origin pausing, one 503 on the landing origin's robots.txt
+    // (cached for a minute) recorded the whole queue `robots-unreachable` and ended the run `done`: round 2, item D again.
+    // The origins the start landed on (its same-host hop target, its `redirected` target and where that lands) pause the
+    // run too, and a Resume after a restart rebuilds them from the start's rows.
+    const kit = timerClock();
+    const db = tempStore();
+    cleanups.push(db.close);
+    const repo = db.store.siteCrawl;
+    const encoder = new TextEncoder();
+    const requests: string[] = [];
+    /** Requests sent so far, never reset. */
+    let sent = 0;
+    /** Page → where it redirects (followed only when the crawl's hook allows it; another host never is). */
+    const redirects: Record<string, string> = { 'http://example.com/': HOME, 'https://example.org/': 'https://www.example.org/' };
+    const homes = new Set([HOME, 'https://www.example.org/']);
+    const lane: BoundedFetcher = {
+      async fetch(request) {
+        requests.push(request.url);
+        sent += 1;
+        const base = { url: request.url, redirects: 0, chain: [] as { url: string; status: number; location: string }[], truncated: false, durationMs: 5, headers: { 'content-type': 'text/html' } as Record<string, string> };
+        let at = request.url;
+        const target = redirects[at];
+        if (target !== undefined) {
+          const hop = await request.allowRedirect!(target, { signal: new AbortController().signal });
+          if (!hop) return { ...base, outcome: 'redirect-refused', status: 301, finalUrl: at, headers: {}, body: new Uint8Array(0) };
+          requests.push(target);
+          sent += 1;
+          base.chain.push({ url: at, status: 301, location: target });
+          base.redirects = 1;
+          at = target;
+        }
+        const links = homes.has(at) ? ['/p1', '/p2', '/p3', '/p4'] : [];
+        const body = encoder.encode(`<!doctype html><title>Page</title>${links.map((href) => `<a href="${href}">x</a>`).join('')}`) as Uint8Array<ArrayBuffer>;
+        return { ...base, outcome: 'response', status: 200, finalUrl: at, body };
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    /** Whether an origin's robots.txt answers now (404: no file); otherwise 503 (`server-error`). */
+    let readable = (_origin: string): boolean => true;
+    const robots: CrawlRobotsSource = {
+      get: async (pageUrl) => {
+        const origin = new URL(pageUrl).origin;
+        const url = `${origin}/robots.txt`;
+        return readable(origin) ? { url, outcome: 'unavailable', status: 404, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false } : { url, outcome: 'server-error', status: 503, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false };
+      },
+    };
+    /** One app session: a new crawl fetcher, crawler and service on the same database. */
+    const boot = (): CrawlService => {
+      const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent: () => 'Mozilla/5.0', clock: kit.clock });
+      const crawler = createCrawler({ repo, fetcher, analyse: inProcessAnalyse, projectLive: async () => true, now: kit.now });
+      return createCrawlService({ repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, now: kit.now, log: () => undefined });
+    };
+
+    // 1. `http://example.com/` lands on `https://example.com/`, whose robots.txt fails once the start and p1 are crawled.
+    const first = boot();
+    readable = (origin) => origin !== 'https://example.com' || sent < 3;
+    const runId = await started(first, settingsFor('http://example.com/'));
+    await kit.settle(first.idle());
+    expect(requests).toEqual(['http://example.com/', HOME, `${HOME}p1`]);
+    expect(await repo.getPage(runId, 'http://example.com/')).toMatchObject({ outcome: 'crawled', finalUrl: HOME });
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 2, queued: 3, refused: 0 } });
+    for (const i of [2, 3, 4]) {
+      expect(await repo.getPage(runId, `${HOME}p${i}`)).toBeNull();
+      expect(await repo.frontierEntry(runId, `${HOME}p${i}`)).toMatchObject({ state: 'queued' });
+    }
+
+    // 3. A restart (a new crawl fetcher, crawler and service): Resume while it still fails pauses again, nothing recorded.
+    const second = boot();
+    await second.startup();
+    requests.length = 0;
+    expect(await second.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(second.idle());
+    expect(requests).toEqual([]);
+    expect(await repo.getPage(runId, `${HOME}p2`)).toBeNull();
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 2, queued: 3, refused: 0 } });
+    // Readable again: the rest is crawled.
+    readable = () => true;
+    expect(await second.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(second.idle());
+    expect(requests).toEqual([2, 3, 4].map((i) => `${HOME}p${i}`));
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'done', reason: null, counts: { pages: 5, queued: 0, refused: 0 } });
+
+    // 2. The apex `https://example.org/` (`site` scope) redirects to `https://www.example.org/`: a `redirected` row, its target
+    // queued. www's robots.txt fails once www's home and p1 are crawled.
+    const third = boot();
+    requests.length = 0;
+    const before = sent;
+    readable = (origin) => origin !== 'https://www.example.org' || sent - before < 3;
+    const apex = await started(third, settingsFor('https://example.org/', { scope: 'site' }));
+    await kit.settle(third.idle());
+    expect(requests).toEqual(['https://example.org/', 'https://www.example.org/', 'https://www.example.org/p1']);
+    expect(await repo.getPage(apex, 'https://example.org/')).toMatchObject({ outcome: 'redirected', finalUrl: 'https://www.example.org/' });
+    expect(await repo.getRun(apex)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 3, queued: 3, refused: 0 } });
+    expect(await repo.getPage(apex, 'https://www.example.org/p2')).toBeNull();
+    // After a restart, the set is rebuilt from the start's `redirected` row: still paused, nothing recorded.
+    const fourth = boot();
+    await fourth.startup();
+    requests.length = 0;
+    expect(await fourth.resume(apex)).toEqual({ status: 'resumed', runId: apex });
+    await kit.settle(fourth.idle());
+    expect(requests).toEqual([]);
+    expect(await repo.getRun(apex)).toMatchObject({ state: 'paused', reason: 'robots-unreachable', counts: { pages: 3, queued: 3, refused: 0 } });
+  });
+
   test('crawl-pacing-survives-a-restart', async () => {
     // Whole-branch review (site-crawl.feature.md, crawl-pacing-survives-a-restart; CRAWL_PACING_LIMITS): the real crawl
     // fetcher's pacing on a fake clock. A run paused by five 429s with `Retry-After: 60` keeps the host's wait and back-off on

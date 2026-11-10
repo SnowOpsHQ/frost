@@ -393,6 +393,15 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   others (round 3, item G): recorded `robots-unreachable` (nothing requested from that origin; a refused
   hop keeps its status and `finalUrl` the hop's target), counted `refused`, and its entry completed, so a
   host whose robots.txt never answers cannot hold the run paused for good.
+- (Council review round 4, item N1) The **start origins** are the typed start URL's origin plus each
+  origin the start landed on: its same-host hop target (the start row's `finalUrl`), its `redirected`
+  target (another host, queued as its own page) and, in turn, where that target lands, the start URL
+  and its `redirected` targets making a chain of at most five URLs. A site usually redirects the URL as
+  typed (`http://` to `https://`, the apex the "Crawl site" button starts at to `www`), so its pages sit
+  on a landing origin; each start origin pauses the run as the typed one does, and a page of the chain
+  pauses it on any origin (its own hop target's robots.txt included). The set is learned from the
+  chain's rows as they are written and rebuilt from them on Resume (no new column). It decides the
+  pause only; scope is unchanged.
 - The run ends `done` when the frontier is empty, or `maxPages` rows are recorded (`max-pages` while
   URLs are still queued); `paused` (`user`, `quit`, `slow-down`, `robots-unreachable`); `cancelled` (`user`, or
   `project-deleted`); `failed` (`error`, a database failure). Once stopped, nothing more is fetched or
@@ -449,6 +458,13 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   recorded `robots-unreachable` (the hop with its 301 and target) and done, every other page is crawled
   and the run ends `done` with two refused. A hop from another origin to the start origin, whose
   robots.txt cannot be read, pauses the run (`robots-unreachable`) with that page unrecorded and queued.
+- `crawl-robots-unreachable-pauses-on-the-start-landing-origin` — (council review round 4, item N1) a
+  start at `http://example.com/` hops (same host) to `https://example.com/`, whose robots.txt answers
+  503 once two pages are crawled: the run pauses (`robots-unreachable`) with the rest queued, nothing
+  refused. After a restart (a new crawl fetcher, crawler and service) Resume pauses again with nothing
+  recorded; readable again, it crawls the rest and ends `done`. An apex start (`site` scope) whose
+  answer redirects to `www` (a `redirected` row) pauses the same way when `www`'s robots.txt fails, and
+  again after a restart.
 - `crawl-query-variants-counted-from-the-frontier` — 30 variants of one path admit 20; a later page's
   new variants are refused and its known ones counted as inlinks; a restart counts the same rows.
 - `crawl-cancels-when-its-project-is-gone` — a project tombstoned mid-run (by sync) while a fetch call
