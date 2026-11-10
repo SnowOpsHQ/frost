@@ -262,8 +262,9 @@ export const DATA_API_LIMITS = {
  * - `too-large`: the body was longer than `maxResponseBytes`;
  * - `http-error`: a status outside 2xx; the status is kept, the body withheld;
  * - `aborted` (Phase 12 Task 8 review): the caller's `signal` aborted (Stop, or its own deadline)
- *   while the request waited for its turn or before it was sent (nothing sent), or while it was in
- *   flight (the fetch is aborted, the body not read);
+ *   while the request waited for its turn or before it was sent (nothing sent or counted; checked
+ *   again with nothing awaited before the fetch), or while it was in flight (the fetch is aborted,
+ *   the body not read);
  * - `cancelled` (Phase 12 Task 8 review): the caller's `beforeSend` check, run once the turn is
  *   granted and before any key is read, said the request is no longer wanted (what it was for
  *   changed while it waited); nothing was read or sent.

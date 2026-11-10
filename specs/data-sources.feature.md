@@ -57,8 +57,11 @@ Scenario: serpapi-key-never-in-a-logged-url
 
 Scenario: data-api-signal-and-before-send (Phase 12 Task 8 review; tested in `main/ai-search/__tests__/ai-search.test.ts`)
   Given a caller passes `signal` and `beforeSend`
-  When the signal aborts while the request waits for its turn, before it is counted, or in flight
+  When the signal aborts while the request waits for its turn, while its key is opened, or in flight
   Then it answers `aborted`, ends the wait at once, aborts the fetch, and sends nothing not yet sent
+  And the signal is checked again with nothing awaited before the fetch (council review), and the
+  fetch's own controller starts aborted if the signal already fired, so a Stop at any earlier await
+  sends nothing and counts nothing (`data-api-stop-while-counting-never-sends-after-the-stop`)
   When `beforeSend` answers false once the turn is granted
   Then it answers `cancelled` before any key is read, and nothing is sent
 
@@ -103,10 +106,11 @@ Scenario: data-usage-migration-creates-table
 
 Scenario: data-usage-counts-every-request
   When the client sends a request (it passed the gate, its turn, its key and the allowlist)
-  Then that provider's count for the current UTC month goes up by one, before the fetch
+  Then that provider's count for the current UTC month goes up by one, as the request is handed to
+  the fetch (council review: counted only once sent; the count is never awaited before the fetch)
   And it counts whatever the answer is (2xx, an error status, a redirect, a timeout, a network failure)
   When a request is refused before sending (`unavailable`, `busy`, `no-key`, `no-keychain`,
-  `key-failed`, `not-allowed`)
+  `key-failed`, `not-allowed`), or stopped (`aborted`) before it is handed to the fetch
   Then nothing is counted
 
 Scenario: data-usage-keeps-twelve-months

@@ -5,7 +5,7 @@ import { dataApiUsage } from './data-usage-schema';
 
 // The data API usage counter (Phase 12 Task 2; spec `specs/data-sources.spec.ts`, `DATA_USAGE_LIMITS`;
 // acceptance `specs/data-sources.feature.md`, Usage counter). The data API client counts each request
-// it sends (after the allowlist, before the fetch) with `increment`; Settings › Data sources reads
+// it sends (after the allowlist, as it is handed to the fetch) with `increment`; Settings › Data sources reads
 // this month's and last month's counts. Each write also deletes rows older than
 // `DATA_USAGE_LIMITS.monthsKept` months, so the table stays a handful of rows. A count stops at
 // `maxRequests`; a tampered row reads as 0.

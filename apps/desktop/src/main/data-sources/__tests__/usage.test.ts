@@ -58,10 +58,10 @@ describe('data usage counter', () => {
     const outcomes = [];
     for (let i = 0; i < answers.length; i += 1) outcomes.push(await api.dataApiRequest('serpapi', 'serp', serpapi));
     expect(outcomes.map((o) => (o.ok ? 'ok' : o.refusal))).toEqual(['ok', 'http-error', 'redirect', 'network', 'too-large']);
-    // Every request that was sent counted once, each before its fetch.
+    // Every request that was sent counted once, each as it was handed to the fetch (council review).
     expect(calls).toHaveLength(5);
     expect(counted).toEqual(['serpapi', 'serpapi', 'serpapi', 'serpapi', 'serpapi']);
-    expect(events).toEqual(Array.from({ length: 5 }, () => ['count serpapi', 'fetch']).flat());
+    expect(events).toEqual(Array.from({ length: 5 }, () => ['fetch', 'count serpapi']).flat());
     // A timeout counts too (it was sent).
     const slow = createDataApiClient({
       store,
@@ -111,6 +111,46 @@ describe('data usage counter', () => {
     await Promise.all(waiting);
     // The four that waited were sent, and counted.
     expect(events).toEqual(Array.from({ length: 5 }, () => 'count serper'));
+  });
+
+  test('data-api-stop-while-counting-never-sends-after-the-stop', async () => {
+    // Council review (item 7): a Stop pressed while the usage count is being written must not be followed
+    // by the paid request. Nothing is awaited between the last Stop check and the fetch, so the request
+    // is either stopped before it (never sent, never counted) or sent and counted, then aborted in flight.
+    const { store } = await keyed();
+    const events: string[] = [];
+    const stop = new AbortController();
+    stop.signal.addEventListener('abort', () => events.push('stop'));
+    let release!: () => void;
+    const written = new Promise<void>((resolve) => (release = resolve));
+    // The Stop arrives while the count is pending (the count is a disk write that takes a while).
+    const countRequest = vi.fn(async (provider: DataProvider) => {
+      events.push(`count ${provider}`);
+      if (!stop.signal.aborted) stop.abort();
+      await written;
+    });
+    const { fetch, calls } = recordingFetch((_url, init) => {
+      events.push(init.signal?.aborted === true ? 'fetch (already stopped)' : 'fetch');
+      return new Response('{"ok":true}', { status: 200 });
+    });
+    const api = createDataApiClient({ store, isOpen: allOpen, fetch, countRequest, sleep: async () => undefined });
+    const pending = api.dataApiRequest('serpapi', 'serp', serpapi, { signal: stop.signal });
+    await vi.waitFor(() => expect(countRequest).toHaveBeenCalledTimes(1));
+    release();
+    expect(await pending).toMatchObject({ ok: false, refusal: 'aborted' });
+    // No request leaves after the Stop, and only a request that was handed to the transport is counted.
+    const stoppedAt = events.indexOf('stop');
+    expect(events.slice(stoppedAt).filter((event) => event.startsWith('fetch'))).toEqual([]);
+    expect(countRequest).toHaveBeenCalledTimes(calls.length);
+    // A Stop that fired before the request was handed over: never sent, never counted.
+    const before = new AbortController();
+    const unsent = createDataApiClient({ store, isOpen: allOpen, fetch, countRequest, sleep: async () => undefined, log: () => undefined });
+    const counted = countRequest.mock.calls.length;
+    const fetched = calls.length;
+    before.abort();
+    expect(await unsent.dataApiRequest('serpapi', 'serp', serpapi, { signal: before.signal })).toMatchObject({ ok: false, refusal: 'aborted' });
+    expect(calls).toHaveLength(fetched);
+    expect(countRequest).toHaveBeenCalledTimes(counted);
   });
 
   test('data-usage-count-failure-never-blocks-or-leaks', async () => {

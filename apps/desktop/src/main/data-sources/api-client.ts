@@ -33,13 +33,15 @@ import type { CredentialStore, WithKeyResult } from '../agent/credentials';
 // It never throws: a `build` that throws is `not-allowed` (its error, which may hold a key, is dropped).
 //
 // Phase 12 Task 8 review: a caller may pass `signal` (Stop or its deadline: `aborted`, checked after the
-// turn, before counting, and passed to the fetch; it also ends the turn's wait) and `beforeSend` (still
+// turn, after the key is opened and again with nothing awaited before the fetch, and passed to the
+// fetch, whose controller starts aborted if it already fired; it also ends the turn's wait) and `beforeSend` (still
 // wanted? asked once the turn is granted, before any key is read: `cancelled`).
 //
 // Requests to one provider start at least `minIntervalMs` apart: after the gate, and before any key
 // is opened, a request reserves its turn and waits for it (so no key is held while waiting); with
 // `maxWaitingPerProvider` already waiting it is refused `busy`. Each request that is sent is counted
-// (`countRequest`, Task 2) just before its fetch; a refused one never is. Nothing runs in the background:
+// (`countRequest`, Task 2) as it is handed to the fetch (council review: counting no longer sits
+// between the last Stop check and the fetch); a refused or stopped-before-sending one never is. Nothing runs in the background:
 // every call follows a user action or an approved agent call. For SerpApi the closure also checks
 // that `api_key` holds exactly the key, once, and that no other part of the URL shows a secret
 // (else `not-allowed`), so the key-less URL is the URL with that one parameter removed.
@@ -88,7 +90,8 @@ export interface DataApiClientDeps {
   readonly timeoutMs?: number;
   /**
    * The usage counter (Task 2; `data_api_usage`): called once per request the client sends, after
-   * every check and before the fetch; never for a refused one. A failure is logged and the request
+   * every check, as the request is handed to the fetch (council review: nothing is awaited between the
+   * last Stop check and the fetch); never for a refused one or one stopped before it was sent. A failure is logged and the request
    * still goes (the counter is a record, not a gate). Setup wires it; tests pass a fake.
    */
   readonly countRequest?: (provider: DataProvider) => Promise<void> | void;
@@ -267,13 +270,19 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
       const parsed = new URL(request.url);
       target = `${base}${parsed.pathname}${parsed.search}`;
     }
+    // Begun from the caller's state, so a signal that already fired aborts the transport at once.
     const controller = new AbortController();
+    if (signal?.aborted) controller.abort();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     // The caller's abort ends the fetch too.
     const onAbort = (): void => controller.abort();
     signal?.addEventListener('abort', onAbort, { once: true });
+    let counted: Promise<void> = Promise.resolve();
     try {
-      const response = await deps.fetch(target, {
+      // Asked again with nothing awaited between here and the fetch: a Stop at any earlier await
+      // (the turn, the key, the build) sends nothing and counts nothing.
+      if (signal?.aborted) return refused('aborted', { url });
+      const sent = deps.fetch(target, {
         method: request.method,
         headers,
         body: request.body ?? null,
@@ -282,6 +291,9 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
         cache: 'no-store',
         signal: controller.signal,
       });
+      // Counted once it is handed to the transport, whatever it answers: only what is sent counts.
+      counted = count(provider);
+      const response = await sent;
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel().catch(() => undefined);
         return refused('redirect', { url });
@@ -303,6 +315,16 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
+      await counted;
+    }
+  };
+
+  /** Counts one sent request (`countRequest`); never rejects: the counter is a record, not a gate. */
+  const count = async (provider: DataProvider): Promise<void> => {
+    try {
+      await deps.countRequest?.(provider);
+    } catch {
+      log(`data api: ${provider} usage not counted`);
     }
   };
 
@@ -353,12 +375,7 @@ export function createDataApiClient(deps: DataApiClientDeps): DataApiClient {
         if (url === null) return refused('not-allowed');
         // Stopped while the key was opened: nothing counted or sent.
         if (signal?.aborted) return refused('aborted', { url });
-        // Counted now: the request passed every check and is sent next, whatever it answers.
-        try {
-          await deps.countRequest?.(provider);
-        } catch {
-          log(`data api: ${provider} usage not counted`);
-        }
+        // Sent next (and counted as it is handed over), with no await before the fetch.
         const outcome = await send(provider, request, headers, url, signal);
         const parsed = new URL(url);
         log(`data api: ${provider} ${request.method} ${parsed.origin}${parsed.pathname} ${outcome.ok ? outcome.status : outcome.refusal}${!outcome.ok && outcome.status !== undefined ? ` ${outcome.status}` : ''}`);
