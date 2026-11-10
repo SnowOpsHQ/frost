@@ -51,7 +51,10 @@ import { storedPageUrl } from './snapshot';
 // 10): while `RANK_CHECK_AVAILABLE` is `false`, `setCadence` (and `setAutoCapture`) and a `searches`
 // `startRun` ("Check rankings") answer `unavailable` here in main, whatever the renderer sends, and no summary is `due`. Every method
 // answers: a refusal is typed (`PROJECT_REFUSALS`, `RUN_REFUSALS`), a database failure is
-// `store-failed` and one log line (its code, never its message: that may hold URLs).
+// `store-failed` and one log line (its code, never its message: that may hold URLs). Phase 12 Task 6b
+// (plan Decision 6): a project's delete and `purgeDeleted` also delete its site crawls (`crawls`),
+// the running one cancelled and awaited first; a tombstoned project whose only rows are a crawl's is
+// listed by `deletedProjectsWithRows`, so start-up finishes an interrupted delete.
 
 export interface ProjectsServiceDeps {
   /** `SessionStore.changeIntel`. */
@@ -73,6 +76,11 @@ export interface ProjectsServiceDeps {
   readonly autoCaptureAvailable?: boolean;
   /** Whether the cadence and its Due notice are offered (`RANK_CHECK_AVAILABLE`, L1; tests may inject `true`). */
   readonly rankCheckAvailable?: boolean;
+  /**
+   * The site crawl's project cleanup (Phase 12 Task 6b, `crawl/service.ts`): a project's delete and
+   * `purgeDeleted` cancel and await its running crawl and delete its crawl runs. Absent: no crawls.
+   */
+  readonly crawls?: { deleteProjectCrawls(projectId: string): Promise<number> };
   readonly now?: () => number;
   readonly log?: (message: string) => void;
 }
@@ -257,13 +265,28 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
     return purged;
   };
 
+  /** The project's crawls (Phase 12 Task 6b): its running crawl cancelled and awaited, its runs deleted; `false` (logged) when that failed. */
+  const deleteCrawls = async (projectId: string): Promise<boolean> => {
+    if (!deps.crawls) return true;
+    try {
+      await deps.crawls.deleteProjectCrawls(projectId);
+      return true;
+    } catch (error) {
+      log(`a deleted project's crawls could not be deleted (${codeOf(error)}); retried later`);
+      return false;
+    }
+  };
+
   /** One retry at a time (startup and runs may ask together). */
   let retrying: Promise<number> | null = null;
   const purgeDeleted = (): Promise<number> => {
     retrying ??= (async () => {
       try {
         let done = 0;
-        for (const projectId of await store.deletedProjectsWithRows()) if ((await purgeProject(projectId, now())) !== null) done += 1;
+        for (const projectId of await store.deletedProjectsWithRows()) {
+          const crawled = await deleteCrawls(projectId);
+          if ((await purgeProject(projectId, now())) !== null && crawled) done += 1;
+        }
         return done;
       } catch (error) {
         log(`deleted projects could not be read (${codeOf(error)})`);
@@ -458,6 +481,8 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
           if (runs.running() === projectId) return refused<ProjectRefusal>('running');
           const at = now();
           if (!(await store.tombstoneProject(projectId, at))) return refused<ProjectRefusal>('not-found');
+          // Its crawls (Phase 12): the running one cancelled and awaited, then every run deleted (retried at start-up if it fails).
+          await deleteCrawls(projectId);
           // 2–3. Its captures and screenshots, and the files no row names any more (retried later if it fails).
           const purged = await purgeProject(projectId, at);
           return { status: 'deleted' as const, purged };

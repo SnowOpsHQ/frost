@@ -25,7 +25,11 @@ import { createCrawlScope, normaliseCrawlUrl, type CrawlScopeRule, type CrawlSco
 // start-origin rule).
 //
 // Task 6a parses robots.txt through an injected `parseRobots` (default: seo-core's pure
-// `crawlRobotsRules`, on main's thread); Task 6b moves that call into the crawl's worker.
+// `crawlRobotsRules`, on main's thread); Task 6b moves that call into the crawl's worker
+// (`crawl/index.ts`). A fetched robots.txt whose parse fails is read as blocked (`blocked-by-robots`),
+// never unknown, and the failed parse is not cached. Task 6b also fetches sitemap files through
+// `fetchPage` (per-call caps and `Accept`), so they pass the same scope, robots.txt, pacing and
+// redirect policy as pages, and asks `beforeRequest` inside the paced slot.
 
 /** The crawl lane (`fetcher.spec.ts`, Lanes): a bounded fetcher over main's hop and resolver with `CRAWL_FETCHER_LIMITS`, per-origin queues of its own. */
 export function createCrawlLane(options: { readonly hop: Hop; readonly resolve: Resolve; readonly now?: () => number }): BoundedFetcher {
@@ -68,6 +72,12 @@ export interface CrawlRobotsState {
   readonly unreachable: boolean;
   /** The site's `Crawl-delay` for the crawl (ms, capped); `null`: none. */
   readonly crawlDelayMs: number | null;
+  /**
+   * robots.txt was fetched (`ok`) but could not be parsed (the crawl worker failed or timed out): read
+   * as **blocked** (`crawl: 'blocked'`, the page recorded `blocked-by-robots`), never as unknown; the
+   * failed parse is not cached, so a later page asks again.
+   */
+  readonly unparsed?: true;
 }
 
 /** One page's fetch, as Task 6b records it. */
@@ -100,12 +110,26 @@ export interface CrawlPageFetch {
   readonly slowDown: boolean;
 }
 
+/**
+ * Per-call options of `fetchPage` (Task 6b): the sitemap seeding's own caps and `Accept` (every other
+ * rule, scope, robots.txt, pacing and the redirect hook, stays the page's), and `beforeRequest`, asked
+ * inside the host's paced slot right before the request (after the robots.txt and pacing waits): `false`
+ * ends the call `aborted` with nothing requested (the crawl: its project was deleted meanwhile).
+ */
+export interface CrawlFetchOptions {
+  readonly maxBytes?: number;
+  readonly timeoutMs?: number;
+  readonly accept?: string;
+  readonly maxRedirects?: number;
+  readonly beforeRequest?: () => Promise<boolean>;
+}
+
 /** One run's fetching. */
 export interface CrawlRunFetcher {
   readonly scope: CrawlScopeRule;
   readonly politeness: Politeness;
-  /** Fetches one page under the run's policy; never rejects. */
-  fetchPage(url: string, signal?: AbortSignal): Promise<CrawlPageFetch>;
+  /** Fetches one page (or, with `options`, a sitemap file) under the run's policy; never rejects. */
+  fetchPage(url: string, signal?: AbortSignal, options?: CrawlFetchOptions): Promise<CrawlPageFetch>;
 }
 
 export interface CrawlFetcher {
@@ -128,6 +152,11 @@ const ROBOTS_WAIT_MS = ROBOTS_FETCH_LIMITS.timeoutMs + CRAWL_ROBOTS_HOOK_MARGIN_
 const MAX_HEADER_CHARS = RESPONSE_LIMITS.maxHeaderValueChars * RESPONSE_LIMITS.maxValuesPerHeader;
 
 const unknownRobots = (fetch: RobotsFetch | null): CrawlRobotsState => ({ fetch, crawl: 'unknown', googlebot: 'unknown', unreachable: true, crawlDelayMs: null });
+/** A fetched robots.txt the worker could not parse: blocked, never unknown (Task 6b review). */
+const unparsedRobots = (fetch: RobotsFetch): CrawlRobotsState => ({ fetch, crawl: 'blocked', googlebot: 'unknown', unreachable: false, crawlDelayMs: null, unparsed: true });
+
+/** Thrown inside a paced slot when `beforeRequest` says no: the call ends `aborted`, nothing requested. */
+class RefusedBeforeRequest extends Error {}
 
 /** A robots.txt answer synthesized for a lookup that gave none in time (or failed): `timeout` / `unreachable`. */
 const synthesized = (url: string, outcome: 'timeout' | 'unreachable'): RobotsFetch => ({ url: `${new URL(url).origin}/robots.txt`, outcome, status: null, finalUrl: null, redirects: 0, body: EMPTY, truncated: false });
@@ -142,8 +171,13 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
   const rulesOf = (fetch: RobotsFetch): Promise<CrawlRobotsRules> => {
     let rules = parsed.get(fetch);
     if (!rules) {
-      rules = Promise.resolve().then(() => parseRobots(decodeRobotsBytes(fetch.body)));
-      parsed.set(fetch, rules);
+      const parsing = Promise.resolve().then(() => parseRobots(decodeRobotsBytes(fetch.body)));
+      // A failed parse is not kept: the next page's lookup asks the worker again.
+      parsing.catch(() => {
+        if (parsed.get(fetch) === parsing) parsed.delete(fetch);
+      });
+      parsed.set(fetch, parsing);
+      rules = parsing;
     }
     return rules;
   };
@@ -156,7 +190,7 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
       try {
         rules = await rulesOf(fetch);
       } catch {
-        return unknownRobots(fetch);
+        return unparsedRobots(fetch);
       }
       // Always the bare product token (and Googlebot's for the second verdict), never the header sent.
       const verdict = (token: string): CrawlRobotsVerdict => (rules.allowed(url, token) ? 'allowed' : 'blocked');
@@ -179,7 +213,7 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
        */
       const learnCrawlDelay = (host: string, origin: string, robots: CrawlRobotsState): void => {
         const outcome = robots.fetch?.outcome;
-        if (outcome === undefined || robots.unreachable) return;
+        if (outcome === undefined || robots.unreachable || robots.unparsed) return;
         if (outcome === 'ok' || ALLOW_ALL.has(outcome)) politeness.setCrawlDelay(host, robots.crawlDelayMs, origin);
       };
       const lookupOptions: RobotsLookupOptions | undefined = scope.privateStart ? { exactOrigin: true } : undefined;
@@ -209,7 +243,7 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
             .then(finish, () => finish(unknownRobots(synthesized(url, 'unreachable'))));
         });
 
-      async function fetchPage(rawUrl: string, signal?: AbortSignal): Promise<CrawlPageFetch> {
+      async function fetchPage(rawUrl: string, signal?: AbortSignal, options: CrawlFetchOptions = {}): Promise<CrawlPageFetch> {
         const url = normaliseCrawlUrl(rawUrl) ?? rawUrl.slice(0, CRAWL_LIMITS.maxUrlChars);
         const none = (outcome: CrawlFetchOutcome, robots: CrawlRobotsState): CrawlPageFetch => ({ url, outcome, status: null, finalUrl: null, redirects: 0, chain: [], refusedUrl: null, redirectTarget: null, headers: {}, xRobotsTag: [], body: EMPTY, bytes: 0, truncated: false, startedAt: null, durationMs: 0, robots, slowDown: outcome === 'deferred' });
         // Scope and the address rule first: an out-of-scope page is never requested, nor its robots.txt.
@@ -259,15 +293,17 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
           fetched = await politeness.schedule(
             host,
             async () => {
+              // Inside the host's slot, after every wait: the last check before the request.
+              if (options.beforeRequest && !(await options.beforeRequest())) throw new RefusedBeforeRequest();
               startedAt = clock.now();
               const result = await deps.fetcher.fetch({
                 url,
                 page: settings.startUrl,
                 userAgent: crawlUserAgent(deps.userAgent()),
-                accept: SERVED_ACCEPT,
-                maxRedirects: SERVED_FETCH_LIMITS.maxRedirects,
-                maxBytes: CRAWL_LIMITS.maxBodyBytes,
-                timeoutMs: SERVED_FETCH_LIMITS.timeoutMs,
+                accept: options.accept ?? SERVED_ACCEPT,
+                maxRedirects: options.maxRedirects ?? SERVED_FETCH_LIMITS.maxRedirects,
+                maxBytes: options.maxBytes ?? CRAWL_LIMITS.maxBodyBytes,
+                timeoutMs: options.timeoutMs ?? SERVED_FETCH_LIMITS.timeoutMs,
                 keepHeaders: CRAWL_KEEP_HEADERS,
                 separateHeaders: CRAWL_SEPARATE_HEADERS,
                 maxHeaderChars: MAX_HEADER_CHARS,
@@ -280,7 +316,7 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
             signal,
           );
         } catch (error) {
-          if (error instanceof CrawlAbortedError) return none('aborted', robots);
+          if (error instanceof CrawlAbortedError || error instanceof RefusedBeforeRequest) return none('aborted', robots);
           if (error instanceof CrawlSlowDownError) return none('deferred', robots);
           return none('unreachable', robots);
         }

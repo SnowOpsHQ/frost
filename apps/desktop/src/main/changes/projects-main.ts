@@ -6,7 +6,7 @@ import type { MainScreenshotsService } from '../screenshots/service';
 import { createScreenshotFiles } from '../screenshots/store';
 import { createCaptureRuns, stopRunOnQuit } from './capture-run';
 import { createCaptureSchedule, stopScheduleOnQuit } from './capture-schedule';
-import { createProjectsService, type MainProjectsService } from './projects';
+import { createProjectsService, type MainProjectsService, type ProjectsServiceDeps } from './projects';
 import { confirmDeleteProject, confirmRankRun } from './projects-dialog';
 import { createPurgeFiles, type PurgeFiles } from './purge-files';
 import { createRetentionService } from './retention';
@@ -53,12 +53,14 @@ export interface MainProjectsDeps {
   readonly serpVerdictOf: SerpVerdictOf;
   /** `SessionStore.settings`: where the rank run disclosure's Continue is remembered (once per install). */
   readonly settings: Pick<SettingsRepository, 'rankRunDisclosureAccepted' | 'setRankRunDisclosureAccepted'>;
+  /** The site crawl's project cleanup (Phase 12 Task 6b, `crawl/service.ts`): a project's delete and `purgeDeleted` delete its crawls. */
+  readonly crawls?: ProjectsServiceDeps['crawls'];
 }
 
 /** Whether a frost window is on screen: visible and not minimised. */
 const windowVisible = (): boolean => BrowserWindow.getAllWindows().some((win) => !win.isDestroyed() && win.isVisible() && !win.isMinimized());
 
-export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log, searchParamsOf, serpVerdictOf, settings }: MainProjectsDeps): ProjectsService & Pick<MainProjectsService, 'purgeDeleted'> {
+export function createMainProjects({ store, userData, browser, changes, screenshots, databaseFile, log, searchParamsOf, serpVerdictOf, settings, crawls }: MainProjectsDeps): ProjectsService & Pick<MainProjectsService, 'purgeDeleted'> {
   const files = createScreenshotFiles(userData);
   const sweeps = createWorkspaceSweeps({ store, log });
   // One purge at a time, whoever asks (a delete, Purge now, an enforcement); each purge is followed by the readings sweep.
@@ -102,6 +104,7 @@ export function createMainProjects({ store, userData, browser, changes, screensh
       return state.tabs.find((tab) => tab.id === state.activeTabId)?.url ?? null;
     },
     runs,
+    ...(crawls ? { crawls } : {}),
     log,
   });
   const retention = createRetentionService({

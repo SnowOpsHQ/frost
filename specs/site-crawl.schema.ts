@@ -7,14 +7,21 @@
  * - `CrawlFindingSchema`, `CrawlPageRowSchema`: one crawled page as stored (`crawl_pages`) and listed.
  * - `CrawlRunViewSchema`: one run as listed; `CrawlStatusViewSchema`: the crawl view main answers,
  *   carrying `available` (the L6 gate, `CRAWL_AVAILABLE`), so the renderer learns it from main.
+ * - `CrawlStartInputSchema`: what the crawl service's `start` takes (Task 6b; Task 7's IPC parses it).
+ * - `CrawlPageJobSchema`, `CrawlPageAnalysisSchema` (Task 6b): one page's job for the crawl worker
+ *   (the served HTML as fetched, what the fetch kept, the origin's robots.txt) and its answer (the
+ *   served-HTML audit's findings and score, the facts a row keeps, the links found), each checked on
+ *   arrival: the worker checks the job, main checks the answer (it is derived from crawled HTML).
  */
 import { z } from 'zod';
 import { UUIDV7_PATTERN } from './capture-db.spec';
 import { isIpLiteral, isPrivateHost } from './private-address.spec';
+import { RESPONSE_LIMITS } from './seo-indexability.spec';
 import { SNAPSHOT_LIMITS } from './seo-limits.spec';
 import { SEO_SEVERITIES } from './seo-rules.spec';
 import {
   CRAWL_INTERVAL_MS,
+  CRAWL_KEEP_HEADERS,
   CRAWL_LIMITS as L,
   CRAWL_PAGE_OUTCOMES,
   CRAWL_PRIVATE_START_SCOPES,
@@ -162,6 +169,8 @@ export const CrawlRunViewSchema = z.strictObject({
   updatedAt: time,
   /** When it reached `done`, `cancelled` or `failed`; `null` before. */
   finishedAt: time.nullable(),
+  /** This session's latest note about the run (`CRAWL_RUN_NOTES`; not stored); absent: none. */
+  note: z.string().min(1).max(256).optional(),
 });
 export type CrawlRunView = z.infer<typeof CrawlRunViewSchema>;
 
@@ -176,3 +185,62 @@ export const CrawlStatusViewSchema = z.strictObject({
   runs: z.array(CrawlRunViewSchema).max(L.maxListedRuns),
 });
 export type CrawlStatusView = z.infer<typeof CrawlStatusViewSchema>;
+
+/** What the crawl service's `start` takes: the run's settings and the project it belongs to (`null`: none). */
+export const CrawlStartInputSchema = z.strictObject({ settings: CrawlSettingsSchema, projectId: id.nullable() });
+export type CrawlStartInput = z.infer<typeof CrawlStartInputSchema>;
+
+// ---- The crawl worker's page job (Task 6b) ------------------------------------------------------
+
+/** Characters of one kept header the crawl fetch keeps (its repeated values joined): as the fetch cuts it. */
+export const CRAWL_MAX_HEADER_CHARS = RESPONSE_LIMITS.maxHeaderValueChars * RESPONSE_LIMITS.maxValuesPerHeader;
+/** Redirect hops a crawl page's chain holds: the fetch's own (`SERVED_FETCH_LIMITS.maxRedirects`) and a refused one. */
+export const CRAWL_MAX_CHAIN = 16;
+
+const status = z.int().min(100).max(599);
+const header = z.string().max(CRAWL_MAX_HEADER_CHARS);
+
+/**
+ * One crawled page for the crawl worker (`crawl` job): the URL the HTML came from (the fetch's final
+ * URL), its media type, the body as read (at most `CRAWL_LIMITS.maxBodyBytes`, cut by main before it
+ * is sent), the final status, the kept headers (`CRAWL_KEEP_HEADERS`; `x-robots-tag` values apart in
+ * `xRobotsTag`), the redirect hops followed, when the fetch started and how long it took, and the
+ * origin's robots.txt as main's robots fetcher answered (checked in the worker with
+ * `RobotsFetchSchema`; anything else reads as none).
+ */
+export const CrawlPageJobSchema = z.strictObject({
+  url: CrawlUrlSchema,
+  contentType: z.string().max(256).nullable(),
+  body: z.instanceof(Uint8Array).refine((body) => body.byteLength <= L.maxBodyBytes, { message: 'body over its cap' }),
+  status,
+  headers: z.strictObject(Object.fromEntries(CRAWL_KEEP_HEADERS.map((name) => [name, header.optional()])) as Record<(typeof CRAWL_KEEP_HEADERS)[number], z.ZodOptional<typeof header>>),
+  xRobotsTag: z.array(z.string().max(RESPONSE_LIMITS.maxHeaderValueChars * RESPONSE_LIMITS.maxValuesPerHeader)).max(RESPONSE_LIMITS.maxValuesPerHeader),
+  chain: z.array(z.strictObject({ url: z.string().min(1).max(L.maxUrlChars), status, location: z.string().min(1).max(L.maxUrlChars) })).max(CRAWL_MAX_CHAIN),
+  extractedAt: time,
+  durationMs: z.number().nonnegative(),
+  robots: z.unknown(),
+});
+export type CrawlPageJob = z.infer<typeof CrawlPageJobSchema>;
+
+/** A link the served HTML holds (an `http(s)` target, resolved), and whether its `rel` says `nofollow`. */
+export const CrawlFoundLinkSchema = z.strictObject({ url: z.string().min(1).max(SNAPSHOT_LIMITS.maxUrlChars), nofollow: z.boolean() });
+export type CrawlFoundLink = z.infer<typeof CrawlFoundLinkSchema>;
+
+/**
+ * The crawl worker's answer for one page (`crawl` job): the served-HTML audit (`runAudit` with
+ * `CRAWL_RULES` only) as a score, an indexable verdict and its findings (id and severity, once per
+ * rule), the first title, the effective canonical, the word count, every link the page has
+ * (`linkTotal`) and the `http(s)` ones the served parse kept (at most `SNAPSHOT_LIMITS.maxLinks`).
+ * Nothing else: no source text, no lead text (`skipExtraText`).
+ */
+export const CrawlPageAnalysisSchema = z.strictObject({
+  score: z.int().min(0).max(100),
+  indexable: z.boolean(),
+  findings: z.array(CrawlFindingSchema).max(CRAWL_RULE_IDS.length),
+  title: z.string().max(SNAPSHOT_LIMITS.maxTextChars).nullable(),
+  canonical: z.string().max(SNAPSHOT_LIMITS.maxUrlChars).nullable(),
+  wordCount: count,
+  linkTotal: count,
+  links: z.array(CrawlFoundLinkSchema).max(SNAPSHOT_LIMITS.maxLinks),
+});
+export type CrawlPageAnalysis = z.infer<typeof CrawlPageAnalysisSchema>;

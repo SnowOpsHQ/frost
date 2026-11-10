@@ -1,6 +1,6 @@
-import { and, asc, count, desc, eq, inArray, sql, type InferSelectModel } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, lt, sql, type InferSelectModel } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
-import { CRAWL_LIMITS, CRAWL_RULE_IDS, type CrawlDiscoverySource, type CrawlFrontierState, type CrawlRunReason, type CrawlRunState } from '@app/specs/site-crawl.spec';
+import { CRAWL_FAILED_OUTCOMES, CRAWL_LIMITS, CRAWL_REFUSED_OUTCOMES, CRAWL_RULE_IDS, type CrawlDiscoverySource, type CrawlFrontierState, type CrawlRunReason, type CrawlRunState } from '@app/specs/site-crawl.spec';
 import {
   CrawlFindingSchema,
   CrawlPageRowSchema,
@@ -102,6 +102,15 @@ export interface SiteCrawlRepository {
   enqueue(runId: string, entries: readonly CrawlDiscovery[]): Promise<number>;
   /** One URL's frontier entry (its inlinks and sitemap flag), or `null`. */
   frontierEntry(runId: string, url: string): Promise<StoredCrawlFrontierEntry | null>;
+  /** Of `urls`, those the run's frontier already holds (queued or done): the seen-set (Task 6b). */
+  knownUrls(runId: string, urls: readonly string[]): Promise<Set<string>>;
+  /**
+   * How many query variants of the path `base` (a URL without a query or fragment) the run's frontier
+   * holds: entries `base?…`, never a longer path's (Task 6b: the per-path cap is counted here, in SQLite).
+   */
+  queryVariantCount(runId: string, base: string): Promise<number>;
+  /** The run's page rows counted: all of them, those refused (`CRAWL_REFUSED_OUTCOMES`) and failed (`CRAWL_FAILED_OUTCOMES`), and their bytes (Task 6b: a resumed run's counts). */
+  pageCounts(runId: string): Promise<Pick<CrawlRunCounts, 'pages' | 'refused' | 'failed' | 'bytes'>>;
   /** The run's orphans (a sitemap listed them, no crawled page links to them), in discovery order. */
   orphansOf(runId: string, page: { readonly limit: number; readonly offset: number }): Promise<string[]>;
   orphanCount(runId: string): Promise<number>;
@@ -137,6 +146,8 @@ function isNoSuchRun(error: unknown): boolean {
 }
 
 const CRAWL_RULES: ReadonlySet<string> = new Set(CRAWL_RULE_IDS);
+const REFUSED: ReadonlySet<string> = new Set(CRAWL_REFUSED_OUTCOMES);
+const FAILED: ReadonlySet<string> = new Set(CRAWL_FAILED_OUTCOMES);
 
 const validUrl = (url: unknown): url is string => CrawlUrlSchema.safeParse(url).success;
 const validDepth = (depth: unknown): depth is number => Number.isInteger(depth) && (depth as number) >= 0 && (depth as number) <= CRAWL_LIMITS.maxDepth;
@@ -400,6 +411,43 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
         .where(and(eq(crawlFrontier.runId, runId), eq(crawlFrontier.url, url)))
         .limit(1);
       return row ? { ...row, state: row.state as CrawlFrontierState } : null;
+    },
+
+    async knownUrls(runId, urls) {
+      const known = new Set<string>();
+      for (const chunk of chunks([...new Set(urls)])) {
+        const rows = await db
+          .select({ url: crawlFrontier.url })
+          .from(crawlFrontier)
+          .where(and(eq(crawlFrontier.runId, runId), inArray(crawlFrontier.url, chunk)));
+        for (const row of rows) known.add(row.url);
+      }
+      return known;
+    },
+
+    async queryVariantCount(runId, base) {
+      // `base?` up to (not including) `base@`: every URL that is `base` plus a query, on the `(run_id, url)` index.
+      const [row] = await db
+        .select({ n: count() })
+        .from(crawlFrontier)
+        .where(and(eq(crawlFrontier.runId, runId), gte(crawlFrontier.url, `${base}?`), lt(crawlFrontier.url, `${base}@`)));
+      return row?.n ?? 0;
+    },
+
+    async pageCounts(runId) {
+      const rows = await db
+        .select({ outcome: crawlPages.outcome, n: count(), bytes: sql<number>`coalesce(sum(${crawlPages.bytes}), 0)` })
+        .from(crawlPages)
+        .where(eq(crawlPages.runId, runId))
+        .groupBy(crawlPages.outcome);
+      const counts = { pages: 0, refused: 0, failed: 0, bytes: 0 };
+      for (const { outcome, n, bytes } of rows) {
+        counts.pages += n;
+        counts.bytes += Number(bytes);
+        if (REFUSED.has(outcome)) counts.refused += n;
+        if (FAILED.has(outcome)) counts.failed += n;
+      }
+      return counts;
     },
 
     async orphansOf(runId, { limit, offset }) {

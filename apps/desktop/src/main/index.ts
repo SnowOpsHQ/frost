@@ -69,6 +69,7 @@ import { createAiChecksMain } from './ai-checks/main';
 import { createHelpMain } from './help/main';
 import { createDiagnosticsMain } from './diagnostics/main';
 import { setupDataSources } from './data-sources';
+import { setupCrawl } from './crawl';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -347,8 +348,10 @@ function start(): void {
   const changes = createMainChanges({ store: sessionStore.changeIntel, browser, tabContents, log: logSession, searchParamsOf: serpParams.of, readingOf: serpParams.readingOf });
   // Screenshots (specs/screenshot.feature.md): the active tab's own view, captured by main; PNG files named by their hash under the profile directory.
   const screenshots = createMainScreenshots({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, tabContents, log: logSession, searchParamsOf: serpParams.of });
+  // The site crawl (specs/site-crawl.feature.md): a worker of its own, start-up recovery, a quit pauses it; fetching bound after ready. Gated (L6).
+  const crawl = setupCrawl({ app, store: sessionStore, spawnWorker: () => new Worker(path.join(__dirname, 'seo-analysis.cjs'), { resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } }), log: logSession });
   // Projects (specs/projects.feature.md): pages and queries, and their capture runs in a tab of their own.
-  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of, serpVerdictOf: serpParams.verdictOf, settings: sessionStore.settings });
+  const projects = createMainProjects({ store: sessionStore.changeIntel, userData: app.getPath('userData'), browser, changes, screenshots, databaseFile: sessionStore.file, log: logSession, searchParamsOf: serpParams.of, serpVerdictOf: serpParams.verdictOf, settings: sessionStore.settings, crawls: crawl.service });
   // The DOM inspector (specs/inspector.feature.md): reads the active tab's page in its own isolated world; never writes to it.
   // Its Served view reads the audit's served HTML as the worker decoded it (never fetched for it); "Copy source" writes main's own text.
   const inspector = createMainInspector({
@@ -415,6 +418,8 @@ function start(): void {
     served = createServedHtml({ fetcher: fetchers.audit, parse: (input) => servedAnalyzer.parseServed(input) });
     observeRequests(browseSession, devtools.observer);
     const robotsFetcher = robots;
+    // The crawl lane over this hop and resolver; robots.txt through the audit lane's robots fetcher (never the crawl lane).
+    crawl.bindFetching({ hop, resolve, robots: robotsFetcher, userAgent: () => browseSession.getUserAgent() });
     checks = createChecks({
       fetch: createCheckFetch(fetchers.checks),
       analyse: (job) => checksAnalyzer.analyseCheck(job),
@@ -448,7 +453,7 @@ function start(): void {
     const update = startUpdateService({ app, net, session, shell, log: logSession });
     app.once('will-quit', () => update.dispose());
     // Sync (specs/sync-engine.feature.md): off unless userData/frost-sync.json turns it on; never throws, runs in the background.
-    const sync = startSyncService({ app, safeStorage, sessionFile: sessionStore.file, log: logSession });
+    const sync = startSyncService({ app, safeStorage, sessionFile: sessionStore.file, log: logSession, crawls: crawl.service });
     app.once('will-quit', () => void sync.dispose());
     // The account, sign-in and entitlements (specs/account-signin.feature.md): after ready (the keychain
     // check), before the first window (its gestures are tracked from creation).

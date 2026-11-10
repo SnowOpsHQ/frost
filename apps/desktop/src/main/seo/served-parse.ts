@@ -16,6 +16,7 @@ import { parseWebUrl } from '@app/specs/web-url.spec';
 // first `SERVED_LEAD_TEXT_MAX_CHARS` of the body's text, for the AI checks' input only (main-only).
 // The decoded text itself is answered beside the snapshot as `sourceText` (Phase 11 Task 5, the
 // Inspector's Served view), cut at `SERVED_SOURCE_MAX_CHARS`: main shows and copies it, never decodes.
+// The site crawl's job (Phase 12 Task 6b) sets `skipExtraText`: neither `sourceText` nor `leadText`.
 
 type Node = DefaultTreeAdapterMap['node'];
 type Element = DefaultTreeAdapterMap['element'];
@@ -233,7 +234,7 @@ export function countWords(text: string): number {
 const SKIP = ['script', 'style', 'noscript', 'template', 'svg', 'math', 'iframe', 'object'];
 
 /** Reads the parsed `document` (from `url`) into a served snapshot. */
-function readSnapshot(document: Node, url: URL, L: SnapshotLimits, budget: Budget, limits: ParseLimits): ServedSnapshot {
+function readSnapshot(document: Node, url: URL, L: SnapshotLimits, budget: Budget, limits: ParseLimits, skipExtraText = false): ServedSnapshot {
   const total = (n: number): number => Math.min(n, L.maxCount);
   const cut = (s: string, max: number): string => {
     if (s.length <= max) return s;
@@ -449,7 +450,7 @@ function readSnapshot(document: Node, url: URL, L: SnapshotLimits, budget: Budge
       scanned += take;
       const value = node.value.slice(0, take);
       wordCount += countWords(value);
-      if (leadText.length < SERVED_LEAD_TEXT_MAX_CHARS) {
+      if (!skipExtraText && leadText.length < SERVED_LEAD_TEXT_MAX_CHARS) {
         const piece = squash(value);
         if (piece !== '') leadText = cut(leadText === '' ? piece : `${leadText} ${piece}`, SERVED_LEAD_TEXT_MAX_CHARS + 1);
       }
@@ -506,7 +507,7 @@ function readSnapshot(document: Node, url: URL, L: SnapshotLimits, budget: Budge
     hreflangTotal: total(hreflangTotal),
     wordCount: total(wordCount),
     textTruncated,
-    leadText: cut(leadText, SERVED_LEAD_TEXT_MAX_CHARS).trimEnd(),
+    ...(skipExtraText ? {} : { leadText: cut(leadText, SERVED_LEAD_TEXT_MAX_CHARS).trimEnd() }),
     noscript: { count: total(noscripts.length), wordCount: total(noscriptWords), linkCount: total(noscriptLinks) },
     nodes: total(budget.nodes),
     partial: budget.hit,
@@ -551,7 +552,10 @@ export function parseServedHtml(input: ServedParseInput, limits: ParseLimits = S
       if (error !== STOP) throw error;
     }
     if (document === null) return { ok: false, reason: 'parse-failed' };
-    const snapshot = readSnapshot(document, url, snapshotLimits, budget, limits);
+    // The crawl's job (`skipExtraText`) keeps neither the source text nor the lead text: only the snapshot.
+    const skipExtraText = input.skipExtraText === true;
+    const snapshot = readSnapshot(document, url, snapshotLimits, budget, limits, skipExtraText);
+    if (skipExtraText) return { ok: true, snapshot };
     return { ok: true, snapshot, sourceText: cutSource(text, sourceMaxChars), sourceTruncated: text.length > sourceMaxChars };
   } catch {
     return { ok: false, reason: 'parse-failed' };

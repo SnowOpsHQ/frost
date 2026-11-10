@@ -76,7 +76,11 @@ export const CRAWL_AVAILABLE = false as boolean;
  * - `maxUrlChars`: the longest URL the crawl queues or stores (the fetcher cuts at the same length);
  * - `maxListedRuns`: runs one crawl view lists (newest first);
  * - `deleteChunkRows`: rows one statement deletes when a run is deleted (links, then pages and the
- *   frontier, chunk by chunk, yielding between chunks, so a 10 000-page run never holds main's thread).
+ *   frontier, chunk by chunk, yielding between chunks, so a 10 000-page run never holds main's thread);
+ * - `frontierWindow` (Task 6b): queued frontier entries the crawler reads from SQLite at once, oldest
+ *   first; it reads the next window only when this one is used up (counted in `maxInMemoryEntries`);
+ * - `sitemapUrlsPerJob` (Task 6b): sitemap `<loc>` URLs one worker answer carries when a sitemap seeds
+ *   the frontier; a longer file is read again for the next ones (counted in `maxInMemoryEntries`).
  */
 export const CRAWL_LIMITS = {
   defaultMaxPages: 500,
@@ -94,7 +98,17 @@ export const CRAWL_LIMITS = {
   maxUrlChars: 2_048,
   maxListedRuns: 100,
   deleteChunkRows: 5_000,
+  frontierWindow: 100,
+  sitemapUrlsPerJob: 1_000,
 } as const;
+
+/**
+ * The crawl worker's deadline per job (ms; Task 6b): a page's parse and audit, a robots.txt parse, or
+ * one sitemap file's read (a sitemap may be `SITEMAP_LIMITS.maxBytes`, so the checks' own deadline,
+ * `CHECKS_ANALYSIS_TIMEOUT_MS`). A job past it ends the worker (the next job starts a new one); a page
+ * whose parse ran out is recorded `parse-failed`.
+ */
+export const CRAWL_ANALYSIS_TIMEOUT_MS = 20_000;
 
 /**
  * The user's interval between two fetch calls to one origin (ms): `default` 1 s, at least `min`
@@ -223,6 +237,48 @@ export type CrawlRunReason = (typeof CRAWL_RUN_REASONS)[number];
 export const CRAWL_SLOW_DOWN_MESSAGE = 'The site asked frost to slow down.' as const;
 
 /**
+ * Notes main keeps about a run for this session (Task 6b review; not stored: the crawl view carries
+ * the latest as `note`, and the log has a line of its own):
+ * - `sitemapTimeout`: a sitemap window did not answer within `CRAWL_ANALYSIS_TIMEOUT_MS`; seeding stopped
+ *   there and the crawl went on from what was seeded and linked.
+ */
+export const CRAWL_RUN_NOTES = {
+  sitemapTimeout: 'A sitemap took too long to read, so the crawl went on without the rest of it.',
+} as const;
+
+/**
+ * The `Accept` header of a sitemap request (Task 6b): sitemaps are fetched through the crawl's own page
+ * fetch (scope, robots.txt, pacing and the redirect hook all apply), with `SITEMAP_LIMITS`' caps.
+ */
+export const CRAWL_SITEMAP_ACCEPT = 'application/xml,text/xml;q=0.9,*/*;q=0.8' as const;
+
+// ---- The crawl service (Task 6b; its IPC is Task 7's) -------------------------------------------
+
+/**
+ * Why main's crawl service did not do what it was asked (each answered as data, never thrown):
+ * - `unavailable`: the L6 gate (`CRAWL_AVAILABLE`, through `legalGates.isOpen('crawl')`) is closed:
+ *   only `start` and `resume` answer it, with `LEGAL_GATE_NOTE`; nothing is stored or fetched;
+ * - `invalid-settings`: `CrawlSettingsSchema` refuses them;
+ * - `not-found`: no such run, or its project is not a live project;
+ * - `busy`: a crawl is already running (one at a time, app-wide);
+ * - `not-resumable`: the run is not `paused`, or its stored settings no longer parse (`settings: null`);
+ * - `not-running`: pause or cancel of a run that is not running (cancel also takes a `paused` run);
+ * - `store-failed`: the database failed (one log line, its code only).
+ */
+export const CRAWL_REFUSALS = ['unavailable', 'invalid-settings', 'not-found', 'busy', 'not-resumable', 'not-running', 'store-failed'] as const;
+export type CrawlRefusal = (typeof CRAWL_REFUSALS)[number];
+
+/**
+ * A crawl service answer: done (`started` / `resumed` carry the run), or refused with why. An
+ * `unavailable` refusal carries `note`: `LEGAL_GATE_NOTE` (`data-sources.spec.ts`), the text the
+ * renderer shows beside the disabled control.
+ */
+export type CrawlServiceAnswer =
+  | { readonly status: 'started' | 'resumed'; readonly runId: string }
+  | { readonly status: 'ok' }
+  | { readonly status: 'refused'; readonly reason: CrawlRefusal; readonly note?: string };
+
+/**
  * How a page's fetch ended, as its row records it:
  * - `crawled`: an HTML response (any status), parsed and audited;
  * - `not-html`: a response of another media type: recorded, not parsed;
@@ -306,6 +362,14 @@ export const SITE_CRAWL_MIGRATION_IDS = ['0240_site_crawl', '0241_site_crawl_gua
  * K-B2 removes any rule whose served audit disagrees with the sidebar's rendered audit on static
  * fixture pages. Every other catalogue rule is excluded, by category (`CRAWL_EXCLUDED_CATEGORIES`) or
  * by id (`CRAWL_EXCLUDED_RULES`), with the reason the crawl sheet shows.
+ *
+ * K-B2 (Task 6b, `crawl-audit-matches-sidebar-on-static-pages`): on static pages that use neither CSS
+ * hiding nor microdata / RDFa, every rule here agrees with the sidebar. Served HTML has no layout, so a
+ * heading hidden by CSS counts for the crawl and not for the sidebar: `h1-multiple`, `h1-empty` and
+ * `heading-level-skipped` then report what the sidebar does not, and are removed. What stays may only
+ * miss there, never add: `h1-missing` and `content-thin` (hidden headings and words count for the
+ * crawl), and the structured-data rules, which read JSON-LD only (the served parse reads no
+ * microdata or RDFa).
  */
 export const CRAWL_RULE_IDS = [
   // title
@@ -317,11 +381,8 @@ export const CRAWL_RULE_IDS = [
   'meta-description-missing',
   'meta-description-too-short',
   'meta-description-multiple',
-  // headings
+  // headings (K-B2 removed `h1-multiple`, `h1-empty` and `heading-level-skipped`: `CRAWL_EXCLUDED_RULES`)
   'h1-missing',
-  'h1-multiple',
-  'h1-empty',
-  'heading-level-skipped',
   // canonical
   'canonical-missing',
   'canonical-multiple',
@@ -400,6 +461,9 @@ export const CRAWL_EXCLUDED_RULES = {
   'images-missing-dimensions': 'Needs the rendered layout.',
   'images-oversized': 'Needs rendered and natural image sizes.',
   'images-lazy-in-first-viewport': 'Needs the rendered first viewport.',
+  'h1-multiple': 'Served HTML has no layout: a heading hidden by CSS counts for the crawl and not for the sidebar, so the crawl could report a second H1 the sidebar does not (K-B2).',
+  'h1-empty': 'Served HTML has no layout: an empty H1 hidden by CSS counts for the crawl and not for the sidebar, so the crawl could report one the sidebar does not (K-B2).',
+  'heading-level-skipped': 'Served HTML has no layout: headings hidden by CSS count for the crawl and not for the sidebar, so the crawl could report a skipped level the sidebar does not (K-B2).',
   'title-too-wide': 'Not in the crawl’s first rule set; the sidebar’s result preview measures it.',
   'meta-description-too-wide': 'Not in the crawl’s first rule set; the sidebar’s result preview measures it.',
   'links-broken': 'Comes from the sidebar’s link check, which requests every link; a crawl does not run it per page.',

@@ -50,6 +50,7 @@ import { createReadingOperations, isCaptureReading, readingRow, type CaptureRead
 import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions, screenshotEdits } from './schema';
 import { createWorkspaceOperations, type WorkspaceOperations } from './workspace';
 import { ciEntryTags, ciProjectCompetitors, ciSerpReadings } from './workspace-schema';
+import { crawlRuns } from '../site-crawl/schema';
 
 export type { ExecutePurgeResult, PurgeCounts, PurgePlan, PurgePolicy, PurgeRecord } from './purge';
 export type { AppendReadingInput, CaptureReadingInput, ReadingDateRow, ReadingOperations, ReadingSearch, ReadingsCountFilter, ReadingsFilter, StoredReading } from './readings';
@@ -288,7 +289,7 @@ export interface ChangeIntelRepository extends PurgeOperations, ReadingOperation
   tombstoneProject(id: string, now: number): Promise<boolean>;
   /** Live projects, Unfiled first, then by creation. */
   projects(): Promise<Project[]>;
-  /** Tombstoned projects that still have captures or screenshots (a `project-deleted` purge that did not run), oldest deletion first. */
+  /** Tombstoned projects that still have captures, screenshots or (Phase 12) crawl runs (a delete that did not finish), oldest deletion first. */
   deletedProjectsWithRows(): Promise<string[]>;
   /** A live project. */
   project(id: string): Promise<Project | null>;
@@ -824,7 +825,8 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         .where(
           and(
             sql`${ciProjects.deletedAt} IS NOT NULL`,
-            sql`(EXISTS (SELECT 1 FROM ci_captures c WHERE c.project_id = ${ciProjects.id}) OR EXISTS (SELECT 1 FROM ci_screenshots s WHERE s.project_id = ${ciProjects.id}))`,
+            // Phase 12 Task 6b: a crawl's runs too (a project whose only data is a crawl; `site-crawl/schema.ts`).
+            sql`(EXISTS (SELECT 1 FROM ci_captures c WHERE c.project_id = ${ciProjects.id}) OR EXISTS (SELECT 1 FROM ci_screenshots s WHERE s.project_id = ${ciProjects.id}) OR EXISTS (SELECT 1 FROM ${crawlRuns} r WHERE r.project_id = ${ciProjects.id}))`,
           ),
         )
         .orderBy(asc(ciProjects.deletedAt), asc(ciProjects.id))

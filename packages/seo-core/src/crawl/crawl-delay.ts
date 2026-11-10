@@ -1,6 +1,6 @@
 import { ROBOTS_PARSE_LIMITS } from '@app/specs/seo-indexability.spec';
 import { CRAWL_ROBOTS_TOKEN, MAX_CRAWL_DELAY_MS } from '@app/specs/site-crawl.spec';
-import { matchRobots, parseRobotsTxt, productToken, robotsPathOf } from '../indexability/robots';
+import { matchRobots, parseRobotsTxt, productToken, robotsPathOf, type RobotsFile } from '../indexability/robots';
 
 // The crawl's own reading of robots.txt (spec `site-crawl.spec.ts`; acceptance `site-crawl.feature.md`,
 // Crawl-delay (Q13); plan Decision 6). Phase 2's parser deliberately ignores `Crawl-delay` and the
@@ -77,19 +77,29 @@ export function crawlDelayFor(text: string, token: string): number | null {
 }
 
 /**
- * What the crawl needs from one robots.txt (Task 6a; Task 6b moves the parse into the crawl's worker):
- * whether `url` may be fetched by `token` (`CRAWL_ROBOTS_TOKEN` for the crawl's own verdict,
- * `googlebot` for the second verdict the Pages view shows; never a user agent header), and the
- * crawl's `Crawl-delay` in milliseconds (`null`: none).
+ * What the crawl needs from one robots.txt (Task 6a; Task 6b parses it in the crawl's worker, then
+ * matches on main with `crawlRobotsRulesOf`): whether `url` may be fetched by `token`
+ * (`CRAWL_ROBOTS_TOKEN` for the crawl's own verdict, `googlebot` for the second verdict the Pages view
+ * shows; never a user agent header), and the crawl's `Crawl-delay` in milliseconds (`null`: none).
  */
 export interface CrawlRobotsRules {
   allowed(url: string, token: string): boolean;
   readonly crawlDelayMs: number | null;
 }
 
-/** `CrawlRobotsRules` from robots.txt `text` (decoded, `decodeRobotsBytes`). A URL that does not parse is not allowed. */
-export function crawlRobotsRules(text: string): CrawlRobotsRules {
-  const file = parseRobotsTxt(text);
+/** One robots.txt as the crawl's worker answers it: plain data (structured-cloneable), the parsed file and the crawl's `Crawl-delay`. */
+export interface CrawlRobotsParse {
+  readonly file: RobotsFile;
+  readonly crawlDelayMs: number | null;
+}
+
+/** robots.txt `text` (decoded, `decodeRobotsBytes`) parsed for the crawl: its groups, rules and sitemaps, and `Crawl-delay` for `CRAWL_ROBOTS_TOKEN`. */
+export function crawlRobotsParse(text: string): CrawlRobotsParse {
+  return { file: parseRobotsTxt(text), crawlDelayMs: crawlDelayFor(text, CRAWL_ROBOTS_TOKEN) };
+}
+
+/** `CrawlRobotsRules` over a parse (matching only; the parse itself ran in the worker). A URL that does not parse is not allowed. */
+export function crawlRobotsRulesOf(parse: CrawlRobotsParse): CrawlRobotsRules {
   return {
     allowed(url, token) {
       let parsed: URL;
@@ -98,8 +108,13 @@ export function crawlRobotsRules(text: string): CrawlRobotsRules {
       } catch {
         return false;
       }
-      return matchRobots(file, token, robotsPathOf(parsed)).allowed;
+      return matchRobots(parse.file, token, robotsPathOf(parsed)).allowed;
     },
-    crawlDelayMs: crawlDelayFor(text, CRAWL_ROBOTS_TOKEN),
+    crawlDelayMs: parse.crawlDelayMs,
   };
+}
+
+/** `CrawlRobotsRules` from robots.txt `text` (decoded, `decodeRobotsBytes`): `crawlRobotsParse`, then `crawlRobotsRulesOf`. */
+export function crawlRobotsRules(text: string): CrawlRobotsRules {
+  return crawlRobotsRulesOf(crawlRobotsParse(text));
 }
