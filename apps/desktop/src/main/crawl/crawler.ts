@@ -33,7 +33,8 @@ import type { SitemapSeeder } from './sitemaps';
 // a parse still under way when it stops is left to end on its own (its answer is dropped). A page's
 // completion (its discoveries and its frontier entry marked done: `CrawlFrontier.complete`) is one write
 // (council review, item 3), so a page stopped after its row but before its completion stays queued and
-// Resume replays it whole: its row and links are replaced (one row, its links once), the run's counts
+// Resume replays it whole: its row and links are replaced (one row, its links once; a replay with no
+// analysis, `not-html` or a refusal, removes the links the earlier answer stored: round 2, item F), the run's counts
 // take the replaced row out first, and its discoveries are counted once. Such a replay comes before the
 // `maxPages` cap, which counts new pages only (council review round 2, item E). The run ends
 // `done` when the frontier is empty or `maxPages` rows are recorded (`max-pages` with URLs still
@@ -378,6 +379,10 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
                 return await finish(stoppedEnd());
               }
               if (status >= 200 && status <= 299) discovered = { urls: page.links.map((link) => link.url), depth: entry.depth + 1 };
+            } else if (replaced !== null) {
+              // A replay whose answer has no analysis: the links the replaced row's answer stored go with it (council review round 2, item F).
+              await repo.putLinks(runId, entry.url, []);
+              if (signal.aborted) return await finish(stoppedEnd());
             }
             if (outcome === 'redirected' && fetched.redirectTarget !== null) discovered = { urls: [fetched.redirectTarget], depth: entry.depth + 1 };
             // The page's discoveries and its entry's `done`, in one write.

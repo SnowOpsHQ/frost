@@ -241,6 +241,45 @@ describe('crawl runs', () => {
     expect(await t.repo.getRun(runId)).toMatchObject({ state: 'done', reason: 'max-pages', counts: { pages: 1, queued: 1, refused: 0, failed: 0 } });
   });
 
+  test('crawl-replay-without-analysis-drops-its-old-links', async () => {
+    // Council review round 2, item F: a page paused after its row and links were written (its completion was not) is
+    // replayed on Resume; when the replay's answer has no analysis (here the page now answers a PDF), the links its earlier
+    // answer stored are removed with the row it replaces, never kept beside a `not-html` row.
+    let home: FakePage = htmlPage('Home', ['/a', '/b']);
+    const t = setup((url) => (url === HOME ? home : undefined));
+    let service!: CrawlService;
+    let pauseAfterLinks = true;
+    const pausing = new Proxy(t.repo, {
+      get(target, key) {
+        const value = Reflect.get(target, key) as unknown;
+        if (typeof value !== 'function') return value;
+        return async (...args: unknown[]) => {
+          const result = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+          if (key === 'putLinks' && pauseAfterLinks) {
+            pauseAfterLinks = false;
+            void service.pause(args[0] as string);
+          }
+          return result;
+        };
+      },
+    });
+    const crawler = createCrawler({ repo: pausing, fetcher: t.fetcher, analyse: inProcessAnalyse, projectLive: async () => true, now: fakeClock() });
+    service = createCrawlService({ repo: t.repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, log: () => undefined });
+
+    const runId = await started(service, settingsFor(HOME));
+    await service.idle();
+    expect(await t.repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'user' });
+    expect(await t.repo.frontierEntry(runId, HOME)).toMatchObject({ state: 'queued' });
+    expect(t.count('SELECT count(*) AS n FROM crawl_links WHERE run_id = ?', runId)).toBe(2);
+
+    home = { html: '%PDF-1.7', contentType: 'application/pdf' };
+    expect(await service.resume(runId)).toEqual({ status: 'resumed', runId });
+    await service.idle();
+    expect(await t.repo.getPage(runId, HOME)).toMatchObject({ outcome: 'not-html', outlinks: 0 });
+    expect(t.count('SELECT count(*) AS n FROM crawl_links WHERE run_id = ?', runId)).toBe(0);
+    expect(await t.repo.getRun(runId)).toMatchObject({ state: 'done', counts: { pages: 1, queued: 0 } });
+  });
+
   test('crawl-pause-and-resume-by-the-user', async () => {
     const t = setup(chain(4));
     const held = t.fetcher.hold(`${HOME}p1`);

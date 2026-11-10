@@ -330,7 +330,9 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   marked done, in **one** transaction — and the run's counts.
 - (Council review, item 3) A page stopped (Pause, a quit, a kill) after its row but before its
   completion stays `queued`: Resume fetches it again and replays it whole. The replay is idempotent:
-  the row is replaced (one row per URL), its links replaced, the run's counts take the replaced row out
+  the row is replaced (one row per URL), its links replaced (a replay whose answer has no analysis —
+  `not-html`, `parse-failed`, `redirected`, a refusal or a failure — removes the links the earlier
+  answer stored: round 2, item F), the run's counts take the replaced row out
   before adding the new one, and its discoveries are recorded once — a completed page is never replayed
   and a page not completed has discovered nothing, so no `(page, link)` discovery adds an inlink twice.
 - (Council review round 2, item E) The replay comes **before** the `maxPages` cap, which counts new
@@ -385,6 +387,9 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   discovers and fetches `/child`, and the run ends with one row per page, the links stored once, counts
   equal to the rows and each inlink counted once. A Pause while the page's discoveries are written
   finds the page complete (`done`): Resume never fetches it again.
+- `crawl-replay-without-analysis-drops-its-old-links` — (council review round 2, item F) a page paused
+  after its row and its two links were written stays `queued`; on Resume it answers a PDF: its row is
+  replaced (`not-html`, no outlinks), the two links are removed, and the run ends `done` with one page.
 - `crawl-page-cap-replays-a-recorded-page` — (council review round 2, item E) `maxPages: 1`, paused
   right after the start's `putPage`: the run is `paused` with the start's row written and the start
   still `queued`. Resume fetches the start again and completes it (its one link stored, `/child`
