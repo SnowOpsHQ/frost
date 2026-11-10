@@ -1403,3 +1403,28 @@ Where the build differs from the plan above, or settles what it left open. **Lea
   streamed in batches, one export at a time. "Looks client-rendered" is a crawled 2xx page under 50
   served words (no script count stored: Decision 6's "with scripts" is not checked). The Pages
   table shows both robots verdicts (frost-crawl and Googlebot). No index migration was needed.
+- Task 8 (K-C1): neither provider dropped (Perplexity `citations` / `search_results`; OpenAI
+  `url_citation` annotations). Models pinned: Perplexity `sonar` (its Sonar endpoint is in a
+  deprecation window — a reviewed `DATA_API_REQUESTS` change to the Agent API may follow); OpenAI
+  `gpt-5-mini` / `gpt-5` with `web_search`, `store: false` (the Responses reference itself was not
+  fetchable: unverified). `run_ai_search` takes no locale in v1. With both L5 gates closed it answers
+  `not-available` as data. Answers are parsed in a SERP worker `ai-answer` job of their own;
+  citation URLs with credentials are dropped; totals survive to the model.
+  `dataApiRequest(…, { signal, beforeSend })` lets Stop and a changed setting stop a request that is
+  still waiting its turn (`aborted`, `cancelled`); `run_ai_search` has its own timeout
+  (`AI_SEARCH_TOOL_TIMEOUT_MS`, 50 s). The broker answers `capped` before any card once a turn has
+  2 calls.
+- Task 9: spec in its own files (`specs/ai-answers.*`); `0242` adds `origin`, `answer_truncated`,
+  `citations_total`; `chat_id` stays `null` for agent answers (the tool port carries no chat id).
+  Purged on write, at start-up, on a retention change and daily; at most 1 000 rows. One per-engine
+  clock in `AiSearchService.send()` serves the agent and the view (lead ruling). The via and
+  default-engine settings are set from the AI answers view.
+- Task 10b: removing a profile retires its partition for the run (tabs closed, storage cleared,
+  never prepared again; the proxy is not reset to direct). A sign-in is removed before a profile's
+  proxy changes, or the edit answers `failed`. Lead ruling: **geolocation is denied** in location
+  tabs and other permission decisions there are per location and in memory only (never shared with
+  home). Links opened from a location tab's panels stay in the location; "Open in" tools use the
+  user's own connection. The badge sits in the tab strip only and is never cut. The leak-test
+  design (`location-profiles.feature.md`) puts the fake site's name in `E2E_PUBLIC_HOSTS`, classifies
+  the tripwire's requests (the disclosed audit fetches are allowed; anything else is a leak) and
+  adds a NetLog check for host-resolver jobs.
