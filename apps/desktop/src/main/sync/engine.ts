@@ -11,6 +11,9 @@ import {
   SYNC_STATE_TABLE,
   SYNC_TABLES,
   SYNC_TOMBSTONE_TABLE,
+  SYNC_DEVICE_LOCAL_DIFF_TABLE,
+  SYNC_SEARCH_PARAMS_TABLES,
+  searchParamsStayLocal,
   type SyncDirection,
   type SyncSkipReason,
   type SyncTableName,
@@ -368,6 +371,29 @@ async function withinRowCap(driver: SqlDriver, table: Table, ids: readonly strin
 
 // ---- Push ----------------------------------------------------------------------------------
 
+/**
+ * `rows` of `table` without those that stay on this device (Phase 12 Decision 7; `sync.spec.ts`,
+ * `SYNC_SEARCH_PARAMS_TABLES`): a row whose `search_params` carry a `location`, and a `ci_diffs` row
+ * whose `to_version_id` names such a version (looked up in `source`). The push mark still moves past
+ * them, so they are never pushed later either. A lookup that fails rejects (the pass fails and is
+ * retried), never pushing a diff it could not check.
+ */
+async function withoutDeviceLocalRows(source: SqlDriver, table: Table, rows: readonly Row[]): Promise<Row[]> {
+  if ((SYNC_SEARCH_PARAMS_TABLES as readonly string[]).includes(table.name)) {
+    const at = columnAt(table, 'search_params');
+    return rows.filter((row) => !searchParamsStayLocal(row[at]));
+  }
+  if (table.name !== SYNC_DEVICE_LOCAL_DIFF_TABLE || rows.length === 0) return [...rows];
+  const to = columnAt(table, 'to_version_id');
+  const ids = [...new Set(rows.map((row) => String(row[to])))];
+  const local = new Set<string>();
+  for (const chunk of chunks(ids)) {
+    const { rows: found } = await source.execute(`SELECT ${q('id')}, ${q('search_params')} FROM ${q('ci_versions')} WHERE ${q('id')} IN (${marks(chunk.length)})`, chunk, 'all');
+    for (const [id, params] of found as [string, unknown][]) if (searchParamsStayLocal(params)) local.add(id);
+  }
+  return rows.filter((row) => !local.has(String(row[to])));
+}
+
 async function pushPages(options: SyncPassOptions): Promise<{ report: SyncDirectionReport; lost: Map<SyncTableName, string[]> }> {
   const { source, replica, deviceId } = options;
   const now = options.now ?? Date.now;
@@ -406,7 +432,8 @@ async function pushPages(options: SyncPassOptions): Promise<{ report: SyncDirect
         'all',
       );
       const page = rows as Row[];
-      await planTable(plan, replica, table, page, at);
+      // Rows that stay on this device are read (the mark moves past them) but never planned.
+      await planTable(plan, replica, table, await withoutDeviceLocalRows(source, table, page), at);
       if (table.name === SYNC_TOMBSTONE_TABLE) tombstonesCaughtUp = page.length < limit;
       if (page.length === 0) continue;
       const timeAt = columnAt(table, table.time);

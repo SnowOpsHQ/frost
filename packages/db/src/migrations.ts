@@ -12,6 +12,7 @@ import { PHASE11_MIGRATIONS } from './phase11-migrations';
 import { SITE_CRAWL_MIGRATIONS } from './site-crawl/migrations';
 import { AI_ANSWERS_MIGRATIONS } from './ai-answers-migrations';
 import { DATA_USAGE_MIGRATIONS } from './data-usage-migrations';
+import { LOCATION_PROFILES_MIGRATIONS } from './location-profiles-migrations';
 import { SERP_API_READINGS_MIGRATIONS } from './change-intel/serp-api-migrations';
 
 // Forward-only migrations (spec `browser-session-db.feature.md`, Migrations). Each one is a
@@ -113,6 +114,7 @@ export const MIGRATIONS: readonly Migration[] = [
   ...SITE_CRAWL_MIGRATIONS,
   ...AI_ANSWERS_MIGRATIONS,
   ...DATA_USAGE_MIGRATIONS,
+  ...LOCATION_PROFILES_MIGRATIONS,
   ...SERP_API_READINGS_MIGRATIONS,
 ];
 

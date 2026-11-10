@@ -53,6 +53,11 @@ export interface ScreenshotTabs {
   overridesOn?(tabId: number): boolean;
   /** The tab's override revision (`TabState.overridesRevision`); absent: no revision check. */
   overridesRevision?(tabId: number): number;
+  /**
+   * The tab's location (Phase 12 Task 10b, `TabState.location`), `null` for a home tab; absent (older
+   * fakes): none. A location tab is screenshotted only on pages whose search parameters carry `location`.
+   */
+  locationOf?(tabId: number): { readonly profileId: string; readonly label: string } | null;
 }
 
 export type ScreenshotCapturers = Readonly<Record<ScreenshotKind, (target: ScreenshotTarget, options: CaptureOptions) => Promise<Captured>>>;
@@ -207,6 +212,24 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
     }
   };
 
+  /** Whether the tab runs on a location profile's proxy (a failure to tell counts as yes: fail closed). */
+  const onLocationTab = (tabId: number): boolean => {
+    try {
+      return (tabs.locationOf?.(tabId) ?? null) !== null;
+    } catch {
+      return true;
+    }
+  };
+  /** Whether `given` are search parameters that carry a location. */
+  const carriesLocation = (given: unknown): boolean => {
+    try {
+      const parsed = SearchParamsSchema.safeParse(given);
+      return parsed.success && parsed.data.location !== undefined;
+    } catch {
+      return false;
+    }
+  };
+
   async function takeTab(tabId: number, options: TakeOptions, run: { controller: AbortController | null }): Promise<TakeScreenshotAnswer> {
     const contents = tabs.contentsOf(tabId);
     if (!contents || contents.isDestroyed()) return refused('no-tab');
@@ -222,6 +245,9 @@ export function createScreenshotsService(deps: ScreenshotsServiceDeps): MainScre
       return refused('tab-emulation-on');
     }
     if (overridesInTheWay(tabId, revision)) return refused('tab-emulation-on');
+    // A location tab (Phase 12 Decision 11): only a result page read with the tab's location; any other
+    // page would read as the user's own connection. Refused before anything is captured or kept.
+    if (onLocationTab(tabId) && !carriesLocation(options.searchParams !== undefined ? options.searchParams : searchParamsOf(tabId, page))) return refused('location-tab');
     // Taken while the tab stays on this page (any main-frame navigation, an in-page one too, would
     // record it under a URL it no longer shows) and in front; anything else cancels it. Watched from
     // here, before the project lookup: a navigation while that is pending cancels it too.
@@ -482,7 +508,7 @@ export function screenshotTabs(
   browser: {
     getState(): {
       readonly activeTabId: number | null;
-      readonly tabs: readonly { readonly id: number; readonly renderProfile: TabRenderProfile | null; readonly tabOverrides?: TabOverrides; readonly loadedUnderOverrides?: boolean; readonly overridesRevision?: number }[];
+      readonly tabs: readonly { readonly id: number; readonly renderProfile: TabRenderProfile | null; readonly tabOverrides?: TabOverrides; readonly loadedUnderOverrides?: boolean; readonly overridesRevision?: number; readonly location?: { readonly profileId: string; readonly label: string } | null }[];
     };
   },
   contentsOf: (tabId: number) => ScreenshotContents | null,
@@ -498,5 +524,7 @@ export function screenshotTabs(
       return tab !== undefined && ((tab.tabOverrides !== undefined && !isDefaultTabOverrides(tab.tabOverrides)) || tab.loadedUnderOverrides === true);
     },
     overridesRevision: (tabId) => tabOf(tabId)?.overridesRevision ?? 0,
+    // Phase 12 Task 10b: the tab's location, set at its creation (`null`: home, or no such tab).
+    locationOf: (tabId) => tabOf(tabId)?.location ?? null,
   };
 }

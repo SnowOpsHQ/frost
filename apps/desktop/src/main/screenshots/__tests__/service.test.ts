@@ -15,7 +15,7 @@ import { CAPTURES_DIR_NAME, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spe
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
 import { CHANGES_READ_API } from '@app/specs/changes.schema';
 import { DEFAULT_RENDER_PROFILE, DEFAULT_TAB_OVERRIDES, type RenderProfile } from '@app/specs/render-profile.spec';
-import { SCREENSHOT_LIMITS, SCREENSHOTS_DIR_NAME, ScreenshotsAnswerSchema, type TakeScreenshotAnswer } from '@app/specs/screenshot.schema';
+import { SCREENSHOT_LIMITS, SCREENSHOT_REFUSAL_MESSAGES, SCREENSHOTS_DIR_NAME, ScreenshotsAnswerSchema, type TakeScreenshotAnswer } from '@app/specs/screenshot.schema';
 import { fakeEvent } from '../../../test/electron-fake';
 import { lateSearchParams } from '../../changes/serp-params';
 import { createChangesService } from '../../changes/service';
@@ -624,5 +624,50 @@ describe('screenshots refuse with tab overrides (Phase 11 Task 6, Decision 8)', 
     // The user's own tab, in front, is refused.
     state.current = browserState([{ id: 1, css: true, marker: true, revision: 5 }, { id: 2 }], 1);
     expect(await service.take(1, { kind: 'viewport' })).toEqual({ status: 'refused', reason: 'tab-emulation-on' });
+  });
+});
+
+// Phase 12 Task 10b (specs/screenshot.spec.ts SCREENSHOT_REFUSALS `location-tab`; specs/location-profiles.feature.md,
+// location-tab-captures-only-result-pages; plan Decision 11): on a location tab only a result page read with its
+// location is screenshotted; an ordinary article there is refused, no file and no row.
+describe('screenshots on a location tab (Phase 12 Task 10b)', () => {
+  const BERLIN = { profileId: '01920000-0000-7000-8000-0000000000c1', label: 'Berlin' };
+  const LOCATED: SearchParams = { ...PARAMS, location: { via: 'proxy', label: 'Berlin' } };
+  const files = (dir: string) => (existsSync(dir) ? readdirSync(dir) : []);
+  const browserState = (location: typeof BERLIN | null) => ({
+    activeTabId: 1,
+    tabs: [{ id: 1, renderProfile: null, tabOverrides: DEFAULT_TAB_OVERRIDES, loadedUnderOverrides: false, overridesRevision: 0, ...(location ? { location } : {}) }],
+  });
+
+  test('location-tab-captures-only-result-pages', async () => {
+    expect(SCREENSHOT_REFUSAL_MESSAGES['location-tab']).toBe('This tab goes through a location proxy. Only its search result pages can be captured for now.');
+    let params: SearchParams | null = null;
+    const shots = start();
+    const tabs = screenshotTabs({ getState: () => browserState(BERLIN) as never }, (tabId) => shots.tabs.get(tabId) ?? null);
+    expect(tabs.locationOf!(1)).toEqual(BERLIN);
+    expect(tabs.locationOf!(9)).toBeNull();
+    const { service, raw, files: store } = also({ tabs, searchParamsOf: () => params });
+    // An ordinary article: refused for every kind, nothing captured or kept.
+    for (const kind of ['viewport', 'full', 'area'] as const) expect(await service.take(1, { kind })).toEqual({ status: 'refused', reason: 'location-tab' });
+    // A result page without the tab's location (or given parameters without one): refused.
+    params = PARAMS;
+    expect(await service.take(1, { kind: 'viewport' })).toEqual({ status: 'refused', reason: 'location-tab' });
+    params = null;
+    expect(await service.take(1, { kind: 'viewport', searchParams: PARAMS })).toEqual({ status: 'refused', reason: 'location-tab' });
+    expect(shots.tabs.get(1)!.captures).toBe(0);
+    expect(rows(raw)).toEqual([]);
+    expect(files(store.dir)).toEqual([]);
+    // Its result page, carrying the location: taken, and the row records it.
+    params = LOCATED;
+    saved(await service.take(1, { kind: 'viewport' }));
+    expect(JSON.parse(String(rows(raw)[0]!['search_params']))).toMatchObject({ location: { via: 'proxy', label: 'Berlin' } });
+  });
+
+  test('location-tab-refusal-leaves-home-tabs-alone', async () => {
+    const shots = start();
+    const tabs = screenshotTabs({ getState: () => browserState(null) as never }, (tabId) => shots.tabs.get(tabId) ?? null);
+    const { service, raw } = also({ tabs, searchParamsOf: () => null });
+    saved(await service.take(1, { kind: 'viewport' }));
+    expect(rows(raw)).toHaveLength(1);
   });
 });

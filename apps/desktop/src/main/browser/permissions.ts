@@ -16,6 +16,7 @@ import {
   type SitePermission,
 } from '@app/specs/permissions.spec';
 import { webOrigin } from '@app/specs/web-url.spec';
+import { locationContextOf } from '../location/sessions';
 
 // Per-origin permission prompts for the browse session (spec `permissions.feature.md`). Pure
 // decisions, the requesting-frame check, the prompt broker (queues, remembered decisions,
@@ -33,6 +34,13 @@ function includes(list: readonly string[], value: unknown): boolean {
 export interface PermissionScope {
   readonly origin: string;
   readonly topLevelOrigin: string;
+  /**
+   * Where it was asked (Phase 12 Task 10b, security review): absent for the user's own connection;
+   * `location:<profileId>:<generation>` in a location profile's session (`location/sessions.ts`). A
+   * decision is remembered and found only in its own context, and one with a context is never
+   * persisted: a location session asks afresh and keeps its answers in memory for the run.
+   */
+  readonly context?: string;
 }
 
 /** What a tab asks for, in its scope. */
@@ -110,7 +118,7 @@ export function requestScope(contents: unknown, details: unknown): PermissionSco
 }
 
 function sameScope(a: PermissionScope | null, b: PermissionScope): boolean {
-  return a !== null && a.origin === b.origin && a.topLevelOrigin === b.topLevelOrigin;
+  return a !== null && a.origin === b.origin && a.topLevelOrigin === b.topLevelOrigin && a.context === b.context;
 }
 
 /** What `ask` is remembered against (`media` split per device). */
@@ -131,7 +139,7 @@ export interface PermissionDecisionStore {
   clear(): void;
 }
 
-const scopeKey = (scope: PermissionScope, permission: SitePermission): string => JSON.stringify([scope.origin, scope.topLevelOrigin, permission]);
+const scopeKey = (scope: PermissionScope, permission: SitePermission): string => JSON.stringify([scope.origin, scope.topLevelOrigin, permission, ...(scope.context === undefined ? [] : [scope.context])]);
 
 /** An in-memory decision store: nothing survives a restart. */
 export function createMemoryDecisionStore(): PermissionDecisionStore {
@@ -165,7 +173,8 @@ export function createPersistentDecisionStore(persist: (decision: StoredDecision
     get: memory.get,
     set(scope, permission, decision) {
       memory.set(scope, permission, decision);
-      if (decision === 'block') persist({ origin: scope.origin, topLevelOrigin: scope.topLevelOrigin, permission, decision });
+      // A location session's decisions are never written (Phase 12 Task 10b): memory only, for the run.
+      if (decision === 'block' && scope.context === undefined) persist({ origin: scope.origin, topLevelOrigin: scope.topLevelOrigin, permission, decision });
     },
     clear: memory.clear,
     load(decisions) {
@@ -339,7 +348,7 @@ export function createPermissionBroker(options: PermissionBrokerOptions = {}): P
 
   return {
     request(tabId, ask, callback, { isCurrent = always, mayPrompt = true } = {}) {
-      const scope: PermissionScope = { origin: ask.origin, topLevelOrigin: ask.topLevelOrigin };
+      const scope: PermissionScope = { origin: ask.origin, topLevelOrigin: ask.topLevelOrigin, ...(ask.context === undefined ? {} : { context: ask.context }) };
       const permissions = sitePermissionsOf(ask);
       if (permissions.length === 0) return call(callback, false);
       const verdict = evaluate(scope, permissions);
@@ -450,18 +459,40 @@ export function createBrowsePermissionHandlers(options: {
   readonly tabIdOf: (contents: unknown) => number | null;
   /** Whether the tab is in HTML fullscreen (its new requests are denied). */
   readonly isFullscreen?: (tabId: number) => boolean;
+  /**
+   * The permission context of the requesting WebContents' session (default: `locationContextOf` of
+   * `contents.session`; `null`: the user's own connection). Phase 12 Task 10b, security review.
+   */
+  readonly contextOf?: (contents: unknown) => string | null;
 }): BrowsePermissionHandlers {
   const { broker, tabIdOf } = options;
+  const contextOf = options.contextOf ?? ((contents: unknown) => locationContextOf(field(contents, 'session')));
+  /** The context, or `undefined` when it cannot be told (fail closed: the request is denied). */
+  const contextFor = (contents: unknown): string | null | undefined => {
+    try {
+      return contextOf(contents);
+    } catch {
+      return undefined;
+    }
+  };
   return {
     request(contents, permission, callback, details) {
       const verdict = classifyPermissionRequest(permission, details);
       if (verdict.kind !== 'prompt') return callback(verdict.kind === 'allow');
+      const context = contextFor(contents);
+      // A location tab never learns where the user is (its proxy shows another place): geolocation is
+      // denied there whatever was decided elsewhere (Phase 12 Task 10b, lead ruling).
+      if (context === undefined || (context !== null && verdict.permission === 'geolocation')) return callback(false);
       const tabId = tabIdOf(contents);
-      const scope = tabId === null ? null : requestScope(contents, details);
-      if (tabId === null || scope === null) return callback(false);
+      const found = tabId === null ? null : requestScope(contents, details);
+      if (tabId === null || found === null) return callback(false);
+      const scope: PermissionScope = context === null ? found : { ...found, context };
       const ask: PermissionAsk = { ...scope, permission: verdict.permission, ...(verdict.mediaTypes ? { mediaTypes: verdict.mediaTypes } : {}) };
       broker.request(tabId, ask, callback, {
-        isCurrent: () => sameScope(requestScope(contents, details), scope),
+        isCurrent: () => {
+          const now = requestScope(contents, details);
+          return sameScope(now === null || context === null ? now : { ...now, context }, scope);
+        },
         // No prompt can show over a fullscreen page: only what is already remembered answers.
         mayPrompt: options.isFullscreen?.(tabId) !== true,
       });
@@ -470,16 +501,19 @@ export function createBrowsePermissionHandlers(options: {
     check(contents, permission, requestingOrigin, details) {
       if (includes(SILENTLY_ALLOWED_PERMISSIONS, permission)) return true;
       if (!includes(PROMPTABLE_PERMISSIONS, permission)) return false;
+      const context = contextFor(contents);
+      if (context === undefined || (context !== null && permission === 'geolocation')) return false;
+      const within = context === null ? {} : { context };
       if (permission === 'media') {
         const mediaType = field(details, 'mediaType');
         const origin = webOrigin(field(details, 'securityOrigin')) ?? webOrigin(requestingOrigin);
         if (origin === null || !includes(MEDIA_TYPES, mediaType)) return false;
         const topLevelOrigin = checkTopLevelOrigin(contents, origin, details);
-        return topLevelOrigin !== null && broker.check({ origin, topLevelOrigin }, MEDIA_TYPE_PERMISSION[mediaType as MediaType]);
+        return topLevelOrigin !== null && broker.check({ origin, topLevelOrigin, ...within }, MEDIA_TYPE_PERMISSION[mediaType as MediaType]);
       }
       const origin = webOrigin(requestingOrigin);
       const topLevelOrigin = origin === null ? null : checkTopLevelOrigin(contents, origin, details);
-      return origin !== null && topLevelOrigin !== null && broker.check({ origin, topLevelOrigin }, permission as Exclude<PromptablePermission, 'media'>);
+      return origin !== null && topLevelOrigin !== null && broker.check({ origin, topLevelOrigin, ...within }, permission as Exclude<PromptablePermission, 'media'>);
     },
   };
 }

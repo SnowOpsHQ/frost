@@ -34,6 +34,8 @@ import type { FindService } from '@app/ipc-contract';
 import { DEFAULT_SEARCH_ENGINE, type SearchEngineId } from '@app/specs/browser-polish.spec';
 import { createTabFinds } from './find';
 import { captureClosedTab, createClosedTabStack, restoreClosedHistory } from './history-closed-tabs';
+import { locationPartition } from '@app/specs/location-profiles.spec';
+import type { TabLocation } from '@app/specs/location-profiles.schema';
 
 // Main-process owner of all browser state (spec `browser-chrome.feature.md` and `tabs.feature.md`,
 // Controller). Only Electron *types* are imported: the view factory and the window are injected, so
@@ -150,6 +152,14 @@ export interface BrowserController extends BrowserService {
   stepFind(forward: boolean): boolean;
   /** Reopens the most recently closed tab (Mod+Shift+T); its id, or `null`. */
   reopenClosedTab(): number | null;
+  /**
+   * A new, active, empty tab on a location profile's partition (Phase 12 Task 10b,
+   * `location-profiles.feature.md`); main prepares the partition (proxy, browse-class) first. Its id,
+   * or `null` (no window: never opens one; `MAX_TABS`, which raises the `tab-limit` notice).
+   */
+  openLocationTab(location: TabLocation): number | null;
+  /** The profile was edited or removed: its tabs close and Reopen Closed Tab forgets them. */
+  forgetLocation(profileId: string): void;
   /** Asks the chrome to open the History view: bumps `historyViewSeq`. A no-op without a window. */
   showHistory(): void;
   /** Empties the closed-tab stack (Clear Browsing Data, "Clear all history"). */
@@ -172,8 +182,12 @@ export interface BrowserController extends BrowserService {
 }
 
 export interface BrowserControllerOptions {
-  /** The allowlisted tab-view factory (`createTabView` in `window.ts`). */
-  readonly createView: () => TabView;
+  /**
+   * The allowlisted tab-view factory (`createTabView` in `window.ts`). A location tab's view is asked
+   * for with its profile's partition (`locationPartition`; the factory sets the WebRTC policy there);
+   * every other tab's with none (the browse partition).
+   */
+  readonly createView: (partition?: string) => TabView;
   /** Whose shortcut modifier applies (Cmd on macOS, Ctrl elsewhere); defaults to `process.platform`. */
   readonly platform?: NodeJS.Platform;
   /**
@@ -276,7 +290,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const snapshot = (): BrowserState => ({
     version: stateWatch.version(),
-    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight, highlightPhrase: tab.highlightPhrase, renderProfile: renderProfiles.state(tab), ...tabOverrides.state(tab), overridesStatus: tabOverrides.cookiesFailed(tab) ? 'failed' : renderProfiles.overridesStatus(tab) })),
+    tabs: strip.tabs.map((tab) => ({ ...tab.state, error: tab.state.error && { ...tab.state.error }, permissionPrompt: prompts.promptFor(tab.id), auditVersion: audits.version(tab.id) + a11y.version(tab.id), highlight: tab.highlight, highlightPhrase: tab.highlightPhrase, renderProfile: renderProfiles.state(tab), ...tabOverrides.state(tab), overridesStatus: tabOverrides.cookiesFailed(tab) ? 'failed' : renderProfiles.overridesStatus(tab), ...(tab.location ? { location: { ...tab.location } } : {}) })),
     activeTabId: strip.activeTabId,
     focusAddressBarSeq,
     toggleSidebarSeq,
@@ -615,7 +629,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const live = liveView(tab);
     if (live) return live;
     if (!hasWindow()) return null;
-    const view = options.createView();
+    // A location tab's view is made on its profile's partition (in memory, proxied), the others on the browse partition.
+    const view = tab.location ? options.createView(locationPartition(tab.location.profileId)) : options.createView();
     tab.view = view;
     tab.unlisten = wireTabView(tab, view, {
       isOpen: (t) => strip.tabs.includes(t),
@@ -625,7 +640,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       denyPrompts: prompts.deny,
       fullscreen,
       applyBounds,
-      session: options.session,
+      // A location tab is never written to history (Phase 12 Task 10b): no visits, no titles.
+      session: tab.location ? undefined : options.session,
       stopLoading: (t) => pageCommands.stopLoading(t),
       takeShortcut,
       removeTab,
@@ -786,7 +802,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (!hasWindow() || !isWebUrl(url)) return null;
     const openerTab = strip.tabs.find((tab) => tab.view !== null && aliveContents(tab.view) === opener);
     // A tab the page opens renders as its opener does (`render-profile.feature.md`, Popups).
-    return openerTab ? openTabRightOf(openerTab, url, true) : null;
+    // A page's popup stays in its opener's location (Phase 12 Task 10b).
+    return openerTab ? openTabRightOf(openerTab, url, true, openerTab.location) : null;
   };
 
   /**
@@ -798,14 +815,16 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     const parsed = parseWebUrl(url);
     const opener = activeTab();
     if (!hasWindow() || !parsed || !opener) return null;
-    return openTabRightOf(opener, parsed.href, inherit);
+    // A link from a location tab's panels (a SERP result, a sidebar link) opens in the same location (Phase 12 Task 10b).
+    return openTabRightOf(opener, parsed.href, inherit, opener.location);
   };
 
   /**
    * Opens the `http(s)` `url` in a new background tab right of `openerTab`, after the tabs it opened;
-   * with `inherit` it starts with the opener's own render profile.
+   * with `inherit` it starts with the opener's own render profile; on `location`'s partition when
+   * given (Phase 12 Task 10b).
    */
-  const openTabRightOf = (openerTab: Tab, url: string, inherit: boolean): number | null => {
+  const openTabRightOf = (openerTab: Tab, url: string, inherit: boolean, location: TabLocation | null): number | null => {
     const index = strip.tabs.indexOf(openerTab);
     if (index < 0) return null;
     if (strip.tabs.length >= MAX_TABS) {
@@ -815,7 +834,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // Right of the opener, after the run of tabs it opened and their own popups (its descendants).
     let at = index + 1;
     while (descendsFrom(strip.tabs[at], openerTab.id)) at += 1;
-    const tab = createTab(nextTabId++, openerTab.id);
+    const tab = createTab(nextTabId++, openerTab.id, location);
     strip.tabs.splice(at, 0, tab);
     // It starts with the opener's own render profile, in effect before its first request.
     if (inherit) renderProfiles.inherit(openerTab, tab);
@@ -877,7 +896,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (url === null) return { status: 'refused', reason: 'not-public' };
     const address = options.pageAddress?.(contents) ?? null;
     if (address !== null && !isPublicAddress(address)) return { status: 'refused', reason: 'private-address' };
-    const id = openTabRightOf(tab, url, false); // tools never inherit the tab's render profile (render-profile.feature.md)
+    // Tools never inherit the tab's render profile (render-profile.feature.md), nor its location: a third-party tool opens on the user's own connection.
+    const id = openTabRightOf(tab, url, false, null);
     return id === null ? { status: 'refused', reason: 'not-opened' } : { status: 'opened', tabId: id };
   };
 
@@ -991,7 +1011,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       return null;
     }
     closedTabs.pop();
-    const tab = createTab(nextTabId++);
+    // A location tab comes back on its profile (only within the run: the stack is in memory, and a
+    // profile edited or removed drops its entries, `forgetLocation`).
+    const tab = createTab(nextTabId++, null, closed.profileOf.location);
     const left = activeTab();
     if (left) highlights.deactivated(left);
     strip.tabs.splice(Math.min(closed.index, strip.tabs.length), 0, tab);
@@ -1010,6 +1032,28 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     changed();
     return tab.id;
   }
+
+  const openLocationTab = (location: TabLocation): number | null => {
+    if (!hasWindow()) return null;
+    if (strip.tabs.length >= MAX_TABS) {
+      raiseNotice('tab-limit');
+      return null;
+    }
+    const tab = createTab(nextTabId++, null, location);
+    const left = activeTab();
+    if (left) highlights.deactivated(left);
+    strip.tabs.push(tab);
+    strip.activeTabId = tab.id;
+    syncAttached();
+    requestAddressFocus();
+    changed();
+    return tab.id;
+  };
+
+  const forgetLocation = (profileId: string): void => {
+    for (const tab of strip.tabs.filter((t) => t.location?.profileId === profileId)) removeTab(tab.id);
+    if (closedTabs.drop((closed) => closed.profileOf.location?.profileId === profileId)) changed();
+  };
 
   const showHistory = (): void => {
     const win = strip.win;
@@ -1133,6 +1177,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     find,
     stepFind,
     reopenClosedTab,
+    openLocationTab,
+    forgetLocation,
     showHistory,
     forgetClosedTabs: () => {
       if (closedTabs.clear()) changed();

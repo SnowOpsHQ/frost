@@ -439,6 +439,10 @@ const SESSION_KEYED_EXCEPTIONS: readonly { readonly file: string; readonly code:
   { file: 'browser/cookie-block.ts', code: 'tabsOf.has(session)', why: 'whether this session has its pair' },
   { file: 'browser/web-request.ts', code: 'hubs.get(session)', why: "each session's one observer hub" },
   { file: 'security/register.ts', code: 'downloadsRefused.has(session)', why: "the app session's download refusal, added once" },
+  // Phase 12 Task 10b: which location profile a proxy `login` came from (the answer's partition check; no class check).
+  { file: 'location/partitions.ts', code: 'entry.session === candidate', why: "the location profile whose partition a login's session is" },
+  { file: 'location/sessions.ts', code: 'marks.has(session)', why: 'a location partition marked once (its permission context; no class check)' },
+  { file: 'location/sessions.ts', code: 'marks.get(session)', why: "a location partition's permission context (no class check)" },
 ];
 
 const SESSIONISH = /(?:^|[.?])(?:\w*session|\w*Session|ses)$/;

@@ -9,6 +9,7 @@ import { createAiChecksRepository, type AiChecksRepository } from './ai-checks';
 import { createAiAnswersRepository, type AiAnswersRepository } from './ai-answers';
 import { createChangeIntelRepository, type ChangeIntelRepository } from './change-intel/repository';
 import { createDataUsageRepository, type DataUsageRepository } from './data-usage';
+import { createLocationProfilesRepository, type LocationProfilesRepository } from './location-profiles';
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
 import { createHistoryRepository, type HistoryRepository } from './history';
 import { createSettingsRepository, type SettingsRepository } from './settings';
@@ -49,6 +50,8 @@ export interface SessionStore {
   readonly siteCrawl: SiteCrawlRepository;
   /** The data API usage counter (Phase 12 Task 2): requests per provider per UTC month; never by Clear Browsing Data. */
   readonly dataUsage: DataUsageRepository;
+  /** Location profiles (Phase 12 Task 10b): label and proxy per profile, no secret; never synced, never by Clear Browsing Data. */
+  readonly locationProfiles: LocationProfilesRepository;
   /** The AI answers (Phase 12 Task 9), written at once, kept by their own retention; device-local, never by Clear Browsing Data. */
   readonly aiAnswers: AiAnswersRepository;
   /** Whether the database is still open (`close()` closes it). */
@@ -86,6 +89,7 @@ export function openSessionStore(options: SessionStoreOptions): SessionStore {
     aiChecks: createAiChecksRepository(drizzle),
     siteCrawl: createSiteCrawlRepository(drizzle),
     dataUsage: createDataUsageRepository(drizzle),
+    locationProfiles: createLocationProfilesRepository(drizzle),
     aiAnswers: createAiAnswersRepository(drizzle),
     get isOpen() {
       return db.isOpen;

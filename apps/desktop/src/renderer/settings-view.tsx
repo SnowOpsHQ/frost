@@ -11,6 +11,7 @@ import { AiChecksSettings } from './settings-ai-checks';
 import { DataSourcesSettings } from './settings-data-sources';
 import { GscSettings } from './settings-gsc';
 import { HistorySettings } from './settings-history';
+import { LocationsSettings } from './settings-locations';
 import { accountStore, settingsActions, useAccountState, useSettingsMenuSeq } from './settings-hooks';
 import { closeCancelsSignIn, holdsSheet, isMenuRequest, onSettingsCloseAsked, onSettingsRequest, opensForConfirmation, requestSettings, SETTINGS_CLOSED, settingsOpened, settingsReducer } from './settings-open';
 import { settingsPaletteSources } from './settings-palette';
@@ -99,6 +100,7 @@ function SettingsView({ section, focusSeq, account, tabId, closeLabel, onClose, 
                 {entry.id === 'account' ? <AccountSettings state={account} /> : null}
                 {entry.id === 'search-console' ? <GscSettings /> : null}
                 {entry.id === 'data-sources' ? <DataSourcesSettings /> : null}
+                {entry.id === 'locations' ? <LocationsSettings /> : null}
                 {entry.id === 'ai-checks' ? <AiChecksSettings tabId={tabId} /> : null}
                 {entry.id === 'telemetry' ? <TelemetrySettings /> : null}
                 {entry.id === 'history' ? <HistorySettings /> : null}

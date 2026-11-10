@@ -26,6 +26,7 @@ import type { TabOverridesService } from './tab-overrides-router';
 import type { HelpService } from './help-service';
 import type { DataSourcesService } from './data-sources-service';
 import type { CrawlIpcService } from './crawl-service';
+import type { LocationService } from './location-service';
 import type { AiAnswersService } from './ai-answers-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
@@ -222,6 +223,8 @@ export interface IpcServices {
   readonly dataSources?: DataSourcesService;
   /** The site crawl: runs, pages, structure and CSV export (Phase 12 Task 7, `crawl-service.ts`). */
   readonly crawl?: CrawlIpcService;
+  /** Location profiles and their tabs (Phase 12 Task 10b, `location-service.ts`). */
+  readonly locations?: LocationService;
   /** The AI answers view: kept answers, its own run, retention and AI search settings (Phase 12 Task 9, `ai-answers-service.ts`). */
   readonly aiAnswers?: AiAnswersService;
 }

@@ -100,6 +100,22 @@ browser and run SEO skills.
 - **Next:** finishing sync (the switch to turn it on, a worker thread, a real server), and code
   signing for macOS and Windows (`docs/design/IMPLEMENTATION-PLAN.md` §4).
 
+## Locations
+See search results as they look from another place, through your own proxy (Settings › Locations;
+"New tab in location…" in the command palette). frost bundles no VPN and recommends no proxy
+provider: you add an HTTP, HTTPS or SOCKS5 proxy you already use. Each location has its own
+temporary browsing session, kept in memory, with WebRTC limited to proxied traffic; its tabs carry a
+badge, are not kept in history and are not restored after a restart. A proxy's username and password
+stay in frost's main process, protected by your OS keychain; an HTTP proxy receives them
+unencrypted, so use an HTTPS proxy when it needs a sign-in.
+Location tabs never get your device location, and their permission answers last only until frost
+quits.
+What is not proxied: pages on localhost, loopback and link-local addresses are reached directly, and
+frost's own requests for a location tab (robots.txt, the served HTML, probes, link, sitemap and
+hreflang checks, a site crawl) and "Open in" tools still go from your own connection. Result pages
+read in a location tab record the location, so their rankings form a series of their own, and they
+stay on this device (they are never synced).
+
 ## Clean-room note
 frost is a **clean-room** build. It is designed from a written behavioral/design
 spec authored by us, not from any third party's source. **This repository contains

@@ -19,6 +19,7 @@ import { TabOverridesSchema, TabRenderProfileSchema } from './render-profile.sch
 import { RENDER_PROFILE_STATUSES } from './render-profile.spec';
 import { BrowserPolishStateShape } from './browser-polish.schema';
 import { DEFAULT_SEARCH_ENGINE, searchEngine } from './browser-polish.spec';
+import { TabLocationSchema } from './location-profiles.schema';
 
 /**
  * Session partition of every tab view. Separate from the app UI's default session: it has no
@@ -271,6 +272,16 @@ export const TabStateSchema = z.strictObject({
    * the result is stored.
    */
   overridesRevision: z.int().nonnegative(),
+  /**
+   * The tab's location (Phase 12 Task 10b, `location-profiles.spec.ts`): the location profile whose
+   * in-memory partition and proxy the tab runs on, and its label, **set when the tab is created and
+   * never changed** (a tab cannot move between partitions). Absent or `null`: the user's own
+   * connection (main omits it for such a tab). The tab badge always shows it; the SERP service adds
+   * it to a result page's search parameters (`{ via: 'proxy', label }`); Capture and screenshots
+   * refuse `location-tab` on any other page; the tab is never written to history or the saved
+   * session.
+   */
+  location: TabLocationSchema.nullable().optional(),
 });
 export type TabState = z.infer<typeof TabStateSchema>;
 

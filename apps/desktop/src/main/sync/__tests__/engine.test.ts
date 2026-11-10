@@ -18,6 +18,9 @@ import {
   SYNC_PURGE_DELETE_ORDER,
   SYNC_STATE_TABLE,
   SYNC_TABLES,
+  SYNC_DEVICE_LOCAL_DIFF_TABLE,
+  SYNC_SEARCH_PARAMS_TABLES,
+  searchParamsStayLocal,
   type SyncTableName,
 } from '@app/specs/sync.spec';
 import { ensureSyncState, pullPass, pushPass, quoteIdentifier, runSyncPass, type SyncDirectionReport } from '../engine';
@@ -523,6 +526,54 @@ describe('sync engine', () => {
 // Phase 10 (`workspace-db.feature.md`, Sync position): the devices are real session databases (every
 // migration, Phase 10's columns and tables included); the replica keeps Phase 6's fixture tables, as
 // `SYNC_TABLES` lists them. Workspace flags, competitors, tags and readings never sync.
+// Phase 12 Decision 7 (lead ruling), Task 10b: rows whose search parameters carry a location stay on this device
+// (specs/sync.spec.ts SYNC_SEARCH_PARAMS_TABLES, SYNC_DEVICE_LOCAL_DIFF_TABLE, searchParamsStayLocal; sync-engine.feature.md).
+describe('sync and location rows', () => {
+  const HOME = '{"engine":"google","query":"tea"}';
+  const BERLIN = '{"engine":"google","location":{"label":"Berlin","via":"proxy"},"query":"tea"}';
+  const withParams = (row: unknown[], at: number, params: string | null) => row.map((value, i) => (i === at ? params : value));
+
+  test('location-rows-stay-device-local', async () => {
+    expect([...SYNC_SEARCH_PARAMS_TABLES].sort()).toEqual(SYNC_TABLES.filter((t) => (t.columns as readonly string[]).includes('search_params')).map((t) => t.name).sort());
+    expect(SYNC_DEVICE_LOCAL_DIFF_TABLE).toBe('ci_diffs');
+    for (const [text, local] of [[null, false], [HOME, false], [BERLIN, true], ['not json', true], ['[1]', true], ['"x"', true]] as const) expect(searchParamsStayLocal(text), String(text)).toBe(local);
+    const a = await fx.device('a');
+    await insert(a, 'ci_projects', project(P, 'Site', 1_000));
+    // The same rows with and without a location.
+    await insert(a, 'ci_project_queries', withParams(query(uuid7(3), P, 'home', 1_000), 3, HOME));
+    await insert(a, 'ci_project_queries', withParams(query(uuid7(4), P, 'berlin', 1_000), 3, BERLIN));
+    await insert(a, 'ci_versions', withParams(version(uuid7(10), 1_000), 4, HOME));
+    await insert(a, 'ci_versions', withParams(version(uuid7(11), 1_001, uuid7(10)), 4, HOME));
+    await insert(a, 'ci_versions', withParams(version(uuid7(12), 1_000), 4, BERLIN));
+    await insert(a, 'ci_versions', withParams(version(uuid7(13), 1_001, uuid7(12)), 4, BERLIN));
+    await insert(a, 'ci_captures', withParams(capture(uuid7(20), P, uuid7(10), 1_000), 7, HOME));
+    await insert(a, 'ci_captures', withParams(capture(uuid7(22), P, uuid7(12), 1_000), 7, BERLIN));
+    await insert(a, 'ci_diffs', diff(uuid7(30), uuid7(10), uuid7(11), 1_001));
+    await insert(a, 'ci_diffs', diff(uuid7(31), uuid7(12), uuid7(13), 1_001));
+    await insert(a, 'ci_screenshots', withParams(screenshot(uuid7(40), P, uuid7(20), 1_001), 12, HOME));
+    await insert(a, 'ci_screenshots', withParams(screenshot(uuid7(41), P, uuid7(22), 1_001), 12, BERLIN));
+    await insert(a, 'ci_screenshots', withParams(screenshot(uuid7(42), P, null, 1_001), 12, null));
+
+    const report = await push(a, 'device-a');
+    const ids = async (table: SyncTableName) => (await rowsOf(fx.replica, table)).map((row) => row[0]);
+    expect(await ids('ci_project_queries')).toEqual([uuid7(3)]);
+    expect(await ids('ci_versions')).toEqual([uuid7(10), uuid7(11)]);
+    expect(await ids('ci_captures')).toEqual([uuid7(20)]);
+    expect(await ids('ci_diffs')).toEqual([uuid7(30)]);
+    expect((await ids('ci_screenshots')).sort()).toEqual([uuid7(40), uuid7(42)].sort());
+    // The project, a query, two versions, a capture, a diff and two screenshots.
+    expect(written(report)).toBe(8);
+    expect(await logCount()).toBe(8);
+    // Never on a later pass either (the mark moved past them), and nothing of Berlin reached the replica.
+    expect(written(await push(a, 'device-a'))).toBe(0);
+    for (const { name } of SYNC_TABLES) expect(JSON.stringify(await rowsOf(fx.replica, name)), name).not.toContain('Berlin');
+    // Another device pulls the home rows only.
+    const b = await fx.device('b');
+    await pull(b, 'device-b');
+    expect((await rowsOf(b, 'ci_versions')).map((row) => row[0])).toEqual([uuid7(10), uuid7(11)]);
+  });
+});
+
 describe('sync and the device-local workspace', () => {
   const PHASE_6_SYNC_TABLES = ['ci_projects', 'ci_project_pages', 'ci_project_queries', 'ci_purges', 'ci_tombstones', ...SYNC_PURGE_DELETE_ORDER];
   const PHASE_6_PROJECT_COLUMNS = ['id', 'name', 'render_profile', 'retention_mode', 'retention_value', 'created_at', 'updated_at', 'deleted_at'];

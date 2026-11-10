@@ -41,6 +41,12 @@ drivers where named). Each scenario maps to one named test. Nothing contacts a r
   earlier one's) is deleted, in `SYNC_PURGE_DELETE_ORDER` (children first), in the same batch; so
   a purge whose tombstones span pages is deleted once all have arrived. The rows go from the
   replica's and the session database's tables, though not necessarily from disk (see Known limits).
+- **Device-local rows** (Phase 12 Decision 7, lead ruling): a push skips every row of
+  `SYNC_SEARCH_PARAMS_TABLES` whose `search_params` carry a `location` (`searchParamsStayLocal`), and
+  every `ci_diffs` row whose `to_version_id` names such a version (looked up in the session
+  database, by id, in the same page). They are never written to the replica; the mark moves past them
+  as past any row read. Until a sync-schema bump (a Phase 7 follow-up), an older build would fail to
+  parse a synced `location` (`SearchParamsSchema` is strict). Pull applies whatever the replica holds.
 - **Marks** live in `SYNC_STATE_TABLE` in the replica, keyed by device ID, direction and table;
   the session database gets no table, row or column from sync.
 - **Missing tables.** A table missing on either side (or missing a listed column, or an
@@ -105,6 +111,13 @@ drivers where named). Each scenario maps to one named test. Nothing contacts a r
 - **Scenario: engine-quotes-spec-identifiers** — the SQL the engine runs (a recording driver)
   names no identifier outside `SYNC_TABLES`, their columns and its own tables; a tombstone whose
   `table_name` is `history` (or any SQL) is stored as a row and deletes nothing.
+- **Scenario: location-rows-stay-device-local** (Phase 12 Decision 7, Task 10b; `sync.spec.ts`
+  `SYNC_SEARCH_PARAMS_TABLES`, `SYNC_DEVICE_LOCAL_DIFF_TABLE`, `searchParamsStayLocal`) — a
+  `ci_project_queries`, `ci_versions`, `ci_captures` or `ci_screenshots` row whose `search_params`
+  carry a `location`, and a `ci_diffs` row whose `to_version_id` names such a version, are never
+  pushed (no replica row, no change-log entry), on that pass or any later one; the same rows without
+  `location` are pushed as before. The push mark moves past the skipped rows. Text that does not
+  parse as a JSON object is kept local (fail closed).
 
 ## Service (`service.test.ts`)
 - **Scenario: service-off-loads-nothing** — with no config, or `enabled: false`, or a tampered one,

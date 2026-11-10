@@ -2,7 +2,7 @@
 // specs/seo-content.spec.ts (CONTENT_TABLES), specs/ai-checks.spec.ts (AI_CHECKS_TABLES), specs/workspace-db.spec.ts (WORKSPACE_TABLES),
 // specs/capture-db.spec.ts (SCREENSHOT_EDIT_TABLES; Phase 11 Decision 18: PHASE11_MIGRATIONS after Phase 10's block, 0230 then 0231)
 // specs/site-crawl.spec.ts (SITE_CRAWL_TABLES; Phase 12: 0240/0241 after PHASE11_MIGRATIONS), specs/data-sources.spec.ts (DATA_USAGE_TABLES; 0243)
-// specs/ai-answers.spec.ts (AI_ANSWERS_TABLES; 0242)
+// specs/ai-answers.spec.ts (AI_ANSWERS_TABLES; 0242), specs/location-profiles.spec.ts (LOCATION_PROFILE_TABLES; 0244)
 // Acceptance: specs/browser-session-db.feature.md (Migrations)
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,9 +17,11 @@ import { AI_CHECKS_TABLES } from '@app/specs/ai-checks.spec';
 import { SERP_API_READINGS_TABLES, WORKSPACE_TABLES } from '@app/specs/workspace-db.spec';
 import { SITE_CRAWL_TABLES } from '@app/specs/site-crawl.spec';
 import { DATA_USAGE_TABLES } from '@app/specs/data-sources.spec';
+import { LOCATION_PROFILE_TABLES } from '@app/specs/location-profiles.spec';
 import { AI_ANSWERS_TABLES } from '@app/specs/ai-answers.spec';
 import { seoAiChecks } from '../ai-checks-schema';
 import { dataApiUsage } from '../data-usage-schema';
+import { locationProfiles } from '../location-profiles-schema';
 import { aiAnswers } from '../ai-answers-schema';
 import * as changeIntel from '../change-intel/schema';
 import * as workspace from '../change-intel/workspace-schema';
@@ -86,10 +88,10 @@ describe('migrations', () => {
   test('migrations-create-schema', () => {
     const db = memory();
     expect(runMigrations(db)).toEqual(MIGRATIONS.map((m) => m.id));
-    expect(tableNames(db)).toEqual([...SESSION_TABLES, ...CHANGE_INTEL_TABLES, MIGRATIONS_TABLE, ...AGENT_TABLES, ...AI_CHECKS_TABLES, ...WORKSPACE_TABLES, ...SCREENSHOT_EDIT_TABLES, ...SITE_CRAWL_TABLES, ...AI_ANSWERS_TABLES, ...DATA_USAGE_TABLES, ...SERP_API_READINGS_TABLES].sort());
+    expect(tableNames(db)).toEqual([...SESSION_TABLES, ...CHANGE_INTEL_TABLES, MIGRATIONS_TABLE, ...AGENT_TABLES, ...AI_CHECKS_TABLES, ...WORKSPACE_TABLES, ...SCREENSHOT_EDIT_TABLES, ...SITE_CRAWL_TABLES, ...AI_ANSWERS_TABLES, ...DATA_USAGE_TABLES, ...LOCATION_PROFILE_TABLES, ...SERP_API_READINGS_TABLES].sort());
     // Phase 2.5 Task 3's Content panel notes are session tables too (`seo-content.feature.md`, content-tables-migrate).
     expect(SESSION_TABLES).toEqual(expect.arrayContaining([...CONTENT_TABLES]));
-    for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, renderProfilePins, seoTargetQueries, seoSnippetVariants, appSettings, seoAiChecks, changeIntel.screenshotEdits, dataApiUsage, aiAnswers]) {
+    for (const table of [schemaMigrations, browserTabs, recentVisits, sitePermissions, renderProfilePins, seoTargetQueries, seoSnippetVariants, appSettings, seoAiChecks, changeIntel.screenshotEdits, dataApiUsage, aiAnswers, locationProfiles]) {
       const name = getTableConfig(table).name;
       expect(sqliteColumns(db, name), name).toEqual(drizzleColumns(table));
     }

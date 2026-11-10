@@ -74,6 +74,7 @@ import { createDiagnosticsMain } from './diagnostics/main';
 import { setupDataSources } from './data-sources';
 import { setupCrawl } from './crawl';
 import { createMainCrawlIpc } from './crawl/dialogs';
+import { setupLocations } from './location';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -488,6 +489,8 @@ function start(): void {
     // Help, keyboard shortcuts and What's New (specs/help.feature.md): bundled notes, fixed pages opened on a gesture only.
     const help = createHelpMain({ app, settings: sessionStore.settings, consumeGesture: (windowId) => account.gestures.consume(windowId), log: logSession, diagnostics: createDiagnosticsMain({ app, sessionStore, telemetry: telemetryMain.service, agent, gsc: gsc.service, sync, log: logSession }) });
     // AI checks (specs/ai-checks.feature.md): off by default; only the audit's cookieless served HTML (peeked), on the agent's own route and model.
+    // Location profiles (specs/location-profiles.feature.md): the user's own proxies on in-memory, browse-class partitions; the one proxy `login` listener.
+    const locations = setupLocations({ app, safeStorage, store: sessionStore.locationProfiles, browser, log: logSession });
     const aiChecks = createAiChecksMain({ browser, isBrowseContents, served: () => served, tabUserAgent, tabScripting, agent: agent.checks, sessionStore, log: logSession });
     attachIpcHandler({
       router: appRouter,
@@ -547,6 +550,7 @@ function start(): void {
         help: help.service,
         dataSources: dataSources.service,
         crawl: createMainCrawlIpc(crawl, logSession), // specs/site-crawl.feature.md (Task 7): runs, pages, structure, CSV via main's save dialog.
+        locations: locations.service, // specs/location-profiles.feature.md (Phase 12 Task 10b): profiles (no secret back) and New tab in location.
         aiAnswers, // specs/ai-answers.feature.md (Phase 12 Task 9): kept AI answers, the view's run, retention and AI search settings.
       },
     });

@@ -161,7 +161,9 @@ export function setupSerp(options: SerpSetupOptions): SerpSetup {
       if (!contents) return null;
       const profile = tab.renderProfile;
       const preset = profile && profile.status !== 'failed' ? profile.profile.device : 'none';
-      return { contentsId: contents.id, url: contents.getURL(), documentSeq: tab.documentSeq, loading: tab.loading, device: SERP_DEVICE_OF_PRESET[preset], page: contents };
+      // A location tab's (Phase 12 Task 10b): its results are asked from that place, through its proxy.
+      const location = tab.location ? { via: 'proxy' as const, label: tab.location.label } : null;
+      return { contentsId: contents.id, url: contents.getURL(), documentSeq: tab.documentSeq, loading: tab.loading, device: SERP_DEVICE_OF_PRESET[preset], location, page: contents };
     },
     tabOf(contentsId) {
       const contents = pages.get(contentsId);

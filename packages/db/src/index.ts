@@ -15,6 +15,7 @@ export type { AgentSkillPrefsRepository, StoredSkillPref } from './agent-skill-p
 export type { AgentMcpRepository, AgentMcpServerWrite, StoredAgentMcpServer } from './agent-mcp';
 export type { AiChecksRepository } from './ai-checks';
 export type { DataUsageRepository } from './data-usage';
+export type { LocationProfilesRepository, LocationProfileValues, StoredLocationProfile } from './location-profiles';
 export type { AiAnswersPage, AiAnswersPageInput, AiAnswersRepository, AiAnswerWrite } from './ai-answers';
 export type { CrawlDiscovery, CrawlFrontierEntry, CrawlLink, CrawlRunPatch, CreateCrawlRunInput, SiteCrawlRepository, StoredCrawlFrontierEntry } from './site-crawl/repository';
 export {

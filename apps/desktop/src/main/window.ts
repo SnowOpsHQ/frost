@@ -2,6 +2,7 @@ import path from 'node:path';
 import { BrowserWindow, WebContentsView } from 'electron';
 import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import { isLocationPartition, LOCATION_WEBRTC_POLICY } from '@app/specs/location-profiles.spec';
 
 /**
  * Creates the app's main window. The four security-critical webPreferences are set explicitly
@@ -38,10 +39,11 @@ export function createMainWindow(): BrowserWindow {
  * the partition only, never the preferences. `tab-view.test.ts` keeps the options equal to the
  * spec. The app-wide guard (`security/register.ts`) classifies the new WebContents by its session
  * (the browse-class registry) and applies the browse guard; on a session that is not browse-class
- * it keeps the app pin (fail closed).
+ * it keeps the app pin (fail closed). On a location partition (`frost-location-<id>`) the view's
+ * WebContents also gets `LOCATION_WEBRTC_POLICY` before it is returned.
  */
 export function createTabView(partition: string = BROWSE_PARTITION): WebContentsView {
-  return new WebContentsView({
+  const view = new WebContentsView({
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
@@ -53,6 +55,11 @@ export function createTabView(partition: string = BROWSE_PARTITION): WebContents
       disableDialogs: true,
     },
   });
+  // A location profile's tab (Phase 12 Task 10b, `location-profiles.spec.ts`): WebRTC may use only
+  // proxied UDP. A WebContents setting (no session has it), applied here, before the caller can load
+  // anything in the view.
+  if (isLocationPartition(partition)) view.webContents.setWebRTCIPHandlingPolicy(LOCATION_WEBRTC_POLICY);
+  return view;
 }
 
 /**

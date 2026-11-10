@@ -25,6 +25,7 @@ import { helpPaletteSources } from '../help-palette';
 import { crawlPaletteSources } from '../crawl-palette';
 import { aiAnswersPaletteSources } from '../ai-answers-palette';
 import { dataSourcesPaletteSources } from '../data-sources-palette';
+import { locationPaletteSources } from '../location-palette';
 
 const URL_A = 'https://www.example.com/a';
 const READY: SeoAuditResponse = { status: 'ready', url: URL_A, audit: { url: URL_A, takenAt: 1, schema: { blocks: [] } } as unknown as SeoAudit };
@@ -63,6 +64,8 @@ function everySource(): PaletteSource[] {
     ...aiAnswersPaletteSources({ open: vi.fn() }),
     // Phase 12 Task 4: "Check searches via <provider>", offered (a vendor named, a project opened) so its id is checked too.
     ...dataSourcesPaletteSources({ provider: () => 'serpapi', refresh: vi.fn(), lastProject: () => 'x', openCheck: vi.fn() }),
+    // Phase 12 Task 10b (location-profiles.feature.md): "New tab in location: <name>" per profile, and "Manage locations".
+    ...locationPaletteSources({ profiles: () => [{ id: '01920000-0000-7000-8000-0000000000c1', label: 'Berlin' }], refresh: vi.fn(), newTab: vi.fn(async () => 'opened' as const), openSettings: vi.fn() }),
   ];
 }
 

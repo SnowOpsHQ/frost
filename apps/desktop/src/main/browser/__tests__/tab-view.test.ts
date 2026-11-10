@@ -2,6 +2,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { BROWSE_PARTITION, TAB_VIEW_WEB_PREFERENCES } from '@app/specs/browser.spec';
 import { HARDENED_WEB_PREFERENCES } from '@app/specs/window-hardening.spec';
+import { LOCATION_WEBRTC_POLICY, locationPartition } from '@app/specs/location-profiles.spec';
 import type { FakeWebContentsView } from '../../../test/electron-fake';
 import { createTabView } from '../../window';
 
@@ -30,5 +31,22 @@ describe('createTabView', () => {
 
   test('tab-view-disables-dialogs', () => {
     expect(webPreferencesOf()['disableDialogs']).toBe(true);
+  });
+});
+
+// Phase 12 Task 10b (specs/location-profiles.spec.ts LOCATION_WEBRTC_POLICY; location-profiles.feature.md,
+// location-tab-webrtc-proxied-only): a location partition's tab view gets the WebRTC policy at creation, before any load.
+describe('createTabView on a location partition', () => {
+  test('location-tab-webrtc-proxied-only', () => {
+    const partition = locationPartition('01920000-0000-7000-8000-0000000000c1');
+    const view = createTabView(partition) as unknown as FakeWebContentsView;
+    // Only the partition changes; the hardened preferences stay the spec's.
+    expect({ ...view.options.webPreferences }).toEqual({ ...TAB_VIEW_WEB_PREFERENCES, partition });
+    const contents = view.webContents as unknown as { setWebRTCIPHandlingPolicy: ReturnType<typeof vi.fn>; loadURL?: unknown };
+    expect(contents.setWebRTCIPHandlingPolicy).toHaveBeenCalledExactlyOnceWith(LOCATION_WEBRTC_POLICY);
+    expect(LOCATION_WEBRTC_POLICY).toBe('disable_non_proxied_udp');
+    // A home tab keeps Chromium's default.
+    const home = createTabView() as unknown as FakeWebContentsView;
+    expect((home.webContents as unknown as { setWebRTCIPHandlingPolicy: ReturnType<typeof vi.fn> }).setWebRTCIPHandlingPolicy).not.toHaveBeenCalled();
   });
 });

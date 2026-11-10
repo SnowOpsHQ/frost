@@ -46,6 +46,11 @@ export interface ChangesTabs {
   overridesOn?(tabId: number): boolean;
   /** The tab's override revision (`TabState.overridesRevision`); absent: no revision check. */
   overridesRevision?(tabId: number): number;
+  /**
+   * The tab's location (Phase 12 Task 10b, `TabState.location`), `null` for a home tab; absent (older
+   * fakes): none. A location tab captures only pages whose search parameters carry `location`.
+   */
+  locationOf?(tabId: number): { readonly profileId: string; readonly label: string } | null;
 }
 
 export interface ChangesServiceDeps {
@@ -188,6 +193,14 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     if (stampedOn(response.tabOverrides)) return 'tab-emulation-on';
     return { contents, response, page };
   };
+  /** Whether the tab runs on a location profile's proxy (a failure to tell counts as yes: fail closed). */
+  const onLocationTab = (tabId: number): boolean => {
+    try {
+      return (tabs.locationOf?.(tabId) ?? null) !== null;
+    } catch {
+      return true;
+    }
+  };
   /** Whether an audit's stamp shows any override on (absent: all off). */
   const stampedOn = (stamp: TabOverrides | undefined): boolean => stamp !== undefined && !isDefaultTabOverrides(stamp);
   /** The tab's override revision now (`undefined`: not known, so not checked). */
@@ -278,6 +291,9 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
     const params = given === null ? null : SearchParamsSchema.safeParse(given);
     if (params !== null && !params.success) return failed('invalid-page', 'its search parameters do not fit their schema');
     const searchParams = params?.data ?? null;
+    // A location tab (Phase 12 Decision 11): only a result page read with the tab's location is captured;
+    // any other page would read as the user's own connection. Refused before anything is read or stored.
+    if (onLocationTab(tabId) && searchParams?.location === undefined) return refused('location-tab');
     // The audit's profile in effect, by the rule screenshots follow too (`profile-in-effect.ts`).
     const profile = recordedProfile(response.renderProfile ?? null);
     if (profile === undefined) return failed('invalid-page', 'its render profile does not fit its schema');
@@ -476,9 +492,10 @@ export function createChangesService(deps: ChangesServiceDeps): MainChangesServi
   return service;
 }
 
-/** What `changesTabs` reads of a tab's state (`TabState`): its overrides, document marker and revision. */
+/** What `changesTabs` reads of a tab's state (`TabState`): its overrides, document marker, revision and location. */
 interface OverridesOfTab {
   readonly id: number;
+  readonly location?: { readonly profileId: string; readonly label: string } | null;
   readonly tabOverrides?: TabOverrides;
   readonly loadedUnderOverrides?: boolean;
   readonly overridesRevision?: number;
@@ -498,6 +515,8 @@ export function changesTabs(
       return tab !== undefined && ((tab.tabOverrides !== undefined && !isDefaultTabOverrides(tab.tabOverrides)) || tab.loadedUnderOverrides === true);
     },
     overridesRevision: (tabId) => tabOf(tabId)?.overridesRevision ?? 0,
+    // Phase 12 Task 10b: the tab's location, set at its creation (`null`: home, or no such tab).
+    locationOf: (tabId) => tabOf(tabId)?.location ?? null,
     activeTabId: () => browser.getState().activeTabId,
     contentsOf,
     getAudit: (tabId) => browser.seo.getAudit(tabId),
