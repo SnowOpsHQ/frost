@@ -103,10 +103,10 @@ fails by name rather than as an image difference. Then every capture waits until
   and TTFB / DOM ready / Load values, and the largest requests' durations (all hidden by
   visual.css). A transient message (the palette's status pill) is waited out, not captured.
 - **Order independence.** In the shared app each state starts from one tab, every sheet, bar and
-  drawer closed, the sidebar open, and the scrollers a capture moves (`.seo-body`,
-  `.settings-content`, `.projects-main`) back at the top.
-- **Distinct sizes.** The guide's two images are valid PNGs of different byte sizes (one padded
-  with a `tEXt` chunk): Page Speed's Largest requests sorts by size and keeps equal sizes in load
+  drawer closed, the sidebar open, and the SEO panel's scroller (`.seo-body`) back at the top (the
+  Settings and Projects sheets are closed, so their scrollers start at the top when reopened).
+- **Distinct sizes.** The guide's two images are valid PNGs of different byte sizes (each padded
+  with a `tEXt` chunk of its own length): Page Speed's Largest requests sorts by size and keeps equal sizes in load
   order, which would follow timing.
 - **No pointer or focus noise.** Focus leaves the chrome (except where the focused field is the
   state: find bar, palette) and the pointer rests on the status bar. `animations: 'disabled'`,
@@ -163,10 +163,11 @@ uploads `apps/desktop/test-results/` in the `playwright-report` artifact.
 5. Commit the PNGs, push, and run CI again: the visual suite passes.
 
 **A change that must not move anything** (a token-only foundation PR): a green run is necessary but
-not sufficient, as up to 0.2 % of each image may differ. Also check that CI's log shows no
-`toHaveScreenshot` difference at all for the visual suite (a passing comparison prints nothing), or
-run the suite with `VISUAL_STRICT=1` (locally against CI-made baselines is not meaningful; in CI,
-e.g. by setting the variable on the e2e step for that run), where any differing pixel fails.
+not sufficient, as up to 0.2 % of each image may differ and a passing comparison prints nothing.
+Prove it with `VISUAL_STRICT=1`, where any differing pixel fails: in CI, by setting the variable on
+the e2e step for that run (locally against CI-made baselines is not meaningful). A strict failure
+can be the known anti-aliasing noise (the Search Console range select's chevron in dark, 2 pixels by
+one RGB step), so look at its diff image before treating it as a real change.
 
 **Local runs**: a local run (Wayland/Hyprland, other fonts and scale) writes missing images and
 compares against them, useful to look at a state or to check that two runs on one machine agree.

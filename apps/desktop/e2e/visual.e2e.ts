@@ -294,6 +294,12 @@ async function settled(): Promise<void> {
 }
 
 /**
+ * `VISUAL_STRICT=1`: no pixel may differ at all (`maxDiffPixels: 0`), for a local run or an explicit
+ * check of a change that must not move anything; by default up to 0.2 % may (playwright.config.ts).
+ */
+const STRICT = process.env['VISUAL_STRICT'] === '1' ? { maxDiffPixels: 0, maxDiffPixelRatio: 0 } : {};
+
+/**
  * Captures the chrome page as `<name>-light.png` and `<name>-dark.png`, once it has `settled()`.
  * Focus leaves the chrome (unless `keepFocus`: the state is about a focused field) and the pointer
  * rests on the status bar, so no focus ring or hover depends on what the flow clicked last. The
@@ -306,14 +312,16 @@ async function capture(name: CaptureName, options: { readonly keepFocus?: boolea
   if (!options.keepFocus) await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.mouse.move(Math.round(WINDOW.width / 2), WINDOW.height - 4);
   await settled();
-  if (options.scroll) {
-    await scrollTo(options.scroll);
-    await settled();
-  }
   const key = await app!.evaluate(({ BrowserWindow }, css) => BrowserWindow.getAllWindows()[0]!.webContents.insertCSS(css), VISUAL_CSS);
   try {
     // visual.css's marker: the sheet is in effect.
     await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--frost-visual-css').trim())).toBe('on');
+    // Scrolled with the sheet in effect (it removes or shortens content inside some scrollers), so
+    // the position checked is the position captured.
+    if (options.scroll) {
+      await scrollTo(options.scroll);
+      await settled();
+    }
     const backgrounds: string[] = [];
     for (const scheme of THEMES) {
       await page.emulateMedia({ colorScheme: scheme });
@@ -327,12 +335,6 @@ async function capture(name: CaptureName, options: { readonly keepFocus?: boolea
     await page.emulateMedia({ colorScheme: null });
   }
 }
-
-/**
- * `VISUAL_STRICT=1`: no pixel may differ at all (`maxDiffPixels: 0`), for a local run or an explicit
- * check of a change that must not move anything; by default up to 0.2 % may (playwright.config.ts).
- */
-const STRICT = process.env['VISUAL_STRICT'] === '1' ? { maxDiffPixels: 0, maxDiffPixelRatio: 0 } : {};
 
 /**
  * Where a "-lower" capture looks: `selector`'s scroller (the SEO panel's `.seo-body`, the Settings
@@ -351,6 +353,8 @@ async function scrollTo(scroll: Scroll): Promise<void> {
     return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight, wanted };
   }, 'top' in scroll ? scroll.top : null);
   expect(reached.max, `${scroll.selector} has something below the fold`).toBeGreaterThan(0);
+  // A fixed offset is really below the end: a shorter scroller would quietly capture its end instead.
+  if ('top' in scroll) expect(reached.wanted, `${scroll.selector} reaches ${reached.wanted} px`).toBeLessThanOrEqual(reached.max);
   // Within a pixel: a fractional device scale (a local run) rounds the scroll position.
   expect(Math.abs(reached.top - Math.min(reached.wanted, reached.max)), `${scroll.selector} scrolled to ${reached.wanted}`).toBeLessThanOrEqual(1);
 }
@@ -447,7 +451,7 @@ test.describe('page surfaces', () => {
     // Navigation card's numbers, the largest requests' durations, the "updated … ago" line).
     await capture('seo-page-speed');
     // Below the fold, almost three screens in all: one screen down (the vitals' end, Issues,
-    // Navigation timing), then the end (Requests, Largest requests, Hosts, DOM).
+    // Navigation timing, Requests), then the end (Requests, Largest requests, Hosts, DOM).
     await capture('seo-page-speed-middle', { scroll: { selector: '.seo-body', top: 600 } });
     await capture('seo-page-speed-lower', { scroll: { selector: '.seo-body', to: 'end' } });
   });
@@ -809,6 +813,8 @@ test.describe('update bar', () => {
 
 test('every capture has a baseline', () => {
   // Every listed name is still captured somewhere in this file (a removed capture leaves its name).
+  // A plain text search: it guards against leftover names, not against a call that is commented
+  // out or skipped, and it expects the name on the same line as `capture(`.
   const source = readFileSync(fileURLToPath(import.meta.url), 'utf8');
   expect(CAPTURES.filter((name) => !source.includes(`capture('${name}'`)), 'CAPTURES entries no capture() call uses').toEqual([]);
   const expected = baselineFiles();
