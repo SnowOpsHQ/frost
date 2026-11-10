@@ -20,10 +20,18 @@ import { RESPONSE_LIMITS } from './seo-indexability.spec';
 import { SNAPSHOT_LIMITS } from './seo-limits.spec';
 import { SEO_SEVERITIES } from './seo-rules.spec';
 import {
+  CRAWL_INDEXABLE_FILTERS,
   CRAWL_INTERVAL_MS,
   CRAWL_KEEP_HEADERS,
   CRAWL_LIMITS as L,
   CRAWL_PAGE_OUTCOMES,
+  CRAWL_PAGE_SORTS,
+  CRAWL_PAGES_LIMITS,
+  CRAWL_READ_REFUSALS,
+  CRAWL_REFUSALS,
+  CRAWL_SORT_DIRECTIONS,
+  CRAWL_STATUS_CLASSES,
+  CRAWL_TREE_LIMITS,
   CRAWL_PRIVATE_START_SCOPES,
   CRAWL_ROBOTS_VERDICTS,
   CRAWL_RULE_IDS,
@@ -31,6 +39,7 @@ import {
   CRAWL_RUN_STATES,
   CRAWL_SCOPES,
   type CrawlScope,
+  type CrawlServiceAnswer,
 } from './site-crawl.spec';
 import { parseWebUrl } from './web-url.spec';
 
@@ -244,3 +253,109 @@ export const CrawlPageAnalysisSchema = z.strictObject({
   links: z.array(CrawlFoundLinkSchema).max(SNAPSHOT_LIMITS.maxLinks),
 });
 export type CrawlPageAnalysis = z.infer<typeof CrawlPageAnalysisSchema>;
+
+
+// ---- Pages and Site structure: the `crawl.*` procedures (Task 7) ---------------------------------
+
+/** A run named by its id (`pause`, `resume`, `cancel`, `delete`). */
+export const CrawlRunIdInputSchema = z.strictObject({ runId: id });
+
+/** `crawl.watch`'s input: the last version the renderer saw (`0`: none). */
+export const CrawlWatchInputSchema = z.strictObject({ sinceVersion: z.int().min(0).max(Number.MAX_SAFE_INTEGER) });
+
+/** `crawl.watch`'s answer: the crawl view (`CrawlStatusViewSchema`) and the change counter it was read at. */
+export const CrawlWatchViewSchema = z.strictObject({ version: z.int().min(0).max(Number.MAX_SAFE_INTEGER), status: CrawlStatusViewSchema });
+export type CrawlWatchView = z.infer<typeof CrawlWatchViewSchema>;
+
+/** The crawl service's answers as they cross IPC (`CrawlServiceAnswer`): `unavailable` carries the gate's note. */
+export const CrawlServiceAnswerSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.enum(['started', 'resumed']), runId: id }),
+  z.strictObject({ status: z.literal('ok') }),
+  z.strictObject({ status: z.literal('refused'), reason: z.enum(CRAWL_REFUSALS), note: z.string().min(1).max(256).optional() }),
+]) satisfies z.ZodType<CrawlServiceAnswer>;
+
+/** The Pages view's filters (`CRAWL_PAGE_FILTERS`), each optional, combined with AND. */
+export const CrawlPageFilterSchema = z.strictObject({
+  status: z.enum(CRAWL_STATUS_CLASSES).optional(),
+  indexable: z.enum(CRAWL_INDEXABLE_FILTERS).optional(),
+  finding: z.enum(CRAWL_RULE_IDS).optional(),
+  depth: z.int().min(0).max(L.maxDepth).optional(),
+  linksCut: z.literal(true).optional(),
+});
+export type CrawlPageFilter = z.infer<typeof CrawlPageFilterSchema>;
+
+const sorted = {
+  filter: CrawlPageFilterSchema,
+  sort: z.enum(CRAWL_PAGE_SORTS),
+  direction: z.enum(CRAWL_SORT_DIRECTIONS),
+};
+
+/** `crawl.pages`: one page of a run's pages, filtered and sorted in SQL, at most `CRAWL_PAGES_LIMITS.maxPageSize` rows. */
+export const CrawlPagesInputSchema = z.strictObject({
+  runId: id,
+  ...sorted,
+  offset: z.int().min(0).max(L.maxPagesCap),
+  limit: z.int().min(1).max(CRAWL_PAGES_LIMITS.maxPageSize),
+});
+export type CrawlPagesInput = z.infer<typeof CrawlPagesInputSchema>;
+
+/** One row of the Pages view: the stored page (`CrawlPageRowSchema`, without its run id) and its in-links (the frontier's count). */
+export const CrawlPageListRowSchema = z.strictObject({ ...CrawlPageRowSchema.shape, inlinks: count }).omit({ runId: true });
+export type CrawlPageListRow = z.infer<typeof CrawlPageListRowSchema>;
+
+const readRefused = z.strictObject({ status: z.literal('refused'), reason: z.enum(CRAWL_READ_REFUSALS) });
+
+/** `crawl.pages`' answer: the rows asked for, from `offset`, and how many pages the filter selects (`total`). */
+export const CrawlPagesAnswerSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('ok'), total: count, offset: count, rows: z.array(CrawlPageListRowSchema).max(CRAWL_PAGES_LIMITS.maxPageSize) }),
+  readRefused,
+]);
+export type CrawlPagesAnswer = z.infer<typeof CrawlPagesAnswerSchema>;
+
+/**
+ * A node of the path tree: a URL text prefix ending in `/` (an origin's root, `https://example.com/`,
+ * or a folder under it, `https://example.com/blog/`).
+ */
+export const CrawlTreePrefixSchema = z
+  .string()
+  .min(1)
+  .max(L.maxUrlChars)
+  .refine((value) => value.endsWith('/') && parseWebUrl(value) !== null, { message: 'a tree prefix is an http(s) URL ending in /' });
+
+/** `crawl.structure`: the tree's level under `prefix` (`null`: the run's origins), its depth histogram and its orphans. */
+export const CrawlStructureInputSchema = z.strictObject({ runId: id, prefix: CrawlTreePrefixSchema.nullable() });
+export type CrawlStructureInput = z.infer<typeof CrawlStructureInputSchema>;
+
+/**
+ * One node of a tree level: its label (an origin, or one path segment as stored, percent-encoded; `''`
+ * is the folder's own page), the pages under it (itself and below, query variants included), the
+ * prefix to read its children with (`null`: no page below it), and its own page's URL when the crawl
+ * recorded one exactly there (`null`: none).
+ */
+export const CrawlTreeNodeSchema = z.strictObject({
+  label: z.string().max(L.maxUrlChars),
+  pages: count,
+  prefix: z.string().min(1).max(L.maxUrlChars).nullable(),
+  url: z.string().min(1).max(L.maxUrlChars).nullable(),
+});
+export type CrawlTreeNode = z.infer<typeof CrawlTreeNodeSchema>;
+
+/** `crawl.structure`'s answer. `tree.more`: nodes of this level not sent (the level holds `nodes.length + more`). */
+export const CrawlStructureAnswerSchema = z.discriminatedUnion('status', [
+  z.strictObject({
+    status: z.literal('ok'),
+    tree: z.strictObject({ prefix: z.string().min(1).max(L.maxUrlChars).nullable(), nodes: z.array(CrawlTreeNodeSchema).max(CRAWL_TREE_LIMITS.maxChildren), more: count }),
+    depths: z.array(z.strictObject({ depth: z.int().min(0).max(L.maxDepth), pages: count })).max(L.maxDepth + 1),
+    orphans: z.strictObject({ urls: z.array(z.string().min(1).max(L.maxUrlChars)).max(CRAWL_TREE_LIMITS.maxOrphansShown), total: count }),
+  }),
+  readRefused,
+]);
+export type CrawlStructureAnswer = z.infer<typeof CrawlStructureAnswerSchema>;
+
+/** `crawl.exportCsv`: a run's pages the filter selects, in the sort. Never a path or a file name: main asks in its own dialog. */
+export const CrawlCsvInputSchema = z.strictObject({ runId: id, ...sorted });
+export type CrawlCsvInput = z.infer<typeof CrawlCsvInputSchema>;
+
+/** `crawl.exportCsv`'s answer: written (`rows` lines, the header aside), the dialog cancelled (nothing written), or refused. */
+export const CrawlCsvAnswerSchema = z.discriminatedUnion('status', [z.strictObject({ status: z.literal('saved'), rows: count }), z.strictObject({ status: z.literal('cancelled') }), readRefused]);
+export type CrawlCsvAnswer = z.infer<typeof CrawlCsvAnswerSchema>;

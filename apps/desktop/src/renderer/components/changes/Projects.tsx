@@ -65,6 +65,7 @@ import { ProjectSettings } from './ProjectSettings';
 import { lastOpenedProject, notifyProjectsChanged, openProjects, setLastOpenedProject, useProjectsRequest } from './projects-sheet';
 import { Rankings } from './Rankings';
 import { Retention } from './Retention';
+import { SiteCrawlButton } from '../crawl/SiteCrawlButton';
 
 // The Projects sheet (acceptance `projects.feature.md`, The sheet): over the page column like
 // History, it lists the projects (Unfiled first) with create, inline rename and delete (main asks
@@ -558,6 +559,7 @@ function ProjectView({
         <h2 className="projects-detail-name" data-testid="projects-name">
           <Text value={project.name} />
         </h2>
+        <SiteCrawlButton project={project} />
         {!project.unfiled ? (
           <button type="button" className="projects-small-button projects-danger" data-testid="projects-delete" disabled={mine && busy} onClick={() => void remove()}>
             Delete project…

@@ -1,16 +1,33 @@
-import { and, asc, count, desc, eq, gte, inArray, lt, sql, type InferSelectModel } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, sql, type InferSelectModel, type SQL } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
-import { CRAWL_FAILED_OUTCOMES, CRAWL_LIMITS, CRAWL_REFUSED_OUTCOMES, CRAWL_RULE_IDS, type CrawlDiscoverySource, type CrawlFrontierState, type CrawlRunReason, type CrawlRunState } from '@app/specs/site-crawl.spec';
+import {
+  CRAWL_FAILED_OUTCOMES,
+  CRAWL_LIMITS,
+  CRAWL_PAGES_LIMITS,
+  CRAWL_REFUSED_OUTCOMES,
+  CRAWL_RULE_IDS,
+  CRAWL_TREE_LIMITS,
+  type CrawlDiscoverySource,
+  type CrawlFrontierState,
+  type CrawlPageSort,
+  type CrawlRunReason,
+  type CrawlRunState,
+  type CrawlSortDirection,
+} from '@app/specs/site-crawl.spec';
 import {
   CrawlFindingSchema,
+  CrawlPageListRowSchema,
   CrawlPageRowSchema,
   CrawlRunViewSchema,
   CrawlSettingsSchema,
   CrawlUrlSchema,
+  type CrawlPageFilter,
+  type CrawlPageListRow,
   type CrawlPageRow,
   type CrawlRunCounts,
   type CrawlRunView,
   type CrawlSettings,
+  type CrawlTreeNode,
 } from '@app/specs/site-crawl.schema';
 import type { SessionDatabase } from '../client';
 import { uuidv7 } from '../change-intel/ids';
@@ -67,6 +84,22 @@ export interface CrawlRunPatch {
   readonly finishedAt?: number | null;
 }
 
+/** One page of a run's pages as the Pages view asks for it (Task 7): filtered and sorted in SQL. */
+export interface CrawlPagesQuery {
+  readonly filter: CrawlPageFilter;
+  readonly sort: CrawlPageSort;
+  readonly direction: CrawlSortDirection;
+  readonly offset: number;
+  /** At most `CRAWL_PAGES_LIMITS.maxPageSize` (a larger one reads that many). */
+  readonly limit: number;
+}
+
+/** One level of a run's path tree (Task 7): its nodes, most pages first, and how many more it holds. */
+export interface CrawlTreeLevel {
+  readonly nodes: CrawlTreeNode[];
+  readonly more: number;
+}
+
 export interface SiteCrawlRepository {
   /** Creates a `queued` run (a fresh UUIDv7 id). Throws on settings `CrawlSettingsSchema` refuses (nothing written). */
   createRun(input: CreateCrawlRunInput): Promise<CrawlRunView>;
@@ -111,6 +144,27 @@ export interface SiteCrawlRepository {
   queryVariantCount(runId: string, base: string): Promise<number>;
   /** The run's page rows counted: all of them, those refused (`CRAWL_REFUSED_OUTCOMES`) and failed (`CRAWL_FAILED_OUTCOMES`), and their bytes (Task 6b: a resumed run's counts). */
   pageCounts(runId: string): Promise<Pick<CrawlRunCounts, 'pages' | 'refused' | 'failed' | 'bytes'>>;
+  /**
+   * Task 7: the run's pages `query.filter` selects (`total`) and, sorted by `query.sort`, the rows from
+   * `query.offset` (at most `query.limit`, capped at `CRAWL_PAGES_LIMITS.maxPageSize`), each with its
+   * in-links from the frontier. A malformed stored row is skipped (the total still counts it).
+   */
+  pagesPage(runId: string, query: CrawlPagesQuery): Promise<{ total: number; rows: CrawlPageListRow[] }>;
+  /**
+   * Task 7: one level of the run's path tree, read in SQL: under `prefix` (an `http(s)` URL text ending
+   * in `/`), the path segments of the run's page URLs; with `prefix` `null`, their origins. At most
+   * `limit` nodes, most pages first, then by label; the rest are counted (`more`).
+   */
+  treeLevel(runId: string, prefix: string | null, limit: number): Promise<CrawlTreeLevel>;
+  /**
+   * Task 7 (CSV export): the ids of the run's pages the filter selects, in the sort, at most `limit`
+   * (one statement: the export's fixed set and order, so rows written or changed meanwhile never move it).
+   */
+  pageOrder(runId: string, query: Omit<CrawlPagesQuery, 'offset' | 'limit'>, limit: number): Promise<number[]>;
+  /** Task 7 (CSV export): the run's pages with these ids (at most `CRAWL_PAGES_LIMITS.maxPageSize`), in the order of `ids`; ids gone or malformed are skipped. */
+  pagesByIds(runId: string, ids: readonly number[]): Promise<CrawlPageListRow[]>;
+  /** Task 7: the run's pages per click depth, shallowest first (depths with no page left out). */
+  depthHistogram(runId: string): Promise<{ depth: number; pages: number }[]>;
   /** The run's orphans (a sitemap listed them, no crawled page links to them), in discovery order. */
   orphansOf(runId: string, page: { readonly limit: number; readonly offset: number }): Promise<string[]>;
   orphanCount(runId: string): Promise<number>;
@@ -189,6 +243,71 @@ function pageRow(row: InferSelectModel<typeof crawlPages>): CrawlPageRow | null 
 }
 
 const present = <T>(value: T | null): value is T => value !== null;
+
+const STATUS_RANGES = { '2xx': [200, 299], '3xx': [300, 399], '4xx': [400, 499], '5xx': [500, 599] } as const;
+
+/** The Pages view's filter as SQL conditions on `crawl_pages` (every value is bound, never spliced). */
+function pageConditions(runId: string, filter: CrawlPageFilter): SQL[] {
+  const where: SQL[] = [eq(crawlPages.runId, runId)];
+  if (filter.status === 'none') where.push(isNull(crawlPages.status));
+  else if (filter.status !== undefined) {
+    const [low, high] = STATUS_RANGES[filter.status];
+    where.push(sql`${crawlPages.status} BETWEEN ${low} AND ${high}`);
+  }
+  if (filter.indexable === 'yes') where.push(eq(crawlPages.indexable, true));
+  else if (filter.indexable === 'no') where.push(eq(crawlPages.indexable, false));
+  else if (filter.indexable === 'unknown') where.push(isNull(crawlPages.indexable));
+  if (filter.finding !== undefined) where.push(sql`EXISTS (SELECT 1 FROM json_each(${crawlPages.findings}) WHERE json_extract(value, '$.id') = ${filter.finding})`);
+  if (filter.depth !== undefined) where.push(eq(crawlPages.depth, filter.depth));
+  if (filter.linksCut === true) where.push(eq(crawlPages.linksCut, true));
+  return where;
+}
+
+/** In-links of a page: its frontier entry's (the authority), `0` without one. */
+const inlinksOf = sql<number>`coalesce(${crawlFrontier.inlinks}, 0)`;
+
+/** The sort key of each `CRAWL_PAGE_SORTS` entry; `nullable` keys sort their `NULL`s last either way. */
+const SORT_KEYS: Readonly<Record<CrawlPageSort, { readonly key: SQL | typeof crawlPages.id; readonly nullable: boolean }>> = {
+  order: { key: crawlPages.id, nullable: false },
+  url: { key: sql`${crawlPages.url}`, nullable: false },
+  status: { key: sql`${crawlPages.status}`, nullable: true },
+  depth: { key: sql`${crawlPages.depth}`, nullable: false },
+  inlinks: { key: inlinksOf, nullable: false },
+  score: { key: sql`${crawlPages.score}`, nullable: true },
+  words: { key: sql`${crawlPages.wordCount}`, nullable: true },
+};
+
+/** A page's frontier entry, joined on `(run_id, url)`. */
+const joinFrontier = and(eq(crawlFrontier.runId, crawlPages.runId), eq(crawlFrontier.url, crawlPages.url));
+
+/** The Pages view's order: a nullable key's `NULL`s last, the key, then the crawl's order (the row id). */
+function orderOf(sort: CrawlPageSort, direction: CrawlSortDirection): SQL[] {
+  const { key, nullable } = SORT_KEYS[sort] ?? SORT_KEYS.order;
+  const keyed = sql`${key}`;
+  return [...(nullable ? [sql`${key} IS NULL`] : []), direction === 'desc' ? desc(keyed) : asc(keyed), asc(crawlPages.id)];
+}
+
+/** A joined page row as the Pages view lists it (no run id, its in-links), or `null` when it no longer parses. */
+function listRow({ page, inlinks }: { readonly page: InferSelectModel<typeof crawlPages>; readonly inlinks: unknown }): CrawlPageListRow | null {
+  const row = pageRow(page);
+  if (row === null) return null;
+  const { runId: _runId, ...rest } = row;
+  const parsed = CrawlPageListRowSchema.safeParse({ ...rest, inlinks: Number(inlinks) });
+  return parsed.success ? parsed.data : null;
+}
+
+/** Rows of a raw `db.all` (the driver may answer each row as an array of columns, in select order, or as an object). */
+function rowsOf<T extends Record<string, unknown>>(result: unknown, names: readonly (keyof T & string)[]): T[] {
+  if (!Array.isArray(result)) return [];
+  return result.map((row) => (Array.isArray(row) ? (Object.fromEntries(names.map((name, i) => [name, row[i]])) as T) : (row as T)));
+}
+
+/** A URL text prefix ending in `/` as a half-open range on the `(run_id, url)` index: `/` + 1 is `0`. */
+const prefixEnd = (prefix: string): string => `${prefix.slice(0, -1)}0`;
+
+/** Where the first `/`, `?` or `#` of `rest` is (1-based), or past its end: one tree segment's end. */
+const SEGMENT_END = (rest: SQL) =>
+  sql`min(iif(instr(${rest}, '/') > 0, instr(${rest}, '/'), length(${rest}) + 1), iif(instr(${rest}, '?') > 0, instr(${rest}, '?'), length(${rest}) + 1), iif(instr(${rest}, '#') > 0, instr(${rest}, '#'), length(${rest}) + 1))`;
 
 export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlRepository {
   const pageId = async (runId: string, url: string): Promise<number | null> => {
@@ -448,6 +567,88 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
         if (FAILED.has(outcome)) counts.failed += n;
       }
       return counts;
+    },
+
+    async pagesPage(runId, { filter, sort, direction, offset, limit }) {
+      const where = and(...pageConditions(runId, filter));
+      const [counted] = await db.select({ n: count() }).from(crawlPages).where(where);
+      const total = counted?.n ?? 0;
+      const rows = await db
+        .select({ page: crawlPages, inlinks: inlinksOf })
+        .from(crawlPages)
+        .leftJoin(crawlFrontier, joinFrontier)
+        .where(where)
+        .orderBy(...orderOf(sort, direction))
+        .limit(Math.max(0, Math.min(Math.trunc(limit), CRAWL_PAGES_LIMITS.maxPageSize)))
+        .offset(Math.max(0, Math.trunc(offset)));
+      return { total, rows: rows.map(listRow).filter(present) };
+    },
+
+    async pageOrder(runId, { filter, sort, direction }, limit) {
+      const rows = await db
+        .select({ id: crawlPages.id })
+        .from(crawlPages)
+        .leftJoin(crawlFrontier, joinFrontier)
+        .where(and(...pageConditions(runId, filter)))
+        .orderBy(...orderOf(sort, direction))
+        .limit(Math.max(0, Math.min(Math.trunc(limit), CRAWL_LIMITS.maxPagesCap)));
+      return rows.map((row) => row.id);
+    },
+
+    async pagesByIds(runId, ids) {
+      const wanted = ids.filter((id) => Number.isInteger(id)).slice(0, CRAWL_PAGES_LIMITS.maxPageSize);
+      if (wanted.length === 0) return [];
+      const rows = await db
+        .select({ page: crawlPages, inlinks: inlinksOf })
+        .from(crawlPages)
+        .leftJoin(crawlFrontier, joinFrontier)
+        .where(and(eq(crawlPages.runId, runId), inArray(crawlPages.id, wanted)));
+      const byId = new Map(rows.map((row) => [row.page.id, row] as const));
+      return wanted.map((id) => byId.get(id)).filter((row): row is NonNullable<typeof row> => row !== undefined).map(listRow).filter(present);
+    },
+
+    async treeLevel(runId, prefix, limit) {
+      const cap = Math.max(0, Math.min(Math.trunc(limit), CRAWL_TREE_LIMITS.maxChildren));
+      type Group = { seg: string; pages: number; folder: number; here: number; groups: number };
+      const names = ['seg', 'pages', 'folder', 'here', 'groups'] as const;
+      if (prefix === null) {
+        // Origins: each URL up to (not including) the first `/` after its `://` (stored URLs are normalised hrefs).
+        const after = sql`substr(${crawlPages.url}, instr(${crawlPages.url}, '://') + 3)`;
+        const origin = sql`iif(instr(${after}, '/') > 0, substr(${crawlPages.url}, 1, instr(${crawlPages.url}, '://') + 1 + instr(${after}, '/')), ${crawlPages.url})`;
+        const groups = rowsOf<Group>(
+          await db.all(
+            sql`SELECT origin AS seg, count(*) AS pages, 1 AS folder, 0 AS here, count(*) OVER () AS groups FROM (SELECT ${origin} AS origin FROM ${crawlPages} WHERE ${crawlPages.runId} = ${runId}) GROUP BY origin ORDER BY pages DESC, origin ASC LIMIT ${cap}`,
+          ),
+          names,
+        );
+        const total = Number(groups[0]?.groups ?? 0);
+        return { nodes: groups.map((g) => ({ label: String(g.seg), pages: Number(g.pages), prefix: `${String(g.seg)}/`, url: null })), more: Math.max(0, total - groups.length) };
+      }
+      const rest = sql.raw('rest');
+      const groups = rowsOf<Group>(
+        await db.all(
+          sql`SELECT seg, count(*) AS pages, max(folder) AS folder, max(here) AS here, count(*) OVER () AS groups FROM (
+                SELECT substr(rest, 1, cut - 1) AS seg, substr(rest, cut, 1) = '/' AS folder, cut > length(rest) AS here FROM (
+                  SELECT rest, ${SEGMENT_END(rest)} AS cut FROM (
+                    SELECT substr(${crawlPages.url}, ${prefix.length + 1}) AS rest FROM ${crawlPages}
+                    WHERE ${crawlPages.runId} = ${runId} AND ${crawlPages.url} >= ${prefix} AND ${crawlPages.url} < ${prefixEnd(prefix)})))
+              GROUP BY seg ORDER BY pages DESC, seg ASC LIMIT ${cap}`,
+        ),
+        names,
+      );
+      const total = Number(groups[0]?.groups ?? 0);
+      return {
+        nodes: groups.map((g) => {
+          const seg = String(g.seg);
+          return { label: seg, pages: Number(g.pages), prefix: Number(g.folder) === 1 ? `${prefix}${seg}/` : null, url: Number(g.here) === 1 ? `${prefix}${seg}` : null };
+        }),
+        more: Math.max(0, total - groups.length),
+      };
+    },
+
+    async depthHistogram(runId) {
+      const rows = await db.select({ depth: crawlPages.depth, pages: count() }).from(crawlPages).where(eq(crawlPages.runId, runId)).groupBy(crawlPages.depth).orderBy(asc(crawlPages.depth));
+      return rows.filter((row) => validDepth(row.depth)).map((row) => ({ depth: row.depth, pages: row.pages }));
     },
 
     async orphansOf(runId, { limit, offset }) {

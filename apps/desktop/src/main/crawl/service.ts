@@ -33,6 +33,8 @@ export interface CrawlServiceDeps {
   readonly projectLive: (projectId: string) => Promise<boolean>;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
+  /** Told whenever the running crawl starts or ends (Task 7: `crawl.watch`'s change counter). */
+  readonly onChange?: () => void;
 }
 
 export interface CrawlService {
@@ -112,8 +114,10 @@ export function createCrawlService(deps: CrawlServiceDeps): CrawlService {
     });
     const entry = { handle, ended };
     active = entry;
+    deps.onChange?.();
     void ended.finally(() => {
       if (active === entry) active = null;
+      deps.onChange?.();
     });
   };
 

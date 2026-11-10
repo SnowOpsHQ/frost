@@ -21,6 +21,7 @@
  * import them.
  */
 import { SERVED_FETCH_LIMITS } from './seo-javascript.spec';
+import { SNAPSHOT_LIMITS } from './seo-limits.spec';
 import type { SeoCategory, SeoRuleId } from './seo-rules.spec';
 
 // ---- The legal gate ---------------------------------------------------------------------------
@@ -472,3 +473,229 @@ export const CRAWL_EXCLUDED_RULES = {
   'sitemap-unreachable': 'Comes from the sidebar’s sitemap check; a crawl does not run it per page.',
   'hreflang-no-return-link': 'Comes from the sidebar’s hreflang check, which requests each alternate; a crawl does not run it per page.',
 } as const satisfies Partial<Record<SeoRuleId, string>>;
+
+
+// ---- Pages and Site structure (Task 7) ----------------------------------------------------------
+
+/**
+ * How long one `crawl.watch` long-poll waits for a change before it answers the current view anyway
+ * (ms), and how many may wait at once **per sender window** (one more answers that window's oldest
+ * early; another window's polls are never evicted), as `browser.watch` (`WATCH_TIMEOUT_MS`,
+ * `MAX_PENDING_WATCHES`). Main counts one change per crawled page (the run's counts written after it),
+ * per run created, updated or deleted, and whenever the running crawl starts or ends. An answer with an
+ * unchanged version (a timeout, an eviction) makes the sheet rest `retryMs` before it asks again.
+ */
+export const CRAWL_WATCH = { timeoutMs: 25_000, maxPending: 4, retryMs: 1_000 } as const;
+
+/**
+ * While a run is running, the sheet reads its pages and structure again at most this often (ms); a
+ * change of the run shown or of its state reads them at once.
+ */
+export const CRAWL_REFRESH_MS = 5_000;
+
+/**
+ * A page's HTTP status as the Pages view filters it: its class (`2xx` … `5xx`), or `none` (no answer:
+ * refused by the crawl's policy, or the fetch failed).
+ */
+export const CRAWL_STATUS_CLASSES = ['2xx', '3xx', '4xx', '5xx', 'none'] as const;
+export type CrawlStatusClass = (typeof CRAWL_STATUS_CLASSES)[number];
+
+/** A page's indexable verdict as the Pages view filters it (`unknown`: not crawled, nothing to judge). */
+export const CRAWL_INDEXABLE_FILTERS = ['yes', 'no', 'unknown'] as const;
+export type CrawlIndexableFilter = (typeof CRAWL_INDEXABLE_FILTERS)[number];
+
+/**
+ * What the Pages view filters on, each optional and combined with AND (`CrawlPageFilterSchema`):
+ * - `status`: one of `CRAWL_STATUS_CLASSES`;
+ * - `indexable`: one of `CRAWL_INDEXABLE_FILTERS`;
+ * - `finding`: a crawl rule (`CRAWL_RULE_IDS`) the page fails;
+ * - `depth`: exactly this many clicks from the start URL (0 to `CRAWL_LIMITS.maxDepth`);
+ * - `linksCut`: only pages whose links were cut at `SNAPSHOT_LIMITS.maxLinks`.
+ * Every filter runs in SQL (main's repository), never over a list in the renderer.
+ */
+export const CRAWL_PAGE_FILTERS = ['status', 'indexable', 'finding', 'depth', 'linksCut'] as const;
+export type CrawlPageFilterKey = (typeof CRAWL_PAGE_FILTERS)[number];
+
+export const CRAWL_PAGE_FILTER_LABELS: Readonly<Record<CrawlPageFilterKey, string>> = {
+  status: 'Status',
+  indexable: 'Indexable',
+  finding: 'Finding',
+  depth: 'Depth',
+  linksCut: 'Links cut',
+};
+
+/**
+ * How the Pages view sorts (`CrawlPagesInputSchema.sort`, ascending or descending), in SQL; pages
+ * without the value (no status, no score, no word count) sort last either way, and ties keep the order
+ * the pages were recorded in:
+ * - `order`: the order the crawl recorded them (breadth first);
+ * - `url`, `status`, `depth`, `score` (`CRAWL_SCORE_LABEL`), `words` (served word count);
+ * - `inlinks`: links to it from crawled pages (the frontier's count).
+ */
+export const CRAWL_PAGE_SORTS = ['order', 'url', 'status', 'depth', 'inlinks', 'score', 'words'] as const;
+export type CrawlPageSort = (typeof CRAWL_PAGE_SORTS)[number];
+
+export const CRAWL_PAGE_SORT_LABELS: Readonly<Record<CrawlPageSort, string>> = {
+  order: 'Crawl order',
+  url: 'URL',
+  status: 'Status',
+  depth: 'Depth',
+  inlinks: 'In-links',
+  score: CRAWL_SCORE_LABEL,
+  words: 'Words',
+};
+
+export const CRAWL_SORT_DIRECTIONS = ['asc', 'desc'] as const;
+export type CrawlSortDirection = (typeof CRAWL_SORT_DIRECTIONS)[number];
+
+/** Rows one `crawl.pages` answer carries: at most `maxPageSize` (the renderer asks `defaultPageSize`). */
+export const CRAWL_PAGES_LIMITS = { defaultPageSize: 50, maxPageSize: 200 } as const;
+
+/**
+ * The Site structure view's bounds (`crawl.structure`): a path tree read one level at a time, in SQL.
+ * - `maxChildren`: nodes one level answers, most pages first; the rest are counted (`more`), never sent;
+ * - `maxOrphansShown`: sitemap orphans listed (their total is counted);
+ * The click-depth histogram has one bar per depth (0 to `CRAWL_LIMITS.maxDepth`).
+ */
+export const CRAWL_TREE_LIMITS = { maxChildren: 100, maxOrphansShown: 100 } as const;
+
+/**
+ * Why a Pages, Site structure or CSV request was not answered (each as data):
+ * - `not-found`: no such run (deleted meanwhile);
+ * - `store-failed`: the database failed (one log line, its code only);
+ * - `write-failed`: the CSV file could not be written (or the dialog failed);
+ * - `exporting`: another CSV export is under way (one at a time, app-wide).
+ */
+export const CRAWL_READ_REFUSALS = ['not-found', 'store-failed', 'write-failed', 'exporting'] as const;
+export type CrawlReadRefusal = (typeof CRAWL_READ_REFUSALS)[number];
+
+/** A served word count below this, on an HTML page answered 2xx, is flagged "looks client-rendered" (Decision 6). */
+export const CRAWL_CLIENT_RENDERED_MAX_WORDS = 50;
+
+/**
+ * The marks a page row carries in the Pages view and the CSV's `Notes` column:
+ * - `linksCut`: the served HTML held more links than the parse keeps (`SNAPSHOT_LIMITS.maxLinks`); links
+ *   past the cap were not followed;
+ * - `clientRendered`: crawled, answered 2xx, with fewer than `CRAWL_CLIENT_RENDERED_MAX_WORDS` served
+ *   words: the page is likely built by scripts, which the crawl never runs (open it in a tab to see it
+ *   rendered). The row keeps no script count (Task 6b), so the word count alone decides.
+ */
+export const CRAWL_PAGE_FLAGS = {
+  linksCut: 'links cut at 1 000',
+  clientRendered: 'looks client-rendered',
+} as const;
+export type CrawlPageFlag = keyof typeof CRAWL_PAGE_FLAGS;
+
+/** The facts the flags read (a page row's). */
+export interface CrawlFlagFacts {
+  readonly outcome: CrawlPageOutcome;
+  readonly status: number | null;
+  readonly wordCount: number | null;
+  readonly linksCut: boolean;
+}
+
+/** The flags a page row carries, in `CRAWL_PAGE_FLAGS` order. */
+export function crawlPageFlags(row: CrawlFlagFacts): CrawlPageFlag[] {
+  const flags: CrawlPageFlag[] = [];
+  if (row.linksCut) flags.push('linksCut');
+  if (row.outcome === 'crawled' && row.status !== null && row.status >= 200 && row.status < 300 && row.wordCount !== null && row.wordCount < CRAWL_CLIENT_RENDERED_MAX_WORDS) flags.push('clientRendered');
+  return flags;
+}
+
+/** `CRAWL_PAGE_FLAGS.linksCut` names the parse's link cap. */
+export const CRAWL_LINKS_CUT_AT = SNAPSHOT_LIMITS.maxLinks;
+
+/**
+ * The CSV export's columns, in order (main writes it: `crawl.exportCsv`; every cell through
+ * `csvCell` from `@app/seo-core`, which neutralises a formula-leading cell; CRLF). The score column is
+ * headed `CRAWL_SCORE_LABEL`, never "health score"; `Findings` lists the failing crawl rules' ids,
+ * space-separated; `Notes` the page's flags (`CRAWL_PAGE_FLAGS`), `; `-separated; `Fetched at` is ISO
+ * 8601 (UTC). The export holds the run's pages the Pages view's filter selects, in its sort.
+ */
+export const CRAWL_CSV_COLUMNS = [
+  'URL',
+  'Final URL',
+  'Outcome',
+  'Status',
+  'Indexable',
+  'Title',
+  'Canonical',
+  'Depth',
+  'In-links',
+  'Out-links',
+  'Words',
+  'robots.txt (frost-crawl)',
+  'robots.txt (Googlebot)',
+  CRAWL_SCORE_LABEL,
+  'Findings',
+  'Notes',
+  'Bytes',
+  'Fetched at',
+] as const;
+
+/**
+ * Rows main reads per statement while it writes a CSV (`CRAWL_PAGES_LIMITS.maxPageSize`). The export
+ * first fixes its rows and their order in one statement (the ids the filter selects, sorted, at most
+ * `CRAWL_LIMITS.maxPagesCap` integers), then reads and appends them this many at a time, so a running
+ * crawl can neither duplicate nor skip a row; pages written after the export began are not in it.
+ */
+export const CRAWL_CSV_READ_ROWS = CRAWL_PAGES_LIMITS.maxPageSize;
+
+/** The file name the CSV export offers (`{date}`: the day, `YYYY-MM-DD`, UTC), in the Downloads folder. */
+export const CRAWL_CSV_FILE_NAME = 'frost-site-crawl-{date}.csv' as const;
+
+/** `CRAWL_CSV_FILE_NAME` for the time `at` (Unix ms; not a valid date: `undated`). */
+export function crawlCsvFileName(at: number): string {
+  const date = typeof at === 'number' && Number.isFinite(at) && !Number.isNaN(new Date(at).getTime()) ? new Date(at).toISOString().slice(0, 10) : 'undated';
+  return CRAWL_CSV_FILE_NAME.replace('{date}', date);
+}
+
+/** Main's save dialog for the crawl CSV (its own words; a CSV filter only). The renderer never names a path. */
+export const CRAWL_CSV_SAVE_DIALOG = {
+  title: 'Save site crawl as CSV',
+  buttonLabel: 'Save',
+  filterName: 'CSV file',
+  extensions: ['csv'],
+} as const;
+
+/**
+ * The crawl sheet's words (frost's own). The score is always `CRAWL_SCORE_LABEL`; nothing here says
+ * "health score".
+ */
+export const CRAWL_VIEW_TEXT = {
+  title: 'Site crawl',
+  close: 'Close site crawl',
+  startTitle: 'Crawl a site',
+  start: 'Start crawl',
+  pause: 'Pause',
+  resume: 'Resume',
+  cancel: 'Cancel',
+  delete: 'Delete run',
+  deleteConfirm: 'Delete this run and its pages? This cannot be undone.',
+  exportCsv: 'Export CSV…',
+  openInTab: 'Open in tab',
+  pagesTab: 'Pages',
+  structureTab: 'Site structure',
+  noRuns: 'No crawls yet.',
+  retentionNote: 'Crawl data is deleted per run: Delete run removes a run and its pages, and deleting a project deletes its runs. Clear Browsing Data and project retention leave it alone.',
+  ruleSetTitle: 'What the crawl checks',
+  ruleSetIntro: `Each page’s served HTML is checked with the crawl’s own rule set, so its ${CRAWL_SCORE_LABEL} is not the sidebar’s score. It uses these categories:`,
+  ruleSetExcluded: 'Left out, and why:',
+  orphansTitle: 'Orphans',
+  orphansNote: 'Listed in a sitemap, never linked from a crawled page.',
+  depthTitle: 'Click depth',
+  treeTitle: 'Paths',
+  treeMore: (more: number) => `${more} more not shown`,
+} as const;
+
+/** What a refused crawl request says (frost's own words); `unavailable` shows `LEGAL_GATE_NOTE` instead. */
+export const CRAWL_REFUSAL_TEXT: Readonly<Record<Exclude<CrawlRefusal, 'unavailable'> | CrawlReadRefusal, string>> = {
+  'invalid-settings': 'Those settings cannot be used. Check the start URL, the scope and the prefixes.',
+  'not-found': 'That crawl or its project no longer exists.',
+  busy: 'A crawl is already running. Pause or cancel it first.',
+  'not-resumable': 'This run cannot be resumed.',
+  'not-running': 'This run is not running.',
+  'store-failed': 'The crawl data could not be read or written. Try again.',
+  'write-failed': 'The file could not be written. Try another place.',
+  exporting: 'An export is already under way. Try again when it is done.',
+};

@@ -25,6 +25,7 @@ import type { SeoExportService } from './seo-export-service';
 import type { TabOverridesService } from './tab-overrides-router';
 import type { HelpService } from './help-service';
 import type { DataSourcesService } from './data-sources-service';
+import type { CrawlIpcService } from './crawl-service';
 
 /** The audit a panel rendered (`SeoAuditRefSchema` in `seo-snapshot.spec.ts`). */
 export interface SeoAuditRef {
@@ -218,4 +219,6 @@ export interface IpcServices {
   readonly help?: HelpService;
   /** Data sources' keys: status, set and clear (Phase 12 Task 1, `data-sources-service.ts`). */
   readonly dataSources?: DataSourcesService;
+  /** The site crawl: runs, pages, structure and CSV export (Phase 12 Task 7, `crawl-service.ts`). */
+  readonly crawl?: CrawlIpcService;
 }

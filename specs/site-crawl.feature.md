@@ -401,5 +401,137 @@ the crawl worker and its URLs handed out `sitemapUrlsPerJob` at a time, then rel
   own; the pass still counts and is not logged as failed.
 
 ## Pages and Site structure (Task 7)
-*UI scenarios, `CRAWL_PAGE_FILTERS`, `CRAWL_PAGE_SORTS`, `CRAWL_CSV_COLUMNS` and the sheet's rule-set
-note: Task 7.*
+SL-096/097. Spec: `CRAWL_WATCH`, `CRAWL_STATUS_CLASSES`, `CRAWL_INDEXABLE_FILTERS`, `CRAWL_PAGE_FILTERS`,
+`CRAWL_PAGE_SORTS`, `CRAWL_PAGES_LIMITS`, `CRAWL_TREE_LIMITS`, `CRAWL_READ_REFUSALS`,
+`CRAWL_CLIENT_RENDERED_MAX_WORDS`, `CRAWL_PAGE_FLAGS` / `crawlPageFlags`, `CRAWL_CSV_COLUMNS`,
+`CRAWL_CSV_READ_ROWS`, `CRAWL_CSV_FILE_NAME` / `crawlCsvFileName`, `CRAWL_CSV_SAVE_DIALOG`,
+`CRAWL_VIEW_TEXT`, `CRAWL_REFUSAL_TEXT` (`site-crawl.spec.ts`); the `crawl.*` shapes in
+`site-crawl.schema.ts` (`CrawlWatchViewSchema`, `CrawlServiceAnswerSchema`, `CrawlPageFilterSchema`,
+`CrawlPagesInputSchema`, `CrawlPageListRowSchema`, `CrawlPagesAnswerSchema`, `CrawlStructureInputSchema`,
+`CrawlTreeNodeSchema`, `CrawlStructureAnswerSchema`, `CrawlCsvInputSchema`, `CrawlCsvAnswerSchema`).
+
+### Decisions
+- **Paged in SQL.** The Pages view reads one page of rows at a time (at most
+  `CRAWL_PAGES_LIMITS.maxPageSize`), filtered and sorted by main's repository; the path tree is read one
+  level at a time (at most `CRAWL_TREE_LIMITS.maxChildren` nodes, the rest counted and said); the
+  renderer never holds a run's full list. In-links and orphans come from the frontier (the authority).
+- **The score is the crawl's.** The score column and the CSV's are headed `CRAWL_SCORE_LABEL`
+  ("Served-HTML score"); the sheet names the crawl's rule set (the categories of `CRAWL_RULE_IDS`, and
+  what `CRAWL_EXCLUDED_CATEGORIES` / `CRAWL_EXCLUDED_RULES` leave out, with their reasons). Nothing says
+  "health score".
+- **Gated in main, shown from main's view.** `start` and `resume` pass main's answer through (refused
+  `unavailable` with `LEGAL_GATE_NOTE` while L6 is closed). The sheet disables Start and Resume with that
+  note when main's view says `available: false`; it never reads `CRAWL_AVAILABLE`. Viewing, exporting
+  and deleting runs are never gated.
+- **Marks, not rendering.** A page with more links than the parse keeps is marked "links cut at 1 000";
+  an HTML page answered 2xx with fewer than `CRAWL_CLIENT_RENDERED_MAX_WORDS` served words is marked
+  "looks client-rendered" (lead ruling: the row keeps no script count yet, so the word count alone
+  decides; Decision 6's "with scripts" is not checked). Each page has "Open in tab", the address bar's
+  path (`browser.navigate`), and shows both robots.txt verdicts: the crawl's (`frost-crawl`) and
+  Googlebot's, from the same file.
+- **Bounded refreshes.** While a run runs, the sheet reads its pages and structure again at most every
+  `CRAWL_REFRESH_MS` (another run or state: at once); main counts one change per page.
+
+### The queries (`packages/db/src/site-crawl/__tests__/site-crawl-views.test.ts`)
+- `crawl-pages-query-paged-and-filtered` — a run's pages come at most `maxPageSize` a page, with the total
+  the filter selects; filters by status class (`2xx` … `5xx`, `none`), indexable (`yes`, `no`,
+  `unknown`), a failing crawl rule (`finding`), an exact depth and "links cut", combined with AND, all in
+  SQL; each row carries its in-links from the frontier and no run id; another run's pages never show.
+- `crawl-pages-sorted-in-sql` — every `CRAWL_PAGE_SORTS` entry, ascending and descending; pages without
+  the value sort last either way; ties keep the crawl's order.
+- `crawl-structure-tree` — the root level lists the run's origins, a folder's level its path segments
+  (query variants counted under their path, a folder's own page as `''`), most pages first; a prefix is a
+  range on the `(run_id, url)` index (`/blog/` never takes `/blogs/`); a level past its limit sends the
+  limit and counts the rest (`more`); the click-depth histogram counts pages per depth; orphans are
+  sitemap URLs never linked (the frontier's `from_sitemap AND inlinks = 0`).
+
+### Main (`apps/desktop/src/main/crawl/__tests__/crawl-ipc.test.ts`)
+- `crawl-csv-written-by-main` — Export CSV asks main's own save dialog, parented to the sender's window
+  and offering `crawlCsvFileName`; main writes `CRAWL_CSV_COLUMNS` (the score column headed
+  `CRAWL_SCORE_LABEL`) and one line per page the filter selects, in its sort, every cell through
+  `csvCell` (a formula-leading title gets its leading `'`; quotes and commas are quoted), CRLF;
+  findings are rule ids, notes the page's marks, the fetch time ISO 8601.
+- `crawl-csv-reads-in-chunks-and-writes-nothing-unasked` — main reads `CRAWL_CSV_READ_ROWS` rows per
+  statement, by id, counting nothing; a cancelled dialog or anything but an absolute path writes nothing;
+  a run that is gone is `not-found` before any dialog; a file that cannot be written is `write-failed`,
+  logged without its path.
+- `crawl-csv-dialog-first-then-a-fixed-set-streamed` — the dialog comes first; then one statement fixes
+  the export's rows and order (`pageOrder`), and each batch is appended to the file as it is read; pages
+  a running crawl writes meanwhile are not in it, and no row is duplicated or skipped.
+- `crawl-csv-one-export-at-a-time` — a second export while one runs is refused `exporting`.
+- `crawl-watch-long-polls-changes` — `watch` answers at once when the counter is past the version asked,
+  else on the next change (a run created or updated, the running crawl's start or end; a page row alone
+  is not one: the run's counts written after it are, one change per page), else, at the router's
+  timeout, the current view.
+- `crawl-watch-evicts-only-the-same-window` — at most `CRAWL_WATCH.maxPending` polls wait per sender
+  window; one more answers that window's oldest early, never another window's.
+- `crawl-ipc-passes-the-gate-through` — as shipped, `start` and `resume` answer `unavailable` with
+  `LEGAL_GATE_NOTE` and the view says `available: false`; cancel and delete still work.
+- `crawl-reads-answer-pages-and-structure` — `pages` and `structure` answer one run's page of rows and
+  one tree level with its histogram and orphans (the first `maxOrphansShown` and their total); a run that
+  is gone is `not-found`, a failing store `store-failed` (logged by code, never message).
+
+### The router (`packages/ipc-contract/src/__tests__/crawl-router.test.ts`)
+- `crawl-router-enforces-sender` — every `crawl.*` procedure (`status`, `watch`, `start`, `pause`,
+  `resume`, `cancel`, `delete`, `pages`, `structure`, `exportCsv`) refuses another origin's sender and
+  fails closed without the service.
+- `crawl-router-inputs-bounded` — strict inputs: run ids are UUIDv7s; settings are
+  `CrawlSettingsSchema`'s (no pattern field, no private start outside `host`); pages at most
+  `maxPageSize`, from closed filter and sort lists (a finding only a crawl rule); a tree prefix an
+  `http(s)` URL ending in `/`; the CSV takes no path or file name (the window id comes from the sender).
+- `crawl-router-answers-are-checked` — an answer carrying anything more, or too many rows, is a masked
+  internal error.
+- `crawl-router-start-passes-the-gate-through` — main's `unavailable` answer and its note reach the
+  renderer as sent.
+- `crawl-watch-times-out-with-the-current-view` — after `CRAWL_WATCH.timeoutMs` the poll answers the
+  current view; main is given the sender's window id (pending polls are counted per window).
+
+### The crawl sheet (`apps/desktop/src/renderer/__tests__/crawl-view.test.ts`)
+- `crawl-view-start-form-defaults-to-the-active-tab-site` — the start URL is the active tab's site (its
+  origin's root) or the one asked for; scope `host`, no prefixes, `defaultMaxPages`, the default interval,
+  sitemaps on; prefixes one per line, literal paths, at most `maxPrefixes`; max pages 1 to `maxPagesCap`.
+- `crawl-view-gated-disabled` — with main's view `available: false`, Start and Resume are disabled with
+  `LEGAL_GATE_NOTE`; delete, export and cancel stay.
+- `crawl-view-injected-open-gate` — with `available: true` (injected), Start and Resume are enabled; a
+  running crawl disables Start (busy) and offers Pause and Cancel; finished runs offer delete and export.
+- `crawl-view-run-size-and-retention-note` — each run shows its pages, queued, refused and failed counts
+  and its size ("N pages · X MB fetched"); the sheet says crawl data is deleted per run; a slow-down pause
+  says why.
+- `crawl-view-score-label-and-rule-set` — the score column is `CRAWL_SCORE_LABEL`; the rule-set note
+  lists the categories used and what is left out with its reason; never "health score".
+- `crawl-view-page-flags-and-open-in-tab` — "links cut at 1 000" and "looks client-rendered"; "Open in
+  tab" closes the sheet and sends an `http(s)` URL to `browser.navigate`, nothing else.
+- `crawl-view-pages-paging-and-filters` — a filter or sort change goes back to the first page; paging
+  text and the previous and next offsets.
+- `crawl-view-structure` — histogram bars as shares of the tallest; tree labels.
+- `crawl-view-progress-long-poll` — each poll passes the last version seen; a failed poll and an answer
+  with an unchanged version each rest `CRAWL_WATCH.retryMs` (never a spin); a closed sheet drops the
+  poll in flight.
+- `crawl-view-robots-verdicts-and-refresh` — the robots.txt column shows the `frost-crawl` and Googlebot
+  verdicts; `refreshDelay` reads again at once for another run or state, at most every
+  `CRAWL_REFRESH_MS` for new pages, never when nothing changed; a project covering its subdomains starts
+  with the `site` scope.
+- `crawl-view-answer-texts` — refusals in frost's words; `unavailable` is main's note.
+- `crawl-palette-commands` — "Crawl this site…" (an `http(s)` tab: the sheet on its site) and "Show site
+  crawl"; neither starts a crawl.
+- `crawl-sheet-gated-disabled` — rendered with an injected main view `available: false`: the disclosure
+  (`FETCH_DISCLOSURE`) and rule-set note show, Start and Resume are disabled with the note beside them,
+  the run's size and the per-run deletion note show, export and delete stay enabled, the run's pages are
+  asked for a page at a time with the score column labelled, a cut page is marked, both robots.txt
+  verdicts show, the rule set's intro shows outside its details, and "Open in tab" closes the sheet and
+  navigates through the address bar's path.
+- `crawl-sheet-injected-open-view` — rendered with `available: true`: Start and Resume are enabled and
+  send main the form's settings and the run id; main's refusal shows as its note; the Pages / Site
+  structure switch is pressed buttons; Site structure shows the tree, the histogram and the orphans.
+- `crawl-and-help-sheets-exclude-each-other` — a Help sheet opening closes the crawl sheet, and the crawl
+  sheet opening (from a project's "Site crawl") closes the Help sheet; the project's site and, for a
+  project covering its subdomains, the `site` scope fill the form.
+
+### Entry points
+- The palette's "Crawl this site…" and "Show site crawl" (`crawl-palette.ts`, registered by
+  `CrawlSheet.tsx`, listed in `palette-all-features.test.ts`); a "Site crawl" button in a project's
+  header (`SiteCrawlButton`, one line in `Projects.tsx`): the sheet on the project's site (`site` scope
+  when the project covers its subdomains), a crawl started there belongs to the project. The sheet is one
+  line in `App.tsx`, a Help-sheet frame over the page column: opening it closes Settings, Projects, the
+  screenshot editor, History and the Help sheets (`useHelpSheet` subscribes `onCrawlOpened`); any of
+  those opening closes it (a Help sheet's `show()` calls `closeCrawl()`, the menu's path included).

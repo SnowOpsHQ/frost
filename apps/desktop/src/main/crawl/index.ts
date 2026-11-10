@@ -5,6 +5,7 @@ import { CRAWL_ANALYSIS_TIMEOUT_MS } from '@app/specs/site-crawl.spec';
 import { createLegalGates } from '../data-sources/gates';
 import { createAnalyzer, type AnalysisWorker, type Analyzer } from '../seo/analysis';
 import type { Hop, Resolve } from '../seo/fetcher';
+import { createCrawlChanges, watchedCrawlRepo, type CrawlChanges } from './changes';
 import { createCrawler, type Crawler } from './crawler';
 import { createCrawlFetcher, createCrawlLane, type CrawlRobotsSource } from './fetch';
 import { createCrawlService, type CrawlService } from './service';
@@ -52,6 +53,10 @@ export interface CrawlFetching {
 export interface CrawlMain {
   /** For Task 7's IPC (start, pause, resume, cancel, delete, status) and the project cleanup. */
   readonly service: CrawlService;
+  /** The crawl tables (Task 7's Pages and Site structure reads), every watched write counted in `changes`. */
+  readonly repo: SiteCrawlRepository;
+  /** The change counter `crawl.watch` long-polls (Task 7). */
+  readonly changes: CrawlChanges;
   /** Binds the crawl lane and the robots fetcher (main, after app ready); until then start and resume answer `unavailable`. */
   bindFetching(fetching: CrawlFetching): void;
 }
@@ -63,14 +68,19 @@ export function setupCrawl(deps: CrawlSetupDeps): CrawlMain {
   const analyzer = createCrawlAnalyzer(deps.spawnWorker);
   app.once('will-quit', () => analyzer.dispose());
   const projectLive = async (projectId: string): Promise<boolean> => (await store.changeIntel.project(projectId)) !== null;
+  // Task 7: every write the crawl sheet shows, and every start and end of a crawl, counts a change for `crawl.watch`.
+  const changes = createCrawlChanges();
+  const repo = watchedCrawlRepo(store.siteCrawl, changes.bump);
   let crawler: Crawler | null = null;
-  const service = createCrawlService({ repo: store.siteCrawl, crawler: () => crawler, isOpen: (id) => gates.isOpen(id), projectLive, log });
+  const service = createCrawlService({ repo, crawler: () => crawler, isOpen: (id) => gates.isOpen(id), projectLive, log, onChange: changes.bump });
   // Start-up: a run left running by a crash (or queued) is paused, never resumed by itself.
   void service.startup();
   // Quitting pauses the running crawl (`quit`), before the store closes at will-quit.
   app.on('before-quit', () => service.quit());
   return {
     service,
+    repo,
+    changes,
     bindFetching({ hop, resolve, robots, userAgent }) {
       const lane = createCrawlLane({ hop, resolve });
       // robots.txt is parsed in the crawl worker; main only matches URLs against what it answers.
@@ -82,7 +92,7 @@ export function setupCrawl(deps: CrawlSetupDeps): CrawlMain {
       const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent, parseRobots: async (text) => crawlRobotsRulesOf(await parseRobotsData(text)) });
       // Sitemap files go through each run's own page fetch (scope, robots.txt, pacing, the redirect hook), read once in the crawl worker.
       const sitemaps = createSitemapSeeder({ robots, parseRobots: parseRobotsData, analyse: (input) => analyzer.crawlSitemap(input), log });
-      crawler = createCrawler({ repo: store.siteCrawl, fetcher, analyse: (job) => analyzer.analyseCrawlPage(job), sitemaps, projectLive, log });
+      crawler = createCrawler({ repo, fetcher, analyse: (job) => analyzer.analyseCrawlPage(job), sitemaps, projectLive, log });
     },
   };
 }

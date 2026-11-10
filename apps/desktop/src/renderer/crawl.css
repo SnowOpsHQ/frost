@@ -1,0 +1,421 @@
+/* The site crawl sheet (Phase 12 Task 7, specs/site-crawl.feature.md, Pages and Site structure). A Help
+   sheet's frame (help.css lays the page area out zero-high while it shows), wider for the Pages table.
+   Bundled and served from app:// (CSP style-src 'self'): no inline styles, existing tokens only. Page
+   text wraps or ellipsises, never widens the sheet: the table scrolls inside its own box. */
+
+.help:has(> .help-body > .crawl) {
+  width: min(1120px, 100%);
+}
+
+.crawl {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.crawl-status:empty {
+  display: none;
+}
+
+.crawl-status {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-field);
+  background: var(--accent-soft);
+}
+
+.crawl-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.crawl-section-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.crawl-subtitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.crawl-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.crawl-note:empty {
+  display: none;
+}
+
+.crawl-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px 12px;
+  align-items: end;
+}
+
+.crawl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.crawl-field-wide {
+  grid-column: 1 / -1;
+}
+
+.crawl-input,
+.crawl-select {
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+  background: var(--bg-field);
+  color: var(--text);
+  font: inherit;
+  user-select: text;
+}
+
+.crawl-textarea {
+  height: auto;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.crawl-select-wide {
+  max-width: 260px;
+}
+
+.crawl-input-narrow {
+  width: 8em;
+}
+
+.crawl-input:focus,
+.crawl-select:focus {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.crawl-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.crawl-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.crawl-rules-more > summary {
+  cursor: default;
+  font-weight: 500;
+}
+
+.crawl-rules-more[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.crawl-rule-list {
+  margin: 0;
+  padding-inline-start: 18px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.crawl-start-row,
+.crawl-run-actions,
+.crawl-toolbar,
+.crawl-paging,
+.crawl-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.crawl-toolbar {
+  align-items: end;
+}
+
+.crawl-gap {
+  flex: 1 1 auto;
+}
+
+.crawl-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crawl-run {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-field);
+}
+
+.crawl-run[data-selected='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.crawl-run-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.crawl-run-pick {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crawl-run-pick:focus-visible,
+.crawl-tab:focus-visible,
+.crawl-tree-toggle:focus-visible,
+.crawl-link-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.crawl-run-state {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.crawl-danger {
+  color: var(--danger);
+}
+
+.crawl-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+}
+
+.crawl-tab {
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.crawl-tab[aria-pressed='true'] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.crawl-pages,
+.crawl-structure {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.crawl-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.crawl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.crawl-table th,
+.crawl-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--bg-chrome-edge);
+  text-align: start;
+  vertical-align: top;
+}
+
+.crawl-table thead th {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: bottom;
+}
+
+.crawl-table tbody th {
+  font-weight: 400;
+}
+
+.crawl-url-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 420px;
+}
+
+.crawl-url,
+.crawl-page-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crawl-page-title {
+  color: var(--text-muted);
+}
+
+.crawl-link-button {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.crawl-link-button:hover {
+  text-decoration: underline;
+}
+
+.crawl-count {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.crawl-tree,
+.crawl-tree-level {
+  min-width: 0;
+}
+
+.crawl-tree-level {
+  margin: 0;
+  padding-inline-start: 14px;
+  list-style: none;
+}
+
+.crawl-tree > .crawl-tree-level {
+  padding-inline-start: 0;
+}
+
+.crawl-tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.crawl-tree-toggle,
+.crawl-tree-leaf {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crawl-tree-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  text-align: start;
+}
+
+.crawl-tree-toggle::before {
+  content: '▸ ';
+  color: var(--text-muted);
+}
+
+.crawl-tree-toggle[aria-expanded='true']::before {
+  content: '▾ ';
+}
+
+.crawl-depths {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.crawl-depth {
+  display: grid;
+  grid-template-columns: 3em 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.crawl-depth-label {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.crawl-depth-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.crawl-depth-meter {
+  flex: 1 1 auto;
+  max-width: 360px;
+  height: 10px;
+  accent-color: var(--accent);
+}
+
+.crawl-orphans {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crawl-orphan {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}

@@ -36,6 +36,7 @@ import { seoExportRouter } from './seo-export-router';
 import { tabOverridesRouter } from './tab-overrides-router';
 import { helpRouter } from './help-router';
 import { dataSourcesRouter } from './data-sources-router';
+import { crawlRouter } from './crawl-router';
 
 // Every procedure starts `publicProcedure.use(enforceSender)` (spec `ipc-sender.feature.md`,
 // `every-procedure-enforces-sender`; Semgrep `ipc-sender-guard` in Task 5).
@@ -321,6 +322,7 @@ export const appRouter = router({
   // Phase 11 Task 11 (`help.feature.md`): the Help menu's sheets, What's New and Help's fixed pages.
   help: helpRouter,
   dataSources: dataSourcesRouter, // Phase 12 Task 1 (`data-sources.feature.md`): data source keys (status, set, clear; never a key back).
+  crawl: crawlRouter, // Phase 12 Task 7 (`site-crawl.feature.md`): the site crawl's runs, pages, structure and CSV export.
 });
 
 export type AppRouter = typeof appRouter;

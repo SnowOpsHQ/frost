@@ -70,6 +70,7 @@ import { createHelpMain } from './help/main';
 import { createDiagnosticsMain } from './diagnostics/main';
 import { setupDataSources } from './data-sources';
 import { setupCrawl } from './crawl';
+import { createMainCrawlIpc } from './crawl/dialogs';
 
 // First, before any window exists: a packaged build never runs with remote debugging (CDP would
 // expose the trusted app page and its IPC bridge). See PACKAGED_FORBIDDEN_SWITCHES in
@@ -528,6 +529,7 @@ function start(): void {
         tabOverrides: browser.tabOverrides,
         help: help.service,
         dataSources: dataSources.service,
+        crawl: createMainCrawlIpc(crawl, logSession), // specs/site-crawl.feature.md (Task 7): runs, pages, structure, CSV via main's save dialog.
       },
     });
     // Clear Browsing Data… (specs/browser-session-db.feature.md): asks in a message box parented
