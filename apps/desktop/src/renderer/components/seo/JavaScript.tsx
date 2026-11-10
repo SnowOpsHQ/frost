@@ -199,7 +199,7 @@ function ItemRow({ item, flash }: { readonly item: JsListItem; readonly flash: (
           className="seo-action seo-js-open"
           aria-label="Open in a background tab"
           title="Open in a background tab"
-          onClick={() => void actions.openBackgroundTab(item.url!).then((id) => flash(id === null ? 'Could not open a tab' : 'Opened in a background tab'))}
+          onClick={() => void actions.openBackgroundTab(item.url!, { inherit: true }).then((id) => flash(id === null ? 'Could not open a tab' : 'Opened in a background tab'))}
         >
           <OpenTabIcon />
         </button>

@@ -203,7 +203,7 @@ export interface ProbesPort {
 // ---- Not wired -------------------------------------------------------------------------------
 
 /**
- * A port standing in for any of the three when its source isn't connected: every query answers
+ * A port standing in for any of the ports when its source isn't connected: every query answers
  * `unavailable` with `reason` (capped), at once, whatever its signal.
  */
 export function unavailablePort(reason: string): SerpPort & IntentPort & GscPort & ProbesPort {

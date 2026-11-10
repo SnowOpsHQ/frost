@@ -49,13 +49,14 @@ browser and run SEO skills.
   backend: [`apps/backend/README.md`](apps/backend/README.md).
 - **Phase 5 — AI agent:** built. A sidebar agent that audits and operates the browser, in a
   utility process of its own that holds no keys: main makes every model request (your own
-  Anthropic or OpenAI key, or the Vercel AI Gateway; keys stay in the OS keychain). Read-only tools
-  run on a standing grant; navigate, click and visibility probes ask unless granted for the site;
-  `execute_javascript`, AI search and MCP tools ask every time, and tool output reaches the model
-  as untrusted data. SERP, intent, probes and Search Console come from Phases 3 and 4, and the
-  agent is gated on the account's `ai-agent` flag. Skills, a grants page, chat retention and export,
-  a context meter and MCP connections (labelled untrusted, sandboxed where the OS allows) round it
-  out. The plan and how it was built: [`docs/plans/phase-5-ai-agent.md`](docs/plans/phase-5-ai-agent.md).
+  Anthropic or OpenAI key, the Vercel AI Gateway, or your ChatGPT plan; keys stay in the OS
+  keychain). Read-only tools run on a standing grant; navigate, click and visibility probes ask
+  unless granted for the site; `execute_javascript`, AI search and MCP tools ask every time, and
+  tool output reaches the model as untrusted data. SERP, intent, probes and Search Console come
+  from Phases 3 and 4, and the agent needs no account (2026-10-29: only sync is gated). Skills, a
+  grants page, chat retention and export, a context meter and MCP connections (labelled untrusted,
+  sandboxed where the OS allows) round it out. The plan and how it was built: [`docs/plans/phase-5-ai-agent.md`](docs/plans/phase-5-ai-agent.md);
+  the ChatGPT plan route: [`docs/plans/agent-chatgpt-plan.md`](docs/plans/agent-chatgpt-plan.md).
 - **Phase 6 — Change intelligence:** built (Tasks 1–8). Per-page change history and visual evidence,
   kept locally, with explicit retention controls:
   - **Changes** (a sidebar panel) captures what a page says to search engines. Each distinct state
@@ -78,6 +79,23 @@ browser and run SEO skills.
   without a click (builds are unsigned, so updates install by hand); and a libSQL driver seam with
   the groundwork for opt-in sync of change intelligence. The plan and how it was built:
   [`docs/plans/phase-7-sync-update-platforms.md`](docs/plans/phase-7-sync-update-platforms.md).
+- **Phase 8 — Free and AI-complete:** built. 14 built-in SEO skills in four groups, a skills
+  library you can search, switch off, export and import (with a review step), Gemini and Grok models
+  on the AI Gateway route, a Reasoning setting, a catalogue of MCP server presets, and deeper
+  readability (sentence length, difficult sentences, complex words; Spanish, French and German).
+  The plan and how it was built: [`docs/plans/phase-8-ai-complete.md`](docs/plans/phase-8-ai-complete.md).
+- **Phase 9 — Search Console depth and AI readiness:** built. Any date range with country and device
+  filters, URL Inspection, target-query suggestions from Search Console, an AI readiness score
+  (assistants, their crawlers and robots.txt verdicts, pre-render coverage, `llms.txt`), an
+  on-device page type, and opt-in AI checks on your own model route (off by default). The plan and
+  how it was built: [`docs/plans/phase-9-gsc-ai-readiness.md`](docs/plans/phase-9-gsc-ai-readiness.md).
+- **Phase 10 — Projects as a workspace:** built. Local rank tracking from the result pages frost
+  captures (position, change, trend), comparison of two searches or two dates, bulk-added searches
+  with tags, a project's site, competitors and favorites, CSV export, a SERP parameter editor, and
+  the same search opened in Perplexity, ChatGPT or Google AI Mode. "Check rankings" and the capture
+  cadence stay switched off (`RANK_CHECK_AVAILABLE`) until their terms note is written. The plan and
+  how it was built:
+  [`docs/plans/phase-10-projects-rank-tracking.md`](docs/plans/phase-10-projects-rank-tracking.md).
 - **Phase 11 — Practitioner tooling:** built (Tasks 1–13). The everyday tools around the audit:
   - **Copy and export:** 24 page values, Images, Headings and Speed tables as CSV, and a Copy SEO
     Data context menu, all written by main from the audit; Copy JSON-LD, the page's or a suggested
@@ -98,7 +116,7 @@ browser and run SEO skills.
   The plan and how it was built:
   [`docs/plans/phase-11-practitioner-tooling.md`](docs/plans/phase-11-practitioner-tooling.md).
 - **Next:** finishing sync (the switch to turn it on, a worker thread, a real server), and code
-  signing for macOS and Windows (`docs/design/IMPLEMENTATION-PLAN.md` §4).
+  signing for macOS and Windows.
 
 ## Clean-room note
 frost is a **clean-room** build. It is designed from a written behavioral/design
@@ -109,6 +127,8 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
 ## Layout
 - `apps/desktop/` — the Electron app (main, preload, the React chrome, the on-device intent utility
   process), packaged with Electron Forge.
+- `apps/agent-runtime/` — the agent runtime (`@app/agent-runtime`): the chat loop, run in an Electron
+  utility process with no network globals and no credential.
 - `apps/backend/` — the account API (`@app/backend`): web and desktop sign-in, signed entitlement
   snapshots and an admin CLI. Hono, better-auth and Drizzle on Postgres (PGlite in dev and tests).
   Never deployed from this repo.
@@ -116,6 +136,8 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
   health score, the schema, robots.txt, hreflang, page speed and security readers, the content
   report, the served-vs-rendered comparison and the link, sitemap and hreflang check readers. Pure
   TypeScript, with no Electron, DOM or Zod dependency.
+- `packages/ai-skills/` — the agent's tool definitions, their input schemas, the read-only data ports
+  and the declarative SEO skills (`@app/ai-skills`).
 - `packages/change-intel/` — the change-intelligence diff engine (`@app/change-intel`): canonical
   JSON, snapshot identity, the region-tagged diff between two captures and word-level inline diffs.
   Pure TypeScript, like `seo-core`.
@@ -127,10 +149,11 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
   error events behind a consent gate, with allowlists and scrubbing. Pure Node, no Electron import.
 - `specs/` — machine-checkable spec artifacts (constants, Zod schemas, `*.feature.md` acceptance
   lists); every scenario maps to a named test.
-- `docs/design/IMPLEMENTATION-PLAN.md` — the design doc (intent, stack, security model, 8-phase roadmap).
-- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–7).
+- `docs/design/IMPLEMENTATION-PLAN.md` — the design doc (intent, stack, security model, phased roadmap).
+- `docs/plans/` — the executable, spec-driven phase plans (Phases 0–12 and the ChatGPT plan route).
 - `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner, and
-  `scripts/sign-selectors.mjs` (`pnpm sign:selectors`, for maintainers signing a selector pack).
+  `scripts/sign-selectors.mjs` (`pnpm sign:selectors`, for maintainers signing a selector pack) and
+  `scripts/sign-update-manifest.mjs` (`pnpm sign:update-manifest`, for signing an update manifest).
 
 ## Getting started
 1. Node ≥ 22.18 and pnpm 12.15.0 (`package.json#packageManager`); `pnpm install`.

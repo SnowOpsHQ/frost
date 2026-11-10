@@ -143,7 +143,9 @@ export function createServedHtml(options: ServedHtmlOptions): ServedHtml {
     });
     const failed = servedFailure(fetched);
     if (failed) return only(failed);
-    const finalUrl = fetched.finalUrl ?? url;
+    // Without a redirect the document is `url` itself: the fetcher cuts the `finalUrl` it reports to the
+    // stored length, which is neither another page nor a base to resolve the document's links against.
+    const finalUrl = fetched.redirects > 0 ? (fetched.finalUrl ?? url) : url;
     // Redirected elsewhere (a login page, another locale): not the page that was rendered.
     if (pageKey(finalUrl) !== url) return only(unavailable('redirected', fetched.status, cutUrl(finalUrl)));
     const contentType = fetched.headers['content-type'] ?? null;

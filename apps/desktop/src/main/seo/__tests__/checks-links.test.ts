@@ -7,7 +7,7 @@ import type { CheckFetch, CheckFetchOptions, CheckFetchResult } from '../checks-
 import { checkLink, planLinks } from '../checks-links';
 
 const link = (href: string): PageLink => ({ href, scheme: '', rel: '', text: 'x', kind: 'internal', target: null });
-const answer = (status: number, changes: Partial<CheckFetchResult> = {}): CheckFetchResult => ({ outcome: 'response', status, finalUrl: '', redirects: 0, body: new Uint8Array(0), truncated: false, headers: { contentType: null, contentEncoding: null, link: null }, ...changes });
+const answer = (status: number, changes: Partial<CheckFetchResult> = {}): CheckFetchResult => ({ outcome: 'response', status, finalUrl: '', redirects: 0, body: new Uint8Array(0), truncated: false, headers: { contentType: null, link: null }, ...changes });
 
 describe('link checks', () => {
   test('link-plan-dedupes-and-skips', () => {

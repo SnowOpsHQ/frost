@@ -318,7 +318,8 @@ line maps to one named test.
 
 ## Chrome helpers (`renderer/__tests__/devtools-view.test.ts`, `devtools-palette.test.ts`)
 - **Scenario: drawer-height-clamped** — the stored height parses or falls back to the default;
-  dragging and keys clamp it to `[min, column − pageMinVisible]`.
+  dragging and keys clamp it to `[min, column − pageMinVisible]`, and the resize edge states that
+  range (`aria-valuemin`, `aria-valuemax`, `aria-valuenow`).
 - **Scenario: drawer-state-from-storage** — open, height and tab read back from storage, with
   defaults for missing or bad values.
 - **Scenario: network-filters** — type, third-party only, failed only (a failure or a status from

@@ -51,7 +51,6 @@ export interface RobotsFile {
   /** The first `maxSitemaps` `Sitemap:` values; `sitemapTotal` counts them all. */
   readonly sitemaps: readonly RobotsSitemap[];
   readonly sitemapTotal: number;
-  readonly lineCount: number;
 }
 
 export interface RobotsParseLimits {
@@ -213,7 +212,7 @@ export function parseRobotsTxt(text: string, limits: RobotsParseLimits = ROBOTS_
     }
   }
 
-  return { groups, ruleCount, sitemaps, sitemapTotal, lineCount: lineNumber };
+  return { groups, ruleCount, sitemaps, sitemapTotal };
 }
 
 /** Whether normalised `pattern` (`*` wildcards, a final `$` anchor) matches normalised `path` from its start. */

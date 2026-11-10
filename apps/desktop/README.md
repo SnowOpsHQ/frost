@@ -9,8 +9,8 @@ hreflang checks. Phase 3 adds:
 - an optional on-device intent classifier;
 - a Visibility panel that fetches a page as search and AI crawlers do.
 
-Phase 4 adds a frost account with plans, opt-in telemetry and a read-only Search Console
-panel, set up in a Settings view.
+Phase 4 adds an optional frost account (needed only for sync), opt-in telemetry and a read-only
+Search Console panel, set up in a Settings view.
 
 Phase 5 adds the agent, a chat that works on the page you are on, on the model you set up (your own
 key, a gateway key or your ChatGPT plan). Phase 9 adds opt-in AI checks of a page on that same model.
@@ -383,7 +383,8 @@ lacks a value says "not configured in this build" for that feature and sends not
 - **Plan gating** (`entitlements-client.feature.md`). The backend signs a snapshot of the account's
   plan and features (`free`: none; `pro`: `ai-agent`, `search-console`, `sync`). Main verifies it
   against the public keys baked into the build (EdDSA only, the right `kid`, issuer, audience and
-  account) and gates on its feature flags, never on the plan name.
+  account) and gates on its feature flags, never on the plan name. Only `sync` is gated: `ai-agent`
+  and `search-console` are `UNGATED_FEATURES` (2026-10-29) and work signed out.
   - A snapshot lives 3 days. Main refreshes at start, every 6 hours and on Settings' Refresh (at
     most once per 30 s).
   - When a refresh fails for a network reason, 7 days of offline grace follow the snapshot's
@@ -1128,7 +1129,9 @@ Desktop app type, and telemetry an endpoint and a DSN of your own.
   the wiring of `@app/telemetry`), `changes/` (Phase 6: the region read, the capture snapshot and
   service, load times, projects, the capture run, retention and purges), `screenshots/` (stitching,
   the page scripts, capture, imaging, the file store and the service), `inspector/` (the page
-  script and the service), `security/`, `protocol/` (`app://`), `menu.ts`,
+  script and the service), `agent/` (Phase 5: the runtime host, the model proxy, approvals and
+  grants, MCP, the ChatGPT plan route), `ai-checks/` (Phase 9), `update/` (the signed update manifest
+  and its client), `sync/` (groundwork, off), `help/` and `diagnostics/` (Phase 11), `security/`, `protocol/` (`app://`), `menu.ts`,
   `session-store.ts`, `clear-browsing-data.ts`, `window.ts` (the window and tab-view factories).
 - `src/workers/intent/` — the intent utility process: its entry, the message handling, frost's
   WordPiece tokenizer, the embedding, the prototype queries, the keyword fake and the self-test

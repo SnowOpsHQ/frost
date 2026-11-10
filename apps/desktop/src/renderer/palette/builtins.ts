@@ -17,7 +17,7 @@ import {
   type OpenToolResult,
 } from '@app/specs/command-palette.spec';
 import { DEFAULT_ZOOM, ZOOM_FACTORS, type PageCommand } from '@app/specs/page-commands.spec';
-import { HIGHLIGHT_PANELS, SEO_PANELS, type HighlightMode, type SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
+import { HIGHLIGHT_PANELS, SEO_PANELS, SEO_RERUNNABLE_REASONS, type HighlightMode, type SeoUnavailableReason } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { zoomLabel } from '../zoom-label';
 import { createConsentStore, type ConsentStore } from './consent';
@@ -52,8 +52,8 @@ export interface PaletteApi {
   clearBrowsingData(): Promise<unknown>;
 }
 
-/** Reasons a fresh audit run may fix (as the sidebar's Retry: the page was slow or answered garbage). */
-const RERUNNABLE: ReadonlySet<SeoUnavailableReason> = new Set(['timeout', 'invalid-snapshot', 'extraction-failed', 'analysis-timeout', 'analysis-failed']);
+/** Reasons a fresh audit run may fix (`SEO_RERUNNABLE_REASONS`, shared with the sidebar's Retry). */
+const RERUNNABLE: ReadonlySet<SeoUnavailableReason> = new Set(SEO_RERUNNABLE_REASONS);
 
 /** `value` cut to `PALETTE_DETAIL_MAX_CHARS` code points (the last an ellipsis). */
 export function cutDetail(value: string): string {

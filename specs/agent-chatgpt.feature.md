@@ -365,7 +365,7 @@ word is `CHATGPT_UI` / the messages. A sign-in is a click: main spends that clic
   `plan-unavailable`, `not-eligible` and `unsupported` (its param named) none.
 - **Scenario: chatgpt-settings-cancel-while-busy** — Cancel works while another action's answer is
   still awaited (it is never held back by the busy guard).
-- **Scenario: chatgpt-error-recovery-busy** — the banner's "Sign in again" / "Turn on plan usage" is
+- **Scenario: chatgpt-error-recovery-busy** (in the test `chatgpt-error-recoveries`) — the banner's "Sign in again" / "Turn on plan usage" is
   disabled until the sign-in it asked for answers: a double click starts one sign-in.
 - **Scenario: chatgpt-settings-live-region** — the account's state (who is signed in, the state's
   sentence, the last sign-in failure, an action's answer) is in one live region that is always

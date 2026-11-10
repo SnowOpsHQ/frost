@@ -91,7 +91,8 @@ interface Entry {
   readonly tabId: number;
   readonly contentsId: number;
   readonly key: string;
-  readonly pageLinks: readonly PageLink[];
+  /** The links of the audit the last link run was started from (the first audit's until one runs). */
+  pageLinks: readonly PageLink[];
   links: LinkRunState;
   sitemaps: SitemapRunState;
   hreflang: HreflangRunState;
@@ -441,6 +442,8 @@ export function createChecks(options: ChecksOptions): Checks {
     let run: Promise<void>;
     if (kind === 'links') {
       entry.links = { ...IDLE_LINK_RUN, ...begun };
+      // The page's links as audited now: a page that changed them without a new document or URL is checked as it is.
+      entry.pageLinks = audit.page.linkList;
       run = runLinks(entry, controller.signal, tab, again);
     } else if (kind === 'sitemaps') {
       entry.sitemaps = { ...IDLE_SITEMAP_RUN, ...begun };

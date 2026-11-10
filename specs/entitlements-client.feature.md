@@ -151,6 +151,7 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
 - `secret-delete-and-clear` — `delete(name)` and `clear()` remove blobs (and stray temporary files).
 - `failed-write-leaves-no-stale-value` — when the rename or the encrypt fails, the old file is removed and the run keeps the new value; `write` resolves `false` although the store is `persistent`.
 - `secret-reencrypts-when-asked` — a blob whose decrypt answers `shouldReEncrypt` reads its value and is written again with the current key.
+- `secret-reencrypt-failure-keeps-the-file` — when that second write fails, the file (still the current value) stays; only a failed write of a new value removes it.
 - `keychain-check-is-bounded` — an asynchronous encryptor that never answers whether it is available makes the store memory-only after `KEYCHAIN_CHECK_TIMEOUT_MS`.
 - `secret-writes-are-ordered` — a write, a delete and a write in a row leave the last on disk; a read whose decrypt finishes after a newer write answers the newer value and does not bring the old one back; `whenIdle()` resolves once the disk has caught up, and `pending()` says whether it has not.
 

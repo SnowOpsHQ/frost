@@ -564,7 +564,11 @@ export function createSerpService(options: SerpServiceOptions): Serp {
         entry.params.url === match.params.url &&
         sortedJson(serpFiltersOf(entry.url, match.engine.id)) === sortedJson(serpFiltersOf(url, match.engine.id))
       ) {
-        entry.url = url;
+        // The URL is part of the state (`serp.url`, which the parameter editor builds from): watchers hear of it.
+        if (entry.url !== url) {
+          entry.url = url;
+          bump();
+        }
         return;
       }
       if (entry) retire(entry);

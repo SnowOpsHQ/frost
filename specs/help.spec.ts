@@ -103,7 +103,7 @@ export function shortcutToAccelerator(shortcut: string): string {
 // ---- The shortcuts screen -------------------------------------------------------------------------
 
 /**
- * Opens (or closes) the keyboard shortcuts screen: Help › Keyboard Shortcuts. An application-menu
+ * Opens the keyboard shortcuts screen (again: it takes focus back): Help › Keyboard Shortcuts. An application-menu
  * accelerator only, not reserved in `before-input-event` (like `HISTORY_SHORTCUT`), so a page's own
  * Mod+/ (an editor's "comment line") keeps it while the page has focus. No frost menu item, reserved
  * shortcut or chrome key handler uses it.

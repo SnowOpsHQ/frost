@@ -37,6 +37,12 @@ export const RERUN_ACTIVE_TAB_ONLY = true;
 export const SEO_UNAVAILABLE_REASONS = ['no-page', 'load-error', 'crashed', 'timeout', 'invalid-snapshot', 'extraction-failed', 'analysis-timeout', 'analysis-failed', 'no-tab'] as const;
 export type SeoUnavailableReason = (typeof SEO_UNAVAILABLE_REASONS)[number];
 
+/**
+ * The reasons a fresh run may fix (the page was slow or answered garbage): the sidebar offers Retry
+ * and the palette "Run the audit again" for these; the others need the page itself to change.
+ */
+export const SEO_RERUNNABLE_REASONS: readonly SeoUnavailableReason[] = ['timeout', 'invalid-snapshot', 'extraction-failed', 'analysis-timeout', 'analysis-failed'];
+
 /** What the sidebar says for each reason (frost's own strings; page text is never part of them). */
 export const SEO_UNAVAILABLE_MESSAGES: Readonly<Record<SeoUnavailableReason, string>> = {
   'no-page': 'Only web pages (http and https) are audited.',

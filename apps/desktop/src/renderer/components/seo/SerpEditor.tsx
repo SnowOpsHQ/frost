@@ -86,7 +86,6 @@ function Editor({ model, tabId, onClose }: { readonly model: SerpEditorModel; re
 
   return (
     <form className="serp-editor" data-testid="serp-editor" aria-label="Edit search" onSubmit={submit}>
-      {rows.length === 0 ? <p className="seo-note">{apply.problem}</p> : null}
       <div className="serp-editor-fields">
         {rows.map((row, index) => (
           <label key={row.id} className="serp-editor-field" data-key={row.id}>
@@ -129,7 +128,7 @@ function Editor({ model, tabId, onClose }: { readonly model: SerpEditorModel; re
         <button type="button" className="panel-button" data-testid="serp-edit-cancel" onClick={onClose}>
           Cancel
         </button>
-        {apply.problem !== null && rows.length > 0 ? (
+        {apply.problem !== null ? (
           <span className="seo-note" data-testid="serp-edit-problem">
             {apply.problem}
           </span>

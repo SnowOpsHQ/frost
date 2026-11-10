@@ -120,6 +120,8 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
 - **Scenario: served-never-fetches-non-web** — a non-`http(s)` page is `not-fetched`, nothing requested.
 - **Scenario: served-redirected-elsewhere** — a fetch that ends at another URL (fragment aside) is
   `redirected`, with the final URL, and is not parsed.
+- **Scenario: served-long-url-is-not-a-redirect** — a page whose URL is longer than `maxUrlChars`
+  and answers without a redirect is that page (the fetcher's cut `finalUrl` is not a redirect).
 - **Scenario: served-aborted-on-navigation** — `forget`, `drop` and `clear` abort the tab's fetches
   in flight, and only those.
 - **Scenario: served-scripting-follows-the-profile** — scripting off is a key of its own and is

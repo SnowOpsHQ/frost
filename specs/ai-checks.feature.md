@@ -70,6 +70,8 @@ named test.
   are `invalid-output` and nothing is stored.
 - `output-capped-and-inert` — control and bidi characters are removed and texts capped, so a long or
   marked-up answer is stored and shown as capped plain text.
+- `output-drops-the-arabic-letter-mark` — U+061C is removed with the other bidi controls, and text
+  that still holds it is not a valid answer.
 - `check-errors-map-and-back-off` — a `check.error` code is mapped (`aiCheckFailureReason`), never
   read as more than "this check failed"; after a failed automatic check the next automatic one is
   `rate` for `automaticBackoffMs` while "Check this page" still runs; with no model set up it is

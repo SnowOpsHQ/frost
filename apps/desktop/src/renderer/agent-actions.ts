@@ -102,5 +102,3 @@ export const agentActions = {
   chatgptSignOut: (): Promise<ChatgptSignOutResult | 'failed'> => ipc.agent.chatgptSignOut.mutate().catch((): 'failed' => 'failed'),
   chatgptAcknowledge: (): Promise<boolean> => ipc.agent.chatgptAcknowledge.mutate().catch(() => false),
 };
-
-export type AgentActions = typeof agentActions;

@@ -103,6 +103,8 @@ none at all over HTTP (`mcp-client-answers-ping-refuses-other-server-requests`).
   namespace unshared and `--disable-userns` where supported (network only if allowed),
   `--die-with-parent`, `--new-session`, no capabilities → `mcp-bubblewrap-argv-golden`,
   `mcp-bubblewrap-hides-every-home-and-user-data`, `mcp-bubblewrap-network-and-home-command`
+- The probe that looks for `--disable-userns` reads the whole of bubblewrap's `--help` (over 5 kB)
+  → `mcp-sandbox-probe-reads-a-long-help`
 - Run for real on a machine with a working bubblewrap: the server can't read a fake home's secret or
   an unlisted file in the real home, can't see a host `/tmp` file, the session bus
   (`/run/user/<uid>/bus`) or `userData`, can't write outside its folder, has no network

@@ -9,7 +9,7 @@ const CSS = readFileSync(fileURLToPath(new URL('../renderer/styles.css', import.
 const COMPONENTS = fileURLToPath(new URL('../renderer/components/devtools/', import.meta.url));
 
 test('devtools-styles-are-delimited', () => {
-  // One delimited section, at the end of the stylesheet; every `.devtools` rule lives in it.
+  // One delimited section; every `.devtools` rule lives in it.
   const start = CSS.indexOf('/* Devtools drawer ');
   const end = CSS.indexOf('/* End of Devtools drawer */');
   expect(start).toBeGreaterThan(0);

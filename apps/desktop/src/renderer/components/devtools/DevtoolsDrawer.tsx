@@ -6,7 +6,7 @@ import type { BrowserState, TabState } from '@app/specs/browser.spec';
 import type { SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { devtoolsPaletteSources } from '../../devtools-palette';
-import { clampHeight, heightAfterKey } from '../../devtools-view';
+import { clampHeight, heightAfterKey, maxHeight } from '../../devtools-view';
 import { useDevtoolsDrawer, useDevtoolsVersion } from '../../hooks/useDevtools';
 import { CloseIcon } from '../../icons';
 import { registerPaletteActions } from '../../palette/registry';
@@ -106,6 +106,8 @@ export function DevtoolsDrawer({
         aria-orientation="horizontal"
         aria-label="Resize the devtools drawer"
         aria-valuemin={DEVTOOLS_HEIGHT.min}
+        // A separator's range defaults to 0–100: without a maximum the height is announced out of range. Before layout the maximum is the height shown.
+        aria-valuemax={maxHeight(column()) ?? shownHeight}
         aria-valuenow={shownHeight}
         tabIndex={0}
         onPointerDown={onPointerDown}

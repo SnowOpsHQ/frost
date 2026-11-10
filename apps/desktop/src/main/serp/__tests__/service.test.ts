@@ -248,8 +248,11 @@ describe('SERP service', () => {
     expect(s.read).toHaveBeenCalledTimes(2);
     const ready = s.serp.state(1).serp;
     expect(ready.status === 'ready' && ready.snapshot.params.query).toBe('trail shoes');
-    // The same search (a fragment, a tracking parameter): the reading stays.
+    // The same search (a fragment, a tracking parameter): the reading stays, and watchers hear of the new URL.
+    const before = s.serp.state(1).version;
     move(`${GOOGLE_2}&ved=abc#top`);
+    expect(s.serp.state(1).version).toBeGreaterThan(before);
+    await expect(s.serp.watch(1, before)).resolves.toMatchObject({ serp: { status: 'ready', url: `${GOOGLE_2}&ved=abc#top` } });
     await vi.advanceTimersByTimeAsync(SERP_INPAGE_DEBOUNCE_MS * 2);
     expect(s.read).toHaveBeenCalledTimes(2);
     expect(s.serp.state(1).serp).toMatchObject({ status: 'ready', url: `${GOOGLE_2}&ved=abc#top` });

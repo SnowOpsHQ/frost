@@ -9,8 +9,8 @@ import { TARGET_QUERY_MAX_CHARS } from '@app/specs/seo-content.spec';
 // (`AiCheckOutputSchema`: exactly its keys, each value of its type and list). Anything else is
 // `null` (`invalid-output`). The result is display-only: nothing acts on it.
 
-/** C0 and C1 controls, and the bidi marks, embeddings, overrides and isolates. */
-const UNSAFE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
+/** C0 and C1 controls, and the bidi marks (U+061C among them), embeddings, overrides and isolates. */
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c‎‏‪-‮⁦-⁩]/g;
 
 /** `value` as plain inert text: unsafe characters out, whitespace collapsed, at most `max` units (never splitting a pair). */
 export function inertText(value: string, max: number): string {

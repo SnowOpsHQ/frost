@@ -34,7 +34,7 @@ interface TabConsole {
 
 export interface ConsoleLog {
   add(contentsId: number, message: ConsoleMessage, now?: number): void;
-  /** A cross-document main-frame navigation started: the tab's console starts over. */
+  /** A cross-document main-frame navigation committed (`did-navigate`): the tab's console starts over. */
   reset(contentsId: number): void;
   forget(contentsId: number): void;
   /** The tab's console (in first-seen order), `null` for a tab that logged nothing. */

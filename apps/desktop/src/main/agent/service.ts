@@ -28,7 +28,7 @@ import { createMemorySkillsStore, createUserSkills, type AgentSkillPrefsStore, t
 // manager over it, the e2e seam (unpackaged only), and disposal when the app quits. The runtime is
 // forked on the first message (the session calls `start()`), not at launch. `wire.ts` passes the
 // Electron modules; tests pass fakes. The search tools' data ports (Task 8) are optional: without
-// them the ports answer "not connected in this build" (main wires Phases 3 and 4's). The agent is
+// them the ports answer "not connected in this build" (main passes Phases 3 and 4's). The agent is
 // never gated (`UNGATED_FEATURES`): main passes no entitlements port, so every agent feature is
 // allowed; the port stays a seam for tests of the refusal paths.
 //

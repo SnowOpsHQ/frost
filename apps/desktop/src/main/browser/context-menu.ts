@@ -10,7 +10,7 @@ import type { SeoExports } from '../seo/exports';
 
 // The page's context menu (spec `page-commands.feature.md`, Context menu): a pure function of a
 // tab's `context-menu` params and history flags; main builds and pops up the native menu from it
-// (`showTabContextMenu`, `menu.ts`). Only Electron *types* are imported. Labels are frost's own
+// (`popupContextMenu`, `menu.ts`). Only Electron *types* are imported. Labels are frost's own
 // (`CONTEXT_MENU_LABELS`), except the cleaned, cut selection in the search item.
 
 /** The `context-menu` params the menu reads. */
