@@ -1,0 +1,349 @@
+/* frost's design tokens: the one place a custom property is declared on :root (specs/design-tokens.spec.ts,
+   specs/design-tokens.feature.md). Imported first by main.tsx, so every rule that reads a token comes after it.
+   Bundled by Vite and served from app:// (CSP style-src 'self'). Light and dark follow the OS
+   (prefers-color-scheme); a dark block redefines only the names whose value changes.
+
+   Two parts:
+   1. Legacy tokens: every property that used to sit in a :root block of styles.css, settings.css,
+      gsc-panel.css and components/agent/agent.css, moved here unchanged (names, values and order).
+      LEGACY_TOKEN_MIGRATION in the spec maps each one to its Signal token (alias or retire).
+   2. Signal tokens with no legacy name, at their Signal values. Nothing reads them yet.
+
+   Signal names that already exist with today's meaning keep today's values here: --text,
+   --text-muted, --text-faint, --accent, --accent-soft, --accent-hover, --on-accent, --ok, --warn,
+   --danger, --bg-hover and --bg-active. The values PR swaps them to their Signal values (the spec
+   records both). --icon is a colour and stays one; the Signal icon size is --icon-size. */
+
+/* ==== 1. Legacy tokens ========================================================================== */
+
+:root {
+  /* ---- Chrome, surfaces, text, accent, status and the SEO sidebar (was in styles.css) */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Inter', Roboto, Ubuntu, Cantarell, 'Noto Sans',
+    'Helvetica Neue', Arial, sans-serif;
+
+  --tabstrip-height: 40px;
+  --toolbar-height: 50px;
+  --status-height: 26px;
+  --radius-control: 9px;
+  --radius-field: 11px;
+
+  --bg-chrome: #f3f5f8;
+  --bg-chrome-edge: #e2e6ec;
+  --bg-strip: #e4e8ee;
+  --bg-tab-hover: rgb(255 255 255 / 0.3);
+  --bg-field: #ffffff;
+  --bg-field-hover: #ffffff;
+  --border-field: #d7dce4;
+  --bg-page: #fbfcfd;
+  --bg-hover: rgb(20 30 50 / 0.07);
+  --bg-active: rgb(20 30 50 / 0.12);
+
+  --text: #1b2230;
+  --text-muted: #5f6b7d;
+  --text-faint: #8d97a6;
+  --icon: #3a4556;
+
+  --accent: #2f6fe4;
+  --accent-soft: rgb(47 111 228 / 0.22);
+  --ok: #1f9d63;
+  --warn: #c2410c;
+  --danger: #d23f3f;
+
+  --start-glow: rgb(82 145 255 / 0.13);
+  --start-mark: #5b8def;
+  --shadow-field: 0 1px 2px rgb(16 24 40 / 0.06);
+
+  --on-accent: #ffffff;
+  --accent-hover: #2560cc;
+  --panel-art: #6b7a90;
+
+  --bg-prompt: #ffffff;
+  --prompt-edge: #dfe4eb;
+  --shadow-prompt: 0 1px 3px rgb(16 24 40 / 0.07);
+
+  /* SEO sidebar (SIDEBAR_PANEL_WIDTH / SIDEBAR_RAIL_WIDTH in specs/seo-sidebar.spec.ts). */
+  --seo-panel-width: 360px;
+  --seo-rail-width: 48px;
+  /* In a narrow window the page keeps at least this much width; the SEO panel gives way. */
+  --page-min-width: 320px;
+  --seo-bg: #f6f7fa;
+  --seo-card: #ffffff;
+  --seo-card-edge: #e3e7ee;
+  --seo-track: #e7ebf1;
+  --seo-skeleton: #e9edf3;
+  --seo-skeleton-shine: #f4f6f9;
+  --caution: #b7791f;
+  --info-tone: #4b72b8;
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04);
+
+  /* ---- Command palette (was in styles.css) */
+  --palette-sheet-height: 404px;
+  --palette-page-min-visible: 96px;
+  --palette-sheet-min-height: 180px;
+  --palette-width: 640px;
+  --palette-bg: #ffffff;
+  --palette-edge: #dfe4eb;
+  --palette-sheet: linear-gradient(180deg, var(--bg-chrome) 0%, #eceff4 100%);
+  --palette-shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 10px 28px rgb(16 24 40 / 0.1);
+  --palette-row-active: rgb(47 111 228 / 0.1);
+  --palette-hit: rgb(47 111 228 / 0.16);
+  --palette-kbd-bg: #f1f3f7;
+  --palette-kbd-edge: #d7dce4;
+
+  /* ---- Render profiles (was in styles.css) */
+  --render-accent: #7a4fe0;
+  --render-soft: rgb(122 79 224 / 0.13);
+  --render-edge: rgb(122 79 224 / 0.55);
+
+  /* ---- Content panel: the SERP previews (was in styles.css) */
+  --serp-card: #ffffff;
+  --serp-title: #2450c8;
+  --serp-text: #474e5c;
+  --serp-path: #5d6573;
+  --serp-glyph: #e3e8f1;
+  --serp-glyph-mark: #6b7a90;
+
+  /* ---- Browser polish: find bar, History, "Jump back in" (was in styles.css) */
+  --find-height: 40px;
+  --history-width: 760px;
+  --jump-tile-bg: #ffffff;
+  --jump-tile-edge: #e3e7ee;
+  --jump-monogram-bg: rgb(47 111 228 / 0.12);
+
+  /* ---- Projects (was in styles.css) */
+  --projects-width: 980px;
+  --projects-run-band: min(300px, 50%);
+
+  /* ---- Settings (was in settings.css) */
+  --settings-width: 820px;
+  --settings-nav-width: 168px;
+  --settings-switch-off: #c9cfd9;
+
+  /* ---- Search Console panel (was in gsc-panel.css) */
+  --gsc-line: var(--accent);
+  --gsc-grid: #e7ebf1;
+  --gsc-axis: var(--text-faint);
+
+  /* ---- Agent panel (was in components/agent/agent.css) */
+  --agent-panel-width: 380px;
+  --agent-rail-width: 40px;
+  --agent-bg: #f6f7fa;
+  --agent-card: #ffffff;
+  --agent-edge: #e3e7ee;
+  --agent-user: #e6eefc;
+  --agent-code-bg: #f1f3f7;
+  --agent-approval-edge: #c98b16;
+  --agent-approval-bg: #fffaf0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* ---- Chrome, surfaces, text, accent, status and the SEO sidebar (was in styles.css) */
+    --bg-chrome: #1d2026;
+    --bg-chrome-edge: #2c3038;
+    --bg-strip: #131519;
+    --bg-tab-hover: rgb(255 255 255 / 0.06);
+    --bg-field: #2a2e36;
+    --bg-field-hover: #30353e;
+    --border-field: #3a3f49;
+    --bg-page: #16181d;
+    --bg-hover: rgb(255 255 255 / 0.07);
+    --bg-active: rgb(255 255 255 / 0.12);
+
+    --text: #e7eaf0;
+    --text-muted: #a3acba;
+    --text-faint: #737d8c;
+    --icon: #c9d0db;
+
+    --accent: #6c9dff;
+    --accent-soft: rgb(108 157 255 / 0.28);
+    --ok: #4cc38a;
+    --warn: #f0995a;
+    --danger: #f07171;
+
+    --start-glow: rgb(108 157 255 / 0.12);
+    --start-mark: #7ea8ff;
+    --shadow-field: none;
+
+    --on-accent: #0e1422;
+    --accent-hover: #86afff;
+    --panel-art: #8f9bad;
+
+    --bg-prompt: #242830;
+    --prompt-edge: #343943;
+    --shadow-prompt: 0 1px 3px rgb(0 0 0 / 0.35);
+
+    --seo-bg: #181a1f;
+    --seo-card: #1f2228;
+    --seo-card-edge: #2c3038;
+    --seo-track: #2b3038;
+    --seo-skeleton: #262a31;
+    --seo-skeleton-shine: #2f343c;
+    --caution: #f0b552;
+    --info-tone: #8fb0e8;
+    --shadow-card: none;
+
+    /* ---- Command palette (was in styles.css) */
+    --palette-bg: #23262d;
+    --palette-edge: #353a44;
+    --palette-sheet: linear-gradient(180deg, var(--bg-chrome) 0%, #191b20 100%);
+    --palette-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 30px rgb(0 0 0 / 0.38);
+    --palette-row-active: rgb(108 157 255 / 0.14);
+    --palette-hit: rgb(108 157 255 / 0.22);
+    --palette-kbd-bg: #2c3038;
+    --palette-kbd-edge: #3d424d;
+
+    /* ---- Render profiles (was in styles.css) */
+    --render-accent: #a98bff;
+    --render-soft: rgb(169 139 255 / 0.16);
+    --render-edge: rgb(169 139 255 / 0.55);
+
+    /* ---- Content panel: the SERP previews (was in styles.css) */
+    --serp-card: #15171b;
+    --serp-title: #93b4ff;
+    --serp-text: #bfc6d2;
+    --serp-path: #9aa3b2;
+    --serp-glyph: #2c3139;
+    --serp-glyph-mark: #a3acba;
+
+    /* ---- Browser polish: find bar, History, "Jump back in" (was in styles.css) */
+    --jump-tile-bg: #1f2228;
+    --jump-tile-edge: #2c3038;
+    --jump-monogram-bg: rgb(108 157 255 / 0.18);
+
+    /* ---- Settings (was in settings.css) */
+    --settings-switch-off: #454b56;
+
+    /* ---- Search Console panel (was in gsc-panel.css) */
+    --gsc-grid: #30353e;
+
+    /* ---- Agent panel (was in components/agent/agent.css) */
+    --agent-bg: #181a1f;
+    --agent-card: #1f2228;
+    --agent-edge: #2c3038;
+    --agent-user: #243251;
+    --agent-code-bg: #15171b;
+    --agent-approval-edge: #d9a441;
+    --agent-approval-bg: #2a2518;
+  }
+}
+
+/* ==== 2. Signal tokens (no legacy name yet; unused until the surface PRs) ======================= */
+
+:root {
+  /* ---- Colour: surfaces */
+  --bg-window: #ececee;
+  --bg-sheet: #fafafa;
+  --bg-subtle: #f4f4f5;
+  --bg-surface: #ffffff;
+  --bg-tab-idle: rgb(255 255 255 / 0.55);
+  --inverse: #18181b;
+  --track: #d4d4d8;
+  --switch-off: #8b8b94;
+  --knob: #ffffff;
+
+  /* ---- Colour: on-colour and rules (--text, --text-muted, --text-faint, --on-accent: part 1) */
+  --on-inverse: #ffffff;
+  --divider: rgb(24 24 27 / 0.08);
+
+  /* ---- Colour: status (--ok, --warn, --danger: part 1). Text on a -soft fill uses its -ink. */
+  --ok-soft: #dcfce7;
+  --ok-ink: #166534;
+  --warn-soft: #fef3c7;
+  --warn-ink: #92400e;
+  --danger-soft: #fee2e2;
+  --danger-ink: #b91c1c;
+
+  /* ---- State (--bg-hover, --bg-active: part 1) */
+  --bg-active-inverse: rgb(255 255 255 / 0.1);
+  --focus-ring: 0 0 0 2px #ececee, 0 0 0 4px #4f46e5;
+
+  /* ---- Type: Geist and Geist Mono (font shorthand; letter-spacing is in the spec's TYPE row) */
+  --text-display: 600 24px/1.15 Geist, system-ui, sans-serif;
+  --text-title: 600 18px/1.3 Geist, system-ui, sans-serif;
+  --text-heading: 600 15px/1.35 Geist, system-ui, sans-serif;
+  --text-body: 400 13px/1.45 Geist, system-ui, sans-serif;
+  --text-small: 400 12px/1.4 Geist, system-ui, sans-serif;
+  --text-micro: 600 11px/1.3 Geist, system-ui, sans-serif;
+  --text-caps: 600 11px/1.45 Geist, system-ui, sans-serif;
+  --text-mono: 400 12px/1.4 'Geist Mono', ui-monospace, monospace;
+
+  /* ---- Radius */
+  --r-xs: 4px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* ---- Space (4px base) */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  /* ---- Elevation */
+  --e-ring: 0 0 0 1px rgb(24 24 27 / 0.06);
+  --e-raised: 0 1px 2px rgb(24 24 27 / 0.08), 0 0 0 1px rgb(24 24 27 / 0.05);
+  --e-sheet: 0 0 0 1px rgb(24 24 27 / 0.05), 0 8px 24px -12px rgb(24 24 27 / 0.18);
+  --e-overlay: 0 0 0 1px rgb(24 24 27 / 0.06), 0 16px 40px -12px rgb(24 24 27 / 0.28);
+
+  /* ---- Size */
+  --h-badge: 22px;
+  --h-chip: 28px;
+  --h-status: 28px;
+  --h-control: 34px;
+  --h-field: 38px;
+  --h-chrome: 56px;
+  --w-rail: 48px;
+  --w-panel: 360px;
+  --icon-size: 18px;
+  --icon-stroke: 1.9;
+  --icon-sm: 16px;
+
+  /* ---- Motion */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* ---- Colour: surfaces */
+    --bg-window: #0f0f11;
+    --bg-sheet: #161618;
+    --bg-subtle: #232326;
+    --bg-surface: #1c1c1f;
+    --bg-tab-idle: rgb(255 255 255 / 0.06);
+    --inverse: #f4f4f5;
+    --track: #3f3f46;
+    --switch-off: #71717a;
+    --knob: #f4f4f5;
+
+    /* ---- Colour: on-colour and rules */
+    --on-inverse: #18181b;
+    --divider: rgb(255 255 255 / 0.08);
+
+    /* ---- Colour: status */
+    --ok-soft: rgb(74 222 128 / 0.12);
+    --ok-ink: #86efac;
+    --warn-soft: rgb(251 191 36 / 0.12);
+    --warn-ink: #fcd34d;
+    --danger-soft: rgb(248 113 113 / 0.12);
+    --danger-ink: #fca5a5;
+
+    /* ---- State */
+    --bg-active-inverse: rgb(24 24 27 / 0.09);
+    --focus-ring: 0 0 0 2px #0f0f11, 0 0 0 4px #8b8cf8;
+
+    /* ---- Elevation */
+    --e-ring: 0 0 0 1px rgb(255 255 255 / 0.1);
+    --e-raised: 0 0 0 1px rgb(255 255 255 / 0.1);
+    --e-sheet: 0 0 0 1px rgb(255 255 255 / 0.1), 0 16px 32px -16px rgb(0 0 0 / 0.7);
+    --e-overlay: 0 0 0 1px rgb(255 255 255 / 0.1), 0 16px 40px -12px rgb(0 0 0 / 0.6);
+  }
+}

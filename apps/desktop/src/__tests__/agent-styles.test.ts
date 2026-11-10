@@ -12,8 +12,10 @@ test('agent-styles-are-delimited', () => {
   // Every `.agent` rule lives in the panel's own stylesheet, which the panel imports.
   expect(read('styles.css')).not.toMatch(/\.agent[-\s{,:[]/);
   const css = read('components/agent/agent.css');
-  expect(css).toContain(`--agent-panel-width: ${AGENT_PANEL_WIDTH}px;`);
-  expect(css).toContain(`--agent-rail-width: ${AGENT_RAIL_WIDTH}px;`);
+  // Its widths are design tokens (specs/design-tokens.spec.ts), declared in tokens.css.
+  const tokens = read('tokens.css');
+  expect(tokens).toContain(`--agent-panel-width: ${AGENT_PANEL_WIDTH}px;`);
+  expect(tokens).toContain(`--agent-rail-width: ${AGENT_RAIL_WIDTH}px;`);
   // Approved code wraps: nothing hides past the block's right edge.
   const codeRule = css.slice(css.indexOf('.agent-code {'), css.indexOf('}', css.indexOf('.agent-code {')));
   expect(codeRule).toContain('white-space: pre-wrap;');

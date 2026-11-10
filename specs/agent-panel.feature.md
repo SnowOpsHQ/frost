@@ -93,7 +93,7 @@ to one named test.
   (`agent-state-hook.test.ts`).
 - **Scenario: agent-palette-actions** (`agent-palette.test.ts`).
 - **Scenario: agent-styles-are-delimited** (`src/__tests__/agent-styles.test.ts`) — every `.agent`
-  rule in `agent.css`; approved code wraps (`pre-wrap`); no inline style or HTML injection in the
+  rule in `agent.css` (its widths are tokens in `tokens.css`); approved code wraps (`pre-wrap`); no inline style or HTML injection in the
   panel; no Zod schema imported.
 
 ## End to end (`apps/desktop/e2e/agent.e2e.ts`, scripted model seam)

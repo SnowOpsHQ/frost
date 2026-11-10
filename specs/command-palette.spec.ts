@@ -64,7 +64,7 @@ export type PaletteReturnFocus = (typeof PALETTE_RETURN_FOCUS)[number];
  * it is open, so typing never resizes the page. It is never shorter than `PALETTE_SHEET_MIN_HEIGHT`
  * (the page then keeps less than `PALETTE_PAGE_MIN_VISIBLE`); in a page column shorter than that
  * the palette does not open (it would be cut off) and says so in the status line
- * (`PALETTE_TOO_SHORT_MESSAGE`). Keep these equal to `styles.css` (a unit test reads it).
+ * (`PALETTE_TOO_SHORT_MESSAGE`). Keep these equal to `tokens.css` (a unit test reads it).
  */
 export const PALETTE_SHEET_HEIGHT = 404;
 export const PALETTE_PAGE_MIN_VISIBLE = 96;
