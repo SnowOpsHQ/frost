@@ -295,7 +295,8 @@ export type CrawlRunState = (typeof CRAWL_RUN_STATES)[number];
  * - `quit`: frost quit while it ran (paused);
  * - `interrupted`: start-up found it `running` or `queued` (paused);
  * - `slow-down`: `CRAWL_LIMITS.backoffAfter` 429 / 503 answers in a row (paused; "The site asked frost
- *   to slow down");
+ *   to slow down"); a run paused so before its start URL completed paused while seeding sitemaps, and its
+ *   Resume does not seed again (council review round 4, item N2);
  * - `max-pages`: done with `maxPages` recorded and URLs still queued (a page recorded before a stop
  *   and still queued is replayed and completed first: the cap holds back new pages only; council
  *   review round 2, item E);

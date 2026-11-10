@@ -1139,6 +1139,51 @@ describe('sitemap seeding', () => {
     expect(await repo.runPacing(runId)).toEqual([expect.objectContaining({ host: 'example.com', inARow: CRAWL_LIMITS.backoffAfter })]);
   });
 
+  test('crawl-resume-after-a-sitemap-slow-down-skips-seeding', async () => {
+    // Council review round 4, item N2: a site's firewall answers 429 on every `/sitemap*` while its pages answer. The run
+    // pauses (`slow-down`) while seeding, before its start URL completes; Resume used to seed again (round 3, item J), make
+    // one sitemap request, pause again, and never crawl a page. A run paused `slow-down` whose start never completed paused
+    // while seeding: Resume goes straight to the pages, no sitemap requested again.
+    const kit = timerClock();
+    const db = tempStore();
+    cleanups.push(db.close);
+    const repo = db.store.siteCrawl;
+    const files = [1, 2, 3, 4, 5].map((i) => `${HOME}sitemap-${i}.xml`);
+    const requests: string[] = [];
+    const lane: BoundedFetcher = {
+      async fetch(request) {
+        requests.push(request.url);
+        const busy = new URL(request.url).pathname.startsWith('/sitemap');
+        const body = encoder.encode(busy ? '' : request.url === HOME ? '<!doctype html><title>Home</title><a href="/a">a</a>' : '<!doctype html><title>Page</title>') as Uint8Array<ArrayBuffer>;
+        return { url: request.url, outcome: 'response', status: busy ? 429 : 200, finalUrl: request.url, redirects: 0, chain: [], headers: { 'content-type': busy ? 'text/plain' : 'text/html' }, body, truncated: false, durationMs: 5 };
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    const robotsText = encoder.encode(`User-agent: *\nAllow: /\n${files.map((file) => `Sitemap: ${file}`).join('\n')}\n`);
+    const robots: CrawlRobotsSource = { get: async (pageUrl) => ({ url: `${new URL(pageUrl).origin}/robots.txt`, outcome: 'ok', status: 200, finalUrl: `${new URL(pageUrl).origin}/robots.txt`, redirects: 0, body: robotsText, truncated: false }) };
+    const parseRobots = async (text: string) => {
+      const parsed = parseCrawlRobots({ text });
+      if (!parsed.ok) throw new Error('robots');
+      return parsed.robots;
+    };
+    const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent: () => 'Mozilla/5.0', clock: kit.clock });
+    const sitemaps = createSitemapSeeder({ robots, parseRobots, analyse: async (input) => parseCrawlSitemap(input), now: kit.now });
+    const crawler = createCrawler({ repo, fetcher, analyse: inProcessAnalyse, sitemaps, projectLive: async () => true, now: kit.now });
+    const service = createCrawlService({ repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, now: kit.now, log: () => undefined });
+
+    const runId = await started(service, settingsFor(HOME, { sitemaps: true }));
+    await kit.settle(service.idle());
+    expect(requests).toEqual(files);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'slow-down', counts: { pages: 0, queued: 1 } });
+
+    // Resume: no sitemap is requested again; the start and its link are crawled (after the back-off) and the run ends `done`.
+    requests.length = 0;
+    expect(await service.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(service.idle());
+    expect(requests).toEqual([HOME, `${HOME}a`]);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'done', reason: null, counts: { pages: 2, queued: 0 } });
+  });
+
   test('crawl-sitemap-storage-failure-fails-the-run', async () => {
     // Council review round 3, item I: seeding skips a sitemap it cannot read, but not a store that fails. The sitemap
     // request learns `Crawl-delay: 10` first, so its pacing is stored before it goes out; that write fails once. The run

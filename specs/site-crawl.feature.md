@@ -338,7 +338,12 @@ fetches (no network, no timer), the real session database, the crawl worker's co
   still leaves the start URL to Resume. A Resume whose start URL has never completed (its entry still
   `queued` and no row for it: stopped before it, or its robots.txt unreadable) queues it again and
   seeds sitemaps again (when the settings ask) before continuing; both are idempotent (the frontier
-  dedupes, a seed adds no inlink, a known URL keeps its state and its done flag).
+  dedupes, a seed adds no inlink, a known URL keeps its state and its done flag). (Council review round
+  4, item N2) A run paused `slow-down` whose start URL never completed paused while seeding (a slow-down
+  answer on the start is recorded and completed first; a `deferred` start comes after seeding ran): its
+  Resume does not seed again and goes straight to the pages, so a site answering 429 / 503 on its
+  sitemaps alone cannot hold the run paused for good. The stored reason tells it; no new column. A
+  Resume after a `robots-unreachable` pause still seeds again.
 - `crawl-start-url-queued-with-its-run` — (round 3, item J) a Pause while a new run reads its counts
   leaves the run `paused` with nothing fetched and the start URL `queued` (depth 0, no inlink); Resume
   crawls it and its link, and the run ends `done` with two pages. A kill there (the run left `queued`):
@@ -505,12 +510,17 @@ the crawl worker and its URLs handed out `sitemapUrlsPerJob` at a time, then rel
   while a sitemap's URLs are seeded fails the run the same way.
 - `crawl-sitemap-falls-back-to-sitemap-xml` — robots.txt without a `Sitemap:` line: `/sitemap.xml` of
   the start's origin. Seeding runs on a fresh start, and on a Resume while the start URL has never
-  completed (round 3, item J); otherwise a resume continues from the frontier.
+  completed (round 3, item J) unless the run paused `slow-down` (round 4, item N2); otherwise a resume
+  continues from the frontier.
 - `crawl-resume-seeds-sitemaps-when-the-start-never-completed` — (council review round 3, item J) with
   robots.txt unreadable, the fallback sitemap is refused and the start URL pauses the run
   (`robots-unreachable`), nothing requested; robots.txt readable again, Resume reads the `Sitemap:` file
   first, then crawls the start and both seeded URLs (`done`, three pages; the linked one has one inlink,
   the other is an orphan). A Resume once the start has completed reads no sitemap.
+- `crawl-resume-after-a-sitemap-slow-down-skips-seeding` — (council review round 4, item N2) every
+  `/sitemap*` request answers 429 and pages answer 200: the five `Sitemap:` files pause the run
+  (`slow-down`) with its start queued; Resume requests no sitemap, crawls the start and its link after
+  the back-off, and the run ends `done` with two pages.
 - `crawl-sitemap-private-start-stays-on-its-origin` — a start on `127.0.0.1:3000` whose robots.txt lists
   `http://127.0.0.1:9229/x` and whose `/sitemap.xml` answers 302 to `:9229`: no request reaches `:9229`
   (nor its robots.txt), nothing is seeded.

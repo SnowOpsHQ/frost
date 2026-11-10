@@ -72,7 +72,7 @@ export interface CrawlerDeps {
   readonly fetcher: { forRun(settings: CrawlSettings): CrawlerRunFetcher };
   /** One page's parse and audit in the crawl worker (`Analyzer.analyseCrawlPage`). */
   readonly analyse: (job: CrawlPageJob) => Promise<CrawlPageResult>;
-  /** Sitemap seeding for a run whose settings ask for it, fresh or resumed before its start URL completed (`createSitemapSeeder`). */
+  /** Sitemap seeding for a run whose settings ask for it, fresh or resumed before its start URL completed and not after a seeding slow-down (`createSitemapSeeder`). */
   readonly sitemaps?: SitemapSeeder;
   /** Whether a project is live (not tombstoned, not deleted): checked before every fetch call of a project's run. */
   readonly projectLive: (projectId: string) => Promise<boolean>;
@@ -119,7 +119,8 @@ export interface CrawlRunHandle {
 export interface Crawler {
   /**
    * Runs `run` (its settings readable): `fresh` queues its start URL and seeds sitemaps first; otherwise it continues
-   * from its frontier, seeding sitemaps first again while its start URL has never completed (round 3, item J).
+   * from its frontier, seeding sitemaps first again while its start URL has never completed (round 3, item J), unless
+   * it paused `slow-down` (then it paused while seeding: round 4, item N2).
    */
   run(run: CrawlRunView & { readonly settings: CrawlSettings }, fresh: boolean): CrawlRunHandle;
 }
@@ -349,10 +350,15 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
           // A fresh run, or a resumed one whose start URL never completed (still queued with no row: a stop or a crash
           // before it, or its robots.txt unreadable; council review round 3, item J), queues its start URL (the run's
           // creation already did: this is idempotent) and seeds sitemaps. Seeding again is idempotent too: the frontier
-          // dedupes, a seed never adds an inlink, and a known URL keeps its state.
+          // dedupes, a seed never adds an inlink, and a known URL keeps its state. A run paused `slow-down` whose start
+          // never completed paused while seeding (the start is the first page fetched, a slow-down answer on it is recorded
+          // and completed first, and a `deferred` start comes after seeding ran): its Resume goes straight to the pages, so a
+          // site that keeps answering 429 / 503 on its sitemaps alone never holds the run paused (council review round 4,
+          // item N2; the stored reason says so, no new column).
           if (fresh || (await startNeverCompleted(scope.start))) {
             await frontier.discover([scope.start], 0, 'start');
-            if (settings.sitemaps && deps.sitemaps && !signal.aborted) {
+            const seedingSlowedDown = !fresh && view.reason === 'slow-down';
+            if (settings.sitemaps && deps.sitemaps && !seedingSlowedDown && !signal.aborted) {
               const seeding = frontier;
               const fetching = runFetcher;
               // Sitemap requests are crawl requests: the run's own fetch (scope, robots.txt, pacing, the redirect hook).
