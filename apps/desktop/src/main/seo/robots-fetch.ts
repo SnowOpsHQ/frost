@@ -14,7 +14,7 @@ export { isPrivateHost, netHop, type Hop, type HopResult, type NetRequester } fr
 // bounded fetcher (`fetcher.ts`, `fetcher.spec.ts`): one hop at a time, each redirect checked before
 // it is followed (at most `maxRedirects`, `http(s)` only, never to a private host unless the page is
 // on one), the body read up to `maxBytes` (only for a 2xx), everything under one `timeoutMs`
-// deadline. Answers are cached per origin (`cacheTtlMs`,
+// deadline. Answers are cached per origin (and apart for exact-origin lookups; `cacheTtlMs`,
 // `failureTtlMs` for transient failures, at most `maxCacheEntries`), and concurrent requests for an
 // origin share one fetch. The body is kept as bytes, never decoded or parsed here: the analysis
 // worker does (`@app/seo-core`, `decodeRobotsBytes`, `parseRobotsTxt`).
@@ -33,11 +33,22 @@ export interface RobotsFetcherOptions {
   readonly limits?: Partial<typeof ROBOTS_FETCH_LIMITS>;
 }
 
+/**
+ * How one lookup is made. `exactOrigin` (the site crawl's lookups for a private start, Phase 12
+ * Decision 6): the fetch never follows a redirect off the robots.txt URL's own origin (scheme, host
+ * and port); such a redirect is answered `private-redirect` (no robots.txt), never `unreachable`.
+ * Lookups with the rule are cached apart from lookups without it, so an answer that followed such a
+ * redirect for another caller (the sidebar) is never reused by the crawl, and the reverse.
+ */
+export interface RobotsLookupOptions {
+  readonly exactOrigin?: boolean;
+}
+
 export interface RobotsFetcher {
   /** The robots.txt of `pageUrl`'s origin (cached), or `null` for a non-`http(s)` page. Never rejects. */
-  get(pageUrl: string): Promise<RobotsFetch | null>;
+  get(pageUrl: string, options?: RobotsLookupOptions): Promise<RobotsFetch | null>;
   /** What `get` would answer at once: the cached, settled answer; `undefined` when there is none yet (or it is still being fetched); `null` for a non-`http(s)` page. */
-  peek(pageUrl: string): RobotsFetch | null | undefined;
+  peek(pageUrl: string, options?: RobotsLookupOptions): RobotsFetch | null | undefined;
   /** Forgets every origin (Clear Browsing Data); a fetch in flight is not cached when it settles. */
   clear(): void;
   /** How many origins are cached (for tests). */
@@ -78,6 +89,10 @@ function robotsOutcome(fetched: BoundedFetchResult): RobotsFetchOutcome {
     // redirect, so no robots.txt (never an "unreachable" warning for it).
     case 'private-address':
       return 'private-redirect';
+    // An exact-origin lookup refused a redirect off its origin (the crawl's private start): no
+    // robots.txt, as a private redirect is, never an "unreachable" one.
+    case 'redirect-refused':
+      return 'private-redirect';
     default:
       return 'unreachable';
   }
@@ -89,8 +104,11 @@ export function createRobotsFetcher(options: RobotsFetcherOptions): RobotsFetche
   const cache = new Map<string, { expires: number; value: Promise<RobotsFetch>; settled?: RobotsFetch }>();
   const fetcher = options.fetcher ?? createBoundedFetcher({ hop: options.hop, now, limits: { perOriginIntervalMs: 0 } });
 
-  async function fetchRobots(robotsUrl: string, pageUrl: string): Promise<RobotsFetch> {
-    const fetched = await fetcher.fetch({ url: robotsUrl, page: pageUrl, maxRedirects: limits.maxRedirects, maxBytes: limits.maxBytes, timeoutMs: limits.timeoutMs, readBody: isOk });
+  async function fetchRobots(robotsUrl: string, pageUrl: string, exactOrigin: boolean): Promise<RobotsFetch> {
+    const origin = new URL(robotsUrl).origin;
+    // The exact-origin rule: a hop to any other scheme, host or port is refused before it is requested.
+    const allowRedirect = async (next: string): Promise<boolean> => parseWebUrl(next)?.origin === origin;
+    const fetched = await fetcher.fetch({ url: robotsUrl, page: pageUrl, maxRedirects: limits.maxRedirects, maxBytes: limits.maxBytes, timeoutMs: limits.timeoutMs, readBody: isOk, ...(exactOrigin ? { allowRedirect } : {}) });
     const outcome = robotsOutcome(fetched);
     return {
       url: fetched.url,
@@ -103,25 +121,29 @@ export function createRobotsFetcher(options: RobotsFetcherOptions): RobotsFetche
     };
   }
 
-  /** The live cache entry for `origin` (an expired one is dropped). */
-  const fresh = (origin: string) => {
-    const cached = cache.get(origin);
+  /** The live cache entry for `key` (an expired one is dropped). */
+  const fresh = (key: string) => {
+    const cached = cache.get(key);
     if (cached && cached.expires > now()) return cached;
-    cache.delete(origin);
+    cache.delete(key);
     return undefined;
   };
 
+  /** The cache key of a lookup: the origin, marked when the lookup has the exact-origin rule (cached apart). */
+  const keyOf = (origin: string, options: RobotsLookupOptions | undefined): string => (options?.exactOrigin === true ? `exact ${origin}` : origin);
+
   return {
-    get(pageUrl) {
+    get(pageUrl, options) {
       const page = parseWebUrl(pageUrl);
       if (!page) return Promise.resolve(null);
       const origin = page.origin;
-      const cached = fresh(origin);
+      const key = keyOf(origin, options);
+      const cached = fresh(key);
       if (cached) return cached.value;
-      const value = fetchRobots(`${origin}/robots.txt`, page.href);
+      const value = fetchRobots(`${origin}/robots.txt`, page.href, options?.exactOrigin === true);
       // In flight: shared until it settles, then kept for its TTL.
       const entry: { expires: number; value: Promise<RobotsFetch>; settled?: RobotsFetch } = { expires: Number.POSITIVE_INFINITY, value };
-      cache.set(origin, entry);
+      cache.set(key, entry);
       while (cache.size > limits.maxCacheEntries) cache.delete(cache.keys().next().value!);
       void value.then((fetched) => {
         entry.settled = fetched;
@@ -129,10 +151,10 @@ export function createRobotsFetcher(options: RobotsFetcherOptions): RobotsFetche
       });
       return value;
     },
-    peek(pageUrl) {
+    peek(pageUrl, options) {
       const page = parseWebUrl(pageUrl);
       if (!page) return null;
-      return fresh(page.origin)?.settled;
+      return fresh(keyOf(page.origin, options))?.settled;
     },
     clear: () => cache.clear(),
     size: () => cache.size,

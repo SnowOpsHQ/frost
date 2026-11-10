@@ -162,6 +162,8 @@ export {
   type UncompressedResource,
   type VitalReading,
 } from './performance';
+// The site crawl's robots.txt reading (Phase 12 Task 6a): Crawl-delay and the crawl's verdicts, for the bare token.
+export { crawlDelayFor, crawlRobotsRules, type CrawlRobotsRules } from './crawl/crawl-delay';
 export { pageUrls, socialPreview, type SocialCard, type SocialImage, type SocialPreview, type SocialSource, type SocialValue } from './social';
 export type {
   CappedText,

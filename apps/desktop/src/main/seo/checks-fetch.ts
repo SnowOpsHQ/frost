@@ -68,6 +68,8 @@ const OUTCOMES: Readonly<Record<FetchOutcome, CheckFetchOutcome>> = {
   'bad-redirect': 'bad-redirect',
   'no-location': 'no-location',
   'private-redirect': 'private-redirect',
+  // The checks pass no redirect-policy hook (only the crawl does): a refused redirect is a redirect not followed.
+  'redirect-refused': 'bad-redirect',
   unreachable: 'unreachable',
   timeout: 'timeout',
   aborted: 'aborted',

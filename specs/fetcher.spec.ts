@@ -97,6 +97,13 @@ export const FETCHER_LIMITS = {
   maxQueuedPerOrigin: 1_000,
   /** Response headers kept per call (`BoundedFetchResult.headers`), each value cut to this (unless the call says otherwise). */
   maxHeaderValueChars: 1_024,
+  /**
+   * The longest one `allowRedirect` answer may take (ms, per hop; Phase 12 Task 6a review): a hook
+   * still unanswered then refuses the hop (`redirect-refused`). At least the crawl hook's own robots.txt
+   * wait (`ROBOTS_FETCH_LIMITS.timeoutMs` + `CRAWL_ROBOTS_HOOK_MARGIN_MS`, 6 s), so the crawl's answer
+   * always arrives first.
+   */
+  maxRedirectHookMs: 8_000,
 } as const;
 
 /**
@@ -137,14 +144,13 @@ export type FetchMethod = (typeof FETCH_METHODS)[number];
  * - `private-address`: the first URL is on a private host and the page is not (nothing requested);
  * - `too-many-redirects`, `bad-redirect`, `no-location`, `private-redirect`: see the rules above;
  * - `unreachable`: a network error; `timeout`: the deadline passed;
- * - `aborted`: the caller's `signal` aborted; `busy`: the origin's queue was full (nothing requested).
- *
- * Phase 12 Task 6a adds `redirect-refused`: the call's `allowRedirect` hook refused a redirect hop
- * (the next URL was never requested; `status` and `finalUrl` are the redirect's). It joins this list
- * with the fetcher change that consults the hook, so every exhaustive mapping of these outcomes is
- * updated in the same change.
+ * - `aborted`: the caller's `signal` aborted; `busy`: the origin's queue was full (nothing requested);
+ * - `redirect-refused` (Phase 12 Task 6a): the call's `allowRedirect` hook refused a redirect hop (the
+ *   next URL was never requested; `status` and `finalUrl` are the redirect's, and the refused hop is
+ *   not in `chain`). Only a call that passes the hook (the crawl lane, and the crawl's exact-origin
+ *   robots.txt lookups) can end so.
  */
-export const FETCH_OUTCOMES = ['response', 'not-web', 'private-address', 'too-many-redirects', 'bad-redirect', 'no-location', 'private-redirect', 'unreachable', 'timeout', 'aborted', 'busy'] as const;
+export const FETCH_OUTCOMES = ['response', 'not-web', 'private-address', 'too-many-redirects', 'bad-redirect', 'no-location', 'private-redirect', 'redirect-refused', 'unreachable', 'timeout', 'aborted', 'busy'] as const;
 export type FetchOutcome = (typeof FETCH_OUTCOMES)[number];
 
 /**
@@ -206,7 +212,9 @@ export interface BoundedFetchRequest {
    * origin** (the fetcher's own DNS resolution excepted), and only when both allow the hop may it look
    * up that origin's robots.txt. The time it spends is not counted in the page fetch's own `timeoutMs`
    * (the deadline is paused while it runs); the hook bounds its own wait, and a hook past its time
-   * refuses the hop.
+   * refuses the hop. The fetcher also caps it (`FETCHER_LIMITS.maxRedirectHookMs`: unanswered then, a
+   * refusal), and once the hook allows a hop to a name it resolves the name again before requesting it
+   * (an answer that turned private while the hook ran refuses the hop, `private-redirect`).
    *
    * `signal` aborts when the call's own `signal` does (the hook passes it to its robots lookup). The
    * fetcher races the hook against the call's signal: an abort while the hook runs ends the call at

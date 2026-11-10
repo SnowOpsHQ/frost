@@ -28,8 +28,11 @@ Task 7 the Pages and Site structure views. Each line maps to one named test.
   part of Clear Browsing Data or project retention; never synced.
 
 ## L6 (owner's decision; Task 6a records it here)
-*To be recorded by Task 6a: the owner's answer to "robots.txt and `Crawl-delay` honoured, no
-override, 1 request/s default, identifying user-agent token" as an acceptable default.*
+**Pending the owner's note.** The question: is "robots.txt and `Crawl-delay` honoured, no override,
+1 request/s default, identifying user-agent token" an acceptable default for an open-source tool?
+Task 6a builds exactly that default (below) but records **no** approval: until the owner's written
+note exists under `docs/research/`, `CRAWL_AVAILABLE` stays `false` and main refuses to start or
+resume a crawl (`crawl-gate-ships-closed`). The change that adds the note flips the gate.
 
 ## Contract (Task 5: `packages/seo-core/src/crawl/__tests__/crawl-spec.test.ts`)
 - `crawl-gate-ships-closed` — `CRAWL_AVAILABLE` is `false` in this build (L6 has no owner's note).
@@ -90,8 +93,140 @@ override, 1 request/s default, identifying user-agent token" as an acceptable de
   projects that still have runs.
 
 ## Fetching, politeness and robots (Task 6a)
-*Scenarios for scope, robots, `Crawl-delay`, politeness, back-off, `Retry-After`, private starts and
-the redirect-policy hook: Task 6a.*
+Code: `packages/seo-core/src/crawl/crawl-delay.ts` (`crawlDelayFor`, `crawlRobotsRules`, pure),
+`apps/desktop/src/main/crawl/scope.ts` (`normaliseCrawlUrl`, `createCrawlScope`,
+`createQueryVariantCap`), `politeness.ts` (`createPoliteness`, an injected clock and timer) and
+`fetch.ts` (`createCrawlLane`, `createCrawlFetcher(deps).forRun(settings).fetchPage(url, signal)`);
+the redirect-policy hook in `apps/desktop/src/main/seo/fetcher.ts`; the exact-origin robots lookup in
+`robots-fetch.ts`. Tests: `packages/seo-core/src/crawl/__tests__/crawl-delay.test.ts`,
+`apps/desktop/src/main/crawl/__tests__/crawl-{scope,politeness,fetch}.test.ts` and
+`apps/desktop/src/main/seo/__tests__/fetcher.test.ts` (the hook), all with fake clocks, fake hops,
+resolvers and robots, loopback names only.
+
+### Crawl-delay (Q13)
+`Crawl-delay` is not in RFC 9309; crawlers that read it disagree on its edge cases. frost's rule:
+- the value is **seconds**, whole or decimal (`5`, `0.5`, `.5`, `2.`); anything else (a sign, a unit
+  such as `5s`, an exponent, a word, empty) is ignored, as if the line were absent; `0` is a valid
+  value that raises nothing;
+- the line belongs to the group of the `user-agent` lines before it, grouped exactly as the robots
+  parser groups them (`parseRobotsTxt`: a `crawl-delay` line between two `user-agent` lines does not
+  end the group's agents; one before any `user-agent` line belongs to no group);
+- the groups are chosen like `groupsFor`: every group naming `CRAWL_ROBOTS_TOKEN` (merged), else every
+  `*` group;
+- **several values in the chosen groups: the largest wins** (the politest reading; first-wins would
+  let a later, stricter line be ignored);
+- the result is in milliseconds, rounded up, capped at `MAX_CRAWL_DELAY_MS` (10 s); none (`null`)
+  when no valid value applies. Google ignores `Crawl-delay`; frost honours it anyway (Decision 6).
+
+### Pacing is per host name (Task 6a security review, lead ruling)
+Pacing and the one-call-in-flight rule are keyed by **host name** (lowercased, trailing dot dropped),
+not origin: `http` and `https`, or two ports, of one host share one pacing state (stricter than the
+plan's "per origin"). A redirect hop to **another host name** is never followed inside a fetch call:
+the call ends `redirected` (a fetched outcome), the row keeps the redirect (`finalUrl` = the target,
+the hop in its chain) and Task 6b queues the target as a page of its own (depth + 1) under that host's
+pacing; hops on the same host name are followed at once after the hook. The pacing state (last start,
+back-off, `Retry-After`, `Crawl-delay`) belongs to the crawl fetcher, not the run: it survives a pause,
+a resume and a new run; only the user's interval is the run's. It is bounded
+(`CRAWL_LIMITS.maxPacedHosts`): a host is forgotten only once its longest possible wait (the largest
+interval at full back-off, raised to its `Crawl-delay`) and its `Retry-After` have passed; past the cap
+a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL stays queued).
+
+### Scenarios
+- `crawl-delay-parsed` — `crawlDelayFor(text, CRAWL_ROBOTS_TOKEN)`: the `frost-crawl` group's value,
+  else the `*` group's (a `frost-crawl` group with no value gives none even when `*` has one); `3` is
+  3 000 ms, `0.5` is 500 ms; absent, negative (`-1`), non-numeric (`soon`, `5s`, `1e3`) give none; the
+  largest of several wins; 60 is capped at 10 000 ms; the group follows the parser's grouping.
+- `crawl-is-polite` (K-B1) — with a fake clock, for **every** interval choice from 500 to 4 000 ms:
+  never two fetch calls in flight to one origin, and consecutive fetch-call starts on one origin at
+  least the effective interval apart (calls of different lengths, some longer than the interval).
+  Through the crawl fetcher, a page that redirects twice on its origin is one fetch call: its hops
+  follow each other at once (not spaced by the interval, bounded by `maxRedirects`), and the next
+  call still waits the full interval after that call **started**. The lane's own floor
+  (`CRAWL_FETCHER_LIMITS`) never delays the crawl's pacing.
+- `crawl-is-polite-per-host` — two hosts redirecting into a third: both calls end `redirected` with
+  the target, nothing is requested from the third host (nor its robots.txt) inside them, and the third
+  host's pages, fetched on their own, are paced as one host; an `http` → `https` redirect on one host
+  is followed in the call, and `http` and `https` pages of that host are paced as one host, one call in
+  flight.
+- `crawl-pacing-survives-runs` — a run backed off by a 429 is paused; a new run (or a resume) of the
+  same crawl fetcher still waits the backed-off interval from the last start (at its own interval).
+- `crawl-politeness-bounds-never-start-early` — over hundreds of calls to more hosts than
+  `maxPacedHosts`, with back-off, `Retry-After` and `Crawl-delay` active, no start is ever earlier than
+  the host's full state requires, the table never exceeds its cap, and a full table refuses a new host
+  instead of forgetting one too soon.
+- `crawl-keeps-a-learned-crawl-delay` — a later robots.txt lookup with no answer or an unknown outcome
+  keeps the `Crawl-delay` an earlier one taught; a known answer (a file without one, no file) changes it.
+- `crawl-honours-crawl-delay-and-retry-after` — the effective interval rises to the site's
+  `Crawl-delay` (capped at 10 s), never below the user's choice; a 429 or 503 with `Retry-After` in
+  seconds or as an HTTP date makes the next call wait it (from when it was received), capped at
+  `CRAWL_LIMITS.maxRetryAfterMs`; a past date or a malformed value waits nothing extra; a
+  `Retry-After` on a 200 is ignored.
+- `crawl-backs-off-and-pauses` — each 429 or 503 in a row doubles the interval; any other answer
+  resets it; the `CRAWL_LIMITS.backoffAfter`-th (5th) in a row answers `slowDown` (the run pauses with
+  `CRAWL_SLOW_DOWN_MESSAGE`, reason `slow-down`, in Task 6b).
+- `crawl-honours-robots` — a URL robots.txt disallows for `frost-crawl` is answered
+  `blocked-by-robots` and never requested; the `frost-crawl` group is used, else `*`; a file with
+  `User-agent: frost-crawl` / `Disallow: /` blocks every URL although `*` allows them; robots.txt the
+  crawl cannot read (an unknown outcome) lets the page be crawled at the default interval with the
+  `robots-txt-unreachable` flag (the start-origin rule); "no robots.txt" outcomes allow everything.
+  Each page carries the crawl's verdict and Googlebot's, from the same file.
+- `crawl-robots-matches-the-bare-token` — requests carry the browse user agent with ` frost-crawl/1`
+  appended; robots.txt `User-agent: frost-crawl` / `Disallow: /` refuses the crawl; a
+  `User-agent: mozilla` / `Disallow: /` group is **not** applied (the header starts with `Mozilla`);
+  every robots match and the `Crawl-delay` lookup receive `CRAWL_ROBOTS_TOKEN` (or `googlebot` for
+  the second verdict), never the header.
+- `crawl-scope-host-site-path` — `host`: the start's host name, either scheme, on the start's own port
+  or a default port (80, 443) only (lead ruling; another port is out of scope); `site`: any host with
+  the start's registrable domain (the same port rule); `path`: the start's host under the start's
+  directory (the same port rule); include
+  prefixes (any one must match, when given) and exclude prefixes (none may match) apply to the path
+  and query, literally (`*` is a plain character); the start URL itself is always in scope.
+- `crawl-strips-tracking-params` — `CRAWL_TRACKING_PARAMS` (any case) are removed and the remaining
+  query is kept byte for byte, in order; the fragment is dropped, the host lowercased, a default port
+  removed; a non-`http(s)` URL, one with credentials or one longer than `maxUrlChars` is no crawl URL.
+- `crawl-caps-query-variants` — at most `maxQueryVariantsPerPath` (20) distinct query strings are
+  admitted per path (each URL is offered once: the frontier is the seen-set); the URL without a query
+  is always admitted; the counter holds a bounded number of paths.
+- `crawl-private-start-is-origin-only` — a start on `127.0.0.1:3000`: every request's `page` is the
+  start URL; a URL on another private host, another port of the same host or another scheme is out
+  of scope and never requested; `127.0.0.1:9229` is never requested; robots.txt is looked up with the
+  exact-origin rule.
+- `crawl-redirects-pass-the-crawl-policy` — a page redirecting to a same-host path robots.txt
+  disallows (`blocked-by-robots`), to an out-of-scope public host (`out-of-scope`), to an excluded
+  path (`out-of-scope`), and to another private host (`private-redirect`): each hop is refused by the
+  hook before it is requested (`redirect-refused`), and the page is recorded with the refusal and the
+  refused target; a hop to a port the scope does not allow is `out-of-scope`; a `127.0.0.1:3000` page redirecting to `127.0.0.1:9229` is refused with no request
+  to `:9229` at all, not even `/robots.txt` (scope and the address rule are decided before any robots
+  lookup); an in-scope, allowed hop is followed in the same call.
+- `crawl-robots-fetch-is-origin-only` — with the exact-origin rule, `127.0.0.1:3000/robots.txt`
+  redirecting to `127.0.0.1:9229` is not followed (no request reaches `:9229`): the robots outcome is
+  `private-redirect` (no robots.txt), never `unreachable`; a robots answer cached for another caller
+  that followed such a redirect is not reused (the two lookups are cached apart); without the rule
+  the sidebar's lookup behaves as before.
+- `crawl-redirect-robots-timeout-refuses-the-hop` — (each case a same-host `http` → `https` hop, so
+  another robots.txt) a redirect target whose robots answer is
+  `timeout`, and one whose lookup is still unanswered at `ROBOTS_FETCH_LIMITS.timeoutMs` +
+  `CRAWL_ROBOTS_HOOK_MARGIN_MS`: the hop is refused and the page recorded `robots-timeout`, never a
+  page fetch `timeout` (the hook's wait is not the page's deadline); a target whose robots answer is
+  `server-error`, `unreachable`, `bad-redirect` or `no-location` (each its own case) follows the
+  start-origin rule: the hop is followed and the page carries the `robots-txt-unreachable` flag.
+- `crawl-keeps-the-headers-it-needs` — every page request asks for `CRAWL_KEEP_HEADERS` and only
+  those come back (`set-cookie`, `server` never); repeated `X-Robots-Tag` values stay apart
+  (`CRAWL_SEPARATE_HEADERS`); the body is read up to `CRAWL_LIMITS.maxBodyBytes` (`truncated` past
+  it).
+- `crawl-user-agent-identifies` — every page request sends the browse session's user agent with
+  ` frost-crawl/1` appended (once), the served-HTML `Accept`, and `page` = the start URL.
+
+### The redirect-policy hook (fetcher, `fetcher.test.ts`)
+- `fetcher-redirect-hook` — without a hook a redirect is followed as before; the hook is asked
+  after the fetcher's own checks (a private or unresolvable target never reaches it) with the
+  resolved next URL; `false` or a rejection ends the call `redirect-refused` (status and final URL
+  the redirect's, the next URL never requested); the time the hook takes is not counted in the
+  call's `timeoutMs`; an abort while the hook runs ends the call `aborted` at once.
+- `fetcher-redirect-hook-is-capped-and-re-resolved` — a hook unanswered at
+  `FETCHER_LIMITS.maxRedirectHookMs` (at least the robots wait plus `CRAWL_ROBOTS_HOOK_MARGIN_MS`)
+  refuses the hop; a name that resolved public before the hook and private after it is refused
+  `private-redirect` before the hop is requested.
 
 ## Runs, frontier, resume and the served-HTML audit (Task 6b)
 *Scenarios for the frontier, max pages and depth, pause / resume / quit / crash, sitemap seeding,

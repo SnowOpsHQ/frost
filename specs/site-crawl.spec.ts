@@ -63,6 +63,10 @@ export const CRAWL_AVAILABLE = false as boolean;
  * - `backoffAfter`: 429 or 503 answers in a row that pause the run ("The site asked frost to slow
  *   down"); each one doubles the interval first;
  * - `maxRetryAfterMs`: the longest `Retry-After` honoured (seconds or a date); a longer one waits this;
+ * - `maxPacedHosts`: hosts whose pacing state (last start, back-off, `Retry-After`, `Crawl-delay`) the
+ *   crawl holds at once (Task 6a review). An entry is forgotten only once no start could be early
+ *   without it (its longest possible wait has passed); a new host past the cap is not fetched (the run
+ *   pauses with `slow-down`, the URL stays queued). Counted in `maxInMemoryEntries`;
  * - `maxInMemoryEntries`: the most per-page entries the crawler holds in memory at once, all its
  *   structures counted (the frontier window read from SQLite, pending rows, per-origin state; K-B3).
  *   Everything else is in SQLite. 2 000 entries of a few hundred bytes each stay well under a
@@ -83,6 +87,7 @@ export const CRAWL_LIMITS = {
   maxLinksStoredPerPage: 200,
   backoffAfter: 5,
   maxRetryAfterMs: 60_000,
+  maxPacedHosts: 256,
   maxInMemoryEntries: 2_000,
   maxPrefixes: 20,
   maxPrefixChars: 256,
@@ -119,11 +124,13 @@ export const CRAWL_SEPARATE_HEADERS = ['x-robots-tag'] as const satisfies readon
 
 /**
  * What a run may follow from its start URL:
- * - `host` (default): the start URL's host (scheme and port aside); for a **private** start, its exact
- *   origin (scheme, host **and** port), so a dev-server crawl never reaches another LAN host or another
- *   port of its own host (`127.0.0.1:3000` never reaches `127.0.0.1:9229`);
- * - `site`: any host under the start URL's registrable domain;
- * - `path`: the start URL's host, under the start URL's directory (its path up to the last `/`).
+ * - `host` (default): the start URL's host name, either scheme (`http` / `https`), on the start URL's
+ *   own port or a scheme's default port (80, 443) only; for a **private** start, its exact origin
+ *   (scheme, host **and** port), so a dev-server crawl never reaches another LAN host or another port
+ *   of its own host (`127.0.0.1:3000` never reaches `127.0.0.1:9229`);
+ * - `site`: any host under the start URL's registrable domain (the same port rule);
+ * - `path`: the start URL's host (the same port rule), under the start URL's directory (its path up to
+ *   the last `/`).
  *
  * Include and exclude prefixes then narrow it: a URL's path (and query) must start with one include
  * prefix, when any is given, and with no exclude prefix. Prefixes are literal text, never patterns.
@@ -220,6 +227,10 @@ export const CRAWL_SLOW_DOWN_MESSAGE = 'The site asked frost to slow down.' as c
  * - `crawled`: an HTML response (any status), parsed and audited;
  * - `not-html`: a response of another media type: recorded, not parsed;
  * - `parse-failed`: an HTML response the worker could not parse in time;
+ * - `redirected`: the page redirected to **another host name** (in scope): that hop is never followed
+ *   inside the fetch call (each host is paced on its own, K-B1); the row keeps the redirect (`status`,
+ *   `finalUrl` = the target) and the target is queued as a page of its own (depth + 1, Task 6b), fetched
+ *   under its host's pacing. Hops on the same host name are followed at once;
  * - `blocked-by-robots`: robots.txt disallows it for `CRAWL_ROBOTS_TOKEN` (never fetched), or a redirect
  *   hop to a URL it disallows was refused;
  * - `out-of-scope`: a redirect hop left the run's scope and was refused (links out of scope are
@@ -235,6 +246,7 @@ export const CRAWL_PAGE_OUTCOMES = [
   'crawled',
   'not-html',
   'parse-failed',
+  'redirected',
   'blocked-by-robots',
   'out-of-scope',
   'private-redirect',
@@ -255,7 +267,7 @@ export type CrawlPageOutcome = (typeof CRAWL_PAGE_OUTCOMES)[number];
  *   private-address rule (`refused`);
  * - failed: the fetch itself went wrong (`failed`).
  */
-export const CRAWL_FETCHED_OUTCOMES = ['crawled', 'not-html', 'parse-failed'] as const satisfies readonly CrawlPageOutcome[];
+export const CRAWL_FETCHED_OUTCOMES = ['crawled', 'not-html', 'parse-failed', 'redirected'] as const satisfies readonly CrawlPageOutcome[];
 export const CRAWL_REFUSED_OUTCOMES = ['blocked-by-robots', 'out-of-scope', 'private-redirect', 'robots-timeout', 'private-address'] as const satisfies readonly CrawlPageOutcome[];
 export const CRAWL_FAILED_OUTCOMES = ['too-many-redirects', 'bad-redirect', 'no-location', 'unreachable', 'timeout'] as const satisfies readonly CrawlPageOutcome[];
 
