@@ -1330,7 +1330,9 @@ describe('sitemap seeding', () => {
     expect(jobs.filter((job) => 'job' in (job as object))).toHaveLength(1);
   });
 
-  test('crawl-sitemap-window-timeout-stops-seeding-with-a-note', async () => {
+  // Skipped on Windows, as crawl-sitemap-read-once-in-windows: its run crawls the 1 000 seeded URLs,
+  // thousands of writes Windows CI syncs to disk one by one (375 s there, under a second elsewhere).
+  test.skipIf(WINDOWS)('crawl-sitemap-window-timeout-stops-seeding-with-a-note', async () => {
     const listed = Array.from({ length: CRAWL_LIMITS.sitemapUrlsPerJob + 10 }, (_, i) => `${HOME}w${i}`);
     const files = { 'https://example.com/sitemap.xml': urlset(listed) };
     const base = seeder(files, null);
