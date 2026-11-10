@@ -1526,3 +1526,19 @@ Where the build differs from the plan above, or settles what it left open. **Lea
   - E: a page already recorded and still queued is replayed and completed before `maxPages` applies;
     the cap holds back only pages with no row.
   - F: a replayed entry whose new answer has no analysis clears its old links (`putLinks(…, [])`).
+- **Council round 3 (crawl fixes, one commit each).**
+  - G: `robots-unreachable` pauses the run only for the start URL's origin (scheme, host, port), for
+    a queued page or a same-host hop; on any other origin the page is recorded `robots-unreachable`
+    (nothing requested, counted `refused`) and its entry completed, so a host whose robots.txt never
+    answers cannot hold the run paused.
+  - H: `CrawlFetchOptions.beforeHop(host)` is asked in the redirect hook after a same-host hop's
+    robots allow it and its `Crawl-delay` is learned, right before the hop; the crawler stores the
+    pacing there when it changed, and a failed write refuses the hop and fails the run (`error`).
+  - I: sitemap seeding still skips files it cannot read, but passes store failures (a pacing or
+    frontier write) up, failing the run (`error`).
+  - J: `createRun({ …, start })` writes the run and its start URL's frontier entry in one
+    transaction; on Resume, while the start URL has never completed, the crawler queues it again and
+    reseeds sitemaps (idempotent: the frontier dedupes, a seed adds no inlink). No new column.
+  - The migration check: `site-crawl-migrations-create-schema` already inserts every run state, run
+    reason (`robots-unreachable` included), page outcome and frontier state on a fresh database;
+    `0240`'s `CHECK`s are generated from the spec arrays and edited in place while unreleased.
