@@ -35,7 +35,10 @@ job (`serp/serp-worker.ts`).
   tool answers `expired`, and nothing is sent.
 - **Bounded.** `act`, never grantable, asks every call. At most `maxCallsPerTurn` (2) calls per turn
   and one per engine every `perEngineCooldownMs` (20 s) across turns, counted as a call is handed to
-  the port (given back on `setting-changed`). The request body is fixed but for the query and the
+  the port (given back on `setting-changed`). Council review: main's service claims the engine's slot
+  as a call arrives, before anything is awaited, and holds it until the call ends, so a second call to
+  that engine while one is still running answers `cooldown` too, however long the first takes; the
+  clock is given back whenever nothing was sent. The request body is fixed but for the query and the
   provider's first allowlisted model (`aiSearchRequestBody`). The tool takes no locale (no body sends
   one). The
   answer's text is parsed in a SERP worker of its own (`ai-answer` job): size and depth checked
@@ -113,6 +116,10 @@ job (`serp/serp-worker.ts`).
 - **Scenario: run-ai-search-capped-per-turn-and-engine** — with two cards pending or run, a third call
   in the turn is answered `capped` before any card (a denied one frees its place); the search tool's
   own cap holds too; the same engine within 20 s across turns: `cooldown`; nothing sent for either.
+- **Scenario: ai-search-one-call-in-flight-per-engine** (council review) — two overlapping calls to one
+  engine (agent and agent, or agent and the AI answers view) send once; the other answers `cooldown`,
+  also when the first is still running past 20 s; another engine is not held back; a call that sent
+  nothing gives the clock back.
 - **Scenario: ai-search-result-is-untrusted** — wrapped, source `search:ai-answer`; citations
   `http(s)` only and deduplicated on the way to the model too.
 

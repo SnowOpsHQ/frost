@@ -247,7 +247,8 @@ export function aiSearchVia(engine: AiSearchEngine, context: AiSearchContext): A
  * - `no-api`: the engine named has no API in this build (`google-ai-mode`; its tab path is D1);
  * - `setting-changed`: the engine's via changed since the call was approved (nothing sent);
  * - `capped`: `maxCallsPerTurn` calls already went out this turn;
- * - `cooldown`: the engine was asked less than `perEngineCooldownMs` ago;
+ * - `cooldown`: the engine was asked less than `perEngineCooldownMs` ago, or a call to it is still
+ *   running (council review: one call per engine in flight, its slot claimed before anything is awaited);
  * - `request-failed`: the data API client refused or the provider failed (its words withheld);
  * - `invalid-answer`: the provider's answer could not be read (too large, too deep, wrong shape, empty).
  */
@@ -262,7 +263,7 @@ export const AI_SEARCH_UNAVAILABLE_MESSAGES: Readonly<Record<AiSearchUnavailable
   'no-api': 'frost has no API for that AI engine in this build. Ask without naming an engine, or name Perplexity or ChatGPT.',
   'setting-changed': 'The AI search setting changed; ask again.',
   capped: `At most ${AI_SEARCH_LIMITS.maxCallsPerTurn} AI searches run in one turn, so nothing was sent. Use the answers you have.`,
-  cooldown: `That AI engine was asked less than ${AI_SEARCH_LIMITS.perEngineCooldownMs / 1000} seconds ago, so nothing was sent. Try again later.`,
+  cooldown: `That AI engine was asked less than ${AI_SEARCH_LIMITS.perEngineCooldownMs / 1000} seconds ago, or is still answering, so nothing was sent. Try again later.`,
   'request-failed': 'The AI search request failed. Its details are not shown.',
   'invalid-answer': "The AI engine's answer could not be read.",
 };

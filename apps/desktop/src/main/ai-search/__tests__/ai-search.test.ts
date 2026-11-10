@@ -345,6 +345,70 @@ describe('run time', () => {
     expect(noKey.sent).toEqual([]);
   });
 
+  test('ai-search-one-call-in-flight-per-engine', async () => {
+    // Council review (item 8): two overlapping calls to one engine (an approved agent call runs as
+    // `void run(...)`, and the AI answers view shares `send`) send once. The slot is claimed before
+    // anything is awaited, and a second call while one is in flight answers `cooldown`, however long
+    // the first takes (a turn queue and the client's timeout can outlast `perEngineCooldownMs`).
+    let clock = Date.UTC(2026, 10, 10);
+    let stored = DEFAULT_AI_SEARCH_SETTINGS;
+    const held: ((value: { ok: true; status: number; body: string; url: string }) => void)[] = [];
+    let onSend: (() => void) | undefined;
+    const client = {
+      dataApiRequest: vi.fn(
+        () =>
+          new Promise<{ ok: true; status: number; body: string; url: string }>((resolve) => {
+            held.push(resolve);
+            onSend?.();
+          }),
+      ),
+    };
+    /** The call's answer, or `'sent'` if the client is asked first (the call would then hang on `held`). */
+    const unlessSent = <T>(call: Promise<T>): Promise<T | 'sent'> => Promise.race([call, new Promise<'sent'>((resolve) => (onSend = () => resolve('sent')))]);
+    const s = createAiSearchService({
+      client: client as never,
+      isOpen: () => true,
+      keys: async () => ({ perplexity: true, 'openai-search': true }),
+      settings: { aiSearchSettings: async () => stored },
+      parse: async (job) => runAiAnswerJob(job),
+      now: () => clock,
+    });
+    const reply = { ok: true as const, status: 200, body: body(PERPLEXITY_ANSWER), url: 'https://api.perplexity.ai/v1/sonar' };
+    // Started together: one is sent, the other answers `cooldown` without being sent.
+    const first = s.ask({ query: 'tea', engine: 'perplexity', via: 'api' });
+    const second = s.ask({ query: 'tea', engine: 'perplexity', via: 'api' });
+    expect(await second).toMatchObject({ status: 'unavailable', state: 'cooldown' });
+    await vi.waitFor(() => expect(client.dataApiRequest).toHaveBeenCalledTimes(1));
+    // Still in flight past the cooldown: a third call is refused too, nothing more is sent.
+    clock += AI_SEARCH_LIMITS.perEngineCooldownMs + 1;
+    expect(await unlessSent(s.ask({ query: 'tea', engine: 'perplexity', via: 'api' }))).toMatchObject({ status: 'unavailable', state: 'cooldown' });
+    expect(await unlessSent(s.answer({ query: 'tea', engine: 'perplexity', via: 'api' }))).toEqual({ ok: false, reason: 'cooldown' });
+    expect(client.dataApiRequest).toHaveBeenCalledTimes(1);
+    onSend = undefined;
+    // Another engine is not held back.
+    const other = s.ask({ query: 'tea', engine: 'chatgpt', via: 'api' });
+    await vi.waitFor(() => expect(client.dataApiRequest).toHaveBeenCalledTimes(2));
+    held[0]!(reply);
+    held[1]!({ ...reply, body: body(OPENAI_ANSWER) });
+    expect(await first).toMatchObject({ status: 'ok' });
+    expect(await other).toMatchObject({ status: 'ok' });
+    // Once it has answered (and the cooldown has passed since it was sent), the engine is asked again.
+    clock += AI_SEARCH_LIMITS.perEngineCooldownMs;
+    const again = s.ask({ query: 'tea', engine: 'perplexity', via: 'api' });
+    await vi.waitFor(() => expect(client.dataApiRequest).toHaveBeenCalledTimes(3));
+    held[2]!(reply);
+    expect(await again).toMatchObject({ status: 'ok' });
+    // A call that sends nothing gives its slot back (here, the setting changed since approval): the next is not held back.
+    clock += AI_SEARCH_LIMITS.perEngineCooldownMs;
+    stored = settings({ via: { perplexity: 'off' } as AiSearchSettings['via'] });
+    expect(await s.ask({ query: 'tea', engine: 'perplexity', via: 'api' })).toMatchObject({ state: 'setting-changed' });
+    stored = DEFAULT_AI_SEARCH_SETTINGS;
+    const after = s.ask({ query: 'tea', engine: 'perplexity', via: 'api' });
+    await vi.waitFor(() => expect(client.dataApiRequest).toHaveBeenCalledTimes(4));
+    held[3]!(reply);
+    expect(await after).toMatchObject({ status: 'ok' });
+  });
+
   test('ai-search-service-withholds-provider-words', async () => {
     const failing = createAiSearchService({
       client: { dataApiRequest: async () => ({ ok: false as const, refusal: 'http-error' as const, message: 'x', status: 401 }) } as never,

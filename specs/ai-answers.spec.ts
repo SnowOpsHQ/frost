@@ -143,7 +143,7 @@ export const AI_ANSWERS_RUN_REFUSAL_TEXT: Readonly<Record<AiAnswersRunRefusal, s
   'engine-off': 'That AI engine is not set up. Add its key in Settings › Data sources, or switch it on here.',
   'no-api': 'frost has no API for that AI engine in this build.',
   'setting-changed': 'The AI search setting changed; ask again.',
-  cooldown: `That AI engine was asked less than ${AI_SEARCH_LIMITS.perEngineCooldownMs / 1000} seconds ago, so nothing was sent. Try again shortly.`,
+  cooldown: `That AI engine was asked less than ${AI_SEARCH_LIMITS.perEngineCooldownMs / 1000} seconds ago, or is still answering, so nothing was sent. Try again shortly.`,
   busy: 'An AI search is already running.',
   'request-failed': AI_SEARCH_UNAVAILABLE_MESSAGES['request-failed'],
   'invalid-answer': AI_SEARCH_UNAVAILABLE_MESSAGES['invalid-answer'],

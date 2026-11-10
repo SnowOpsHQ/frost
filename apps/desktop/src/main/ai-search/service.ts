@@ -44,10 +44,12 @@ import { aiSearchBuild } from './api';
 //   the engine and via the view resolved; it answers the `AiAnswer` itself and tells no listener
 //   (the view stores it).
 // - **One per-engine clock** (Task 9 lead ruling): both paths go through `send`, which allows one call
-//   per engine every `AI_SEARCH_LIMITS.perEngineCooldownMs` (`cooldown`, nothing sent), counted just
-//   before the request is handed to the client and given back when the client sent nothing (gate,
-//   queue, key or allowlist refusals, or the setting changed while it waited). The agent's per-turn
-//   cap stays in the broker and the search tool.
+//   per engine every `AI_SEARCH_LIMITS.perEngineCooldownMs` (`cooldown`, nothing sent). The engine's
+//   slot is claimed as the call arrives, before anything is awaited, and held until the call ends
+//   (council review): a second call to that engine while one runs answers `cooldown` too, however
+//   long the first takes. The clock is given back when nothing was sent (the setting changed, the
+//   engine has no API, or the client sent nothing: gate, queue, key or allowlist refusals, or the
+//   setting changed while it waited). The agent's per-turn cap stays in the broker and the search tool.
 
 export interface AiSearchSettingsReader {
   /** `SettingsRepository.aiSearchSettings`. */
@@ -139,6 +141,8 @@ export function createAiSearchService(deps: AiSearchServiceDeps): AiSearchServic
 
   /** When each engine was last handed to the client (both paths: the agent's and the view's). */
   const lastSent = new Map<AiSearchEngine, number>();
+  /** Engines with a call running now (claimed until that call ends, whatever it answers). */
+  const inFlight = new Set<AiSearchEngine>();
   /** Refusals that mean the client sent nothing: the engine's turn is given back. */
   const NOT_SENT: ReadonlySet<string> = new Set(['unavailable', 'busy', 'no-key', 'no-keychain', 'key-failed', 'not-allowed', 'cancelled']);
 
@@ -148,53 +152,65 @@ export function createAiSearchService(deps: AiSearchServiceDeps): AiSearchServic
     const { engine, via } = query;
     // Only an approved input carries both; anything else was not approved as it would run.
     if (!isAiSearchEngine(engine) || !isAiSearchVia(via) || typeof query.query !== 'string') return { ok: false, reason: 'setting-changed' };
-    // The setting at run time must still give the approved via (what was approved is what runs).
-    if (aiSearchVia(engine, await context()) !== via) {
-      log(`ai search: ${engine} refused (setting-changed)`);
-      return { ok: false, reason: 'setting-changed' };
-    }
-    signal?.throwIfAborted();
-    const provider = AI_SEARCH_API_PROVIDER[engine];
-    if (provider === null) return { ok: false, reason: 'no-api' };
-    const build = aiSearchBuild(provider, query.query);
-    if (build === null) return { ok: false, reason: 'request-failed' };
-    // The per-engine clock: checked and set with nothing awaited in between.
+    // The engine's slot, claimed before anything is awaited (council review): a call while another to
+    // the same engine is still running, or within the cooldown of the last one, sends nothing.
     const at = now();
     const last = lastSent.get(engine);
-    if (last !== undefined && at - last < AI_SEARCH_LIMITS.perEngineCooldownMs) {
+    if (inFlight.has(engine) || (last !== undefined && at - last < AI_SEARCH_LIMITS.perEngineCooldownMs)) {
       log(`ai search: ${engine} refused (cooldown)`);
       return { ok: false, reason: 'cooldown' };
     }
+    inFlight.add(engine);
     lastSent.set(engine, at);
+    /** Gives the slot's clock back when nothing was sent (unless a later call has set it since). */
     const giveBack = (): void => {
       if (lastSent.get(engine) !== at) return;
       if (last === undefined) lastSent.delete(engine);
       else lastSent.set(engine, last);
     };
-    // The signal reaches the request (Stop or the tool's deadline: a waiting request is never sent,
-    // one in flight is aborted), and the setting is asked again once its turn comes, before any key
-    // is read: switched off while it waited, nothing is sent (`setting-changed`).
-    const answer = await deps.client.dataApiRequest(provider, 'ai-search', build, {
-      ...(signal ? { signal } : {}),
-      beforeSend: async () => aiSearchVia(engine, await context()) === via,
-    });
-    if (!answer.ok && NOT_SENT.has(answer.refusal)) giveBack();
-    signal?.throwIfAborted();
-    if (!answer.ok) {
-      log(`ai search: ${engine} request ${answer.refusal}`);
-      if (answer.refusal === 'cancelled') return { ok: false, reason: 'setting-changed' };
-      return { ok: false, reason: answer.refusal === 'unavailable' ? 'not-available' : 'request-failed' };
+    let handed = false;
+    try {
+      // The setting at run time must still give the approved via (what was approved is what runs).
+      if (aiSearchVia(engine, await context()) !== via) {
+        log(`ai search: ${engine} refused (setting-changed)`);
+        return { ok: false, reason: 'setting-changed' };
+      }
+      signal?.throwIfAborted();
+      const provider = AI_SEARCH_API_PROVIDER[engine];
+      if (provider === null) return { ok: false, reason: 'no-api' };
+      const build = aiSearchBuild(provider, query.query);
+      if (build === null) return { ok: false, reason: 'request-failed' };
+      // The signal reaches the request (Stop or the tool's deadline: a waiting request is never sent,
+      // one in flight is aborted), and the setting is asked again once its turn comes, before any key
+      // is read: switched off while it waited, nothing is sent (`setting-changed`).
+      handed = true;
+      const answer = await deps.client.dataApiRequest(provider, 'ai-search', build, {
+        ...(signal ? { signal } : {}),
+        beforeSend: async () => aiSearchVia(engine, await context()) === via,
+      });
+      if (!answer.ok && NOT_SENT.has(answer.refusal)) giveBack();
+      signal?.throwIfAborted();
+      if (!answer.ok) {
+        log(`ai search: ${engine} request ${answer.refusal}`);
+        if (answer.refusal === 'cancelled') return { ok: false, reason: 'setting-changed' };
+        return { ok: false, reason: answer.refusal === 'unavailable' ? 'not-available' : 'request-failed' };
+      }
+      // The client caps the body; checked again before it is posted (the worker checks its bytes).
+      if (answer.body.length > AI_SEARCH_LIMITS.maxResponseBytes) return { ok: false, reason: 'invalid-answer' };
+      const parsed = await deps.parse({ provider, body: answer.body }).catch((): AiAnswerJobResult => ({ ok: false }));
+      signal?.throwIfAborted();
+      if (!parsed.ok) {
+        log(`ai search: ${engine} answer not read`);
+        return { ok: false, reason: 'invalid-answer' };
+      }
+      const fetchedAt = new Date(now()).toISOString();
+      return { ok: true, answer: { query: query.query, engine, via, provider, ...parsed.answer, fetchedAt } };
+    } finally {
+      // Never handed to the client (the setting changed, no API, no body, or stopped first): nothing
+      // was sent, so the clock is given back as before. The slot is free again either way.
+      if (!handed) giveBack();
+      inFlight.delete(engine);
     }
-    // The client caps the body; checked again before it is posted (the worker checks its bytes).
-    if (answer.body.length > AI_SEARCH_LIMITS.maxResponseBytes) return { ok: false, reason: 'invalid-answer' };
-    const parsed = await deps.parse({ provider, body: answer.body }).catch((): AiAnswerJobResult => ({ ok: false }));
-    signal?.throwIfAborted();
-    if (!parsed.ok) {
-      log(`ai search: ${engine} answer not read`);
-      return { ok: false, reason: 'invalid-answer' };
-    }
-    const fetchedAt = new Date(now()).toISOString();
-    return { ok: true, answer: { query: query.query, engine, via, provider, ...parsed.answer, fetchedAt } };
   };
 
   return {
