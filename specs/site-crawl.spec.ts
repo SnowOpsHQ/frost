@@ -13,7 +13,8 @@
  * never the sidebar's health score.
  *
  * Storage (`SITE_CRAWL_TABLES`, migrations `0240_site_crawl` and `0241_site_crawl_guards` in
- * `packages/db/src/site-crawl/`): a run, its pages, its links (capped per page) and its frontier.
+ * `packages/db/src/site-crawl/`, and `0246_crawl_run_pacing` for a paused run's pacing): a run, its
+ * pages, its links (capped per page) and its frontier.
  * Crawl data is the user's working data, deleted per run (Delete run, or deleting the project it
  * belongs to); it is not part of Clear Browsing Data or project retention.
  *
@@ -120,6 +121,27 @@ export const CRAWL_INTERVAL_MS = { default: 1_000, min: 500, max: 4_000 } as con
 
 /** The longest `Crawl-delay` honoured (ms); a site asking for more is crawled at this interval. */
 export const MAX_CRAWL_DELAY_MS = 10_000;
+
+/**
+ * A paused run's pacing, kept across a restart (Phase 12 whole-branch review; acceptance
+ * `site-crawl.feature.md`, `crawl-pacing-survives-a-restart`). When a run pauses (any reason: the
+ * user, a quit, a slow-down), each host the crawl fetcher paces is stored on the run
+ * (`crawl_runs.pacing`, `CrawlPacingSnapshotSchema`) with the time its next request may start
+ * (`waitUntil`: the later of its `Retry-After` and its last start plus its effective interval at the
+ * run's interval) and its back-off (429 / 503 answers in a row, at most `CRAWL_LIMITS.backoffAfter`).
+ * A resume, in this session or after a restart, seeds the crawl fetcher's pacing from it, so a run
+ * paused by a slow-down resumes backed off and not before the stored time. A stored time is never
+ * honoured further ahead than this (the longest wait any host state can ask for: the largest interval
+ * or `Crawl-delay` at full back-off, or the longest `Retry-After`), so a clock set back cannot hold a
+ * host for longer.
+ *
+ * - `maxHostChars`: the longest host name kept (a DNS name's limit; a longer one is not stored);
+ * - `maxWaitMs`: the furthest ahead a stored `waitUntil` is honoured on resume (ms).
+ */
+export const CRAWL_PACING_LIMITS = {
+  maxHostChars: 253,
+  maxWaitMs: Math.max(CRAWL_LIMITS.maxRetryAfterMs, Math.max(CRAWL_INTERVAL_MS.max, MAX_CRAWL_DELAY_MS) * 2 ** CRAWL_LIMITS.backoffAfter),
+} as const;
 
 /**
  * The margin (ms) added to `ROBOTS_FETCH_LIMITS.timeoutMs` (`seo-indexability.spec.ts`) for the
@@ -354,6 +376,12 @@ export type SiteCrawlTable = (typeof SITE_CRAWL_TABLES)[number];
 
 /** The migration ids of the crawl's storage (Phase 12 owns `0240`–`0249`). */
 export const SITE_CRAWL_MIGRATION_IDS = ['0240_site_crawl', '0241_site_crawl_guards'] as const;
+
+/**
+ * The migration that adds `crawl_runs.pacing` (`CRAWL_PACING_LIMITS`; Phase 12 whole-branch review): its
+ * own id after the SERP-API readings' `0245`, spread in `MIGRATIONS` in id order (`0240` is never edited).
+ */
+export const CRAWL_PACING_MIGRATION_IDS = ['0246_crawl_run_pacing'] as const;
 
 // ---- The served-HTML rule set -------------------------------------------------------------------
 

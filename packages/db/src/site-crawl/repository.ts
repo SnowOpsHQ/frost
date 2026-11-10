@@ -16,11 +16,13 @@ import {
 } from '@app/specs/site-crawl.spec';
 import {
   CrawlFindingSchema,
+  CrawlPacedHostSchema,
   CrawlPageListRowSchema,
   CrawlPageRowSchema,
   CrawlRunViewSchema,
   CrawlSettingsSchema,
   CrawlUrlSchema,
+  type CrawlPacedHost,
   type CrawlPageFilter,
   type CrawlPageListRow,
   type CrawlPageRow,
@@ -82,6 +84,12 @@ export interface CrawlRunPatch {
   readonly reason?: CrawlRunReason | null;
   readonly counts?: Partial<CrawlRunCounts>;
   readonly finishedAt?: number | null;
+  /**
+   * A paused run's per-host pacing (`CrawlPacingSnapshotSchema`; whole-branch review): stored for a
+   * resume after a restart; `null` clears it; absent leaves it. Entries the schema refuses are dropped
+   * and at most `CRAWL_LIMITS.maxPacedHosts` kept, so storing it never fails a run's end.
+   */
+  readonly pacing?: readonly CrawlPacedHost[] | null;
 }
 
 /** One page of a run's pages as the Pages view asks for it (Task 7): filtered and sorted in SQL. */
@@ -106,6 +114,8 @@ export interface SiteCrawlRepository {
   /** Changes a run's state, reason, counts and finish time; `false` when there is no such run. */
   updateRun(id: string, patch: CrawlRunPatch, now: number): Promise<boolean>;
   getRun(id: string): Promise<CrawlRunView | null>;
+  /** A run's stored pacing (its valid entries; `[]` for none, a malformed value or no such run). Main only. */
+  runPacing(id: string): Promise<CrawlPacedHost[]>;
   /** Runs, newest first: all, or one project's (`projectId`); at most `limit` (default `CRAWL_LIMITS.maxListedRuns`). */
   listRuns(filter?: { readonly projectId?: string; readonly limit?: number }): Promise<CrawlRunView[]>;
   /** Deletes a run's links, pages and frontier (in chunks, yielding between them), then the run; `false` when there was none. */
@@ -231,6 +241,18 @@ function runView(row: InferSelectModel<typeof crawlRuns>): CrawlRunView | null {
     finishedAt: row.finishedAt,
   });
   return parsed.success ? parsed.data : null;
+}
+
+/** The entries of `value` `CrawlPacedHostSchema` accepts, at most `CRAWL_LIMITS.maxPacedHosts`. */
+function pacedHosts(value: unknown): CrawlPacedHost[] {
+  if (!Array.isArray(value)) return [];
+  const kept: CrawlPacedHost[] = [];
+  for (const entry of value) {
+    if (kept.length >= CRAWL_LIMITS.maxPacedHosts) break;
+    const parsed = CrawlPacedHostSchema.safeParse(entry);
+    if (parsed.success) kept.push(parsed.data);
+  }
+  return kept;
 }
 
 function pageRow(row: InferSelectModel<typeof crawlPages>): CrawlPageRow | null {
@@ -366,7 +388,7 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
       return { id, projectId, startUrl: valid.startUrl, settings: valid, state: 'queued', reason: null, counts: { pages: 0, queued: 0, refused: 0, failed: 0, bytes: 0 }, createdAt: now, updatedAt: now, finishedAt: null };
     },
 
-    async updateRun(id, { state, reason, counts, finishedAt }, now) {
+    async updateRun(id, { state, reason, counts, finishedAt, pacing }, now) {
       const updated = await db
         .update(crawlRuns)
         .set({
@@ -378,6 +400,7 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
           ...(counts?.failed === undefined ? {} : { failed: counts.failed }),
           ...(counts?.bytes === undefined ? {} : { bytes: counts.bytes }),
           ...(finishedAt === undefined ? {} : { finishedAt }),
+          ...(pacing === undefined ? {} : { pacing: pacing === null ? null : JSON.stringify(pacedHosts(pacing)) }),
           updatedAt: now,
         })
         .where(eq(crawlRuns.id, id))
@@ -388,6 +411,11 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
     async getRun(id) {
       const [row] = await db.select().from(crawlRuns).where(eq(crawlRuns.id, id)).limit(1);
       return row ? runView(row) : null;
+    },
+
+    async runPacing(id) {
+      const [row] = await db.select({ pacing: crawlRuns.pacing }).from(crawlRuns).where(eq(crawlRuns.id, id)).limit(1);
+      return pacedHosts(parseJson(row?.pacing));
     },
 
     async listRuns(filter = {}) {

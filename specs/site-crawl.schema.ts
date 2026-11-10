@@ -8,6 +8,7 @@
  * - `CrawlRunViewSchema`: one run as listed; `CrawlStatusViewSchema`: the crawl view main answers,
  *   carrying `available` (the L6 gate, `CRAWL_AVAILABLE`), so the renderer learns it from main.
  * - `CrawlStartInputSchema`: what the crawl service's `start` takes (Task 6b; Task 7's IPC parses it).
+ * - `CrawlPacingSnapshotSchema`: a paused run's per-host pacing as stored (`crawl_runs.pacing`), main only.
  * - `CrawlPageJobSchema`, `CrawlPageAnalysisSchema` (Task 6b): one page's job for the crawl worker
  *   (the served HTML as fetched, what the fetch kept, the origin's robots.txt) and its answer (the
  *   served-HTML audit's findings and score, the facts a row keeps, the links found), each checked on
@@ -24,6 +25,7 @@ import {
   CRAWL_INTERVAL_MS,
   CRAWL_KEEP_HEADERS,
   CRAWL_LIMITS as L,
+  CRAWL_PACING_LIMITS,
   CRAWL_PAGE_OUTCOMES,
   CRAWL_PAGE_SORTS,
   CRAWL_PAGES_LIMITS,
@@ -182,6 +184,22 @@ export const CrawlRunViewSchema = z.strictObject({
   note: z.string().min(1).max(256).optional(),
 });
 export type CrawlRunView = z.infer<typeof CrawlRunViewSchema>;
+
+/**
+ * One host's pacing as a paused run keeps it (`crawl_runs.pacing`; `CRAWL_PACING_LIMITS` in
+ * `site-crawl.spec.ts`): the host name (the pacing key), when its next request may start (ms since the
+ * epoch) and its back-off (429 / 503 answers in a row). Main only: never sent to the renderer.
+ */
+export const CrawlPacedHostSchema = z.strictObject({
+  host: z.string().min(1).max(CRAWL_PACING_LIMITS.maxHostChars),
+  waitUntil: time,
+  inARow: z.int().min(0).max(L.backoffAfter),
+});
+export type CrawlPacedHost = z.infer<typeof CrawlPacedHostSchema>;
+
+/** A paused run's pacing: at most `CRAWL_LIMITS.maxPacedHosts` hosts, one entry each. */
+export const CrawlPacingSnapshotSchema = z.array(CrawlPacedHostSchema).max(L.maxPacedHosts);
+export type CrawlPacingSnapshot = z.infer<typeof CrawlPacingSnapshotSchema>;
 
 /**
  * The crawl view main answers: whether a crawl may be started or resumed in this build

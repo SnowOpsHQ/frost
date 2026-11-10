@@ -125,8 +125,14 @@ plan's "per origin"). A redirect hop to **another host name** is never followed 
 the call ends `redirected` (a fetched outcome), the row keeps the redirect (`finalUrl` = the target,
 the hop in its chain) and Task 6b queues the target as a page of its own (depth + 1) under that host's
 pacing; hops on the same host name are followed at once after the hook. The pacing state (last start,
-back-off, `Retry-After`, `Crawl-delay`) belongs to the crawl fetcher, not the run: it survives a pause,
-a resume and a new run; only the user's interval is the run's. It is bounded
+back-off, `Retry-After`, `Crawl-delay`) belongs to the crawl fetcher, not the run: within one session
+it survives a pause, a resume and a new run; only the user's interval is the run's. Across a restart
+the crawl fetcher starts empty, so a pausing run (any reason: the user, a quit, a slow-down) also stores
+each paced host's next allowed start (`waitUntil`, the later of its `Retry-After` and its last start
+plus its effective interval) and its back-off on the run (`crawl_runs.pacing`, migration `0246`,
+`CRAWL_PACING_LIMITS`); Resume seeds the pacing from it before the first request, so a run paused by a
+slow-down resumes backed off and not before the stored time (a stored time more than
+`CRAWL_PACING_LIMITS.maxWaitMs` ahead is honoured only that far). It is bounded
 (`CRAWL_LIMITS.maxPacedHosts`): a host is forgotten only once its longest possible wait (the largest
 interval at full back-off, raised to its `Crawl-delay`) and its `Retry-After` have passed; past the cap
 a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL stays queued).
@@ -150,6 +156,12 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   flight.
 - `crawl-pacing-survives-runs` — a run backed off by a 429 is paused; a new run (or a resume) of the
   same crawl fetcher still waits the backed-off interval from the last start (at its own interval).
+- `crawl-pacing-survives-a-restart` — five 429s in a row with `Retry-After: 60` pause the run
+  (`slow-down`); the stored pacing holds the host's `waitUntil` (the 429's time + 60 s) and its back-off
+  (5). After a restart (a new crawl fetcher, crawler and service on the same database), Resume within
+  the minute sends the first request exactly at the stored time, never before; a 429 there pauses the run
+  again at once (the back-off came back), and the next restart's Resume waits the full backed-off
+  interval (the interval × 2⁵) from that request's start.
 - `crawl-politeness-bounds-never-start-early` — over hundreds of calls to more hosts than
   `maxPacedHosts`, with back-off, `Retry-After` and `Crawl-delay` active, no start is ever earlier than
   the host's full state requires, the table never exceeds its cap, and a full table refuses a new host
@@ -398,7 +410,8 @@ the crawl worker and its URLs handed out `sitemapUrlsPerJob` at a time, then rel
   sync while the project has, in turn, a running crawl, a paused one, a finished one, and one on its
   final fetch: once the pull completes no crawl row is left and no crawl runs.
 - `synced-tombstone-crawl-cleanup-never-fails-the-pass` — a cleanup that fails is one log line of its
-  own; the pass still counts and is not logged as failed.
+  own; the pass still counts and is not logged as failed. The projects' `purgeDeleted`, which the same
+  pull then runs (whole-branch review, `sync-engine.feature.md`), fails on a line of its own too.
 
 ## Pages and Site structure (Task 7)
 SL-096/097. Spec: `CRAWL_WATCH`, `CRAWL_STATUS_CLASSES`, `CRAWL_INDEXABLE_FILTERS`, `CRAWL_PAGE_FILTERS`,

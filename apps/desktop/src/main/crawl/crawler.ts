@@ -1,7 +1,7 @@
 import type { SiteCrawlRepository } from '@app/db';
 import { SERVED_HTML_TYPES } from '@app/specs/seo-javascript.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
-import type { CrawlPageAnalysis, CrawlPageJob, CrawlPageRow, CrawlRunView, CrawlSettings } from '@app/specs/site-crawl.schema';
+import type { CrawlPacedHost, CrawlPageAnalysis, CrawlPageJob, CrawlPageRow, CrawlRunView, CrawlSettings } from '@app/specs/site-crawl.schema';
 import { CRAWL_FAILED_OUTCOMES, CRAWL_KEEP_HEADERS, CRAWL_LIMITS, CRAWL_REFUSED_OUTCOMES, type CrawlPageOutcome, type CrawlRunReason, type CrawlRunState } from '@app/specs/site-crawl.spec';
 import { mediaType } from '../seo/served';
 import type { CrawlPageResult } from './analyse';
@@ -30,6 +30,9 @@ import type { SitemapSeeder } from './sitemaps';
 // queued); `paused` (by the user, a quit, a slow-down) or `cancelled` (by the user, or its project gone)
 // when stopped; `failed` (`error`) when the database fails. Held in memory: the frontier's window, one
 // page's links while they are discovered, the pacing table (K-B3); every page goes to SQLite at once.
+// A run that pauses (any reason) stores its pacing with its end (`Politeness.snapshot`; a finished one
+// clears it), and a resumed run seeds its crawl fetcher's pacing from it before its first request, so a
+// restart never lets a resume reach a host sooner than it asked (`crawl-pacing-survives-a-restart`).
 
 /** What one run's fetching offers the crawler (`CrawlFetcher.forRun`; tests fake it). */
 export interface CrawlerRunFetcher {
@@ -84,6 +87,8 @@ export interface CrawlRunHandle {
   stop(why: CrawlStopReason): void;
   /** This session's note about the run (`CRAWL_RUN_NOTES`), or `null`. */
   note(): string | null;
+  /** The run's pacing now (`Politeness.snapshot`), for a quit's immediate write; `null` before its fetcher exists. */
+  pacing?(): CrawlPacedHost[] | null;
 }
 
 export interface Crawler {
@@ -198,7 +203,9 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
           try {
             const queued = (await frontier?.queued()) ?? 0;
             const at = now();
-            await repo.updateRun(runId, { state: end.state, reason: end.reason, counts: { ...counts, queued }, finishedAt: TERMINAL.has(end.state) ? at : null }, at);
+            // A pause keeps the run's pacing for a resume after a restart; a finished run needs none.
+            const pacing = end.state === 'paused' ? (runFetcher?.politeness?.snapshot() ?? null) : TERMINAL.has(end.state) ? null : undefined;
+            await repo.updateRun(runId, { state: end.state, reason: end.reason, counts: { ...counts, queued }, finishedAt: TERMINAL.has(end.state) ? at : null, ...(pacing === undefined ? {} : { pacing }) }, at);
           } catch (error) {
             log(`a run's end could not be stored (${codeOf(error)})`);
           }
@@ -210,6 +217,8 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
           const scope = runFetcher.scope;
           frontier = createFrontier({ repo, runId, scope });
           Object.assign(counts, await repo.pageCounts(runId));
+          // A resume (perhaps after a restart, with a new crawl fetcher): no host is reached sooner, or less backed off, than when it paused.
+          if (!fresh && runFetcher.politeness) runFetcher.politeness.restore(await repo.runPacing(runId));
           if (signal.aborted) return await finish(stoppedEnd());
           // A project deleted while this run was being started or resumed: nothing is discovered or fetched.
           if (!(await projectLive())) return await finish(stoppedEnd());
@@ -320,6 +329,7 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
           controller.abort();
         },
         note: () => note,
+        pacing: () => runFetcher?.politeness?.snapshot() ?? null,
       };
     },
   };

@@ -10,7 +10,9 @@ import { markLocationSession, renewLocationSession } from './sessions';
 // bypass stays; no `direct://` fallback) and **awaits** it, then registers the session as
 // browse-class (`registerBrowseClassSession`, which runs every Task 10a installer on it), so the
 // tab's WebContents is classified as a tab at its creation. Only this directory may register a
-// browse-class session (`browse-class.ts`).
+// browse-class session (`browse-class.ts`). The partition's spellchecker is turned off first (no
+// languages, then disabled), so a location session never loads or downloads a dictionary: no request
+// the user did not ask for leaves it (whole-branch review).
 //
 // Editing a profile resets its partition (after its tabs closed): storage and cache cleared (service
 // workers too), connections closed, and the proxy set again before the next tab. Removing one
@@ -23,6 +25,8 @@ export interface LocationSession {
   clearStorageData(): Promise<void>;
   clearCache(): Promise<void>;
   closeAllConnections?(): Promise<void>;
+  setSpellCheckerLanguages(languages: string[]): void;
+  setSpellCheckerEnabled(enable: boolean): void;
 }
 
 export interface LocationPartitionsDeps {
@@ -95,7 +99,11 @@ export function createLocationPartitions(deps: LocationPartitionsDeps = {}): Loc
         const rules = proxyRulesFor(proxy);
         let entry = prepared.get(profileId);
         if (!entry) {
-          entry = { session: fromPartition(locationPartition(profileId)), applied: null };
+          const created = fromPartition(locationPartition(profileId));
+          // No dictionary is loaded or downloaded for it (no languages, then off: Electron turns spellcheck on with languages).
+          created.setSpellCheckerLanguages([]);
+          created.setSpellCheckerEnabled(false);
+          entry = { session: created, applied: null };
           prepared.set(profileId, entry);
           // Known as a location session (its own permission answers, geolocation denied) before it joins the class.
           markLocationSession(entry.session, profileId);

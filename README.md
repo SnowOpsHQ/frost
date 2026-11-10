@@ -134,6 +134,16 @@ hreflang checks, a site crawl) and "Open in" tools still go from your own connec
 read in a location tab record the location, so their rankings form a series of their own, and they
 stay on this device (they are never synced).
 
+## Data sources, AI answers and the site crawl
+These are built, but they ship turned off until the project's review of their terms is done; until
+then the app shows them disabled, with a note saying so. Settings › Data sources takes your own keys
+for SerpApi, DataForSEO or Serper (result pages) and for Perplexity or OpenAI web search (AI
+answers). With them, a project's searches can be checked through the API ("Check via API"), and the
+AI answers view keeps what those engines answered, with their citations. The site crawl fetches a
+site's served HTML within robots.txt, paced, and audits every page. Nothing runs on its own: each
+request is one you start, with your own key (the crawl needs none), and what comes back stays on
+this device.
+
 ## Clean-room note
 frost is a **clean-room** build. It is designed from a written behavioral/design
 spec authored by us, not from any third party's source. **This repository contains

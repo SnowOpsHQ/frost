@@ -74,6 +74,11 @@ export interface PurgePlan {
   readonly bytes: number;
   /** Of `bytes`, the unreferenced files' (their rows' `bytes`). */
   readonly fileBytes: number;
+  /**
+   * Of `bytes`, the API readings' (stored UTF-8 bytes; whole-branch review). Device-local, so never in
+   * `ci_purges.bytes` (synced): a mixed purge logs `bytes - apiReadingBytes`.
+   */
+  readonly apiReadingBytes: number;
 }
 
 export type ExecutePurgeResult = { readonly status: 'purged'; readonly purgeId: string; readonly plan: PurgePlan } | { readonly status: 'stale' } | { readonly status: 'empty' };
@@ -319,6 +324,7 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       unreferencedHashes: sorted(unreferenced.map(([hash]) => hash)),
     };
     const fileBytes = unreferenced.reduce((sum, [, { bytes }]) => sum + bytes, 0);
+    const apiReadingBytes = apiReadings.reduce((sum, row) => sum + row.bytes, 0);
     let readingBytes = 0;
     for (const part of chunks(plan.captureIds)) {
       const [row] = await db
@@ -331,7 +337,7 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       (await sumOver(ciVersions, sql`length(CAST(${ciVersions.snapshot} AS BLOB))`, plan.versionIds)) +
       (await sumOver(ciDiffs, sql`length(CAST(${ciDiffs.diff} AS BLOB))`, plan.diffIds)) +
       readingBytes +
-      apiReadings.reduce((sum, row) => sum + row.bytes, 0) +
+      apiReadingBytes +
       fileBytes;
     const counts: PurgeCounts = {
       captures: plan.captureIds.length,
@@ -341,7 +347,7 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
       // Only when there is one: every other plan's counts stay exactly Phase 6's.
       ...(plan.apiReadingIds.length > 0 ? { readings: plan.apiReadingIds.length } : {}),
     };
-    return { ...plan, counts, bytes, fileBytes };
+    return { ...plan, counts, bytes, fileBytes, apiReadingBytes };
   }
 
   return {
@@ -367,9 +373,10 @@ export function createPurgeOperations(db: SessionDatabase): PurgeOperations {
         ['ci_versions', ciVersions, fresh.versionIds],
       ];
       // An API-only purge writes no `ci_purges` row (a synced, all-zero row would tell other devices
-      // nothing): `ci_serp_api_purges` records it, by this same purge id.
+      // nothing): `ci_serp_api_purges` records it, by this same purge id. A mixed purge's row logs the
+      // captured rows' bytes only: the API readings are device-local (whole-branch review).
       const capturedRows = logged.captures + logged.versions + logged.diffs + logged.screenshots > 0;
-      const items: BatchItem<'sqlite'>[] = capturedRows ? [db.insert(ciPurges).values({ id: purgeId, reason, projectId: fresh.projectId, policy: policyJson(fresh.policy), ...logged, bytes: fresh.bytes, createdAt: now })] : [];
+      const items: BatchItem<'sqlite'>[] = capturedRows ? [db.insert(ciPurges).values({ id: purgeId, reason, projectId: fresh.projectId, policy: policyJson(fresh.policy), ...logged, bytes: Math.max(0, fresh.bytes - fresh.apiReadingBytes), createdAt: now })] : [];
       for (const [tableName, , ids] of order) {
         for (const part of chunks(ids)) items.push(db.insert(ciTombstones).values(part.map((rowId) => ({ id: uuidv7(now), purgeId, tableName, rowId, createdAt: now }))));
       }

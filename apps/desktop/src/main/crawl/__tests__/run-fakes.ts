@@ -10,7 +10,7 @@ import { defaultCrawlSettings, type CrawlSettings } from '@app/specs/site-crawl.
 import type { CrawlPageJob } from '@app/specs/site-crawl.schema';
 import { analyseCrawlPage, type CrawlPageResult } from '../analyse';
 import type { CrawlFetchOptions, CrawlPageFetch, CrawlRobotsState } from '../fetch';
-import { pacingKey, type Pacing } from '../politeness';
+import { pacingKey, type CrawlClock, type Pacing } from '../politeness';
 import { createCrawlScope } from '../scope';
 
 const encoder = new TextEncoder();
@@ -129,4 +129,44 @@ export const settingsFor = (startUrl: string, changes: Partial<CrawlSettings> = 
 export function fakeClock(start = 1_800_000_000_000) {
   let at = start;
   return () => (at += 1_000);
+}
+
+/**
+ * A fake clock with timers (for the real crawl fetcher's pacing): time moves only when a timer fires or
+ * the test sets it. `settle(promise)` lets promises run, then fires the earliest timer, until `promise` settles.
+ */
+export function timerClock(start = 1_800_000_000_000) {
+  let time = start;
+  let serial = 0;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  const clock: CrawlClock = {
+    now: () => time,
+    setTimeout(fn, ms) {
+      const id = ++serial;
+      timers.set(id, { at: time + Math.max(0, ms), fn });
+      return () => timers.delete(id);
+    },
+  };
+  const flush = async () => {
+    for (let i = 0; i < 20; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+  };
+  async function settle<T>(promise: Promise<T>): Promise<T> {
+    let done = false;
+    void promise.then(
+      () => (done = true),
+      () => (done = true),
+    );
+    for (let i = 0; i < 10_000; i++) {
+      await flush();
+      if (done) return promise;
+      let next: [number, { at: number; fn: () => void }] | undefined;
+      for (const entry of timers) if (!next || entry[1].at < next[1].at) next = entry;
+      if (!next) break;
+      timers.delete(next[0]);
+      time = Math.max(time, next[1].at);
+      next[1].fn();
+    }
+    throw new Error('never settled');
+  }
+  return { clock, now: () => time, advance: (ms: number) => (time += ms), pending: () => timers.size, settle };
 }

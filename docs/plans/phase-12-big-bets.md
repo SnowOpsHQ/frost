@@ -483,7 +483,7 @@ and Phase 10 global constraints still holds. In particular, and new for this pha
   tasks add them out of numeric order (Task 2 `0243`, Task 4 `0245`, Task 5 `0240`/`0241`, Task 9
   `0242`, Task 10b `0244`): a task that adds a lower id than one already spread inserts its list
   **before** that id. Final order: `CHANGE_INTEL`, `0200`, `0210`, `0220`–`0223`, `0230`/`0231`,
-  `0240`/`0241`, `0242`, `0243`, `0244`, `0245`. The test-only fixture ids are already `9000_`
+  `0240`/`0241`, `0242`, `0243`, `0244`, `0245`, `0246` (whole-branch review). The test-only fixture ids are already `9000_`
   (Phase 8).
 
   | Id | Creates / changes |
@@ -494,7 +494,8 @@ and Phase 10 global constraints still holds. In particular, and new for this pha
   | `0243_data_api_usage` | `data_api_usage` (provider, month, requests) |
   | `0244_location_profiles` | `location_profiles` (no secrets) |
   | `0245_serp_api_readings` | `ci_serp_api_purges (reading_id PRIMARY KEY, purged_at)`; `DROP TRIGGER ci_serp_readings_capture_gone_only` (Phase 10's `0223` `BEFORE DELETE` guard) and recreates it with two arms (Decision 7) as `ci_serp_readings_delete_guard`; a no-resurrect trigger for recorded ids; `ci_serp_readings_no_update` and `ci_serp_readings_no_replace` untouched |
-  | `0246`–`0249` | reserved |
+  | `0246_crawl_run_pacing` | (whole-branch review) `crawl_runs.pacing`: a paused run's per-host pacing, JSON, bounded by `CHECK` |
+  | `0247`–`0249` | reserved |
   Settings (vendor choice per purpose, engine via and default engine, retention)
   use the existing `app_settings` table (`0005_app_settings`); no migration.
 - **Clean-room:** vendor fixtures are synthetic JSON written from the vendors' public documentation;
@@ -1359,7 +1360,8 @@ Where the build differs from the plan above, or settles what it left open. **Lea
   per origin — stricter than K-B1's "per origin"; a redirect to another host name ends the call
   with the new outcome `redirected` (`redirectTarget`), which 6b queues at depth + 1 under that
   host's pacing; same-host hops follow at once after the hook. Pacing state (last start, back-off,
-  `Retry-After`, Crawl-delay) lives per crawl fetcher, so it survives pause and resume; the map is
+  `Retry-After`, Crawl-delay) lives per crawl fetcher, so within one session it survives pause and
+  resume (across a restart, see the whole-branch review below); the map is
   capped (`CRAWL_LIMITS.maxPacedHosts` 256) and a host past the cap is `deferred` (the run pauses).
   The fetcher re-resolves a hop's name after the hook and caps the hook at
   `FETCHER_LIMITS.maxRedirectHookMs` (8 000 ms). Public scopes allow either scheme but only the
@@ -1428,3 +1430,27 @@ Where the build differs from the plan above, or settles what it left open. **Lea
   design (`location-profiles.feature.md`) puts the fake site's name in `E2E_PUBLIC_HOSTS`, classifies
   the tripwire's requests (the disclosed audit fetches are allowed; anything else is a leak) and
   adds a NetLog check for host-resolver jobs.
+- **Whole-branch review (fixes).**
+  - Crawl pacing across a restart: a pausing run (any reason, quit included) stores each paced host's
+    `waitUntil` (the later of `Retry-After` and last start + effective interval) and back-off (capped
+    at `backoffAfter`) on the run, `crawl_runs.pacing` (`CrawlPacingSnapshotSchema`, at most
+    `maxPacedHosts`, JSON ≤ 96 KiB by `CHECK`); a finished run clears it. Resume seeds the crawl
+    fetcher's pacing from it before the first request (never loosening a held state; a stored time is
+    honoured at most `CRAWL_PACING_LIMITS.maxWaitMs` = 320 s ahead, against a clock set back). The
+    column comes from a **new migration `0246_crawl_run_pacing`** (`ALTER TABLE … ADD COLUMN`, spread
+    after `0245`), not an edit of `0240`, so a database that already took `0240` gets it too. The quit
+    path writes the pacing with its immediate pause. Not covered: a crash (no pause is written; the
+    previous pause's pacing, if any, is reused, which is only ever stricter).
+  - The location e2e's WebRTC "not vacuous" probe annotates and skips (with its reason) on a machine
+    whose home tab gathers nothing (macOS Local Network privacy, no interface); it still asserts where
+    anything was gathered.
+  - Location partitions set no spellchecker languages, then disable the spellchecker, once, before
+    the proxy and the browse-class registration, so no dictionary is loaded or downloaded for them.
+  - A mixed purge's `ci_purges.bytes` (synced) leaves out the device-local API readings' bytes:
+    `PurgePlan.apiReadingBytes` (of `bytes`) is subtracted.
+  - A sync pull that wrote `ci_projects` runs, after the crawls' cleanup, the projects' `purgeDeleted`
+    (`StartSyncDeps.projects`, its own `try` and log line), so a tombstoned project's API readings go
+    at once rather than at the next start-up. Like start-up recovery, it may purge captured rows whose
+    synced tombstones have not arrived yet (a pull cut at `SYNC_MAX_PAGES_PER_PASS`): a second
+    `project-deleted` purge record, no data kept that should go.
+  - README and `apps/desktop/README.md` describe the gated data sources, AI answers and crawl.

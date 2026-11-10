@@ -14,7 +14,8 @@ import type { Crawler, CrawlRunHandle, CrawlStopReason } from './crawler';
 // - a paused run continues only on the user's `resume`, never by itself: start-up moves every run left
 //   `running` or `queued` to `paused` (`interrupted`) and starts nothing; a run whose stored settings no
 //   longer parse is never resumed;
-// - quitting pauses the running crawl (`quit`): its state is written at once, before the store closes;
+// - quitting pauses the running crawl (`quit`): its state and its pacing are written at once, before the
+//   store closes;
 // - `deleteProjectCrawls` cancels the project's running crawl and awaits its end (no fetch call or row
 //   write follows), then deletes the project's runs (paused and finished ones too), with their pages,
 //   links and frontier. A project's delete, startup recovery (`purgeDeleted`) and a sync pull that
@@ -233,9 +234,10 @@ export function createCrawlService(deps: CrawlServiceDeps): CrawlService {
       const running = active;
       if (running === null) return;
       running.handle.stop('quit');
-      // Written now, before the store closes at will-quit; the run's own end writes the same.
+      // Written now, before the store closes at will-quit, with the run's pacing (a resume after the restart honours it); the run's own end writes the same.
       const at = now();
-      void repo.updateRun(running.handle.runId, { state: 'paused', reason: 'quit', finishedAt: null }, at).catch((error: unknown) => log(`a quit's pause could not be stored (${codeOf(error)}); start-up pauses it`));
+      const pacing = running.handle.pacing?.() ?? null;
+      void repo.updateRun(running.handle.runId, { state: 'paused', reason: 'quit', finishedAt: null, ...(pacing === null ? {} : { pacing }) }, at).catch((error: unknown) => log(`a quit's pause could not be stored (${codeOf(error)}); start-up pauses it`));
     },
 
     async idle() {

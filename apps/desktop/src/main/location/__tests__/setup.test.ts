@@ -29,7 +29,7 @@ describe('locations setup', () => {
     const app = { getPath: () => '/user', on: vi.fn((_event: 'login', l: LoginListener) => (listener = l)) };
     const sessions = new Map<string, LocationSession>();
     const fromPartition = (partition: string) => {
-      if (!sessions.has(partition)) sessions.set(partition, { setProxy: vi.fn(async () => {}), clearStorageData: vi.fn(async () => {}), clearCache: vi.fn(async () => {}) });
+      if (!sessions.has(partition)) sessions.set(partition, { setProxy: vi.fn(async () => {}), clearStorageData: vi.fn(async () => {}), clearCache: vi.fn(async () => {}), setSpellCheckerLanguages: vi.fn(), setSpellCheckerEnabled: vi.fn() });
       return sessions.get(partition)!;
     };
     const register = vi.fn();

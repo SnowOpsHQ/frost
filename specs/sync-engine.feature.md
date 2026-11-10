@@ -134,6 +134,12 @@ drivers where named). Each scenario maps to one named test. Nothing contacts a r
 - **Scenario: service-fail-safe** — the opener rejecting, the session database missing, or a pass
   throwing is one log line each and never a throw; `startSyncService` never throws, even when
   `app.getPath` does.
+- **Scenario: synced-tombstone-purges-api-readings-at-pull** (`crawl-sync.test.ts`; Phase 12
+  whole-branch review) — a pull that applied `ci_projects` rows runs, after the crawls' cleanup
+  (`crawls`), the projects' `purgeDeleted` (`projects`): a tombstoned project's device-local SERP API
+  readings (never synced, so no tombstone reaches them) are purged before the pass completes, not at
+  the next start-up. A failure is one log line of its own ("a deleted project's local rows could not
+  be purged"; `synced-tombstone-crawl-cleanup-never-fails-the-pass`) and never fails the pass.
 
 ## Known limits
 - **One refused row stalls pull.** A page is one transaction, so a row the session database

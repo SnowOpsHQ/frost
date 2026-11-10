@@ -175,14 +175,15 @@ unless named otherwise.
   each key's newest, which always stays (Phase 6's rule for captures; lead ruling, a deviation from the
   plan's "older than N days"); `all` (the project deleted) every one. The plan carries their ids (`apiReadingIds`, sorted), counts them
   in `counts.readings` (present **only** when at least one is selected, so every other count stays as
-  it was) and their stored bytes in `bytes`. `executePurge`'s stale check compares `apiReadingIds`, its
+  it was) and their stored bytes in `bytes` (and apart, in `apiReadingBytes`). `executePurge`'s stale check compares `apiReadingIds`, its
   emptiness check counts them (an API-only plan is purged, not `empty`), and in the same transaction
   it records each id in `ci_serp_api_purges` (with the purge's id, reason and project) and then deletes
   those readings. `counts.readings` is never written to `ci_purges` (its columns are Phase 6's) nor to
   `PurgeRecord.counts`, and a purge that removes **only** API readings writes no `ci_purges` row at all
   (no all-zero row is synced): `ci_serp_api_purges` is its only, device-local, log, and the purge log
   view (`ci_purges`) does not list it. A purge that also removes captured rows writes its `ci_purges`
-  row, and its records carry that row's id.
+  row, and its records carry that row's id; that row's `bytes` is `bytes − apiReadingBytes` (the
+  device-local API readings' bytes never reach the synced log; whole-branch review).
 - **Orphans.** `deleteOrphanReadings` sweeps `source = 'capture'` rows only; the reads never skip a
   `serp-api` reading for having no capture.
 - **Deleted projects.** `deletedProjectsWithRows` also lists a tombstoned project that still has
@@ -229,6 +230,9 @@ unless named otherwise.
   stale by a new API reading is `stale`; its retention purge writes no `ci_purges` row.
 - **Scenario: api-only-purge-counts-show-readings** — `counts.readings` is present only when the
   plan selects an API reading; the `ci_purges` row and `PurgeRecord.counts` have no `readings`.
+- **Scenario: mixed-purge-logs-only-captured-bytes** — a purge of captured rows and API readings
+  answers a plan whose `bytes` counts both and whose `apiReadingBytes` is the readings' stored bytes;
+  its `ci_purges` row (and `PurgeRecord.bytes`) records `bytes − apiReadingBytes`.
 - **Scenario: api-only-project-delete-retried-after-restart** — a tombstoned project with only
   `serp-api` readings is listed by `deletedProjectsWithRows` until its `project-deleted` purge runs,
   which writes no `ci_purges` row.

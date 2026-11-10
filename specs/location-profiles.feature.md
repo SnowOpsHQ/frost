@@ -27,7 +27,11 @@ decides whether proxy locations ship.
   fallback), then registers the session as browse-class (`registerBrowseClassSession`): every Task
   10a installer runs on it (main-frame and request observers, guard, permission handlers, downloads
   cancelled). Only then is the tab created, so its WebContents is classified as a tab at creation.
-  If `setProxy` or the registration fails, no tab opens (`failed`).
+  If `setProxy` or the registration fails, no tab opens (`failed`). Before any of that (once, when
+  the partition's session is first taken) its spellchecker is turned off: `setSpellCheckerLanguages([])`,
+  then `setSpellCheckerEnabled(false)` (Electron turns spellcheck on whenever languages are set), so
+  Chromium never loads or downloads a dictionary for it: a location session makes no request the
+  user did not ask for (whole-branch review).
 - **A location tab** is created on that partition (`createTabView(partition)`), and its WebContents
   gets `setWebRTCIPHandlingPolicy('disable_non_proxied_udp')` in the same call, before any
   navigation. A tab the page opens (`window.open`, `target=_blank`: the guard denies the popup and
@@ -122,6 +126,9 @@ Task 11's leak test is the check.
 - **location-session-has-browse-wiring** — every installer added with `onBrowseClassSession` ran
   once on the location session.
 - **location-partition-is-in-memory** — the partition is `frost-location-<id>`, never `persist:`.
+- **location-session-has-no-spellchecker** — `ensure` sets no spellchecker languages, then disables
+  the spellchecker, before `setProxy` and the registration; once per partition (a second tab or a
+  reset never turns it on again).
 - **proxy-login-only-for-its-proxy** — the profile's own proxy on its partition, first attempt:
   answered with the stored sign-in; a wrong host or port, a site's 401 (`isProxy: false`), another
   partition (the browse session or another profile's), no webContents, a second attempt, no stored
@@ -253,7 +260,10 @@ Linux only: Playwright's `--password-store=basic` would leave frost `weak` prote
      `HOST_RESOLVER_*` event names the site.
 - **location-webrtc-probe-is-not-vacuous** — the same probe in a home tab (a loopback-literal page)
   yields a candidate or a STUN datagram (here: an mDNS `.local` host candidate and STUN binding
-  requests), so the location tab's empty answer is the policy's doing.
+  requests), so the location tab's empty answer is the policy's doing. A machine whose home tab
+  gathers nothing at all (no usable interface, or macOS Local Network privacy blocking the mDNS host
+  candidate) records an annotation and skips the check with its reason instead of failing; where
+  anything was gathered the assertion holds.
 - **location-result-page-capture-records-the-location** — with the test pack installed, the result
   page loads in the location tab (its own request carried the proxy's marker), the SERP panel reads
   it, Capture now stores the first version, and that `ci_versions` row's `search_params` carry

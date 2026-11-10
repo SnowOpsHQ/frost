@@ -116,3 +116,20 @@ export const SITE_CRAWL_MIGRATIONS: readonly Migration[] = [
     `,
   },
 ];
+
+/** Longest pacing JSON stored (`crawl_runs.pacing`): `maxPacedHosts` entries of a 253-character host, with room to spare. */
+export const MAX_CRAWL_PACING_JSON_CHARS = 98_304;
+
+/**
+ * `0246_crawl_run_pacing` (Phase 12 whole-branch review; spec `CRAWL_PACING_LIMITS`,
+ * `CRAWL_PACING_MIGRATION_IDS`; acceptance `crawl-pacing-survives-a-restart`): a paused run's per-host
+ * pacing (`CrawlPacingSnapshotSchema` as JSON; `NULL`: none), so a resume after a restart honours what
+ * the site asked for. Its own migration rather than an edit of `0240`, so a database that already took
+ * `0240` gets it too; spread in `MIGRATIONS` in id order, after the SERP-API readings' `0245`.
+ */
+export const SITE_CRAWL_PACING_MIGRATIONS: readonly Migration[] = [
+  {
+    id: '0246_crawl_run_pacing',
+    sql: `ALTER TABLE crawl_runs ADD COLUMN pacing TEXT CHECK (pacing IS NULL OR length(pacing) <= ${MAX_CRAWL_PACING_JSON_CHARS});`,
+  },
+];

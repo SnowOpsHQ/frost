@@ -1,7 +1,8 @@
 // Spec: specs/location-profiles.spec.ts (LOCATION_PARTITION_PREFIX, locationPartition, proxyRulesFor), specs/browser.spec.ts
 // (BROWSE_PARTITION, BROWSE_CLASS_PARTITIONS), specs/render-profile.spec.ts (COOKIE_BLOCK)
 // Acceptance: specs/location-profiles.feature.md (location-session-is-browse-class, location-session-has-browse-wiring,
-// location-partition-is-in-memory, clear-browsing-data-covers-location-partitions, cookie-block-on-a-location-tab)
+// location-partition-is-in-memory, clear-browsing-data-covers-location-partitions, cookie-block-on-a-location-tab,
+// location-session-has-no-spellchecker)
 // · plan docs/plans/phase-12-big-bets.md, Decision 11, Task 10b
 import { session, type Session } from 'electron';
 import { describe, expect, test, vi } from 'vitest';
@@ -82,6 +83,27 @@ describe('location partitions', () => {
     failing.setProxy.mockRejectedValueOnce(new Error('bad rules'));
     await expect(partitions.ensure(OTHER, PROXY)).rejects.toThrow();
     expect(isBrowseClassSession(failing)).toBe(false);
+  });
+
+  test('location-session-has-no-spellchecker', async () => {
+    // Whole-branch review: no dictionary load or download from a location session (no request the user did not ask for).
+    const PROFILE = fresh();
+    const order: string[] = [];
+    const target = locationSession(PROFILE, order);
+    target.setSpellCheckerLanguages.mockImplementation(() => void order.push('languages'));
+    target.setSpellCheckerEnabled.mockImplementation(() => void order.push('spellchecker'));
+    const partitions = createLocationPartitions({ register: () => void order.push('register') });
+    await partitions.ensure(PROFILE, PROXY);
+    // No languages, then off (Electron turns spellcheck back on when languages are set), all before the proxy and the registration.
+    expect(target.setSpellCheckerLanguages).toHaveBeenCalledExactlyOnceWith([]);
+    expect(target.setSpellCheckerEnabled).toHaveBeenCalledExactlyOnceWith(false);
+    expect(order).toEqual(['languages', 'spellchecker', `setProxy ${JSON.stringify({ mode: 'fixed_servers', proxyRules: 'http://proxy.example.net:3128' })}`, 'register']);
+    // Once per partition: a second tab, or a reset, does not turn it on again.
+    await partitions.ensure(PROFILE, PROXY);
+    await partitions.reset(PROFILE);
+    await partitions.ensure(PROFILE, PROXY);
+    expect(target.setSpellCheckerEnabled).toHaveBeenCalledOnce();
+    expect(target.setSpellCheckerEnabled.mock.calls.flat()).not.toContain(true);
   });
 
   test('location-session-has-browse-wiring', async () => {

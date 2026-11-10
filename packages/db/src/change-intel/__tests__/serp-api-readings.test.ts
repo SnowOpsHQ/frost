@@ -1,7 +1,8 @@
 // Spec: specs/workspace-db.spec.ts (SERP_API_READINGS_TABLES, SERP_API_READINGS_MIGRATION_IDS, SERP_READING_SOURCES,
 // SEARCH_KEY_VERSION), specs/retention.spec.ts (PurgeCountsView.readings)
 // Acceptance: specs/workspace-db.feature.md (API readings (Phase 12); Scenarios), specs/retention.feature.md
-// (api-only-purge-counts-show-readings) · plan docs/plans/phase-12-big-bets.md, Decision 7 and Task 4
+// (api-only-purge-counts-show-readings) · plan docs/plans/phase-12-big-bets.md, Decision 7, Task 4 and the whole-branch
+// review (mixed-purge-logs-only-captured-bytes)
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
@@ -312,6 +313,28 @@ describe('API readings (Phase 12)', () => {
     expect(entry!.counts).toEqual({ captures: 1, versions: 1, diffs: 1, screenshots: 0 });
     // A purge of captured rows and API readings: the record names that `ci_purges` row.
     expect(t.raw.prepare('SELECT purge_id AS id FROM ci_serp_api_purges').all().map((row) => row['id'])).toEqual([entry!.id]);
+  });
+
+  test('mixed-purge-logs-only-captured-bytes', async () => {
+    // Whole-branch review: `ci_purges` is synced, the API readings are device-local; a mixed purge's logged bytes leave theirs out.
+    const site = (await t.repo.createProject('Mixed bytes', 500))!;
+    appended(await capture(t.repo, { url: 'https://example.com/', snapshot: 'a', at: 1_000, projectId: site.id }));
+    appended(await capture(t.repo, { url: 'https://example.com/', snapshot: 'b', at: 2_000, projectId: site.id }));
+    await stored(apiReading(site.id, 1_500));
+    await stored(apiReading(site.id, 2_500));
+    expect(await t.repo.setRetention(site.id, 'versions', 1, 2_600)).toBe(true);
+    const { plan, done } = await purge(site.id, { mode: 'versions', value: 1 }, 3_000);
+    expect(done).toMatchObject({ status: 'purged' });
+    // The plan's figure still counts everything freed here; `apiReadingBytes` names the API readings' part.
+    const apiBytes = utf8(JSON.stringify({ status: 'ready', at: 1_500 }));
+    expect(plan.apiReadingBytes).toBe(apiBytes);
+    expect(plan.bytes).toBeGreaterThan(apiBytes);
+    const [entry] = await t.repo.purges({ projectId: site.id });
+    expect(entry!.bytes).toBe(plan.bytes - apiBytes);
+    expect(t.raw.prepare('SELECT bytes FROM ci_purges').get()!['bytes']).toBe(plan.bytes - apiBytes);
+    // A plan with no API readings: none of its bytes are theirs.
+    const again = (await t.repo.planPurge({ projectId: site.id, policy: { mode: 'versions', value: 1 }, now: 3_000 }))!;
+    expect(again.apiReadingBytes).toBe(0);
   });
 
   test('api-only-project-delete-retried-after-restart', async () => {

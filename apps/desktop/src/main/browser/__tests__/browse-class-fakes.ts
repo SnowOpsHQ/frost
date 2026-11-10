@@ -68,6 +68,8 @@ export class RichSession extends EventEmitter {
   clearStorageData = vi.fn(async () => {});
   clearCache = vi.fn(async () => {});
   getUserAgent = vi.fn(() => 'Mozilla/5.0 frost-test');
+  setSpellCheckerLanguages = vi.fn((_languages: string[]) => {});
+  setSpellCheckerEnabled = vi.fn((_enable: boolean) => {});
 }
 
 const partitions = new Map<string, RichSession>();

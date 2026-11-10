@@ -9,7 +9,7 @@ import { AGENT_SKILL_PREFS_MIGRATIONS } from './agent-skill-prefs-migrations';
 import { AI_CHECKS_MIGRATIONS } from './ai-checks-migrations';
 import { WORKSPACE_MIGRATIONS } from './change-intel/workspace-migrations';
 import { PHASE11_MIGRATIONS } from './phase11-migrations';
-import { SITE_CRAWL_MIGRATIONS } from './site-crawl/migrations';
+import { SITE_CRAWL_MIGRATIONS, SITE_CRAWL_PACING_MIGRATIONS } from './site-crawl/migrations';
 import { AI_ANSWERS_MIGRATIONS } from './ai-answers-migrations';
 import { DATA_USAGE_MIGRATIONS } from './data-usage-migrations';
 import { LOCATION_PROFILES_MIGRATIONS } from './location-profiles-migrations';
@@ -116,6 +116,7 @@ export const MIGRATIONS: readonly Migration[] = [
   ...DATA_USAGE_MIGRATIONS,
   ...LOCATION_PROFILES_MIGRATIONS,
   ...SERP_API_READINGS_MIGRATIONS,
+  ...SITE_CRAWL_PACING_MIGRATIONS,
 ];
 
 /**

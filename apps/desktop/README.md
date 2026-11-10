@@ -609,6 +609,17 @@ it was built: `docs/plans/phase-11-practitioner-tooling.md`.
   refuse any other page in a location tab for now (it would read as your own connection). Rows that
   carry a location stay on this device: sync never sends them.
 
+### Data sources, AI answers and the site crawl (Phase 12)
+Built, and shipped turned off until the project's terms review is done: the app shows each control
+disabled with the note "Not available in this build yet: its terms are still under review.", and
+main refuses the request whatever the window asks. Settings › Data sources holds your own keys (SerpApi, DataForSEO or Serper for result pages;
+Perplexity or OpenAI web search for AI answers), protected by the OS keychain as the agent's keys
+are. With them, "Check via API" reads a project's searches through the chosen vendor, the AI answers view keeps what
+those engines answered with their citations, and the site crawl fetches a site's served HTML (robots.txt
+honoured, one request per host at a time, slower when the site asks) and audits each page. All of it
+is user-initiated, uses your own keys (the crawl needs none) and stays local: API readings, AI answers
+and crawl data are kept on this device and never synced.
+
 ## Security model (summary)
 The details, each with its named tests, are in `specs/*.feature.md`.
 - **Two kinds of WebContents.** The chrome (the React UI) is served from `app://app` with a strict

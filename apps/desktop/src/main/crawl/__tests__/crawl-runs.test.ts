@@ -1,11 +1,12 @@
 // Spec: specs/site-crawl.spec.ts (CRAWL_LIMITS, CRAWL_RUN_STATES, CRAWL_RUN_REASONS, CRAWL_PAGE_OUTCOMES, CRAWL_SLOW_DOWN_MESSAGE,
 // CRAWL_REFUSALS), specs/site-crawl.schema.ts (CrawlSettingsSchema, CrawlPageRowSchema, CrawlPageJobSchema, CrawlPageAnalysisSchema),
 // specs/seo-checks.spec.ts (SITEMAP_LIMITS), specs/seo-limits.spec.ts (SNAPSHOT_LIMITS.maxLinks)
-// Acceptance: specs/site-crawl.feature.md (Runs, frontier, resume and the served-HTML audit); plan docs/plans/phase-12-big-bets.md
+// Acceptance: specs/site-crawl.feature.md (Runs, frontier, resume and the served-HTML audit; crawl-pacing-survives-a-restart); plan docs/plans/phase-12-big-bets.md
 // Decision 3 (K-B3), Decision 6 and Task 6b
 //
 // Every site here is a fake page fetcher (no network, no timer); the frontier and the rows are the real session database.
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import type { BoundedFetcher } from '@app/specs/fetcher.spec';
 import { SITEMAP_LIMITS } from '@app/specs/seo-checks.spec';
 import { SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import type { RobotsFetch } from '@app/specs/seo-snapshot.spec';
@@ -13,11 +14,11 @@ import { CrawlPageRowSchema, type CrawlPageAnalysis, type CrawlPageJob } from '@
 import { CRAWL_LIMITS, CRAWL_RUN_NOTES, CRAWL_SLOW_DOWN_MESSAGE } from '@app/specs/site-crawl.spec';
 import { parseCrawlRobots, parseCrawlSitemap, type CrawlPageResult } from '../analyse';
 import { createCrawler, type CrawlerDeps, type CrawlMemory } from '../crawler';
-import type { CrawlRobotsSource } from '../fetch';
+import { createCrawlFetcher, type CrawlRobotsSource } from '../fetch';
 import { createCrawlService, type CrawlService } from '../service';
 import { createPacing, type CrawlClock, type Pacing } from '../politeness';
 import { createSitemapSeeder } from '../sitemaps';
-import { fakeClock, fakeFetcher, htmlPage, inProcessAnalyse, settingsFor, tempStore, type FakePage } from './run-fakes';
+import { fakeClock, fakeFetcher, htmlPage, inProcessAnalyse, settingsFor, tempStore, timerClock, type FakePage } from './run-fakes';
 
 const HOME = 'https://example.com/';
 const cleanups: (() => Promise<void>)[] = [];
@@ -229,6 +230,64 @@ describe('crawl runs', () => {
     expect(await t.repo.getPage(runId, `${HOME}a`)).toMatchObject({ outcome: 'crawled' });
     expect(await t.repo.getPage(runId, `${HOME}b`)).toMatchObject({ status: 429 });
     expect(await t.repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'slow-down' });
+  });
+
+  test('crawl-pacing-survives-a-restart', async () => {
+    // Whole-branch review (site-crawl.feature.md, crawl-pacing-survives-a-restart; CRAWL_PACING_LIMITS): the real crawl
+    // fetcher's pacing on a fake clock. A run paused by five 429s with `Retry-After: 60` keeps the host's wait and back-off on
+    // the run, so a restart (a new crawl fetcher) never lets Resume reach the site early or at the base interval.
+    const kit = timerClock();
+    const db = tempStore();
+    cleanups.push(db.close);
+    const repo = db.store.siteCrawl;
+    const requests: { url: string; at: number }[] = [];
+    let answer = (url: string): { status: number; headers: Record<string, string> } => (url === HOME ? { status: 200, headers: {} } : /\/p[1-5]$/.test(url) ? { status: 429, headers: { 'retry-after': '60' } } : { status: 200, headers: {} });
+    const lane: BoundedFetcher = {
+      async fetch(request) {
+        requests.push({ url: request.url, at: kit.now() });
+        const { status, headers } = answer(request.url);
+        const body = new TextEncoder().encode(request.url === HOME ? '<!doctype html><title>Home</title>' + Array.from({ length: 9 }, (_, i) => `<a href="/p${i + 1}">p</a>`).join('') : '<!doctype html><title>Page</title>') as Uint8Array<ArrayBuffer>;
+        return { url: request.url, outcome: 'response', status, finalUrl: request.url, redirects: 0, chain: [], headers: { 'content-type': 'text/html', ...headers }, body, truncated: false, durationMs: 5 };
+      },
+      load: () => ({ running: 0, queued: 0 }),
+    };
+    const robots: CrawlRobotsSource = { get: async (pageUrl) => ({ url: `${new URL(pageUrl).origin}/robots.txt`, outcome: 'unavailable', status: null, finalUrl: null, redirects: 0, body: new Uint8Array(0), truncated: false }) };
+    /** One app session: a new crawl fetcher (empty pacing), crawler and service on the same database. */
+    const boot = (): CrawlService => {
+      const fetcher = createCrawlFetcher({ fetcher: lane, robots, userAgent: () => 'Mozilla/5.0', clock: kit.clock });
+      const crawler = createCrawler({ repo, fetcher, analyse: inProcessAnalyse, projectLive: async () => true, now: kit.now });
+      return createCrawlService({ repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, now: kit.now, log: () => undefined });
+    };
+
+    const first = boot();
+    const runId = await started(first, settingsFor(HOME));
+    await kit.settle(first.idle());
+    // Home, then p1–p5 each answer 429 (Retry-After: 60): the fifth in a row pauses the run.
+    expect(requests.map((r) => r.url)).toEqual([HOME, ...[1, 2, 3, 4, 5].map((i) => `${HOME}p${i}`)]);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'slow-down' });
+    const lastAt = requests[5]!.at;
+    expect(await repo.runPacing(runId)).toEqual([{ host: 'example.com', waitUntil: lastAt + 60_000, inARow: CRAWL_LIMITS.backoffAfter }]);
+
+    // A restart within the minute: Resume's first request waits until the stored time, never before.
+    kit.advance(10_000);
+    answer = (url) => (url === `${HOME}p6` ? { status: 429, headers: {} } : { status: 200, headers: {} });
+    const second = boot();
+    await second.startup();
+    expect(await second.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(second.idle());
+    expect(requests[6]).toEqual({ url: `${HOME}p6`, at: lastAt + 60_000 });
+    // The back-off came back too: one more 429 is the sixth in a row, so the run pauses again at once.
+    expect(requests).toHaveLength(7);
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'slow-down' });
+
+    // Another restart: the next request waits the full backed-off interval (1 s × 2⁵) from that request's start.
+    kit.advance(1_000);
+    const third = boot();
+    await third.startup();
+    expect(await third.resume(runId)).toEqual({ status: 'resumed', runId });
+    await kit.settle(third.idle());
+    expect(requests[7]).toEqual({ url: `${HOME}p7`, at: requests[6]!.at + 1_000 * 2 ** CRAWL_LIMITS.backoffAfter });
+    expect(await repo.getRun(runId)).toMatchObject({ state: 'done' });
   });
 
   test('crawl-query-variants-counted-from-the-frontier', async () => {

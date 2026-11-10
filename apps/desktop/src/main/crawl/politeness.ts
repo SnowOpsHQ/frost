@@ -1,4 +1,5 @@
-import { CRAWL_INTERVAL_MS, CRAWL_LIMITS, MAX_CRAWL_DELAY_MS } from '@app/specs/site-crawl.spec';
+import type { CrawlPacedHost } from '@app/specs/site-crawl.schema';
+import { CRAWL_INTERVAL_MS, CRAWL_LIMITS, CRAWL_PACING_LIMITS, MAX_CRAWL_DELAY_MS } from '@app/specs/site-crawl.spec';
 
 // The crawl's pacing (spec `site-crawl.spec.ts`, `CRAWL_INTERVAL_MS`, `MAX_CRAWL_DELAY_MS`,
 // `CRAWL_LIMITS.backoffAfter` / `maxRetryAfterMs` / `maxPacedHosts`; acceptance `site-crawl.feature.md`,
@@ -12,9 +13,11 @@ import { CRAWL_INTERVAL_MS, CRAWL_LIMITS, MAX_CRAWL_DELAY_MS } from '@app/specs/
 // the call); a redirect to another host name ends the call (`redirected`), so no host is ever reached
 // outside its own pacing. The crawl lane's floor (`CRAWL_FETCHER_LIMITS`) is a second guarantee only.
 //
-// The pacing state is the crawl fetcher's, not a run's: it survives a pause, a resume and a new run
-// (`createPacing`, one per crawl fetcher); only the user's interval belongs to the run (`forRun`). It
-// is bounded: a host's state is forgotten only once no start could be early without it (its longest
+// The pacing state is the crawl fetcher's, not a run's: within one session it survives a pause, a
+// resume and a new run (`createPacing`, one per crawl fetcher); only the user's interval belongs to the
+// run (`forRun`). Across a restart (a new crawl fetcher) a paused run carries it: `snapshot` gives each
+// host's next allowed start and back-off (stored on the run, `CRAWL_PACING_LIMITS`), and `restore` seeds a
+// resumed run's pacing from it (whole-branch review, `crawl-pacing-survives-a-restart`). It is bounded: a host's state is forgotten only once no start could be early without it (its longest
 // possible wait has passed), and past `maxPacedHosts` a new host is refused (`CrawlSlowDownError`)
 // rather than forgetting one too soon. The clock and the timer are injected (tests: a fake clock).
 
@@ -81,6 +84,19 @@ export interface Politeness {
   intervalFor(host: string): number;
   /** Hosts with state held (at most `maxPacedHosts`; K-B3 counts it). */
   size(): number;
+  /**
+   * Each host whose next start is still ahead or that is backed off: `waitUntil`, the later of its
+   * `Retry-After` and its last start plus its effective interval at this run's interval, and its 429 /
+   * 503 answers in a row (capped at `backoffAfter`). Host names past `CRAWL_PACING_LIMITS.maxHostChars`
+   * are left out. What a pausing run stores.
+   */
+  snapshot(): CrawlPacedHost[];
+  /**
+   * Seeds hosts from a stored `snapshot` (a resume after a restart): no start before `waitUntil` (honoured
+   * at most `CRAWL_PACING_LIMITS.maxWaitMs` ahead), the back-off at least the stored one. Never loosens a
+   * held state; a host the table has no room for is skipped.
+   */
+  restore(hosts: readonly CrawlPacedHost[]): void;
 }
 
 export interface Pacing {
@@ -232,6 +248,28 @@ export function createPacing(options: { readonly clock?: CrawlClock; readonly ma
         },
         intervalFor: (host) => intervalOf(states.get(host), intervalMs),
         size: () => states.size,
+        snapshot() {
+          const at = clock.now();
+          const hosts: CrawlPacedHost[] = [];
+          for (const [host, state] of states) {
+            if (host.length === 0 || host.length > CRAWL_PACING_LIMITS.maxHostChars) continue;
+            const waitUntil = Math.max(state.retryUntil, state.lastStart + intervalOf(state, intervalMs));
+            const inARow = Math.min(state.inARow, CRAWL_LIMITS.backoffAfter);
+            if (waitUntil <= at && inARow === 0) continue;
+            hosts.push({ host, waitUntil: Number.isFinite(waitUntil) ? Math.max(0, Math.ceil(waitUntil)) : 0, inARow });
+          }
+          return hosts;
+        },
+        restore(hosts) {
+          const limit = clock.now() + CRAWL_PACING_LIMITS.maxWaitMs;
+          for (const entry of hosts) {
+            if (!Number.isFinite(entry.waitUntil) || !Number.isInteger(entry.inARow) || entry.inARow < 0) continue;
+            const state = stateOf(entry.host);
+            if (!state) continue;
+            state.inARow = Math.max(state.inARow, Math.min(entry.inARow, CRAWL_LIMITS.backoffAfter));
+            state.retryUntil = Math.max(state.retryUntil, Math.min(entry.waitUntil, limit));
+          }
+        },
       };
     },
   };

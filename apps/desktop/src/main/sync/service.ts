@@ -38,7 +38,10 @@ import { ensureSyncState, runSyncPass, type SyncPassReport } from './engine';
 //
 // Phase 12 Task 6b (plan Decision 6): a pull that applied project rows ends with the site crawl's
 // project cleanup (`crawls`) for each tombstoned project that still has crawl runs, so no crawl row is
-// left once the pull completes; it runs in its own `try` and never fails the pass.
+// left once the pull completes; it runs in its own `try` and never fails the pass. Then (whole-branch
+// review) the projects' `purgeDeleted` (`projects`), the start-up purge of deleted projects, so their
+// device-local rows that no synced tombstone reaches (the SERP API readings) go at once, not at the next
+// start-up; in a `try` of its own too.
 
 export interface SyncStatus {
   /** `starting` until the config is read; `off` when sync is off (or disposed); `failed` when it could not start. */
@@ -70,6 +73,13 @@ export interface StartSyncDeps {
    * completes, in a `try` of its own: a failure is one log line and never fails the pass.
    */
   readonly crawls?: { projectsWithRuns(projectIds: readonly string[]): Promise<string[]>; deleteProjectCrawls(projectId: string): Promise<number> };
+  /**
+   * The projects' purge of deleted projects (`MainProjectsService.purgeDeleted`, whole-branch review):
+   * after a pull that applied project rows, after the crawls' cleanup, so a tombstoned project's
+   * device-local rows (its SERP API readings, never synced) are purged before the pass completes, as
+   * start-up recovery would. In a `try` of its own: a failure is one log line and never fails the pass.
+   */
+  readonly projects?: { purgeDeleted(): Promise<number> };
 }
 
 export interface SyncServiceHandle {
@@ -154,6 +164,15 @@ export function startSyncService(deps: StartSyncDeps): SyncServiceHandle {
     }
   };
 
+  /** After a pull that applied project rows, after the crawls: the projects' purge of deleted projects. Its own `try`, never the pass's. */
+  const purgeTombstonedProjects = async (projects: NonNullable<StartSyncDeps['projects']>): Promise<void> => {
+    try {
+      await projects.purgeDeleted();
+    } catch (error) {
+      say(`sync: a deleted project's local rows could not be purged (${describe(error)}); retried at start-up`);
+    }
+  };
+
   const pass = (replicaFile: string, deviceId: string): Promise<void> => {
     if (running !== null || disposed || replica === null || session === null) return running ?? Promise.resolve();
     const [source, target] = [session, replica];
@@ -171,7 +190,9 @@ export function startSyncService(deps: StartSyncDeps): SyncServiceHandle {
         }
         passes += 1;
         lastPassAt = (deps.now ?? Date.now)();
-        if (deps.crawls && report.pull.tables.some((table) => table.table === 'ci_projects' && table.written > 0)) await deleteTombstonedCrawls(source, deps.crawls);
+        const projectsPulled = report.pull.tables.some((table) => table.table === 'ci_projects' && table.written > 0);
+        if (deps.crawls && projectsPulled) await deleteTombstonedCrawls(source, deps.crawls);
+        if (deps.projects && projectsPulled) await purgeTombstonedProjects(deps.projects);
       } catch (error) {
         say(`sync: a pass failed (${describe(error)}); will retry`);
       } finally {

@@ -468,7 +468,7 @@ function start(): void {
     const update = startUpdateService({ app, net, session, shell, log: logSession });
     app.once('will-quit', () => update.dispose());
     // Sync (specs/sync-engine.feature.md): off unless userData/frost-sync.json turns it on; never throws, runs in the background.
-    const sync = startSyncService({ app, safeStorage, sessionFile: sessionStore.file, log: logSession, crawls: crawl.service });
+    const sync = startSyncService({ app, safeStorage, sessionFile: sessionStore.file, log: logSession, crawls: crawl.service, projects });
     app.once('will-quit', () => void sync.dispose());
     // The account, sign-in and entitlements (specs/account-signin.feature.md): after ready (the keychain
     // check), before the first window (its gestures are tracked from creation).

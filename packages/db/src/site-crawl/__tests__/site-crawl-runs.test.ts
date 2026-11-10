@@ -2,14 +2,18 @@
 // (CrawlPageRowSchema)
 // Acceptance: specs/site-crawl.feature.md (Runs, frontier, resume and the served-HTML audit: the frontier as the authority;
 // Deleting a project deletes its crawls); plan docs/plans/phase-12-big-bets.md Decision 6 (startup recovery:
-// `deletedProjectsWithRows` also lists a tombstoned project that still has crawl runs) and Task 6b
+// `deletedProjectsWithRows` also lists a tombstoned project that still has crawl runs) and Task 6b; the whole-branch
+// review's `crawl-pacing-survives-a-restart` (CRAWL_PACING_LIMITS, CRAWL_PACING_MIGRATION_IDS, CrawlPacingSnapshotSchema)
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, test } from 'vitest';
 import { defaultCrawlSettings, type CrawlPageRow } from '@app/specs/site-crawl.schema';
-import { CRAWL_LIMITS } from '@app/specs/site-crawl.spec';
+import { CRAWL_LIMITS, CRAWL_PACING_LIMITS, CRAWL_PACING_MIGRATION_IDS } from '@app/specs/site-crawl.spec';
+import { MIGRATIONS } from '../../migrations';
 import { openSessionStore, type SessionStore } from '../../store';
+import { SITE_CRAWL_PACING_MIGRATIONS } from '../migrations';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -97,5 +101,47 @@ describe('the crawl run storage (Task 6b)', () => {
     expect(await opened.siteCrawl.deleteRunsOfProject(project.id)).toBe(1);
     expect(await opened.changeIntel.deletedProjectsWithRows()).toEqual([]);
     expect(CRAWL_LIMITS.maxListedRuns).toBeGreaterThan(0);
+  });
+
+  test('crawl-run-pacing-stored', async () => {
+    // `0246` adds `crawl_runs.pacing` in its own migration, in id order right after the SERP-API readings' `0245`.
+    expect(SITE_CRAWL_PACING_MIGRATIONS.map((m) => m.id)).toEqual([...CRAWL_PACING_MIGRATION_IDS]);
+    const ids = MIGRATIONS.map((m) => m.id);
+    expect(ids.indexOf('0246_crawl_run_pacing')).toBe(ids.indexOf('0245_serp_api_readings') + 1);
+    expect([...ids].sort()).toEqual(ids);
+
+    const opened = store();
+    const repo = opened.siteCrawl;
+    const run = await repo.createRun({ projectId: null, settings: defaultCrawlSettings('https://example.com/'), now: 1_000 });
+    // A run that never paused has none.
+    expect(await repo.runPacing(run.id)).toEqual([]);
+    const pacing = [
+      { host: 'example.com', waitUntil: 61_000, inARow: 5 },
+      { host: 'cdn.example.com', waitUntil: 2_000, inARow: 0 },
+    ];
+    expect(await repo.updateRun(run.id, { state: 'paused', reason: 'slow-down', pacing }, 1_500)).toBe(true);
+    expect(await repo.runPacing(run.id)).toEqual(pacing);
+    // A patch without `pacing` leaves it; `null` clears it.
+    await repo.updateRun(run.id, { state: 'running', reason: null }, 1_600);
+    expect(await repo.runPacing(run.id)).toEqual(pacing);
+    await repo.updateRun(run.id, { pacing: null }, 1_700);
+    expect(await repo.runPacing(run.id)).toEqual([]);
+    // Bounded on the way in: invalid entries are dropped (never failing the run's end), at most `maxPacedHosts` kept.
+    const long = 'a'.repeat(CRAWL_PACING_LIMITS.maxHostChars + 1);
+    const many = Array.from({ length: CRAWL_LIMITS.maxPacedHosts + 10 }, (_, i) => ({ host: `h${i}.example`, waitUntil: 5_000, inARow: 1 }));
+    await repo.updateRun(run.id, { pacing: [{ host: long, waitUntil: 5_000, inARow: 1 }, { host: 'x.example', waitUntil: -1, inARow: 1 }, { host: 'y.example', waitUntil: 5_000, inARow: 99 }, ...many] }, 1_800);
+    expect(await repo.runPacing(run.id)).toEqual(many.slice(0, CRAWL_LIMITS.maxPacedHosts));
+    // Leniently on the way out: a tampered value reads as none, or as its valid entries; the column's CHECK bounds its size.
+    const raw = new DatabaseSync(opened.file);
+    try {
+      raw.prepare('UPDATE crawl_runs SET pacing = ? WHERE id = ?').run('not json', run.id);
+      expect(await repo.runPacing(run.id)).toEqual([]);
+      raw.prepare('UPDATE crawl_runs SET pacing = ? WHERE id = ?').run(JSON.stringify([{ host: 'ok.example', waitUntil: 9, inARow: 2 }, { host: 7 }]), run.id);
+      expect(await repo.runPacing(run.id)).toEqual([{ host: 'ok.example', waitUntil: 9, inARow: 2 }]);
+      expect(() => raw.prepare('UPDATE crawl_runs SET pacing = ? WHERE id = ?').run('x'.repeat(200_000), run.id)).toThrow(/CHECK/);
+    } finally {
+      raw.close();
+    }
+    expect(await repo.runPacing('01900000-0000-7000-8000-000000000000')).toEqual([]);
   });
 });

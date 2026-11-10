@@ -29,6 +29,8 @@ export const crawlRuns = sqliteTable(
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
     finishedAt: integer('finished_at'),
+    /** A paused run's per-host pacing (`CrawlPacingSnapshotSchema` as JSON; `0246`), or `null`. Main only. */
+    pacing: text('pacing'),
   },
   (table) => [index('crawl_runs_project_id').on(table.projectId)],
 );

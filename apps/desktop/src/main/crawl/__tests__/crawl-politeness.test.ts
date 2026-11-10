@@ -1,9 +1,10 @@
 // Spec: specs/site-crawl.spec.ts (CRAWL_INTERVAL_MS, MAX_CRAWL_DELAY_MS, CRAWL_LIMITS.backoffAfter / maxRetryAfterMs,
 // CRAWL_SLOW_DOWN_MESSAGE); specs/fetcher.spec.ts (the crawl lane)
 // Acceptance: specs/site-crawl.feature.md (Fetching, politeness and robots: crawl-is-polite, crawl-honours-crawl-delay-and-retry-after,
-// crawl-backs-off-and-pauses); plan docs/plans/phase-12-big-bets.md Decision 3 (K-B1), Decision 6 and Task 6a
+// crawl-backs-off-and-pauses, crawl-pacing-survives-a-restart: CRAWL_PACING_LIMITS); plan docs/plans/phase-12-big-bets.md
+// Decision 3 (K-B1), Decision 6, Task 6a and the whole-branch review
 import { describe, expect, test } from 'vitest';
-import { CRAWL_INTERVAL_MS, CRAWL_LIMITS, MAX_CRAWL_DELAY_MS } from '@app/specs/site-crawl.spec';
+import { CRAWL_INTERVAL_MS, CRAWL_LIMITS, CRAWL_PACING_LIMITS, MAX_CRAWL_DELAY_MS } from '@app/specs/site-crawl.spec';
 import { createPacing, createPoliteness, CrawlSlowDownError, type CrawlClock } from '../politeness';
 
 /** A fake clock: time moves only when the test advances it; timers fire in time order. */
@@ -289,5 +290,45 @@ describe('crawl politeness', () => {
     await next;
     expect(starts[1]! - starts[0]!).toBe(1_000);
     expect(pacing.size()).toBe(1);
+  });
+
+  test('crawl-pacing-snapshot-and-restore', async () => {
+    // What a pausing run stores and a resume after a restart seeds (crawl-pacing-survives-a-restart).
+    const kit = fakeClock();
+    const run = createPacing({ clock: kit.clock }).forRun(1_000);
+    await run.schedule('slow.example', async () => undefined);
+    for (let i = 0; i < CRAWL_LIMITS.backoffAfter + 2; i++) run.report('slow.example', { status: 429, retryAfter: i === 0 ? '30' : null });
+    await run.schedule('quick.example', async () => undefined);
+    run.setCrawlDelay('quick.example', 3_000);
+    const at = kit.now();
+    // The back-off is capped at `backoffAfter`; the wait is the later of Retry-After and last start + effective interval.
+    expect(run.snapshot()).toEqual([
+      { host: 'slow.example', waitUntil: at + 1_000 * 2 ** CRAWL_LIMITS.backoffAfter, inARow: CRAWL_LIMITS.backoffAfter },
+      { host: 'quick.example', waitUntil: at + 3_000, inARow: 0 },
+    ]);
+    // A host whose wait has passed and that is not backed off is left out.
+    kit.set(at + 5_000);
+    expect(run.snapshot().map((host) => host.host)).toEqual(['slow.example']);
+
+    // A new crawl fetcher (a restart) seeded from it: no start before the stored time, backed off after it.
+    const later = fakeClock(at + 10_000);
+    const resumed = createPacing({ clock: later.clock }).forRun(1_000);
+    resumed.restore([{ host: 'slow.example', waitUntil: at + 32_000, inARow: CRAWL_LIMITS.backoffAfter }]);
+    expect(resumed.intervalFor('slow.example')).toBe(1_000 * 2 ** CRAWL_LIMITS.backoffAfter);
+    const starts: number[] = [];
+    const first = resumed.schedule('slow.example', async () => void starts.push(later.now()));
+    await later.run();
+    await first;
+    expect(starts).toEqual([at + 32_000]);
+    // A stored time too far ahead (a clock set back) is honoured only `maxWaitMs` ahead; restore never loosens a held state.
+    const skewed = fakeClock(at);
+    const pacing = createPacing({ clock: skewed.clock }).forRun(1_000);
+    pacing.restore([{ host: 'far.example', waitUntil: at + 10 * CRAWL_PACING_LIMITS.maxWaitMs, inARow: 1 }]);
+    pacing.restore([{ host: 'far.example', waitUntil: 0, inARow: 0 }]);
+    const far = pacing.schedule('far.example', async () => skewed.now());
+    await skewed.run();
+    expect(await far).toBe(at + CRAWL_PACING_LIMITS.maxWaitMs);
+    expect(pacing.intervalFor('far.example')).toBe(2_000);
+    expect(CRAWL_PACING_LIMITS.maxWaitMs).toBe(Math.max(CRAWL_LIMITS.maxRetryAfterMs, Math.max(CRAWL_INTERVAL_MS.max, MAX_CRAWL_DELAY_MS) * 2 ** CRAWL_LIMITS.backoffAfter));
   });
 });
