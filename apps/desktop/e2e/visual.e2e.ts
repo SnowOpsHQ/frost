@@ -294,7 +294,8 @@ async function settled(): Promise<void> {
 }
 
 /**
- * `VISUAL_STRICT=1`: no pixel may differ at all (`maxDiffPixels: 0`), for a local run or an explicit
+ * `VISUAL_STRICT=1`: no counted pixel may differ (`maxDiffPixels: 0`; pixelmatch never counts pixels it
+ * classifies as anti-aliasing, so this is not byte-for-byte), for a local run or an explicit
  * check of a change that must not move anything; by default up to 0.2 % may (playwright.config.ts).
  */
 const STRICT = process.env['VISUAL_STRICT'] === '1' ? { maxDiffPixels: 0, maxDiffPixelRatio: 0 } : {};

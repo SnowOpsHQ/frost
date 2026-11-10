@@ -13,7 +13,8 @@ export default defineConfig({
     timeout: 10_000,
     // The screenshot baseline (visual.e2e.ts; specs/visual-baseline.feature.md): no other suite
     // compares screenshots. `threshold: 0`: any change of a pixel's colour counts as a difference
-    // (the default 0.2 lets a subtle token colour shift pass); at most 0.2 % of pixels may differ.
+    // (the default 0.2 lets a subtle token colour shift pass), except pixels Playwright's pixelmatch
+    // classifies as anti-aliasing, which it never counts; at most 0.2 % of pixels may differ.
     toHaveScreenshot: { animations: 'disabled', caret: 'hide', threshold: 0, maxDiffPixelRatio: 0.002, scale: 'css' },
   },
   // Baselines are Linux CI's renderings, e.g. e2e/__screenshots__/visual.e2e.ts/seo-overview-dark.png
