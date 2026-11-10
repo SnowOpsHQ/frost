@@ -34,10 +34,13 @@ import type { SitemapSeeder } from './sitemaps';
 // queued); `paused` (by the user, a quit, a slow-down) or `cancelled` (by the user, or its project gone)
 // when stopped; `failed` (`error`) when the database fails. Held in memory: the frontier's window, one
 // page's links while they are discovered, the pacing table (K-B3); every page goes to SQLite at once.
-// A run stores its pacing (`Politeness.snapshot`) as it starts and whenever it changes (`Politeness.changes`:
-// after a fetch call that set or cleared a back-off, took a `Retry-After`, learned a `Crawl-delay`, or
-// started under a raised interval; council review, item 5), and again with its end if it pauses (a
-// finished one clears it). A resumed run seeds its crawl fetcher's pacing from it before its first
+// A run stores its pacing (`Politeness.snapshot`) as it starts, whenever it changes (`Politeness.changes`:
+// after a fetch call that set or cleared a back-off, took a `Retry-After` or learned a `Crawl-delay`;
+// council review, item 5), **before** each request that starts under a raised interval or follows such a
+// change (`Politeness.startRaises`, the request's own start counted: council review round 2, item B; the
+// write is awaited inside the host's slot, after the project check, and the start is stamped once it is
+// stored, so a crash with that request in flight loses nothing; a write that fails sends nothing and the
+// run fails), and again with its end if it pauses (a finished one clears it). A resumed run seeds its crawl fetcher's pacing from it before its first
 // request, so neither a restart nor a crash or kill lets a resume reach a host sooner than it asked
 // (`crawl-pacing-survives-a-restart`, `crawl-pacing-survives-a-crash`). A run whose hosts never raise
 // their interval writes no pacing per page.
@@ -171,8 +174,6 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
         controller.abort();
         return false;
       };
-      /** Asked inside each request's paced slot, right before it is sent (after the robots.txt and pacing waits). */
-      const beforeRequest = async (): Promise<boolean> => !signal.aborted && (await projectLive());
 
       const memory = (): CrawlMemory => {
         const held = frontier?.memory() ?? { window: 0, pending: 0, paths: 0 };
@@ -222,16 +223,39 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
         const stoppedEnd = (): CrawlRunEnd => STOPPED[stopped ?? 'pause'];
         /** `Politeness.changes` when the run's pacing was last stored. */
         let pacingStored = 0;
-        /** Stores the run's pacing when it changed since it was last stored (a crash then loses none of it). */
-        const storePacing = async (): Promise<void> => {
+        /**
+         * Stores the run's pacing when it changed since it was last stored, or (with `starting`, just before a
+         * request to that host) when that start raises it: the snapshot then counts the start as now. A crash
+         * then loses none of it.
+         */
+        const storePacing = async (starting?: string): Promise<void> => {
           const politeness = runFetcher?.politeness;
-          if (!politeness || signal.aborted || politeness.changes() === pacingStored) return;
-          pacingStored = politeness.changes();
-          await repo.updateRun(runId, { pacing: politeness.snapshot() }, now());
+          if (!politeness || signal.aborted) return;
+          const changes = politeness.changes();
+          if (changes === pacingStored && (starting === undefined || !politeness.startRaises(starting))) return;
+          await repo.updateRun(runId, { pacing: politeness.snapshot(starting) }, now());
+          pacingStored = changes;
         };
-        /** The run's page fetch, its pacing stored once the call has ended. */
-        const fetchPage = async (fetching: CrawlerRunFetcher, url: string, options: CrawlFetchOptions): Promise<CrawlPageFetch> => {
-          const fetched = await fetching.fetchPage(url, signal, options);
+        /**
+         * The run's page fetch. Inside the host's paced slot, right before the request: the project is still live
+         * (a deleted one sends nothing and stops the run), then the pacing that request will leave is stored, so
+         * a crash with it in flight never lets a resume reach the host sooner. Its pacing is stored again once
+         * the call has ended, if the answer changed it. A pacing write that fails sends nothing and fails the run.
+         */
+        const fetchPage = async (fetching: CrawlerRunFetcher, url: string, options: CrawlFetchOptions = {}): Promise<CrawlPageFetch> => {
+          let failure: { readonly error: unknown } | null = null;
+          const beforeRequest = async (host: string): Promise<boolean> => {
+            if (signal.aborted || !(await projectLive())) return false;
+            try {
+              await storePacing(host);
+            } catch (error) {
+              failure = { error };
+              return false;
+            }
+            return !signal.aborted;
+          };
+          const fetched = await fetching.fetchPage(url, signal, { ...options, beforeRequest });
+          if (failure !== null) throw (failure as { readonly error: unknown }).error;
           await storePacing();
           return fetched;
         };
@@ -259,7 +283,7 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
                 runId,
                 settings,
                 scope,
-                fetch: (url, options) => fetchPage(fetching, url, { ...options, beforeRequest }),
+                fetch: (url, options) => fetchPage(fetching, url, options),
                 signal,
                 seed: (urls) => seeding.discover(urls, 1, 'sitemap'),
               });
@@ -279,7 +303,7 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
             // Before each fetch call (and again inside its paced slot, `beforeRequest`): a project deleted here or by sync meanwhile cancels the run.
             if (!(await projectLive())) return await finish(stoppedEnd());
             if (signal.aborted) return await finish(stoppedEnd());
-            const fetched = await untilAborted(fetchPage(runFetcher, entry.url, { beforeRequest }), signal);
+            const fetched = await untilAborted(fetchPage(runFetcher, entry.url), signal);
             if (fetched === ABORTED || fetched.outcome === 'aborted' || signal.aborted) return await finish(stoppedEnd());
             // A host past the pacing table's cap: nothing requested, nothing recorded; the URL stays queued.
             if (fetched.outcome === 'deferred') return await finish(SLOW_DOWN);

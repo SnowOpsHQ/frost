@@ -121,15 +121,18 @@ export interface CrawlPageFetch {
 /**
  * Per-call options of `fetchPage` (Task 6b): the sitemap seeding's own caps and `Accept` (every other
  * rule, scope, robots.txt, pacing and the redirect hook, stays the page's), and `beforeRequest`, asked
- * inside the host's paced slot right before the request (after the robots.txt and pacing waits): `false`
- * ends the call `aborted` with nothing requested (the crawl: its project was deleted meanwhile).
+ * with the call's pacing key inside the host's paced slot right before the request (after the robots.txt
+ * and pacing waits): `false` ends the call `aborted` with nothing requested (the crawl: its project was
+ * deleted meanwhile, or its pacing could not be stored). The crawl also stores its pacing there, before a
+ * start that raises it (council review round 2, item B); the call's start is stamped only once it has
+ * answered, right before the request.
  */
 export interface CrawlFetchOptions {
   readonly maxBytes?: number;
   readonly timeoutMs?: number;
   readonly accept?: string;
   readonly maxRedirects?: number;
-  readonly beforeRequest?: () => Promise<boolean>;
+  readonly beforeRequest?: (host: string) => Promise<boolean>;
 }
 
 /** One run's fetching. */
@@ -353,7 +356,7 @@ export function createCrawlFetcher(deps: CrawlFetcherDeps): CrawlFetcher {
             signal,
             // Inside the host's slot, after every wait: the last checks before the request, before its start is stamped.
             async () => {
-              if (options.beforeRequest && !(await options.beforeRequest())) throw new RefusedBeforeRequest();
+              if (options.beforeRequest && !(await options.beforeRequest(host))) throw new RefusedBeforeRequest();
             },
           );
         } catch (error) {

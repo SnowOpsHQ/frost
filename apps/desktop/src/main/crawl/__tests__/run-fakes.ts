@@ -76,7 +76,7 @@ export function fakeFetcher(site: (url: string) => FakePage | undefined, now: ()
           await Promise.race([held.released, new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }))]);
           if (signal?.aborted) return { ...fetchOf(url, site(url), now()), outcome: 'aborted' };
         }
-        if (fetchOptions.beforeRequest && !(await fetchOptions.beforeRequest())) return { ...fetchOf(url, undefined, now()), outcome: 'aborted' };
+        if (fetchOptions.beforeRequest && !(await fetchOptions.beforeRequest(pacingKey(url) ?? ''))) return { ...fetchOf(url, undefined, now()), outcome: 'aborted' };
         fetched.push(url);
         return fetchOf(url, site(url), now());
       };

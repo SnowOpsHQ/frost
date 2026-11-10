@@ -333,8 +333,10 @@ describe('crawl politeness', () => {
   });
 
   test('crawl-pacing-changes-only-when-a-snapshot-would', async () => {
-    // Council review, item 5: the crawler stores the snapshot whenever `changes()` moved, so it moves for every change a
-    // stored snapshot would miss, and never for a plain call at the run's own interval (a plain crawl writes no pacing per page).
+    // Council review, item 5: the crawler stores the snapshot whenever `changes()` moved, so it moves for every change to a
+    // host's state a stored snapshot would miss, and never for a plain call at the run's own interval (a plain crawl writes
+    // no pacing per page). Round 2, item B: a start under a raised interval is `startRaises` instead, stored before its request
+    // as `snapshot(host)` (that start counted as now), so it moves no counter.
     const kit = fakeClock();
     const run = createPacing({ clock: kit.clock }).forRun(1_000);
     const plain = async () => {
@@ -345,24 +347,33 @@ describe('crawl politeness', () => {
     };
     for (let i = 0; i < 3; i++) await plain();
     expect(run.changes()).toBe(0);
-    // A 429 (back-off, Retry-After): one change; a start under the raised interval: one; the 200 that clears it: one.
+    expect(run.startRaises('a.example')).toBe(false);
+    // A 429 (back-off, Retry-After): one change; the start under the raised interval raises it but is no change; the 200 that clears it: one.
     run.report('a.example', { status: 429, retryAfter: '60' });
     expect(run.changes()).toBe(1);
+    expect(run.startRaises('a.example')).toBe(true);
     await plain();
-    expect(run.changes()).toBe(3);
+    expect(run.changes()).toBe(2);
+    expect(run.startRaises('a.example')).toBe(false);
     await plain();
-    expect(run.changes()).toBe(3);
-    // A Crawl-delay learned: one change; the same value again: none; each start under it: one (its waitUntil moved).
+    expect(run.changes()).toBe(2);
+    // A Crawl-delay learned: one change; the same value again: none; starts under it: none, each one raised.
     run.setCrawlDelay('a.example', 3_000);
     run.setCrawlDelay('a.example', 3_000);
-    expect(run.changes()).toBe(4);
+    expect(run.changes()).toBe(3);
+    expect(run.startRaises('a.example')).toBe(true);
     await plain();
     await plain();
-    expect(run.changes()).toBe(6);
+    expect(run.changes()).toBe(3);
+    // What the crawler stores just before the next start: that start counted as now, plus the Crawl-delay.
+    const at = kit.now();
+    expect(run.snapshot('a.example')).toEqual([{ host: 'a.example', waitUntil: at + 3_000, inARow: 0 }]);
+    expect(run.snapshot('other.example')).toEqual(run.snapshot());
     run.setCrawlDelay('a.example', null);
-    expect(run.changes()).toBe(7);
+    expect(run.changes()).toBe(4);
+    expect(run.startRaises('a.example')).toBe(false);
     // Restoring a stored snapshot is no change (it is what was stored).
     run.restore([{ host: 'b.example', waitUntil: kit.now() + 5_000, inARow: 1 }]);
-    expect(run.changes()).toBe(7);
+    expect(run.changes()).toBe(4);
   });
 });

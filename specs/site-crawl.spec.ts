@@ -133,9 +133,13 @@ export const MAX_CRAWL_DELAY_MS = 10_000;
  * (`waitUntil`: the later of its `Retry-After` and its last start plus its effective interval at the
  * run's interval, so a learned `Crawl-delay` is in it) and its back-off (429 / 503 answers in a row, at
  * most `CRAWL_LIMITS.backoffAfter`). It is stored as the run starts, after every fetch call that changed
- * it (a back-off set or cleared, a `Retry-After`, a `Crawl-delay` learned or changed, a call started
- * under a raised interval: never for a call at the run's own interval), and as the run pauses (any
- * reason: the user, a quit, a slow-down); a finished run clears it. A resume, in this session or after
+ * it (a back-off set or cleared, a `Retry-After`, a `Crawl-delay` learned or changed), **before** every
+ * request that starts under a raised interval or follows such a change (that request's own start
+ * counted, the write awaited inside the host's slot before the start is stamped: council review round
+ * 2, item B; a write that fails sends nothing and fails the run), never for a call at the run's own
+ * interval, and as the run pauses (any reason: the user, a quit, a slow-down); a finished run clears
+ * it. The stored start is read as the write begins, so it can precede the request's own start by that
+ * one local write. A resume, in this session or after
  * a restart or a crash (start-up pauses the run left `running`), seeds the crawl fetcher's pacing from
  * it, so a run resumes backed off and not before the stored time. A stored time is never
  * honoured further ahead than this (the longest wait any host state can ask for: the largest interval

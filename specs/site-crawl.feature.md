@@ -132,11 +132,15 @@ the crawl fetcher starts empty, so the run stores each paced host's next allowed
 later of its `Retry-After` and its last start plus its effective interval, a learned `Crawl-delay`
 included) and its back-off on the run (`crawl_runs.pacing`, migration `0246`, `CRAWL_PACING_LIMITS`):
 as it starts, **whenever the pacing changes** (council review, item 5: after a fetch call that set or
-cleared a back-off, took a `Retry-After`, learned or changed a `Crawl-delay`, or started under an
-interval raised by either; `Politeness.changes`), and as it pauses (any reason: the user, a quit, a
-slow-down). A call at the run's own interval changes nothing, so a crawl with no `Crawl-delay` and no
-back-off writes no pacing per page; one with them writes it once per fetch call (its calls are seconds
-apart). So a crash or kill (no pause written; start-up pauses the run left `running`) loses none of it.
+cleared a back-off, took a `Retry-After`, or learned or changed a `Crawl-delay`; `Politeness.changes`),
+**before every request that starts under an interval raised by either** (council review round 2, item
+B; `Politeness.startRaises`: the snapshot counts that request's start as now, the write is awaited
+inside the host's slot after the project check, and only then is the start stamped and the request
+sent; a write that fails sends nothing and fails the run), and as it pauses (any reason: the user, a
+quit, a slow-down). A call at the run's own interval changes nothing, so a crawl with no `Crawl-delay`
+and no back-off writes no pacing per page; one with them writes it about once per fetch call (its calls
+are seconds apart). So a crash or kill (no pause written; start-up pauses the run left `running`)
+loses none of it, even with a request in flight.
 Resume seeds the pacing from it before the first request, so a run resumes backed off and not before
 the stored time (a stored time more than
 `CRAWL_PACING_LIMITS.maxWaitMs` ahead is honoured only that far). It is bounded
@@ -179,10 +183,16 @@ a new host is not fetched (`deferred`, the run pauses with `slow-down`, the URL 
   the run as it is answered; the app is then killed (no pause written, the run left `running`). At the
   next start the run is paused (`interrupted`), and Resume sends its first request exactly at the
   stored time (the 429's time + 60 s), never before.
-- `crawl-pacing-changes-only-when-a-snapshot-would` — (council review, item 5) `Politeness.changes`
-  moves for a 429 / 503 (back-off, `Retry-After`), for the answer that clears a back-off, for a
-  `Crawl-delay` learned, changed or dropped, and for each start under a raised interval; never for calls
-  at the run's own interval, a `Crawl-delay` learned again unchanged, or a `restore`.
+- `crawl-pacing-stored-before-the-request` — (council review round 2, item B) a page starts under a
+  `Crawl-delay: 10` learned this session and the app is killed with its request in flight (no answer,
+  no pause written): the run's stored pacing already holds that request's start + 10 s. At the next
+  start the run is paused (`interrupted`), and Resume, two seconds after the kill, sends its first
+  request exactly at the stored time, never before.
+- `crawl-pacing-changes-only-when-a-snapshot-would` — (council review, item 5; round 2, item B)
+  `Politeness.changes` moves for a 429 / 503 (back-off, `Retry-After`), for the answer that clears a
+  back-off, and for a `Crawl-delay` learned, changed or dropped; never for a start, calls at the run's
+  own interval, a `Crawl-delay` learned again unchanged, or a `restore`. `startRaises(host)` is true
+  while the host's interval is raised, and `snapshot(host)` counts that host's start as now.
 - `crawl-politeness-bounds-never-start-early` — over hundreds of calls to more hosts than
   `maxPacedHosts`, with back-off, `Retry-After` and `Crawl-delay` active, no start is ever earlier than
   the host's full state requires, the table never exceeds its cap, and a full table refuses a new host
