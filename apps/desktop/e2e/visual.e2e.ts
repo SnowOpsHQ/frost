@@ -1,9 +1,10 @@
-// Specs: specs/visual-baseline.feature.md (the surfaces, themes, masks, determinism rules and the baseline procedure)
+// Specs: specs/visual-baseline.feature.md (the surfaces, themes, hidden text, determinism rules and the baseline procedure)
 // Acceptance: specs/visual-baseline.feature.md (End to end)
 //
 // The screenshot baseline: every main surface of the chrome page (`app://app/`), in light and dark,
 // compared with `toHaveScreenshot` against `e2e/__screenshots__/visual.e2e.ts/<state>-<theme>.png`.
-// Only the chrome is captured; a tab's page is a native view no page screenshot includes.
+// Only the chrome is captured; a tab's page is a native view no page screenshot includes. Text that
+// follows the clock or the date is drawn without glyphs by visual.css; CAPTURES lists every capture.
 //
 // Linux only, and the baselines come from CI only (`xvfb-run` on ubuntu-24.04): a local run writes
 // missing images (`updateSnapshots: 'missing'`) for looking at, but they differ from CI's and are
@@ -11,14 +12,16 @@
 // the branch, download the `playwright-report` artifact, copy each `*-actual.png` to its baseline
 // path, review, commit.
 import { X509Certificate, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
-import { SETTINGS_MENU } from '@app/specs/account-settings.spec';
+import { fileURLToPath } from 'node:url';
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { ACCOUNT_SETTINGS_TEXT, SETTINGS_MENU } from '@app/specs/account-settings.spec';
 import { AGENT_E2E_SCRIPT_SWITCH } from '@app/specs/agent-session.spec';
 import { HISTORY_MENU_ID, JUMP_BACK_IN_TITLE } from '@app/specs/browser-polish.spec';
 import { COMMAND_PALETTE_MENU_ID } from '@app/specs/command-palette.spec';
@@ -119,7 +122,8 @@ async function startSite() {
       html(`<!doctype html><html lang="en"><title>${name.charAt(0).toUpperCase()}${name.slice(1)} page</title><p>${name}</p></html>`);
     } else if (pathname === '/start') html('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Agent start</title></head><body><h1>Agent start</h1><p>Where the agent begins.</p></body></html>');
     else if (pathname === '/notify') html('<!doctype html><html lang="en"><title>Page NOTIFY</title><h1>Page NOTIFY</h1></html>');
-    else if (pathname.startsWith('/img/')) response.writeHead(200, { 'Content-Type': 'image/png' }).end(PNG);
+    // Never cached: Page Speed's request list says "cached" for a cached one, which would follow the order of the tests.
+    else if (pathname.startsWith('/img/')) response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }).end(PNG);
     else response.writeHead(404, { 'Content-Type': 'text/plain' }).end('not here');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -172,34 +176,120 @@ async function launch(args: readonly string[] = [], options: Parameters<typeof l
   }
 }
 
-/** Masked in every capture: the audit footer's clock time and read duration. */
-const alwaysMasked = (): Locator[] => [page.getByTestId('seo-duration')];
+/**
+ * Every capture's name: `capture()` takes only these, and 'every capture has a baseline' checks
+ * the baseline directory against them (`<name>-light.png`, `<name>-dark.png`).
+ */
+const CAPTURES = [
+  'new-tab',
+  'new-tab-jump-back-in',
+  'history',
+  'seo-overview',
+  'seo-on-page',
+  'seo-schema',
+  'seo-page-speed',
+  'seo-search-console',
+  'seo-changes',
+  'devtools-drawer',
+  'find-bar',
+  'command-palette',
+  'settings',
+  'projects',
+  'render-profile',
+  'permission-bar',
+  'update-bar',
+  'agent-empty',
+  'agent-conversation',
+] as const;
+type CaptureName = (typeof CAPTURES)[number];
+const baselineFiles = (): string[] => CAPTURES.flatMap((name) => THEMES.map((theme) => `${name}-${theme}.png`));
 
 /**
- * Captures the chrome page as `<name>-light.png` and `<name>-dark.png`. Focus leaves the chrome
- * (unless `keepFocus`: the state is about a focused field) and the pointer rests on the status
- * bar, so no focus ring or hover depends on what the flow clicked last. The theme is the chrome's
- * emulated `prefers-color-scheme`; each capture checks the media query and the body's colour
- * really follow it. Soft: a missing or different image fails the test but the other captures run.
- *
- * A missing baseline: Playwright writes the rendering as the baseline and as `*-actual.png`
- * (`updateSnapshots: 'missing'`, playwright.config.ts) and passes; in CI the capture fails here
- * instead, so the actual reaches the `playwright-report` artifact and the run is red.
+ * The screenshot-only stylesheet: it hides the glyphs of text that follows the clock, the date or a
+ * measured time, keeping its box (visual.css says which, and why each box is fixed). Inserted from
+ * main (`webContents.insertCSS`) for the captures only: Playwright's own `stylePath` injects a
+ * `<style>` element, which the chrome's strict CSP refuses without a word.
  */
-async function capture(name: string, options: { readonly mask?: readonly Locator[]; readonly keepFocus?: boolean } = {}): Promise<void> {
+const VISUAL_CSS = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'visual.css'), 'utf8');
+
+/** Text left out of `settled()`'s comparison: it changes every second while the state is otherwise still. */
+const TICKING = ['.seo-speed-live-text', '[data-testid="seo-speed-metric-value"]', '[data-testid="seo-speed-navigation"]', '[data-testid="seo-speed-largest"]'];
+
+/** What still says it is working: a busy region, a tab's spinner, the audit skeleton, or a "Loading…"-style line. */
+const BUSY_SELECTORS = '[aria-busy="true"], [data-testid="tab-loading"], [data-testid="seo-pending"], [data-testid="gsc-loading"], [data-testid="changes-loading"]';
+const BUSY_TEXT = /\b(Loading|Reading|Checking|Measuring|Waiting|Starting|Connecting|Saving|Capturing|Adding|Downloading)\b[^…]{0,40}…/;
+
+/**
+ * Waits until the chrome holds still: nothing on screen says it is still working, and its text
+ * (bar `TICKING`), its state attributes and the audit's identity have not changed for 1.5 s (a
+ * served-HTML fetch, the speed measurement or AI readiness can land after the first answer).
+ */
+async function settled(): Promise<void> {
+  let last = '';
+  let since = Date.now();
+  await expect
+    .poll(
+      async () => {
+        const now = await page.evaluate(
+          ({ ticking, busySelectors, busyText }) => {
+            const shown = (el: Element) => el.getClientRects().length > 0;
+            const busy = [...document.querySelectorAll(busySelectors)].filter(shown).map((el) => el.getAttribute('data-testid') ?? el.className);
+            const texts: string[] = [];
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+              const parent = node.parentElement;
+              if (!parent || !shown(parent) || ticking.some((selector) => parent.closest(selector))) continue;
+              const text = node.textContent?.trim() ?? '';
+              if (text === '') continue;
+              if (new RegExp(busyText).test(text)) busy.push(text);
+              texts.push(text);
+            }
+            const states = [...document.querySelectorAll('[data-state], [data-status], [data-band], [data-outcome]')].map((el) =>
+              ['data-state', 'data-status', 'data-band', 'data-outcome'].map((name) => el.getAttribute(name) ?? '').join(':'),
+            );
+            const audit = document.querySelector('[data-testid="seo-duration"]')?.getAttribute('data-ms') ?? '';
+            return { busy, signature: [texts.join('␟'), states.join(','), audit].join('|') };
+          },
+          { ticking: TICKING, busySelectors: BUSY_SELECTORS, busyText: BUSY_TEXT.source },
+        );
+        const signature = now.busy.length > 0 ? `busy ${now.busy.join(', ')}` : now.signature;
+        if (signature !== last || now.busy.length > 0) [last, since] = [signature, Date.now()];
+        return now.busy.length > 0 ? `still busy: ${now.busy.join(', ')}` : Date.now() - since >= 1_500;
+      },
+      { timeout: 30_000, intervals: [250], message: 'the chrome settles (nothing busy, nothing changing for 1.5 s)' },
+    )
+    .toBe(true);
+}
+
+/**
+ * Captures the chrome page as `<name>-light.png` and `<name>-dark.png`, once it has `settled()`.
+ * Focus leaves the chrome (unless `keepFocus`: the state is about a focused field) and the pointer
+ * rests on the status bar, so no focus ring or hover depends on what the flow clicked last. The
+ * theme is the chrome's emulated `prefers-color-scheme`; each capture checks the media query and
+ * the body's colour really follow it. Soft: a different image fails the test but the other
+ * captures run. A missing baseline is written (and its `*-actual.png` kept) by Playwright
+ * (`updateSnapshots: 'missing'`); 'every capture has a baseline' fails for it in CI.
+ */
+async function capture(name: CaptureName, options: { readonly keepFocus?: boolean } = {}): Promise<void> {
   if (!options.keepFocus) await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.mouse.move(Math.round(WINDOW.width / 2), WINDOW.height - 4);
-  const backgrounds: string[] = [];
-  for (const scheme of THEMES) {
-    const file = `${name}-${scheme}.png`;
-    await page.emulateMedia({ colorScheme: scheme });
-    expect(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(scheme === 'dark');
-    backgrounds.push(await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
-    if (process.env['CI']) expect.soft(existsSync(test.info().snapshotPath(file, { kind: 'screenshot' })), `baseline ${file} is missing (specs/visual-baseline.feature.md, Baseline procedure)`).toBe(true);
-    await expect.soft(page).toHaveScreenshot(file, { mask: [...alwaysMasked(), ...(options.mask ?? [])] });
+  await settled();
+  const key = await app!.evaluate(({ BrowserWindow }, css) => BrowserWindow.getAllWindows()[0]!.webContents.insertCSS(css), VISUAL_CSS);
+  try {
+    // visual.css's marker: the sheet is in effect.
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--frost-visual-css').trim())).toBe('on');
+    const backgrounds: string[] = [];
+    for (const scheme of THEMES) {
+      await page.emulateMedia({ colorScheme: scheme });
+      expect(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(scheme === 'dark');
+      backgrounds.push(await page.evaluate(() => getComputedStyle(document.body).backgroundColor));
+      await expect.soft(page).toHaveScreenshot(`${name}-${scheme}.png`);
+    }
+    expect(backgrounds[0], 'the dark theme repaints the chrome').not.toBe(backgrounds[1]);
+  } finally {
+    await app!.evaluate(({ BrowserWindow }, key) => BrowserWindow.getAllWindows()[0]!.webContents.removeInsertedCSS(key), key);
+    await page.emulateMedia({ colorScheme: null });
   }
-  expect(backgrounds[0], 'the dark theme repaints the chrome').not.toBe(backgrounds[1]);
-  await page.emulateMedia({ colorScheme: null });
 }
 
 const sidebar = () => page.getByTestId('seo-sidebar');
@@ -211,38 +301,12 @@ async function showPanel(panel: string): Promise<void> {
   await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', panel);
 }
 
-/**
- * Waits until the sidebar's audit has settled: the rail's dots, the score and the audit footer
- * unchanged for 1.5 s (a served-HTML fetch or the speed measurement can land after the first answer).
- */
-async function settled(): Promise<void> {
-  let last = '';
-  let since = Date.now();
-  await expect
-    .poll(
-      async () => {
-        const now = await page.evaluate(() =>
-          [
-            [...document.querySelectorAll('[data-testid="seo-rail-item"]')].map((item) => item.getAttribute('data-status') ?? '-').join(','),
-            document.querySelector('[data-testid="seo-score"]')?.textContent ?? '',
-            document.querySelector('[data-testid="seo-duration"]')?.textContent ?? '',
-          ].join('|'),
-        );
-        if (now !== last) [last, since] = [now, Date.now()];
-        return Date.now() - since;
-      },
-      { timeout: 30_000, intervals: [250] },
-    )
-    .toBeGreaterThanOrEqual(1_500);
-}
-
-/** Loads `pathname` of `origin` in the active tab and waits for its settled audit (On-Page shows its URL: seo-sidebar.e2e.ts). */
+/** Loads `pathname` of `origin` in the active tab and waits for its audit (On-Page shows its URL: seo-sidebar.e2e.ts). */
 async function audit(pathname: string, origin = ORIGIN): Promise<number> {
   const url = `${origin}${pathname}`;
   await go(url);
   await showPanel('on-page');
   await expect(page.getByTestId('seo-fact-url')).toHaveText(url, { timeout: AUDIT_WAIT });
-  await settled();
   return contentsIdAt(url);
 }
 
@@ -274,6 +338,8 @@ test.describe('page surfaces', () => {
     await audit('/guide');
     await showPanel('overview');
     await expect(page.getByTestId('seo-score')).toBeVisible();
+    // AI readiness scores the page once its checks are in: 3 of 4 (the visibility probes never ran).
+    await expect(page.getByTestId('ai-readiness-ring')).toHaveAttribute('data-state', 'partial', { timeout: AUDIT_WAIT });
     await capture('seo-overview');
   });
 
@@ -298,12 +364,14 @@ test.describe('page surfaces', () => {
     await expect(page.getByTestId('seo-audit-url')).toHaveAttribute('title', `⁨${ORIGIN}/guide⁩`, { timeout: AUDIT_WAIT });
     await expect(page.getByTestId('seo-speed')).toHaveAttribute('data-source', 'live', { timeout: AUDIT_WAIT });
     const metric = (name: string) => page.locator(`[data-testid="seo-speed-metric"][data-metric="${name}"]`);
-    await expect.poll(async () => (await metric('fcp').getAttribute('data-value')) ?? '', { timeout: 15_000 }).not.toBe('');
+    // Every vital the page can have without input is measured (INP needs an interaction): LCP, CLS, FCP, TTFB.
+    for (const name of ['lcp', 'cls', 'fcp', 'ttfb']) await expect.poll(async () => (await metric(name).getAttribute('data-value')) ?? '', { timeout: 15_000, message: name }).not.toBe('');
     await expect(page.locator('[data-testid="seo-speed-type"][data-type="document"]')).toHaveAttribute('data-requests', '1');
-    // Measured times differ from run to run: their values, bars and the "updated … ago" line.
-    await capture('seo-page-speed', {
-      mask: [page.getByTestId('seo-speed-metric-value'), page.locator('[data-testid="seo-speed-metric"] svg'), page.getByTestId('seo-speed-live'), page.getByTestId('seo-speed-breakdown'), page.getByTestId('seo-speed-waterfall')],
-    });
+    await expect(page.getByTestId('seo-speed-ttfb')).not.toHaveText('');
+    await expect(page.getByTestId('seo-speed-load')).not.toHaveText('Not yet');
+    // The measured times themselves are hidden by visual.css (their values, meter markers, the
+    // Navigation card's numbers, the "updated … ago" line); `capture` settles first.
+    await capture('seo-page-speed');
   });
 
   test('seo-changes', async () => {
@@ -328,9 +396,8 @@ test.describe('page surfaces', () => {
       await expect(page.getByTestId('changes-capture-status')).toHaveAttribute('data-outcome', 'new');
       await expect(page.getByTestId('changes-diff')).toHaveAttribute('data-state', 'ready');
       await expect(page.getByTestId('changes-version')).toHaveCount(2);
-      await settled();
-      // The versions' capture times: in the history list, the diff's heading and its compare picker.
-      await capture('seo-changes', { mask: [page.getByTestId('changes-version-time'), page.locator('.changes-pair-time'), page.getByTestId('changes-compare')] });
+      // The versions' capture times (the history list, the diff's heading, its compare picker) are hidden by visual.css.
+      await capture('seo-changes');
     } finally {
       site.state.version = 1;
     }
@@ -382,6 +449,10 @@ test.describe('page surfaces', () => {
     await audit('/guide');
     await menu(SETTINGS_MENU.id);
     await expect(page.getByTestId('settings-view')).toBeVisible();
+    // Account, Search Console and AI checks each say "Loading…" until main answers (settings-account.tsx,
+    // settings-gsc.tsx, settings-ai-checks.tsx): every one has answered.
+    await expect(page.getByTestId('settings-content')).not.toContainText('Loading…');
+    await expect(page.getByTestId('settings-content')).toContainText(ACCOUNT_SETTINGS_TEXT.unconfigured);
     await capture('settings');
     await page.getByTestId('settings-close').click();
     await expect(page.getByTestId('settings-view')).toHaveCount(0);
@@ -425,7 +496,6 @@ test.describe('page surfaces', () => {
     await expect(page.getByTestId('render-frame-reload')).toHaveCount(0);
     await expect.poll(() => app!.evaluate(({ webContents }, id) => webContents.fromId(id)!.isLoading(), id)).toBe(false);
     await expect(page.getByTestId('render-frame-summary')).toHaveText('Phone 412×915 · Mobile browser');
-    await settled();
     await page.getByTestId('render-profile-toggle').click();
     await expect(bar).toBeVisible();
     await capture('render-profile');
@@ -470,8 +540,9 @@ test.describe('new tab and history', () => {
     await capture('new-tab');
   });
 
-  test('history', async () => {
-    // browser-polish.e2e.ts: some visits, then the new tab's "Jump back in" and the History sheet.
+  test('jump-back-in-and-history', async () => {
+    // browser-polish.e2e.ts: some visits, then the new tab's "Jump back in" and the History sheet
+    // (one test: both show the same visits).
     for (const name of ['kiwi', 'lime', 'kiwi', 'kiwi', 'mango']) {
       await go(`${ORIGIN}/h/${name}`);
       await contentsIdAt(`${ORIGIN}/h/${name}`);
@@ -485,7 +556,7 @@ test.describe('new tab and history', () => {
     await menu(HISTORY_MENU_ID);
     await expect(page.getByTestId('history-view')).toBeVisible();
     await expect(page.getByTestId('history-row')).toHaveCount(3);
-    await capture('history', { mask: [page.locator('.history-time')] });
+    await capture('history');
   });
 });
 
@@ -585,8 +656,8 @@ test.describe('search console', () => {
     if ((await clicks.getAttribute('aria-pressed')) !== 'true') await clicks.click();
     await expect(page.getByTestId('gsc-total-clicks')).toHaveText('60');
     await expect(page.getByTestId('gsc-line')).toHaveCount(1);
-    // The dates follow today's date.
-    await capture('seo-search-console', { mask: [page.getByTestId('gsc-through'), page.getByTestId('gsc-freshness'), page.getByTestId('gsc-x-tick')] });
+    // The dates follow today's date: visual.css hides them (the ticks, "Through …", the freshness line).
+    await capture('seo-search-console');
   });
 });
 
@@ -645,4 +716,32 @@ test.describe('update bar', () => {
     await expect(page.getByTestId('command-palette-status')).toHaveAttribute('data-shown', 'false');
     await capture('update-bar');
   });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The baseline directory against the registry (CAPTURES). Last, so a run's own captures came first.
+
+test('every capture has a baseline', () => {
+  const expected = baselineFiles();
+  const dir = path.dirname(test.info().snapshotPath(expected[0]!, { kind: 'screenshot' }));
+  // No orphans (a renamed or removed state's images), here and in CI.
+  let present: string[] = [];
+  try {
+    present = readdirSync(dir).filter((file) => file.endsWith('.png'));
+  } catch {
+    // No directory yet: nothing orphaned.
+  }
+  expect(present.filter((file) => !expected.includes(file)), `PNGs in ${dir} that no capture makes`).toEqual([]);
+  // In CI, every capture's two images are committed. Not "on disk": `updateSnapshots: 'missing'` has
+  // just written each missing one into CI's checkout (keeping its *-actual.png for the artifact).
+  if (process.env['CI']) {
+    const committed = execFileSync('git', ['ls-files', '--', dir], { cwd: path.dirname(fileURLToPath(import.meta.url)), encoding: 'utf8' })
+      .split('\n')
+      .filter(Boolean)
+      .map((file) => path.basename(file));
+    expect(
+      expected.filter((file) => !committed.includes(file)),
+      'captures without a committed baseline: adopt their *-actual.png from the playwright-report artifact (specs/visual-baseline.feature.md, Baseline procedure)',
+    ).toEqual([]);
+  }
 });

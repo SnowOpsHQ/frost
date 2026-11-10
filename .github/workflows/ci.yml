@@ -74,11 +74,13 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # The screen is xvfb-run's own default, written out so a change of that default in the runner
+      # image cannot silently move the screenshot baselines (specs/visual-baseline.feature.md).
       - name: "Gate: e2e"
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           command -v xvfb-run >/dev/null || { sudo apt-get update && sudo apt-get install -y xvfb; }
-          xvfb-run -a pnpm --filter @app/desktop test:e2e
+          xvfb-run -a -s "-screen 0 1280x1024x24" pnpm --filter @app/desktop test:e2e
 
       - name: Upload Playwright report
         if: ${{ failure() }}

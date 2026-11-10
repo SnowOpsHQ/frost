@@ -1,0 +1,60 @@
+/* Screenshot-only: visual.e2e.ts inserts it into the chrome from main (`webContents.insertCSS`)
+   for each capture and removes it after (specs/visual-baseline.feature.md, Determinism). Text that
+   follows the clock, the date or a measured time is drawn without its glyphs: its box, background
+   and border stay and are compared, the text is not. Each element below was checked to sit where
+   its own width cannot move anything else (a block or grid row of its own, a fixed column, the last
+   item of its line or flex row, an SVG label); the few whose size could follow the text are given
+   a fixed one here. */
+
+/* The marker visual.e2e.ts checks before capturing: this sheet is in effect. */
+:root {
+  --frost-visual-css: on;
+}
+
+/* Every audited state: the audit footer, "Audited <clock time> · read in <n> ms" (a block row). */
+[data-testid='seo-duration'],
+/* Changes: a version's capture time (left of a space-between row whose count is right-aligned),
+   the diff's "Version of <time>" (the end of its line) and the compare picker (a flex: 1 select). */
+[data-testid='changes-version-time'],
+.changes-pair-time,
+[data-testid='changes-compare'],
+/* History: a visit's time (a fixed 56 px column). */
+.history-time,
+/* Search Console: "Through <date>" (a grid row of its own). */
+[data-testid='gsc-through'],
+/* Page Speed: the measured values (a block line each), the live line's "updated … ago" (the last
+   item of its row), a largest request's duration (after its size), the Navigation card's numbers. */
+[data-testid='seo-speed-metric-value'],
+.seo-speed-live-text,
+[data-testid='seo-speed-large'] .seo-speed-num + .seo-speed-num,
+[data-testid='seo-speed-navigation'] .seo-speed-num,
+[data-testid='seo-speed-navigation'] dd {
+  color: transparent !important;
+}
+
+/* Search Console: the freshness line names three dates, so it could wrap to a different number of
+   lines from one day to the next: one clipped line instead. */
+[data-testid='gsc-freshness'] {
+  overflow: hidden !important;
+  color: transparent !important;
+  white-space: nowrap !important;
+}
+
+/* Search Console: the chart's date ticks (SVG labels, anchored start / middle / end). */
+[data-testid='gsc-x-tick'] {
+  fill: transparent !important;
+}
+
+/* Page Speed: where a measured value sits on its meter (the zones stay), the Navigation card's
+   total (a pill as wide as its text) and its waterfall's phase bars and markers (the track stays). */
+[data-testid='seo-speed-marker'],
+[data-testid='seo-speed-navigation'] .seo-badge,
+[data-testid='seo-speed-waterfall'] rect:not(.seo-speed-waterfall-track) {
+  visibility: hidden !important;
+}
+
+/* Page Speed: the Navigation card lists only the phases that took time (which ones varies from run
+   to run), so its list is left out and the card keeps one height. */
+[data-testid='seo-speed-navigation'] .seo-speed-phases {
+  display: none !important;
+}
