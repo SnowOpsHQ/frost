@@ -18,6 +18,7 @@ import { SEO_CATEGORIES } from '@app/specs/seo-rules.spec';
 import { SEO_PANELS } from '@app/specs/seo-sidebar.spec';
 import {
   clampHeight,
+  maxHeight,
   filterNetwork,
   formatBytes,
   formatDuration,
@@ -59,6 +60,10 @@ describe('devtools drawer helpers', () => {
     // Not laid out yet: only the floor applies; a tiny column never goes below the floor.
     expect(clampHeight(5000, 0)).toBe(5000);
     expect(clampHeight(500, 200)).toBe(DEVTOOLS_HEIGHT.min);
+    // The resize edge's `aria-valuemax`: the same ceiling, unknown before layout.
+    expect(maxHeight(column)).toBe(max);
+    expect(maxHeight(200)).toBe(DEVTOOLS_HEIGHT.min);
+    expect(maxHeight(0)).toBeNull();
     // Keys on the resize edge.
     expect(heightAfterKey(300, 'ArrowUp', column)).toBe(300 + DEVTOOLS_HEIGHT.keyboardStep);
     expect(heightAfterKey(300, 'ArrowDown', column)).toBe(300 - DEVTOOLS_HEIGHT.keyboardStep);

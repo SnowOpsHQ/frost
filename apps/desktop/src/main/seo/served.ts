@@ -144,8 +144,9 @@ export function createServedHtml(options: ServedHtmlOptions): ServedHtml {
     const failed = servedFailure(fetched);
     if (failed) return only(failed);
     const finalUrl = fetched.finalUrl ?? url;
-    // Redirected elsewhere (a login page, another locale): not the page that was rendered.
-    if (pageKey(finalUrl) !== url) return only(unavailable('redirected', fetched.status, cutUrl(finalUrl)));
+    // Redirected elsewhere (a login page, another locale): not the page that was rendered. Without a
+    // redirect it is the same page whatever `finalUrl` says: the fetcher cuts that to the stored length.
+    if (fetched.redirects > 0 && pageKey(finalUrl) !== url) return only(unavailable('redirected', fetched.status, cutUrl(finalUrl)));
     const contentType = fetched.headers['content-type'] ?? null;
     const parsed = await options.parse({ url: finalUrl, contentType, body: fetched.body, scriptingEnabled: scripting }).catch((): ServedParseResult => ({ ok: false, reason: 'parse-failed' }));
     if (!parsed.ok) return only(unavailable(parsed.reason, fetched.status, cutUrl(finalUrl)));

@@ -2,7 +2,6 @@ import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AGENT_MCP_PARTITION } from '@app/specs/agent-mcp.spec';
 import type { McpFetchInit } from './http';
 import type { McpManagerDeps } from './manager';
 import { detectSandbox } from './sandbox';
@@ -26,6 +25,22 @@ const isExecutable = (file: string): boolean => {
     return false;
   }
 };
+
+/**
+ * The most a sandbox probe may print. bubblewrap's `--help` is over 5 kB (0.13.1: 5.5 kB), and an
+ * answer cut short is no answer: `--disable-userns` would never be seen.
+ */
+export const SANDBOX_PROBE_MAX_BUFFER = 64 * 1024;
+
+/** Runs a sandbox probe (`bwrap --version`, `bwrap --help`): its exit code and stdout, or `null` when it could not run, timed out or printed too much. */
+export function runProbe(command: string, args: readonly string[], pathEnv: string): Promise<{ readonly code: number | null; readonly stdout: string } | null> {
+  return new Promise((resolve) => {
+    execFile(command, [...args], { timeout: 3_000, maxBuffer: SANDBOX_PROBE_MAX_BUFFER, windowsHide: true, shell: false, env: { PATH: pathEnv } }, (error, stdout) => {
+      if (error && typeof (error as { code?: unknown }).code !== 'number') resolve(null);
+      else resolve({ code: error ? Number((error as { code?: unknown }).code) : 0, stdout: String(stdout) });
+    });
+  });
+}
 
 /** `spawn`, never through a shell whatever the caller passes. */
 export const nodeSpawn: SpawnLike = (command, args, options) => spawn(command, [...args], { ...options, stdio: [...options.stdio], shell: false });
@@ -63,13 +78,7 @@ export function nodeMcpDeps(session: () => McpSessionLike): Pick<
           () => true,
           () => false,
         ),
-        run: (command, args) =>
-          new Promise((resolve) => {
-            execFile(command, [...args], { timeout: 3_000, maxBuffer: 4096, windowsHide: true, shell: false, env: { PATH: pathEnv } }, (error, stdout) => {
-              if (error && typeof (error as { code?: unknown }).code !== 'number') resolve(null);
-              else resolve({ code: error ? Number((error as { code?: unknown }).code) : 0, stdout: String(stdout) });
-            });
-          }),
+        run: (command, args) => runProbe(command, args, pathEnv),
       }),
     isExecutable,
     isDirectory: (file) => fs.promises.stat(file).then(
@@ -87,5 +96,3 @@ export function nodeMcpDeps(session: () => McpSessionLike): Pick<
     platform: process.platform,
   };
 }
-
-export { AGENT_MCP_PARTITION };

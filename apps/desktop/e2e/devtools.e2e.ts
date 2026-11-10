@@ -208,6 +208,9 @@ test('drawer-toggles-and-page-shrinks', async () => {
   // Resizing from the keyboard moves the page's bottom edge.
   const before = (await viewBounds())!.height;
   await page.getByTestId('devtools-resize').focus();
+  // The separator states its range (without a maximum it would default to 100, below any drawer height).
+  const edge = page.getByTestId('devtools-resize');
+  expect(Number(await edge.getAttribute('aria-valuemax'))).toBeGreaterThanOrEqual(Number(await edge.getAttribute('aria-valuenow')));
   await page.keyboard.press('ArrowUp');
   await expect.poll(async () => (await viewBounds())!.height).toBeLessThan(before);
   await page.getByTestId('devtools-close').click();

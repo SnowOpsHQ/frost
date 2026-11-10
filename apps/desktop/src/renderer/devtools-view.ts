@@ -39,12 +39,17 @@ export function tabFromStorage(value: string | null): DevtoolsTabId {
   return DEVTOOLS_TABS.find((t) => t.id === value)?.id ?? DEFAULT_DEVTOOLS_TAB;
 }
 
+/** The tallest the drawer may be in a `column` (never below `min`); `null` before layout (a `column` of 0 or less). */
+export function maxHeight(column: number): number | null {
+  return column > 0 ? Math.max(DEVTOOLS_HEIGHT.min, Math.floor(column - DEVTOOLS_HEIGHT.pageMinVisible)) : null;
+}
+
 /**
  * `height` clamped to `[min, column − pageMinVisible]` (never below `min`), rounded; a `column` of
  * 0 or less (not laid out yet) clamps only from below.
  */
 export function clampHeight(height: number, column: number): number {
-  const max = column > 0 ? Math.floor(column - DEVTOOLS_HEIGHT.pageMinVisible) : Number.POSITIVE_INFINITY;
+  const max = maxHeight(column) ?? Number.POSITIVE_INFINITY;
   const wanted = Number.isNaN(height) || (height === Number.POSITIVE_INFINITY && max === Number.POSITIVE_INFINITY) ? DEVTOOLS_HEIGHT.default : Math.round(height);
   return Math.max(DEVTOOLS_HEIGHT.min, Math.min(wanted, max));
 }
