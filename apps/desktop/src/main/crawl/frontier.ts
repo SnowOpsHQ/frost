@@ -15,6 +15,10 @@ import { normaliseCrawlUrl, type CrawlScopeRule } from './scope';
 // and, when it has a query, while its path has fewer than `maxQueryVariantsPerPath` variants in the
 // frontier. A URL the frontier already holds is recorded again whatever its depth or query (one inlink
 // per discovering page, a sitemap flag), and keeps its lower depth while it is queued.
+//
+// A page's completion (`complete`: the URLs it discovered and its own entry marked done) is one write
+// (council review, item 3): a page interrupted before it stays queued and is replayed whole on Resume,
+// and a page completed is never replayed, so no page is discovered from twice (no inlink counted twice).
 
 export interface CrawlFrontier {
   /** The oldest queued entry not handed out yet (reading the next window when this one is used up); `null` when none is queued. */
@@ -26,8 +30,11 @@ export interface CrawlFrontier {
    * file's batch): answers how many URLs were new. Out-of-scope and unparseable URLs are left out.
    */
   discover(urls: readonly string[], depth: number, source: CrawlDiscoverySource): Promise<number>;
-  /** Marks `url` done (fetched, refused or skipped): it stays seen. */
-  done(url: string): Promise<void>;
+  /**
+   * Completes the page at `url` (fetched, refused or skipped): records what it discovered (as `discover`,
+   * when given) and marks it done, in one write; it stays seen. Answers how many URLs were new.
+   */
+  complete(url: string, discovered: { readonly urls: readonly string[]; readonly depth: number } | null): Promise<number>;
   queued(): Promise<number>;
   /** Entries held in memory now (K-B3): the window, and the batch being discovered. */
   memory(): { readonly window: number; readonly pending: number; readonly paths: number };
@@ -50,6 +57,51 @@ export function createFrontier(options: { readonly repo: SiteCrawlRepository; re
   /** Queued entries, counted once from SQLite and then kept up to date here (`null`: not counted yet). */
   let queuedCount: number | null = null;
 
+  /** `discover`, and with `done` that URL's entry marked done in the same write. */
+  const record = async (urls: readonly string[], depth: number, source: CrawlDiscoverySource, done: string | null): Promise<number> => {
+    // Normalised, in scope, once each.
+    const found = new Set<string>();
+    for (const raw of urls) {
+      const url = normaliseCrawlUrl(raw);
+      if (url !== null && scope.check(url) === 'in') found.add(url);
+    }
+    pending = found.size;
+    try {
+      const known = found.size === 0 ? new Set<string>() : await repo.knownUrls(runId, [...found]);
+      const admitted: string[] = [];
+      // New query variants per path, counted from the frontier (SQLite) plus those admitted in this batch.
+      const variants = new Map<string, number>();
+      for (const url of found) {
+        if (known.has(url)) {
+          admitted.push(url);
+          continue;
+        }
+        if (depth > CRAWL_LIMITS.maxDepth) continue;
+        const base = baseOf(url);
+        if (base !== null) {
+          let held = variants.get(base);
+          if (held === undefined) held = await repo.queryVariantCount(runId, base);
+          if (held >= CRAWL_LIMITS.maxQueryVariantsPerPath) {
+            variants.set(base, held);
+            continue;
+          }
+          variants.set(base, held + 1);
+          paths = variants.size;
+        }
+        admitted.push(url);
+      }
+      // A known URL past the depth cap keeps its own (lower) depth: it is recorded at the cap.
+      const at = Math.min(depth, CRAWL_LIMITS.maxDepth);
+      const entries = admitted.map((url) => ({ url, depth: at, source }));
+      const added = admitted.length === 0 && done === null ? 0 : await repo.enqueue(runId, entries, done === null ? undefined : { done });
+      if (queuedCount !== null) queuedCount += added;
+      return added;
+    } finally {
+      pending = 0;
+      paths = 0;
+    }
+  };
+
   return {
     async next() {
       for (;;) {
@@ -71,54 +123,13 @@ export function createFrontier(options: { readonly repo: SiteCrawlRepository; re
       queuedCount = null;
     },
 
-    async discover(urls, depth, source) {
-      // Normalised, in scope, once each.
-      const found = new Set<string>();
-      for (const raw of urls) {
-        const url = normaliseCrawlUrl(raw);
-        if (url !== null && scope.check(url) === 'in') found.add(url);
-      }
-      if (found.size === 0) return 0;
-      pending = found.size;
-      try {
-        const known = await repo.knownUrls(runId, [...found]);
-        const admitted: string[] = [];
-        // New query variants per path, counted from the frontier (SQLite) plus those admitted in this batch.
-        const variants = new Map<string, number>();
-        for (const url of found) {
-          if (known.has(url)) {
-            admitted.push(url);
-            continue;
-          }
-          if (depth > CRAWL_LIMITS.maxDepth) continue;
-          const base = baseOf(url);
-          if (base !== null) {
-            let held = variants.get(base);
-            if (held === undefined) held = await repo.queryVariantCount(runId, base);
-            if (held >= CRAWL_LIMITS.maxQueryVariantsPerPath) {
-              variants.set(base, held);
-              continue;
-            }
-            variants.set(base, held + 1);
-            paths = variants.size;
-          }
-          admitted.push(url);
-        }
-        // A known URL past the depth cap keeps its own (lower) depth: it is recorded at the cap.
-        const at = Math.min(depth, CRAWL_LIMITS.maxDepth);
-        const added = admitted.length === 0 ? 0 : await repo.enqueue(runId, admitted.map((url) => ({ url, depth: at, source })));
-        if (queuedCount !== null) queuedCount += added;
-        return added;
-      } finally {
-        pending = 0;
-        paths = 0;
-      }
-    },
+    discover: (urls, depth, source) => record(urls, depth, source, null),
 
-    async done(url) {
-      await repo.markDone(runId, [url]);
-      // Only a handed-out entry (a queued one) is marked done here.
+    async complete(url, discovered) {
+      const added = await record(discovered?.urls ?? [], discovered?.depth ?? 0, 'link', url);
+      // Only a handed-out entry (a queued one) leaves the count.
       if (handed.delete(url) && queuedCount !== null) queuedCount = Math.max(0, queuedCount - 1);
+      return added;
     },
 
     async queued() {

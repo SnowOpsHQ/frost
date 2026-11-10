@@ -140,9 +140,11 @@ export interface SiteCrawlRepository {
    * a new URL is queued; a URL seen before is never queued again (the frontier is the seen-set), but
    * a `link` adds one inlink, a `sitemap` sets `fromSitemap`, and while it is still `queued` it keeps
    * the lower depth. Each URL counts once per call. Answers how many URLs were new; `0` (nothing
-   * written) for a run that does not exist.
+   * written) for a run that does not exist. With `done`, that URL's entry is marked done in the same
+   * transaction (council review, item 3): a page's discoveries and its completion are one write, so a
+   * page interrupted before it is never discovered from twice, and one completed is never replayed.
    */
-  enqueue(runId: string, entries: readonly CrawlDiscovery[]): Promise<number>;
+  enqueue(runId: string, entries: readonly CrawlDiscovery[], options?: { readonly done?: string }): Promise<number>;
   /** One URL's frontier entry (its inlinks and sitemap flag), or `null`. */
   frontierEntry(runId: string, url: string): Promise<StoredCrawlFrontierEntry | null>;
   /** Of `urls`, those the run's frontier already holds (queued or done): the seen-set (Task 6b). */
@@ -510,7 +512,7 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
         .orderBy(asc(crawlLinks.id));
     },
 
-    async enqueue(runId, entries) {
+    async enqueue(runId, entries, options = {}) {
       const byUrl = new Map<string, { runId: string; url: string; depth: number; state: 'queued'; inlinks: number; fromSitemap: boolean }>();
       for (const { url, depth, source } of entries) {
         if (!validUrl(url) || !validDepth(depth) || (source !== 'start' && source !== 'link' && source !== 'sitemap')) continue;
@@ -521,10 +523,15 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
         if (source === 'sitemap') entry.fromSitemap = true;
         byUrl.set(url, entry);
       }
-      if (byUrl.size === 0) return 0;
+      const done = options.done === undefined ? [] : [db.update(crawlFrontier).set({ state: 'done' }).where(and(eq(crawlFrontier.runId, runId), eq(crawlFrontier.url, options.done)))];
+      if (byUrl.size === 0) {
+        if (done.length > 0) await runBatch(db, done);
+        return 0;
+      }
       const size = db.select({ n: count() }).from(crawlFrontier).where(eq(crawlFrontier.runId, runId));
       try {
         const results = await runBatch(db, [
+          ...done,
           size,
           ...chunks([...byUrl.values()]).map((chunk) =>
             db
@@ -541,7 +548,7 @@ export function createSiteCrawlRepository(db: SessionDatabase): SiteCrawlReposit
           ),
           size,
         ]);
-        const before = (results[0] as { n: number }[])[0]?.n ?? 0;
+        const before = (results[done.length] as { n: number }[])[0]?.n ?? 0;
         const after = (results[results.length - 1] as { n: number }[])[0]?.n ?? 0;
         return after - before;
       } catch (error) {

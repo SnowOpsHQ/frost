@@ -135,6 +135,71 @@ describe('crawl runs', () => {
     expect(await t.repo.getRun(runId)).toMatchObject({ state: 'done', counts: { pages: 6, queued: 0 } });
   });
 
+  test('crawl-pause-mid-page-replays-its-completion', async () => {
+    // Council review, item 3: a Pause that lands while a page's row is written (`putPage`) leaves the page queued (its
+    // links not yet discovered), so Resume fetches it again and discovers `/child`. The replay is idempotent: one row, its
+    // links stored once, the run's counts equal to its rows, and each page's discoveries counted once (no inlink twice).
+    const site: Record<string, FakePage> = { [HOME]: htmlPage('Home', ['/child', '/other']), [`${HOME}child`]: htmlPage('Child', ['/']), [`${HOME}other`]: htmlPage('Other', ['/child']) };
+    const t = setup(site);
+    let service!: CrawlService;
+    /** Pauses the run once, right after the named repository write for `url` returns. */
+    let pauseAfter: { readonly method: 'putPage' | 'enqueue'; readonly url: string } | null = { method: 'putPage', url: HOME };
+    const pausing = new Proxy(t.repo, {
+      get(target, key) {
+        const value = Reflect.get(target, key) as unknown;
+        if (typeof value !== 'function') return value;
+        return async (...args: unknown[]) => {
+          const result = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+          const hit =
+            pauseAfter !== null &&
+            key === pauseAfter.method &&
+            (key === 'putPage' ? (args[0] as { url: string }).url === pauseAfter.url : (args[1] as { url: string; source: string }[]).some((entry) => entry.url === pauseAfter!.url && entry.source === 'link'));
+          if (hit) {
+            pauseAfter = null;
+            void service.pause(key === 'putPage' ? (args[0] as { runId: string }).runId : (args[0] as string));
+          }
+          return result;
+        };
+      },
+    });
+    const crawler = createCrawler({ repo: pausing, fetcher: t.fetcher, analyse: inProcessAnalyse, projectLive: async () => true, now: fakeClock() });
+    service = createCrawlService({ repo: t.repo, crawler: () => crawler, isOpen: () => true, projectLive: async () => true, log: () => undefined });
+
+    const runId = await started(service, settingsFor(HOME));
+    await service.idle();
+    expect(await t.repo.getRun(runId)).toMatchObject({ state: 'paused', reason: 'user' });
+    // The row is written, but the page's completion (its discoveries, its frontier entry) is not: it stays queued.
+    expect(await t.repo.frontierEntry(runId, HOME)).toMatchObject({ state: 'queued' });
+    expect(await t.repo.frontierEntry(runId, `${HOME}child`)).toBeNull();
+
+    // Resume replays the page: fetched again, its links discovered, `/child` fetched.
+    expect(await service.resume(runId)).toEqual({ status: 'resumed', runId });
+    await service.idle();
+    expect(t.fetcher.fetched).toEqual([HOME, HOME, `${HOME}child`, `${HOME}other`]);
+    expect(t.count('SELECT count(*) AS n FROM crawl_pages WHERE run_id = ? AND url = ?', runId, HOME)).toBe(1);
+    expect(t.count('SELECT count(*) AS n FROM crawl_links WHERE run_id = ?', runId)).toBe(4);
+    // Inlinks: `/child` from the start and from `/other`; the start from `/child`; each discovering page once.
+    expect(await t.repo.frontierEntry(runId, `${HOME}child`)).toMatchObject({ inlinks: 2, state: 'done' });
+    expect(await t.repo.frontierEntry(runId, `${HOME}other`)).toMatchObject({ inlinks: 1, state: 'done' });
+    expect(await t.repo.frontierEntry(runId, HOME)).toMatchObject({ inlinks: 1, state: 'done' });
+    expect(await t.repo.getRun(runId)).toMatchObject({ state: 'done', counts: { pages: 3, queued: 0, refused: 0, failed: 0 } });
+    expect((await t.repo.getRun(runId))!.counts.bytes).toBe((await t.rows(runId)).reduce((sum, row) => sum + row.bytes, 0));
+
+    // A Pause that lands while the discoveries are written: they and the entry's `done` are one write, so the page is
+    // complete and never replayed (its links are never discovered twice).
+    t.fetcher.fetched.length = 0;
+    pauseAfter = { method: 'enqueue', url: `${HOME}child` };
+    const second = await started(service, settingsFor(HOME));
+    await service.idle();
+    expect(await t.repo.getRun(second)).toMatchObject({ state: 'paused', reason: 'user' });
+    expect(await t.repo.frontierEntry(second, HOME)).toMatchObject({ state: 'done' });
+    expect(await service.resume(second)).toEqual({ status: 'resumed', runId: second });
+    await service.idle();
+    expect(t.fetcher.fetched).toEqual([HOME, `${HOME}child`, `${HOME}other`]);
+    expect(await t.repo.frontierEntry(second, `${HOME}child`)).toMatchObject({ inlinks: 2 });
+    expect(await t.repo.getRun(second)).toMatchObject({ state: 'done', counts: { pages: 3 } });
+  });
+
   test('crawl-pause-and-resume-by-the-user', async () => {
     const t = setup(chain(4));
     const held = t.fetcher.hold(`${HOME}p1`);

@@ -25,7 +25,11 @@ import type { SitemapSeeder } from './sitemaps';
 // - a refusal or a failure is recorded as such; `deferred` records nothing, leaves the URL queued and
 //   pauses the run (`slow-down`), as `slowDown` does after its row.
 // Nothing is written once the run is stopped: every write follows a check of its signal, and a fetch or
-// a parse still under way when it stops is left to end on its own (its answer is dropped). The run ends
+// a parse still under way when it stops is left to end on its own (its answer is dropped). A page's
+// completion (its discoveries and its frontier entry marked done: `CrawlFrontier.complete`) is one write
+// (council review, item 3), so a page stopped after its row but before its completion stays queued and
+// Resume replays it whole: its row and links are replaced (one row, its links once), the run's counts
+// take the replaced row out first, and its discoveries are counted once. The run ends
 // `done` when the frontier is empty or `maxPages` rows are recorded (`max-pages` with URLs still
 // queued); `paused` (by the user, a quit, a slow-down) or `cancelled` (by the user, or its project gone)
 // when stopped; `failed` (`error`) when the database fails. Held in memory: the frontier's window, one
@@ -285,15 +289,22 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
               }
             } else outcome = fetched.outcome;
 
-            // One row per page, written as the page ends.
+            // One row per page, written as the page ends. A resumed run may replay a page whose row was written
+            // before it stopped (its completion was not): the row is replaced, and counted once.
             const row = rowOf(entry.url, entry.depth, fetched, outcome, page);
+            const replaced = fresh ? null : await repo.getPage(runId, entry.url);
+            if (signal.aborted) return await finish(stoppedEnd());
             if (await repo.putPage(row)) {
-              counts.pages += 1;
-              if (REFUSED.has(outcome)) counts.refused += 1;
-              if (FAILED.has(outcome)) counts.failed += 1;
-              counts.bytes += row.bytes;
+              const was = (set: ReadonlySet<string>): number => (replaced !== null && set.has(replaced.outcome) ? 1 : 0);
+              if (replaced === null) counts.pages += 1;
+              counts.refused += (REFUSED.has(outcome) ? 1 : 0) - was(REFUSED);
+              counts.failed += (FAILED.has(outcome) ? 1 : 0) - was(FAILED);
+              counts.bytes += row.bytes - (replaced?.bytes ?? 0);
             } else log('a page row was refused');
-            if (page !== null && !signal.aborted) {
+            // Stopped before the page's completion: it stays queued, and Resume replays it.
+            if (signal.aborted) return await finish(stoppedEnd());
+            let discovered: { readonly urls: readonly string[]; readonly depth: number } | null = null;
+            if (page !== null) {
               linksHeld = page.links.length;
               const stored = page.links.slice(0, CRAWL_LIMITS.maxLinksStoredPerPage).flatMap((link) => {
                 const toUrl = normaliseCrawlUrl(link.url);
@@ -303,11 +314,16 @@ export function createCrawler(deps: CrawlerDeps): Crawler {
               const status = row.status ?? 0;
               // The page's links are the most the crawler holds at once (K-B3 samples it here).
               deps.observe?.(memory());
-              if (status >= 200 && status <= 299 && !signal.aborted) await frontier.discover(page.links.map((link) => link.url), entry.depth + 1, 'link');
-              linksHeld = 0;
+              if (signal.aborted) {
+                linksHeld = 0;
+                return await finish(stoppedEnd());
+              }
+              if (status >= 200 && status <= 299) discovered = { urls: page.links.map((link) => link.url), depth: entry.depth + 1 };
             }
-            if (outcome === 'redirected' && fetched.redirectTarget !== null && !signal.aborted) await frontier.discover([fetched.redirectTarget], entry.depth + 1, 'link');
-            await frontier.done(entry.url);
+            if (outcome === 'redirected' && fetched.redirectTarget !== null) discovered = { urls: [fetched.redirectTarget], depth: entry.depth + 1 };
+            // The page's discoveries and its entry's `done`, in one write.
+            await frontier.complete(entry.url, discovered);
+            linksHeld = 0;
             const at = now();
             await repo.updateRun(runId, { counts: { ...counts, queued: await frontier.queued() } }, at);
             deps.observe?.(memory());

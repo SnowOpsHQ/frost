@@ -77,7 +77,8 @@ resume a crawl (`crawl-gate-ships-closed`). The change that adds the note flips 
   orphans: a `link` discovery adds one inlink per discovering page (a URL twice on one page counts
   once), a `sitemap` seed sets `from_sitemap` and is no inlink, the start URL is neither; a URL met
   again while `queued` keeps the lower depth (a `done` one keeps its depth); orphans are
-  `from_sitemap` with no inlink, listed in discovery order and counted.
+  `from_sitemap` with no inlink, listed in discovery order and counted. `enqueue(…, { done })` marks
+  that URL done in the same transaction as the discoveries (a page's completion is one write).
 - `crawl-reads-are-lenient` — on read, a finding id that is no longer a crawl rule (or a malformed
   finding) is dropped and the row stays; a run whose settings no longer parse is listed with
   `settings: null` (its `startUrl` kept) and can be deleted. Writes stay strict.
@@ -286,7 +287,13 @@ fetches (no network, no timer), the real session database, the crawl worker's co
 ### The run
 - One crawl at a time, app-wide. A run takes the oldest queued URL of its frontier (read from SQLite
   `CRAWL_LIMITS.frontierWindow` at a time), checks its project is live, fetches it (Task 6a) and writes
-  its row as the page ends; then its links, its discoveries, its frontier entry and the run's counts.
+  its row as the page ends; then its links, then its completion — its discoveries and its frontier entry
+  marked done, in **one** transaction — and the run's counts.
+- (Council review, item 3) A page stopped (Pause, a quit, a kill) after its row but before its
+  completion stays `queued`: Resume fetches it again and replays it whole. The replay is idempotent:
+  the row is replaced (one row per URL), its links replaced, the run's counts take the replaced row out
+  before adding the new one, and its discoveries are recorded once — a completed page is never replayed
+  and a page not completed has discovered nothing, so no `(page, link)` discovery adds an inlink twice.
 - The frontier (SQLite) is the queue, the seen-set, the authority for inlinks and sitemap orphans, and
   for the per-path query-variant cap: a resumed run, or a new crawler after a restart, counts what the
   run holds. A known URL is recorded again (an inlink) at any depth or query; a new one only within
@@ -319,6 +326,11 @@ fetches (no network, no timer), the real session database, the crawl worker's co
 - `crawl-resumes-from-frontier` — quitting while a page is fetched pauses the run (`quit`) with that
   page unrecorded and still queued; after a restart (a new service on the same database) Resume
   fetches it and the rest, never a recorded page again, and the run ends `done`.
+- `crawl-pause-mid-page-replays-its-completion` — (council review, item 3) a Pause while the start
+  page's row is written leaves the page `queued` with nothing discovered; Resume fetches it again,
+  discovers and fetches `/child`, and the run ends with one row per page, the links stored once, counts
+  equal to the rows and each inlink counted once. A Pause while the page's discoveries are written
+  finds the page complete (`done`): Resume never fetches it again.
 - `crawl-pause-and-resume-by-the-user` — Pause stops the run (`paused`, `user`) and awaits it; only
   Resume continues it; Pause or Cancel of a run that is not running answers `not-running`.
 - `crawl-never-resumes-on-start` — a paused run stays paused through a restart's recovery, a status
