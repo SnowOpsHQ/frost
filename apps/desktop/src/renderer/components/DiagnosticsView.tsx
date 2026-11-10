@@ -51,7 +51,16 @@ export function DiagnosticsSheet(props: HelpSheetProps) {
     <HelpSheetFrame testId="diagnostics-view" title={DIAGNOSTICS_TEXT.title} closeLabel={DIAGNOSTICS_TEXT.close} focusSeq={focusSeq} onClose={close}>
       <p className="help-note">{DIAGNOSTICS_TEXT.intro}</p>
       <div className="diagnostics-actions">
-        <button type="button" className="diagnostics-save" data-testid="diagnostics-save" disabled={loaded.state !== 'ready' || saving} onClick={save}>
+        {/* While saving, Save stays focusable (`aria-disabled`; `save` ignores it): a focused button that
+            turns `disabled` loses focus to the body, where Esc no longer reaches the sheet. */}
+        <button
+          type="button"
+          className="diagnostics-save"
+          data-testid="diagnostics-save"
+          disabled={loaded.state !== 'ready'}
+          aria-disabled={saving || undefined}
+          onClick={save}
+        >
           {saving ? DIAGNOSTICS_TEXT.saving : DIAGNOSTICS_TEXT.save}
         </button>
         <p className="help-note diagnostics-note" role="status" data-testid="diagnostics-note">

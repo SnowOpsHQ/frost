@@ -332,11 +332,12 @@
   font-size: 12.5px;
 }
 
-.diagnostics-save:hover:not(:disabled) {
+.diagnostics-save:hover:not(:disabled, [aria-disabled='true']) {
   border-color: var(--accent);
 }
 
-.diagnostics-save:disabled {
+.diagnostics-save:disabled,
+.diagnostics-save[aria-disabled='true'] {
   opacity: 0.6;
 }
 
