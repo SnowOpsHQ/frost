@@ -3,27 +3,28 @@
 // specs/site-crawl.schema.ts (CrawlPageFilterSchema, CrawlPageListRowSchema, CrawlTreeNodeSchema)
 // Acceptance: specs/site-crawl.feature.md (Pages and Site structure, Task 7: The queries); plan
 // docs/plans/phase-12-big-bets.md Task 7 (paged queries only, no client-side full list)
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, test } from 'vitest';
 import { CrawlPageListRowSchema, CrawlTreeNodeSchema, defaultCrawlSettings, type CrawlPageRow } from '@app/specs/site-crawl.schema';
 import { CRAWL_TREE_LIMITS } from '@app/specs/site-crawl.spec';
-import { openSessionStore, type SessionStore } from '../../store';
+import { createDrizzle } from '../../client';
+import { runMigrations } from '../../migrations';
+import { createSiteCrawlRepository, type SiteCrawlRepository } from '../repository';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-function store(): SessionStore {
-  const dir = mkdtempSync(path.join(tmpdir(), 'frost-crawl-views-'));
-  const opened = openSessionStore({ dir });
-  cleanups.push(async () => {
-    await opened.close();
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-  });
-  return opened;
+/**
+ * A migrated in-memory database: these queries read what they are given, and hundreds of seeded rows
+ * written one at a time to a file were too slow on Windows CI.
+ */
+function store(): { siteCrawl: SiteCrawlRepository } {
+  const raw = new DatabaseSync(':memory:');
+  runMigrations(raw);
+  cleanups.push(async () => raw.close());
+  return { siteCrawl: createSiteCrawlRepository(createDrizzle(raw)) };
 }
 
 const page = (runId: string, url: string, changes: Partial<CrawlPageRow> = {}): CrawlPageRow => ({
