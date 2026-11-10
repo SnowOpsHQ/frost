@@ -1,0 +1,40 @@
+{
+  "search_metadata": { "id": "frost-fixture-0001", "status": "Success", "total_time_taken": 1.25 },
+  "search_parameters": { "engine": "google", "q": "frost browser", "google_domain": "google.com", "gl": "us", "hl": "en", "device": "desktop" },
+  "search_information": { "query_displayed": "frost browser", "organic_results_state": "Results for exact spelling" },
+  "ads": [
+    { "position": 1, "block_position": "top", "title": "Frost Gear Winter Sale", "link": "https://ads.example.net/frost-gear", "displayed_link": "ads.example.net" },
+    { "position": 2, "block_position": "bottom", "title": "Frost Kit for Windows", "link": "https://shop.example.org/frost-kit" }
+  ],
+  "answer_box": { "type": "organic_result", "title": "What frost is, in one line", "link": "https://www.icecrystal.example/what-is-frost", "snippet": "Frost is ice that forms on cold surfaces." },
+  "knowledge_graph": { "title": "Frost (browser)", "type": "Software", "website": "https://frost.example.com/", "description": "An SEO browser." },
+  "local_results": {
+    "places": [
+      { "position": 1, "title": "Frost Outfitters", "place_id": "frost-place-1", "links": { "website": "https://outfitters.example.net/" } },
+      { "position": 2, "title": "Glacier Supply", "place_id": "frost-place-2", "links": { "phone": "+1 555 0100" } }
+    ],
+    "more_locations_link": "https://www.google.com/search?q=frost+outfitters"
+  },
+  "organic_results": [
+    { "position": 1, "title": "Frost — the SEO browser", "link": "https://www.example.com/frost", "displayed_link": "www.example.com › frost", "snippet": "Audit pages as you browse." },
+    { "position": 2, "title": "Ten frost tips", "link": "https://blog.example.org/frost-tips", "snippet": "Tips for frost users." },
+    { "position": 3, "title": "Frost history", "link": "https://example.com/history", "snippet": "Where frost came from." },
+    { "position": 4, "title": "Frostline guide", "link": "https://www.frostline.example/", "snippet": "A guide." },
+    { "position": 5, "title": "Alice on frost", "link": "https://alice.github.io/frost", "snippet": "A personal page." }
+  ],
+  "related_questions": [
+    { "question": "Is frost a web browser?", "type": "featured_snippet", "title": "Frost FAQ", "link": "https://www.example.com/faq" },
+    { "question": "Does frost run on Linux?", "type": "ai_overview", "text_blocks": [{ "type": "paragraph", "snippet": "Yes." }] }
+  ],
+  "inline_videos": [
+    { "position": 1, "title": "Frost in ten minutes", "link": "https://video.example.net/watch?v=frost10", "duration": "10:02" }
+  ],
+  "perspectives": [
+    { "title": "What I learned using frost", "link": "https://forum.example.net/t/frost" }
+  ],
+  "related_searches": [
+    { "query": "frost browser download", "link": "https://www.google.com/search?q=frost+browser+download" },
+    { "query": "frost browser linux", "link": "https://www.google.com/search?q=frost+browser+linux" }
+  ],
+  "serpapi_pagination": { "current": 1, "next": "https://serpapi.com/search.json?start=10" }
+}

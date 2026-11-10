@@ -1,0 +1,30 @@
+{
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "tasks": [
+    {
+      "id": "11101200-frost-fixture-0002",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "result": [
+        {
+          "keyword": "frost outfitters near me",
+          "se_domain": "google.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "items_count": 8,
+          "items": [
+            { "type": "paid", "rank_group": 1, "rank_absolute": 1, "position": "left", "title": "Call Frost Outfitters", "url": null },
+            { "type": "local_pack", "rank_group": 1, "rank_absolute": 2, "position": "left", "title": "Frost Outfitters", "domain": "outfitters.example.net", "url": "https://outfitters.example.net/", "cid": "1001" },
+            { "type": "local_pack", "rank_group": 2, "rank_absolute": 3, "position": "left", "title": "Glacier Supply", "url": null, "cid": "1002" },
+            { "type": "local_pack", "rank_group": 3, "rank_absolute": 4, "position": "left", "title": "Polar Gear Co.", "domain": "polargear.example.org", "url": "https://polargear.example.org/store", "cid": "1003" },
+            { "type": "organic", "rank_group": 1, "rank_absolute": 5, "position": "left", "title": "Frost Outfitters — winter gear", "domain": "outfitters.example.net", "url": "https://outfitters.example.net/winter" },
+            { "type": "organic", "rank_group": 2, "rank_absolute": 6, "position": "left", "title": "Best frost gear shops", "domain": "www.example.com", "url": "https://www.example.com/frost-shops" },
+            { "type": "organic", "rank_group": 3, "rank_absolute": 7, "position": "left", "title": "Polar Gear Co. reviews", "domain": "reviews.example.org", "url": "https://reviews.example.org/polar-gear" },
+            { "type": "related_searches", "rank_group": 1, "rank_absolute": 8, "position": "left", "items": ["frost outfitters hours", "frost gear store"] }
+          ]
+        }
+      ]
+    }
+  ]
+}
