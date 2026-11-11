@@ -86,7 +86,9 @@ Each line maps to one named test.
 - **Panel.** A verdict card (Secure / Needs attention / Not secure / Local page, with HTTPS, mixed
   content and HSTS signals), the ranked security issues, the security header table (present / weak /
   missing / unknown / not applicable, the values as text and frost's reading of them), the mixed
-  content list, then the accessibility card: the run button, progress against the time cap, then a
+  content list, then the accessibility card: the run button, progress against the time cap (only
+  the running message is a live status, announced once; the elapsed seconds beside it are plain
+  text outside it, so a screen reader does not re-announce them every second), then a
   tally by impact, the groups (worst first) and each rule expandable to its description, help URL
   (text, "Open in new tab" through `browser.openBackgroundTab`, http(s) only) and elements (selector
   text and axe's failure summary). Light and dark; inline SVG icons drawn for frost; no `style`
@@ -165,6 +167,7 @@ Each line maps to one named test.
 - What the accessibility section shows for each run state and report → `a11y-view-states`
 - Upgraded mixed content in the signals; partial and timed-out notes → `compliance-notes`
 - Progress, impact counts and node lists → `a11y-progress-and-counts`
+- The run's progress: the live status holds only the running message, the ticking elapsed seconds sit outside it (`apps/desktop/src/renderer/__tests__/compliance-run-progress.test.ts`) → `a11y-progress-announced-once`
 
 ## End to end (`apps/desktop/e2e/seo-compliance.e2e.ts`)
 https cases use a loopback https server with a fresh self-signed certificate that the suite's own

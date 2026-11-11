@@ -188,17 +188,21 @@ function MixedCard({ security }: { readonly security: SecurityReport }) {
 
 // ---- Accessibility -------------------------------------------------------------------------------
 
-function RunProgress({ startedAt }: { readonly startedAt: number }) {
+export function RunProgress({ startedAt }: { readonly startedAt: number }) {
   const now = useNow(true);
   const fill = Math.round(runProgress(startedAt, now) * 1000) / 10;
   return (
-    <div className="seo-a11y-progress" data-testid="seo-a11y-progress" role="status" aria-live="polite">
+    <div className="seo-a11y-progress" data-testid="seo-a11y-progress">
       <svg className="seo-a11y-progress-bar" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true" focusable="false">
         <rect className="seo-a11y-progress-track" x="0" y="0" width="100" height="4" rx="2" />
         <rect className="seo-a11y-progress-fill" x="0" y="0" width={Math.max(fill, 3)} height="4" rx="2" />
       </svg>
+      {/* Only the stable message is live: the seconds tick every second and would be re-announced. */}
       <span className="seo-a11y-progress-text">
-        {A11Y_RUN_MESSAGES.running} {elapsedSeconds(startedAt, now)} s of at most {A11Y_TIMEOUT_MS / 1_000} s
+        <span role="status" aria-live="polite">
+          {A11Y_RUN_MESSAGES.running}
+        </span>{' '}
+        {elapsedSeconds(startedAt, now)} s of at most {A11Y_TIMEOUT_MS / 1_000} s
       </span>
     </div>
   );
