@@ -141,9 +141,11 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
   panel is open (drawn over the panel; moving to the next item shows its label at once). With the
   panel collapsed the tab's view sits beside the rail and would cover it, so the item keeps the
   native `title` tooltip instead.
-- Overview: the score ring (0–100, coloured by band) with the band's label, error / warning / info
-  counts, and the top `OVERVIEW_TOP_ISSUES` ranked issues ("Show all" for the rest). Each issue
-  expands to its why, its fix and its facts and samples.
+- Overview: the score ring (0–100, coloured by band) with the band's label, how many issues to fix
+  and how many checks passed (`SeoAudit.passed`: only rules that ran, `seo-rules.feature.md`,
+  passed-counts-rules-that-ran), error / warning / info counts, and the top `OVERVIEW_TOP_ISSUES`
+  ranked issues ("Show all" for the rest). Each issue expands to its why, its fix and its facts and
+  samples.
 - Overview, "Page" card (Phase 9 Task 8, `page-type.feature.md`): the page type worked out on this
   device (`audit.pageType`), its confidence and the signals that decided it; and the intent of the
   page's target query (the Content panel's), classified on this device only when a target is set

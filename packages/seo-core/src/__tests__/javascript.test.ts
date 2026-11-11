@@ -5,42 +5,9 @@ import { JAVASCRIPT_RULE_SPECS, JS_DIFF_LIMITS, JS_FIELDS, JS_VERDICT_THRESHOLDS
 import type { ServedFetch, ServedSnapshot, ServedState } from '@app/specs/seo-javascript.schema';
 import { SEO_RULE_SPECS, type SeoRuleId } from '@app/specs/seo-rules.spec';
 import { javascriptReport, RULES, runAudit, type JavascriptComparison, type PageSnapshot } from '../index';
-import { cleanSnapshot, PAGE_URL, text } from './fixtures';
+import { cleanSnapshot, PAGE_URL, servedOf, text } from './fixtures';
 
 const FETCH: ServedFetch = { url: PAGE_URL, finalUrl: PAGE_URL, status: 200, redirects: 0, bytes: 12_000, truncated: false, contentType: 'text/html', userAgent: null, durationMs: 40 };
-
-/** The served snapshot of `page` as a static page would serve it (the same fields). */
-function servedOf(page: PageSnapshot, changes: Partial<ServedSnapshot> = {}): ServedSnapshot {
-  return {
-    url: page.url,
-    lang: page.lang,
-    titles: page.titles,
-    titleTotal: page.titleTotal,
-    metaDescriptions: page.metaDescriptions,
-    metaDescriptionTotal: page.metaDescriptionTotal,
-    metaRobots: page.metaRobots,
-    canonicals: page.canonicals,
-    canonicalTotal: page.canonicalTotal,
-    ogUrl: page.ogUrl,
-    viewport: page.viewport,
-    headings: page.headings,
-    headingTotal: page.headingTotal,
-    links: page.links,
-    linkTotal: page.linkTotal,
-    images: page.images.map((image) => ({ src: image.src, alt: image.alt })),
-    imageTotal: page.imageTotal,
-    jsonLd: page.jsonLd,
-    jsonLdTotal: page.jsonLdTotal,
-    hreflang: page.hreflang,
-    hreflangTotal: page.hreflangTotal,
-    wordCount: page.wordCount,
-    textTruncated: false,
-    noscript: { count: 0, wordCount: 0, linkCount: 0 },
-    nodes: 400,
-    partial: false,
-    ...changes,
-  };
-}
 
 /** `rendered` with its served side (`served` changes on a copy of it, or a whole state). */
 function withServed(rendered: PageSnapshot, served: Partial<ServedSnapshot> | ServedState = {}, fetch: Partial<ServedFetch> = {}): PageSnapshot {

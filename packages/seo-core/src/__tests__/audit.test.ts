@@ -1,9 +1,11 @@
 // Spec: specs/seo-rules.spec.ts (SEVERITY_WEIGHTS, SCORE_BANDS), specs/seo-sidebar.spec.ts (PanelStatus)
 // Acceptance: specs/seo-rules.feature.md (Audit and score)
 import { describe, expect, test } from 'vitest';
+import { CHECKS_RULE_SPECS } from '@app/specs/seo-checks.spec';
 import { NOINDEX_SCORE_CAP, SEO_RULE_SPECS, type SeoRuleId, type SeoSeverity } from '@app/specs/seo-rules.spec';
-import { pageFacts, panelStatus, runAudit, scoreAudit, scoreBand, type Finding } from '../index';
-import { cleanSnapshot, page, robots, text } from './fixtures';
+import { pageFacts, panelStatus, RULES, runAudit, scoreAudit, scoreBand, type Finding, type PageSnapshot } from '../index';
+import { cleanSecurity, cleanSnapshot, header, okResponse, okRobots, page, robots, servedOf, text } from './fixtures';
+import { withVitals } from './performance-fixtures';
 
 /** A finding of rule `id` as the catalog defines it. */
 function finding(id: SeoRuleId): Finding {
@@ -102,6 +104,86 @@ describe('audit', () => {
     expect(scoreBand(60)).toBe('fair');
     expect(scoreBand(59)).toBe('poor');
     expect(scoreBand(0)).toBe('poor');
+  });
+
+  test('passed-counts-rules-that-ran', () => {
+    // The clean fixture has no speed measurement, render-blocking count, served HTML, accessibility
+    // check or site checks: those rules found nothing, but they did not run either.
+    const unchecked = [...SEO_RULE_SPECS.filter((s) => s.category === 'performance' || s.category === 'accessibility' || s.category === 'javascript'), ...CHECKS_RULE_SPECS].map((s) => s.id);
+    const clean = runAudit(cleanSnapshot());
+    expect(clean.findings).toEqual([]);
+    expect(clean.passed).toBe(SEO_RULE_SPECS.length - unchecked.length);
+
+    // Everything collected (INP measured too) and passing: every rule ran and passed.
+    const collect = (changes: Partial<PageSnapshot> = {}): PageSnapshot => {
+      const rendered = page(changes);
+      return {
+        ...rendered,
+        performance: withVitals({ inp: 80 }),
+        blockingScripts: { total: 0, urls: [] },
+        accessibility: { url: rendered.url, axeVersion: '4.14.0', ranAt: 1, durationMs: 420, violations: [], violationTotal: 0, passes: 40, incomplete: 0, inapplicable: 30, partial: false },
+        served: { status: 'ready', fetch: { url: rendered.url, finalUrl: rendered.url, status: 200, redirects: 0, bytes: 12_000, truncated: false, contentType: 'text/html', userAgent: null, durationMs: 40 }, snapshot: servedOf(rendered) },
+        checks: { links: { checked: 3, broken: [], internalRedirects: [] }, sitemaps: { files: 1, urlCount: 10, listed: true, errors: [] }, hreflang: { checked: 0, noReturn: [] } },
+      };
+    };
+    const everything = collect();
+    expect(runAudit(everything).findings).toEqual([]);
+    expect(runAudit(everything).passed).toBe(SEO_RULE_SPECS.length);
+    // A measurement without INP (no interaction): its two rules did not run.
+    expect(runAudit({ ...everything, performance: withVitals({ inp: null }) }).passed).toBe(SEO_RULE_SPECS.length - 2);
+
+    // Over http, with no response recorded and robots.txt still being fetched: the response, header
+    // and robots.txt rules did not run, and the HSTS and mixed-content rules do not apply.
+    const http = 'http://example.com/guides/seo-basics';
+    const bare = runAudit(collect({ url: http, canonicals: [{ href: http, resolved: http }], ogUrl: http, response: null, robots: okRobots(undefined, { outcome: 'pending' }) }));
+    const failed = bare.findings.map((f) => f.ruleId);
+    expect(failed).toEqual(['https-missing']);
+    const notRun: SeoRuleId[] = [
+      ...(['http-status-redirect', 'http-status-client-error', 'http-status-server-error', 'http-redirect-chain'] as const),
+      ...(['x-robots-noindex', 'x-robots-noindex-other-bot', 'x-robots-nofollow', 'canonical-header-conflict'] as const),
+      ...(['mixed-content-active', 'mixed-content-passive', 'hsts-missing', 'hsts-short-max-age', 'csp-missing', 'csp-unsafe-inline', 'nosniff-missing', 'clickjacking-unprotected', 'referrer-policy-missing', 'referrer-policy-unsafe'] as const),
+      ...(['robots-txt-blocks-googlebot', 'robots-txt-blocks-all', 'robots-txt-no-sitemap', 'robots-txt-unreachable'] as const),
+    ];
+    expect(bare.passed).toBe(SEO_RULE_SPECS.length - failed.length - notRun.length);
+    // A meta policy and a meta referrer are read without the headers (a `navigation` response: its
+    // status is known, its redirects are not).
+    const metas = runAudit(collect({ response: okResponse({ source: 'navigation', headersAvailable: false, headers: [] }), security: cleanSecurity({ metaCsp: ["default-src 'self'"], metaReferrer: 'no-referrer' }) }));
+    expect(metas.findings).toEqual([]);
+    expect(metas.passed).toBe(SEO_RULE_SPECS.length - ['http-redirect-chain', 'x-robots-noindex', 'x-robots-noindex-other-bot', 'x-robots-nofollow', 'canonical-header-conflict', 'hsts-missing', 'hsts-short-max-age', 'nosniff-missing', 'clickjacking-unprotected'].length);
+
+    /** The rules of `ids` that pass on `snapshot` without counting as passed. */
+    const uncounted = (snapshot: PageSnapshot, ids: readonly SeoRuleId[]) => RULES.filter((rule) => ids.includes(rule.id) && rule.check(snapshot) === null && runAudit(snapshot, [rule]).passed === 0).map((rule) => rule.id);
+    const responseRules: SeoRuleId[] = ['http-status-redirect', 'http-status-client-error', 'http-status-server-error', 'http-redirect-chain'];
+    // `in-page`: no response for this URL, so no status; `navigation`: a status, but no redirects recorded.
+    expect(uncounted(collect({ response: okResponse({ source: 'in-page', status: null, headersAvailable: false, headers: [] }) }), responseRules)).toEqual(responseRules);
+    expect(uncounted(collect({ response: okResponse({ source: 'navigation', headersAvailable: false, headers: [] }) }), responseRules)).toEqual(['http-redirect-chain']);
+    expect(uncounted(collect({ response: okResponse({ source: 'cache' }) }), responseRules)).toEqual([]);
+
+    // A cut CSP header: inline scripts, framing (without X-Frame-Options) and mixed content are unknown.
+    const securityRules = SEO_RULE_SPECS.filter((spec) => spec.category === 'security').map((spec) => spec.id);
+    const cut = collect({
+      response: okResponse({ headers: [header('content-type', 'text/html'), header('strict-transport-security', 'max-age=31536000'), header('x-content-type-options', 'nosniff'), header('referrer-policy', 'no-referrer'), { name: 'content-security-policy', value: "script-src 'self' 'unsafe-inline'", truncated: true }] }),
+      security: cleanSecurity({ insecureResources: [{ kind: 'image', url: 'http://cdn.example/a.png', tag: 'img' }], insecureResourceTotal: 1 }),
+    });
+    expect(runAudit(cut).findings.filter((f) => f.category === 'security')).toEqual([]);
+    expect(uncounted(cut, securityRules)).toEqual(['mixed-content-passive', 'csp-unsafe-inline', 'clickjacking-unprotected']);
+    // X-Frame-Options does not settle it: any frame-ancestors after the cut would override it.
+    expect(uncounted(collect({ response: okResponse({ headers: [...okResponse().headers.filter((h) => h.name !== 'content-security-policy'), { name: 'content-security-policy', value: "script-src 'self'", truncated: true }] }) }), securityRules)).toEqual(['csp-unsafe-inline', 'clickjacking-unprotected']);
+
+    // Headers unknown and no meta tags: no security rule that reads the response headers counts.
+    const unknownHeaders = collect({ response: okResponse({ source: 'navigation', headersAvailable: false, headers: [] }) });
+    // These read the page itself (its URL and its resources), not the headers.
+    const fromPage: SeoRuleId[] = ['https-missing', 'mixed-content-active', 'mixed-content-passive'];
+    expect(uncounted(unknownHeaders, securityRules)).toEqual(securityRules.filter((id) => !fromPage.includes(id)));
+    // An empty meta policy is no policy: nothing is known about the CSP.
+    expect(uncounted(collect({ response: unknownHeaders.response, security: cleanSecurity({ metaCsp: [''] }) }), ['csp-missing'])).toEqual(['csp-missing']);
+    // Without an HTML canonical the header's would be read, and the headers are unknown.
+    expect(uncounted(collect({ response: unknownHeaders.response, canonicals: [], canonicalTotal: 0 }), ['canonical-elsewhere'])).toEqual(['canonical-elsewhere']);
+    // A sitemap check that cannot tell whether the page is listed.
+    expect(uncounted({ ...everything, checks: { ...everything.checks!, sitemaps: { files: 0, urlCount: 0, listed: null, errors: [] } } }, ['sitemap-page-not-listed'])).toEqual(['sitemap-page-not-listed']);
+
+    // A crawl audit's subset counts its own rules.
+    expect(runAudit(everything, RULES.slice(0, 5)).passed).toBe(5);
   });
 
   test('panel-status', () => {

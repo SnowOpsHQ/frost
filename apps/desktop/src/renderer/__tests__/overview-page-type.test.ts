@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 // Spec: specs/page-type.spec.ts (PAGE_TYPE_LABELS, PAGE_TYPE_SIGNAL_LABELS, PAGE_TYPE_CONFIDENCE_LABELS, PAGE_TYPE_COPY),
 // specs/intent-classifier.spec.ts (IntentState, IntentAnswer)
-// Acceptance: specs/page-type.feature.md (Overview "Page" card), specs/seo-sidebar.feature.md (Overview, "Page" card)
+// Acceptance: specs/page-type.feature.md (Overview "Page" card), specs/seo-sidebar.feature.md (Overview, "Page" card;
+// Overview's checks passed), specs/seo-rules.feature.md (passed-counts-rules-that-ran)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -64,8 +65,8 @@ afterEach(() => {
 
 const one = (selector: string) => host.querySelector<HTMLElement>(selector);
 const all = (selector: string) => [...host.querySelectorAll<HTMLElement>(selector)];
-async function show(changes: Parameters<typeof audit>[0] = {}) {
-  await act(async () => root.render(createElement(Overview, { audit: audit(changes), tab: TAB, onOpenPanel: () => {} })));
+async function show(changes: Parameters<typeof audit>[0] = {}, passed = 0) {
+  await act(async () => root.render(createElement(Overview, { audit: { ...audit(changes), passed }, tab: TAB, onOpenPanel: () => {} })));
   // The stored target answers, then the classifier.
   await act(async () => undefined);
 }
@@ -150,5 +151,14 @@ describe('Overview "Page" card', () => {
     fake.intentState = 'model-missing';
     await show();
     expect(one('[data-testid="page-intent"]')!.textContent).toContain(PAGE_TYPE_COPY.intentOff);
+  });
+});
+
+describe('Overview score card', () => {
+  test('passed-counts-rules-that-ran', async () => {
+    // The audit's own count (rules that ran and found nothing), not the catalog's size less the
+    // findings: rules that never ran on the page are not passes.
+    await show({}, 7);
+    expect(one('.seo-score-text')!.textContent).toContain('No errors or warnings · 7 checks passed');
   });
 });
