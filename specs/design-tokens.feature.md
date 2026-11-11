@@ -38,8 +38,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `var(--bg-chrome)`, so its first stop is now `--bg-window` (its second stays a literal until the
   palette's surface PR).
 - **Contrast.** Every pair in `CONTRAST_PAIRS` (the text/background and UI/background pairs the
-  token sheet names, plus body text, links and on-colour buttons on every surface) reaches its WCAG 2.x minimum, 4.5:1 for text and 3:1 for UI, in light and dark,
-  computed from the values in `tokens.css` (a translucent fill composited over its surface).
+  token sheet names, plus body text, links and on-colour buttons on every surface) reaches its
+  WCAG 2.x minimum, 4.5:1 for text and 3:1 for UI, in light and dark, computed from the values in
+  `tokens.css` (a translucent fill composited over its opaque surface).
 - **Hex ratchet.** Literal hex colours in renderer stylesheets other than `tokens.css` never exceed
   `HEX_COLOUR_RATCHET`; each surface PR lowers it.
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the

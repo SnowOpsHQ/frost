@@ -230,7 +230,9 @@ test('signal-contrast-meets-aa', () => {
       let bg = colour(pair.bg);
       if (bg[3] < 1) {
         expect(pair.over, `${label}: a translucent background needs \`over\``).toBeDefined();
-        bg = composite(bg, colour(pair.over ?? pair.bg));
+        const surface = colour(pair.over ?? pair.bg);
+        expect(surface[3], `${label}: \`over\` must be opaque`).toBe(1);
+        bg = composite(bg, surface);
       }
       const fg = composite(colour(pair.fg), bg);
       expect(contrastRatio(fg, bg), label).toBeGreaterThanOrEqual(pair.min);

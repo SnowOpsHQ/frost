@@ -388,7 +388,7 @@ export const CONTRAST_PAIRS = [
   { fg: '--danger', bg: '--bg-sheet', min: 3, why: RING },
 ] as const satisfies readonly ContrastPair[];
 
-// ---- Fonts (step 2: Geist bundled, not yet applied) ----
+// ---- Fonts (the values step: Geist bundled, not yet applied) ----
 
 /**
  * The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares the bundled
