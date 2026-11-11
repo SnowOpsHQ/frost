@@ -36,9 +36,11 @@ function shorthandFace(font: string): { family: string; weight: number } {
   return { family: unquote(match[2] ?? ''), weight: Number(match[1]) };
 }
 
+const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+
 /** The top-level blocks of a stylesheet without nesting (comments dropped); throws on anything else. */
 function blocks(css: string): { prelude: string; declarations: Map<string, string> }[] {
-  const text = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const text = stripComments(css);
   const found: { prelude: string; declarations: Map<string, string> }[] = [];
   const rest = text.replace(/([^{}]*)\{([^{}]*)\}/g, (_, prelude: string, body: string) => {
     const declarations = new Map<string, string>();
@@ -74,8 +76,8 @@ test('bundled-fonts-cover-the-type-scale', () => {
 
 test('fonts-stylesheet-declares-bundled-fonts', () => {
   const css = read(FONTS_STYLESHEET);
-  // Local only: no remote URL and no data: URI anywhere (the CSP's font-src is 'self').
-  expect(css).not.toMatch(/https?:|data:|\/\//);
+  // Local only: no remote or protocol-relative URL and no data: URI in any rule (the CSP's font-src is 'self').
+  expect(stripComments(css)).not.toMatch(/https?:|data:|\/\//);
   const faces = blocks(css);
   for (const face of faces) expect(face.prelude).toBe('@font-face');
   expect(faces).toHaveLength(BUNDLED_FONTS.length);

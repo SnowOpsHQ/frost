@@ -22,6 +22,13 @@ test('geist-fonts-load', async () => {
   page.on('console', (message) => {
     if (/content.security.policy|refused to load/i.test(message.text())) consoleProblems.push(message.text());
   });
+  // The font requests, as the page made them. (Chromium keeps no Resource Timing entries for a
+  // non-HTTP scheme such as app://, so the page's own performance timeline can't show them.)
+  const fontRequests: { url: string; status: number | undefined; type: string | undefined }[] = [];
+  page.on('requestfinished', (request) => {
+    if (!/\.woff2(?:[?#]|$)/.test(request.url())) return;
+    void request.response().then((response) => fontRequests.push({ url: request.url(), status: response?.status(), type: response?.headers()['content-type'] }));
+  });
 
   const result = await page.evaluate(async (fonts) => {
     // Installed before any font is requested.
@@ -34,11 +41,7 @@ test('geist-fonts-load', async () => {
     }
     // A violation event is dispatched asynchronously: give it a turn to arrive.
     await new Promise((resolve) => setTimeout(resolve, 250));
-    const woff2 = performance
-      .getEntriesByType('resource')
-      .map((entry) => entry.name)
-      .filter((name) => /\.woff2(?:[?#]|$)/.test(name));
-    return { violations, loaded, woff2 };
+    return { violations, loaded };
   }, BUNDLED_FONTS);
 
   const unquote = (value: string) => value.replace(/^(['"])(.*)\1$/, '$2');
@@ -47,8 +50,12 @@ test('geist-fonts-load', async () => {
     expect(match.length, `${family} ${weight}: ${JSON.stringify(faces)}`).toBeGreaterThanOrEqual(1);
   }
   // One woff2 per bundled face, each fetched from the app's own scheme (never a CDN, never data:).
-  expect(result.woff2).toHaveLength(BUNDLED_FONTS.length);
-  for (const url of result.woff2) expect(url.startsWith(APP_ENTRY_URL), url).toBe(true);
+  await expect.poll(() => fontRequests.length).toBe(BUNDLED_FONTS.length);
+  expect(new Set(fontRequests.map((request) => request.url)).size).toBe(BUNDLED_FONTS.length);
+  for (const request of fontRequests) {
+    expect(request.url.startsWith(`${APP_ENTRY_URL}assets/`), request.url).toBe(true);
+    expect(request, request.url).toMatchObject({ status: 200, type: 'font/woff2' });
+  }
   expect(result.violations).toEqual([]);
   expect(consoleProblems).toEqual([]);
 });
