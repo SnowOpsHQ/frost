@@ -30,7 +30,8 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
   get a placeholder key and a proxied `fetch` that sends `fetch.request` to main and streams the
   `fetch.*` answers into a `Response`. The proxied fetch drops credential headers (`authorization`,
   `proxy-authorization`, `x-api-key`, `api-key`, `cookie`) and refuses, locally, a body over
-  `maxRequestBodyBytes`, a method other than `GET` and `POST`, and a body it cannot send as is. It
+  `maxRequestBodyBytes` (a string counted in UTF-8 bytes, as main counts it), a method other than
+  `GET` and `POST`, and a body it cannot send as is. It
   stops reading a response at `maxResponseBytes` (`too-large`, and `fetch.abort` to main), drops a
   status text a `Response` cannot carry, and fails a head it cannot build as `network`, so every
   request settles. A failed proxied request is never retried by the AI SDK (main decides about
