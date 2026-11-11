@@ -149,6 +149,8 @@ Phase 2.5 Task 7; review focus `link-checks-are-bounded`. Each line maps to one 
 - `checks-view-labels` — status chips, tones and run summaries.
 - `checks-view-result-index` — a row finds its result by target.
 - `palette-checks-actions` — Check links / sitemaps / hreflang open their panel and start; Stop only while running.
+- `checks-view-forgets-unwatched-tab` — a forgotten tab's last state is gone; other tabs keep theirs.
+- `checks-watch-forgets-on-unmount` (`checks-watch-hook.test.ts`) — when a tab's watch ends its last state is forgotten, so a run that ends unseen never leaves Stop offered; with no panel watching, the palette does not offer Stop (the panel's Stop is a click away).
 
 ## Highlight (`apps/desktop/src/main/seo/__tests__/checks-highlight.test.ts`)
 - `highlight-broken-mode` — `broken` outlines only the listed targets (fragment aside).
