@@ -603,5 +603,9 @@ describe('projects view', () => {
     expect(api.open).toHaveBeenLastCalledWith({ projectId: P1 });
     expect(api.purgeNow).toHaveBeenCalledWith(P1);
     expect(await action('projects.compact').run(ctx)).toBe('Compacted the change database: 2.0 kB → 1.0 kB.');
+    // Purge opens the sheet (it takes focus); Compact shows only main's message box, so the palette
+    // puts focus back where it was (issue #25: not left on <body>).
+    expect(action('projects.purge-now').focus).toBe('handler');
+    expect(action('projects.compact').focus ?? 'restore').toBe('restore');
   });
 });

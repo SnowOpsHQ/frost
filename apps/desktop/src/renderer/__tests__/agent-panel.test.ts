@@ -2,13 +2,13 @@
 // Spec: specs/agent-panel.spec.ts (AGENT_PANEL_STORAGE_KEY), specs/agent-session.spec.ts (AgentState.approval,
 // APPROVAL_ENABLE_DELAY_MS)
 // Acceptance: specs/agent-panel.feature.md (agent-panel-swapped-approval-starts-disarmed,
-// agent-panel-approval-opens-without-changing-the-preference)
+// agent-panel-approval-opens-without-changing-the-preference, agent-panel-palette-requests-move-focus)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { AGENT_PANEL_STORAGE_KEY } from '@app/specs/agent-panel.spec';
 import { APPROVAL_ENABLE_DELAY_MS, type AgentState } from '@app/specs/agent-session.spec';
-import { approval, state as makeState } from './agent-fixtures';
+import { SKILLS, approval, state as makeState } from './agent-fixtures';
 
 // The panel's state comes from a stand-in for `useAgentState` that the test sets.
 const current = vi.hoisted(() => ({ state: null as AgentState | null }));
@@ -18,6 +18,7 @@ vi.mock('../agent-actions', () => ({
 }));
 vi.mock('../ipc', () => ({ ipc: {} }));
 const { AgentPanel } = await import('../components/agent/AgentPanel');
+const { requestAgentPanel } = await import('../agent-palette');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -76,4 +77,35 @@ test('agent-panel-approval-opens-without-changing-the-preference', () => {
   act(() => byTestId('agent-toggle')!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
   expect(byTestId('agent-panel')!.dataset['open']).toBe('true');
   expect(window.localStorage.getItem(AGENT_PANEL_STORAGE_KEY)).toBe('1');
+});
+
+test('agent-panel-palette-requests-move-focus', () => {
+  // The palette closes without restoring focus for these (`focus: 'handler'`): the panel must take it.
+  const ask = (request: Parameters<typeof requestAgentPanel>[0]) => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+    act(() => requestAgentPanel(request));
+  };
+  window.localStorage.setItem(AGENT_PANEL_STORAGE_KEY, '0');
+  show(makeState({ skills: [...SKILLS] }));
+  // From the rail: settings focuses the head's settings button, a skill run the composer.
+  ask({ kind: 'settings' });
+  expect(byTestId('agent-panel')!.dataset['view']).toBe('settings');
+  expect(document.activeElement).toBe(byTestId('agent-settings-toggle'));
+  // Already on settings: still moved there.
+  ask({ kind: 'settings' });
+  expect(document.activeElement).toBe(byTestId('agent-settings-toggle'));
+  ask({ kind: 'run-skill', skillId: 'audit-this-page' });
+  expect(byTestId('agent-panel')!.dataset['view']).toBe('chat');
+  expect(document.activeElement).toBe(byTestId('agent-input'));
+  // Already open on the chat: a skill run and a new chat still focus the composer.
+  ask({ kind: 'run-skill', skillId: 'audit-this-page' });
+  expect(document.activeElement).toBe(byTestId('agent-input'));
+  ask({ kind: 'new-chat' });
+  expect(document.activeElement).toBe(byTestId('agent-input'));
+  // Collapsed, a skill run opens the panel on the composer.
+  ask({ kind: 'toggle' });
+  expect(byTestId('agent-panel')!.dataset['open']).toBe('false');
+  ask({ kind: 'run-skill', skillId: 'audit-this-page' });
+  expect(document.activeElement).toBe(byTestId('agent-input'));
 });

@@ -125,7 +125,8 @@ retention procedures of `packages/ipc-contract/src/projects-router.ts`; and the 
   database file) with `USAGE_NOTE`; the purge log; Compact database (main confirms; before → after).
 - After Purge now (and any change to the projects) the Changes panel reads its history and
   screenshots again.
-- The palette: "Purge this project now" and "Compact the change database".
+- The palette: "Purge this project now" (opens the sheet on the project) and "Compact the change
+  database" (only main's message box: focus goes back where it was before the palette).
 
 ## Scenarios
 - **Scenario: retention-spec-values** — bounds, cadence, wording, dialogs, `formatBytes`. Test:

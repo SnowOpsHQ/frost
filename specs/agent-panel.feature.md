@@ -20,6 +20,9 @@ to one named test.
   request opens it for now without changing that choice.
 - **Toggle.** The rail's button and the palette's "Toggle AI agent" (plus "AI agent settings" and
   "New AI agent chat"). No keyboard shortcut: shortcuts are main's menu table, not the panel's.
+  Each palette request moves focus into what it shows, even when the panel was already there (the
+  palette restores none): "AI agent settings" to the head's settings button, "New AI agent chat" and
+  "Run skill: {name}" to the composer, the toggle to the composer or the rail's button.
 - **State.** The panel renders main's `AgentState` only, long-polled over `agent.watch` with backoff
   on error and a short pause after an answer that didn't advance the version (never a tight loop);
   unmounting aborts the poll in flight. Intents go over the sender-guarded `agent.*` procedures, each with a
@@ -80,6 +83,9 @@ to one named test.
 - **Scenario: agent-panel-swapped-approval-starts-disarmed** (`agent-panel.test.ts`) — the next
   request's card is disarmed for a whole delay.
 - **Scenario: agent-panel-approval-opens-without-changing-the-preference** (`agent-panel.test.ts`).
+- **Scenario: agent-panel-palette-requests-move-focus** (`agent-panel.test.ts`; issue #25) — from the
+  palette, settings focuses the settings button and a skill run (or a new chat) the composer, with
+  the panel closed or already open on that view; focus is never left on `<body>`.
 - **Scenario: settings-key-field-never-keeps-the-key** — password input, emptied, never in the DOM.
 - **Scenario: reasoning-select-sends-set-reasoning-effort** (Phase 8 Task 9; `agent-components.test.ts`)
   — choosing a level in the Reasoning select (under Model, labelled "Reasoning") calls
