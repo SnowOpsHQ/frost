@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { A11yImpactGroup, AccessibilityReport, SecurityReport, SeoAudit } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import {
@@ -15,6 +15,7 @@ import {
 import type { A11yViolation, InsecureResource } from '@app/specs/seo-snapshot.spec';
 import { OpenTabIcon } from '../../icons';
 import { actions } from '../../ipc';
+import { useNow } from '../../hooks/useNow';
 import { a11yNote, a11yView, countLabel, mixedNote, elapsedSeconds, headersUnknownNote, headerTone, impactCounts, nodesShown, runButtonLabel, runProgress, securitySignals, securitySummary, type A11yView } from '../../compliance-view';
 import type { Tone } from '../../indexability-view';
 import { formatCount, openableUrl } from '../../seo-view';
@@ -186,18 +187,6 @@ function MixedCard({ security }: { readonly security: SecurityReport }) {
 }
 
 // ---- Accessibility -------------------------------------------------------------------------------
-
-/** Re-renders every quarter second while `on` (the running check's elapsed time); answers now. */
-function useNow(on: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!on) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(timer);
-  }, [on]);
-  return now;
-}
 
 function RunProgress({ startedAt }: { readonly startedAt: number }) {
   const now = useNow(true);

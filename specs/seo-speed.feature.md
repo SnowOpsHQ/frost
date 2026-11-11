@@ -119,7 +119,8 @@ many visits on many devices), which can be very different. The panel says so und
   score and the rail dot use the audit-time measurement). Render-blocking scripts are
   read by the extractor (the snapshot), so that finding always comes from the audit.
 - **Live updates, bounded.** The chrome polls every `SPEED_POLL_MS` after each answer (never two at
-  once) and pauses after `SPEED_LIVE_MAX_POLLS` (Resume starts another run). A poll session is one
+  once) and pauses after `SPEED_LIVE_MAX_POLLS` (Resume starts another run); the paused line's age of
+  the last measurement ("last … ago") keeps counting while it waits. A poll session is one
   tab, one URL and one document (the tab's `documentSeq`): switching tabs, navigating, reloading
   (toolbar, menu or shortcut: the same URL, a new document), leaving the panel or collapsing the
   sidebar ends it, and its late answers are dropped; a reload of a paused session starts a fresh,
@@ -231,6 +232,8 @@ many visits on many devices), which can be very different. The panel says so und
 - **Scenario: use-speed-restarts-on-reload** (`use-speed.test.ts`, the hook in a DOM) — the panel's
   hook, paused at the poll limit, starts polling again with no answer shown once the tab's
   `documentSeq` changes for the same URL.
+- **Scenario: paused-line-age-keeps-counting** (`speed-live-line.test.ts`, the line in a DOM) — paused
+  at the poll limit, with no poll left to re-render it, the line's "last … ago" follows the clock.
 - **Scenario: meter-geometry**, **missing-vital-text**, **waterfall-geometry**, **bars-and-shares**,
   **shown-speed-prefers-live-for-this-url**, **speed-issues-merge-measured-and-snapshot-rules**,
   **openable-resources-and-ago**, **speed-notes** (Wayland, route change, too few requests, a full
