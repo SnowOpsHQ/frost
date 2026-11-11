@@ -227,6 +227,15 @@ describe('agent chats (db)', () => {
     }
   });
 
+  test('agent-chats-secure-delete-restored-after-a-failed-batch', async () => {
+    expect(await repo.saveChat(head('kept', 1), full())).toBe(true);
+    // A failing statement inside the batch: the rollback doesn't undo a pragma, so the restore must still run.
+    raw.exec(`CREATE TEMP TRIGGER fail_delete BEFORE DELETE ON agent_chats BEGIN SELECT RAISE(ABORT, 'refused'); END`);
+    await expect(repo.deleteChat('kept')).rejects.toThrow(/refused/);
+    expect(raw.prepare('PRAGMA secure_delete').get()!['secure_delete']).toBe(0);
+    expect(count('agent_chats')).toBe(1);
+  });
+
   test('agent-chats-in-store', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frost-chats-'));
     try {

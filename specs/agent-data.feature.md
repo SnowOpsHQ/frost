@@ -71,6 +71,9 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
   untouched); a position past what is stored is refused; replacing from a position drops what follows.
 - **Scenario: agent-chats-deleted-text-leaves-the-file** — after deletes, a rewrite and an `off` prune,
   none of the text is in the file's bytes; the connection's `secure_delete` is as it was.
+- **Scenario: agent-chats-secure-delete-restored-after-a-failed-batch** — a delete that fails
+  mid-batch is rolled back and leaves the connection's `secure_delete` as it was (a pragma isn't
+  undone by a rollback).
 - **Scenario: agent-chats-capped** — only the `MAX_STORED_CHATS` most recent are kept, their rows too.
 - **Scenario: agent-chats-refuse-out-of-bounds** — bad ids, titles, times, counts and rows are
   refused; tampered rows are skipped on the way out.

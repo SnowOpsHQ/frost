@@ -140,13 +140,24 @@ export function createAgentChatsRepository(db: SessionDatabase): AgentChatsRepos
    * Runs `queries` in one transaction with SQLite's `secure_delete` on, so what they delete or
    * overwrite is zeroed in the file, not left in free pages; the connection's own setting is put
    * back in the same transaction (nothing else runs on the connection meanwhile: the batch is one
-   * synchronous callback), so no other table's deletes change.
+   * synchronous callback), so no other table's deletes change. A pragma isn't undone by a rollback:
+   * a batch that fails before its last statement has the setting put back after it.
    */
   const secureBatch = async (queries: readonly Parameters<typeof db.batch>[0][number][]) => {
     const [row] = (await db.all<{ secure_delete?: unknown }>(sql`PRAGMA secure_delete`)) as unknown[];
     const value = Array.isArray(row) ? row[0] : (row as { secure_delete?: unknown } | undefined)?.secure_delete;
     const previous = value === 1 || value === 2 ? value : 0;
-    await db.batch([db.run(sql`PRAGMA secure_delete = 1`), ...queries, db.run(sql.raw(`PRAGMA secure_delete = ${previous}`))] as unknown as Parameters<typeof db.batch>[0]);
+    const restore = sql.raw(`PRAGMA secure_delete = ${previous}`);
+    try {
+      await db.batch([db.run(sql`PRAGMA secure_delete = 1`), ...queries, db.run(restore)] as unknown as Parameters<typeof db.batch>[0]);
+    } catch (error) {
+      try {
+        await db.run(restore);
+      } catch {
+        // The connection is gone: so is its setting. The batch's own error is the one to report.
+      }
+      throw error;
+    }
   };
 
   const deleteAll = () => secureBatch([db.delete(agentChats), db.delete(agentChatMessages), db.delete(agentChatEntries)]);
