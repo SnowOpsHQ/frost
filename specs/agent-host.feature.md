@@ -130,6 +130,9 @@ one named test.
   running chat is refused.
 - **Scenario: host-ready-timeout-restarts** — no `ready` within `readyTimeoutMs` → the process is
   killed and forked again after the backoff.
+- **Scenario: host-fork-failed** — `fork` throwing, or the port hand-over throwing, is one failure
+  (`fork-failed`) and a restart after the backoff: both channel ports are closed and a child already
+  forked is killed, so its later exit counts nothing more.
 - **Scenario: host-protocol-mismatch** — `ready` with another protocol version → killed, status
   `stopped`, failure `protocol-mismatch`, no restart; `start()` answers `false`.
 - **Scenario: host-crash-fails-chats** — an exit while chats run answers each with `chat.error`
