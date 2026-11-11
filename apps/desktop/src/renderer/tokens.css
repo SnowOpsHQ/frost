@@ -9,7 +9,7 @@
       spec maps each one to its Signal token (alias or retire):
       - an alias is var() of its Signal token, declared once (light) with no dark override, so it
         follows that token in both themes;
-      - a retired name and a layout constant keep their pre-Signal value until its surface PR.
+      - a retired name keeps its pre-Signal value until its surface PR; a layout constant keeps its value.
       Self-aliases (Signal names that existed with the same meaning: --text, --text-muted,
       --text-faint, --accent, --accent-soft, --accent-hover, --on-accent, --ok, --warn, --danger,
       --bg-hover and --bg-active) are not here: part 2 declares them at their Signal values.
@@ -20,7 +20,7 @@
 /* ==== 1. Legacy tokens (aliases point at part 2) ================================================ */
 
 :root {
-  /* ---- Chrome, surfaces, icons and the SEO sidebar (was in styles.css; text, accent and status: part 2) */
+  /* ---- Chrome, surfaces, icons and the SEO sidebar (was in styles.css; text, accent, status and state: part 2) */
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Inter', Roboto, Ubuntu, Cantarell, 'Noto Sans',
     'Helvetica Neue', Arial, sans-serif;
 
@@ -128,7 +128,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* ---- Chrome, surfaces, icons and the SEO sidebar (was in styles.css; text, accent and status: part 2) */
+    /* ---- Chrome, surfaces, icons and the SEO sidebar (was in styles.css; text, accent, status and state: part 2) */
     --bg-chrome-edge: #2c3038;
     --bg-strip: #131519;
     --bg-tab-hover: rgb(255 255 255 / 0.06);

@@ -339,7 +339,10 @@ const RING = 'Score rings take their band colour: --ok, --warn, --danger (graphi
 const WARN = '"--warn: dots and graphics (≥ 3:1 on white and sheet)"; ' + RING;
 const INK = '"Text on a soft status fill uses its -ink colour (≥ 4.5:1)"';
 
-/** The contrast pairs the Signal token sheet names; checked against `tokens.css` in both themes. */
+/**
+ * The contrast pairs the Signal token sheet names, plus frost's own floor for body text, links and
+ * on-colour buttons on every surface; checked against `tokens.css` in both themes.
+ */
 export const CONTRAST_PAIRS = [
   // Text
   { fg: '--text', bg: '--bg-window', min: 4.5, why: BODY },
@@ -359,6 +362,16 @@ export const CONTRAST_PAIRS = [
   { fg: '--on-accent', bg: '--accent', min: 4.5, why: 'accent buttons: --on-accent on --accent (4.5:1)' },
   { fg: '--on-accent', bg: '--accent-hover', min: 4.5, why: 'accent buttons, hovered: --on-accent on --accent-hover (4.5:1)' },
   { fg: '--on-inverse', bg: '--inverse', min: 4.5, why: 'inverse buttons (Ask frost): --on-inverse on --inverse (4.5:1)' },
+  {
+    fg: '--on-inverse',
+    bg: '--bg-active-inverse',
+    over: '--inverse',
+    min: 4.5,
+    why: '"An inverse button (Ask frost) uses --bg-active-inverse when pressed or open" (4.5:1)',
+  },
+  // Text on the accent tint
+  { fg: '--text', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'the palette\'s active row (--palette-row-active → --accent-soft) (4.5:1)' },
+  { fg: '--text', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'your messages in the agent panel (--agent-user → --accent-soft) (4.5:1)' },
   // Status text on a soft fill
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },

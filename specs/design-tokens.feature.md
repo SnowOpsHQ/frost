@@ -31,10 +31,13 @@ Code: `apps/desktop/src/renderer/tokens.css`, imported by `main.tsx`. Each line 
   `alias` (the name stays) or `retire` (replaced; removed once no rule uses it). Since the values
   step, an alias whose Signal token has another name is exactly `var(<signal>)` in light with no dark
   override, so it follows the Signal token in both themes (`--bg-chrome: var(--bg-window)`,
-  `--seo-panel-width: var(--w-panel)`). Retired names and layout constants (`signal: null`) keep
-  their values until their surface PR; no rule outside `tokens.css` changes.
+  `--seo-panel-width: var(--w-panel)`). Retired names keep their values until their surface PR;
+  layout constants (aliases with `signal: null`) keep theirs. No rule outside `tokens.css` changes.
+  A retired value that reads an alias moves with it: `--palette-sheet`'s gradient starts at
+  `var(--bg-chrome)`, so its first stop is now `--bg-window` (its second stays a literal until the
+  palette's surface PR).
 - **Contrast.** Every pair in `CONTRAST_PAIRS` (the text/background and UI/background pairs the
-  token sheet names) reaches its WCAG 2.x minimum, 4.5:1 for text and 3:1 for UI, in light and dark,
+  token sheet names, plus body text, links and on-colour buttons on every surface) reaches its WCAG 2.x minimum, 4.5:1 for text and 3:1 for UI, in light and dark,
   computed from the values in `tokens.css` (a translucent fill composited over its surface).
 - **Hex ratchet.** Literal hex colours in renderer stylesheets other than `tokens.css` never exceed
   `HEX_COLOUR_RATCHET`; each surface PR lowers it.
@@ -59,7 +62,9 @@ Code: `apps/desktop/src/renderer/tokens.css`, imported by `main.tsx`. Each line 
   committed snapshot (the values step updated it on purpose: the aliases became `var()`, their dark
   entries went, and the shared names took their Signal values).
 - **Scenario: legacy-aliases-point-at-signal-tokens** — every alias whose Signal token has another
-  name is exactly `var(<signal>)` in light and has no dark override.
+  name is exactly `var(<signal>)` in light and has no dark override; the self-aliases are exactly
+  the shared names; `--w-panel` and `--w-rail` equal `SIDEBAR_PANEL_WIDTH` / `SIDEBAR_RAIL_WIDTH`
+  (`specs/seo-sidebar.spec.ts`).
 - **Scenario: signal-contrast-meets-aa** — every `CONTRAST_PAIRS` pair reaches its minimum WCAG 2.x
   contrast ratio in light and in dark, read from `tokens.css` (`var()` resolved, translucent colours
   composited); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).

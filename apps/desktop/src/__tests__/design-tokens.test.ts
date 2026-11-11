@@ -15,6 +15,7 @@ import {
   type SignalToken,
   type SignalTokenGroup,
 } from '@app/specs/design-tokens.spec';
+import { SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 
 const RENDERER = fileURLToPath(new URL('../renderer/', import.meta.url));
 const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8');
@@ -196,6 +197,9 @@ test('legacy-aliases-point-at-signal-tokens', () => {
   // The self-aliases are exactly the shared names.
   const selfAliases = LEGACY_TOKEN_MIGRATION.filter((row) => row.kind === 'alias' && row.signal === row.legacy).map((row) => row.legacy);
   expect([...selfAliases].sort()).toEqual([...SIGNAL_NAMES_WITH_LEGACY_VALUES].sort());
+  // The sidebar's widths now come from Signal; they still match the layout constants in the sidebar spec.
+  expect(LIGHT.get('--w-panel')).toBe(`${SIDEBAR_PANEL_WIDTH}px`);
+  expect(LIGHT.get('--w-rail')).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
 });
 
 test('signal-contrast-meets-aa', () => {
@@ -208,14 +212,18 @@ test('signal-contrast-meets-aa', () => {
   const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
   expect(pairs.length).toBeGreaterThan(0);
   for (const [theme, values] of Object.entries(themes)) {
-    /** A token's colour in this theme, a `var()` resolved one level against the same theme. */
+    /** A token's colour in this theme, following `var()` references in the same theme. */
     const colour = (name: string): Rgba => {
-      const raw = values.get(name);
-      if (raw === undefined) throw new Error(`${name} is not declared (${theme})`);
-      const ref = /^var\((--[\w-]+)\)$/.exec(raw)?.[1];
-      const value = ref === undefined ? raw : values.get(ref);
-      if (value === undefined) throw new Error(`${name}: ${raw} is not declared (${theme})`);
-      return parseColour(value);
+      const seen = new Set<string>();
+      for (let current = name; ; ) {
+        if (seen.has(current)) throw new Error(`${name}: var() cycle through ${current} (${theme})`);
+        seen.add(current);
+        const raw = values.get(current);
+        if (raw === undefined) throw new Error(`${name}: ${current} is not declared (${theme})`);
+        const ref = /^var\((--[\w-]+)\)$/.exec(raw)?.[1];
+        if (ref === undefined) return parseColour(raw);
+        current = ref;
+      }
     };
     for (const pair of pairs) {
       const label = `${pair.fg} on ${pair.bg}${pair.over ? ` over ${pair.over}` : ''} (${theme})`;
