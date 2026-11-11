@@ -294,11 +294,13 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     publish({ targets: current.targets.map((target) => (target.outcome === 'pending' || target.outcome === 'running' ? { ...target, outcome: 'cancelled' } : target)) });
   };
 
-  type Run = { readonly projectId: string; cancelled: boolean; wake: (() => void) | null; tabId: number | null; readonly previous: number | null };
+  type Run = { readonly projectId: string; cancelled: boolean; wake: (() => void) | null; tabId: number | null; previous: number | null };
   /** When the last search navigation was sent, in any run (`null`: none since frost started): the next search waits `querySpacingMs` from it. */
   let lastSearchAt: number | null = null;
   /** The run under way (reserved as soon as one starts): its cancel flag and the wake-up of its current wait. */
   let active: Run | null = null;
+  /** What is left of `querySpacingMs` before `target` may go (none, or below zero: it goes at once; only a search waits). */
+  const spacingLeft = (target: RunPlanTarget): number => (queriesAnEngine(target) && lastSearchAt !== null ? lastSearchAt + limits.querySpacingMs - now() : 0);
 
   /**
    * Closes the run's tab if it is still open; the tab in front before comes back, but only if the
@@ -609,28 +611,36 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
      * cancelled meanwhile.
      */
     const spaceBefore = async (target: RunPlanTarget): Promise<boolean> => {
-      if (queriesAnEngine(target) && lastSearchAt !== null) {
-        const wait = lastSearchAt + limits.querySpacingMs - now();
-        if (wait > 0) await pause(run, wait);
-      }
+      const wait = spacingLeft(target);
+      if (wait > 0) await pause(run, wait);
       return run.cancelled;
     };
     try {
       groups: for (let g = 0; g < groups.length; g++) {
-        if (g > 0) {
+        // A later group, or a first one whose search had to wait (`start` opened no tab for it).
+        if (g > 0 || tabId === null) {
           // A search that comes next waits its spacing before the new tab opens (not in front of the user empty).
           if (await spaceBefore(groups[g]!.targets[0]!)) {
             end = 'cancelled';
             break;
           }
-          // The last group's tab gives way to the next group's: only with it in front, so a new tab
-          // never takes the front from the user.
-          const ready = await untilActive(run, tabId!);
-          if (ready !== null) {
-            end = ready;
-            break;
+          if (tabId !== null) {
+            // The last group's tab gives way to the next group's: only with it in front, so a new tab
+            // never takes the front from the user.
+            const ready = await untilActive(run, tabId);
+            if (ready !== null) {
+              end = ready;
+              break;
+            }
+            browser.closeTab(tabId);
+          } else {
+            // The run's first tab opens only now: the tab in front now is the one to give back at the end.
+            try {
+              run.previous = browser.getState().activeTabId;
+            } catch {
+              run.previous = null;
+            }
           }
-          browser.closeTab(tabId!);
           tabId = openTab(groups[g]!.profile);
           run.tabId = tabId;
           if (tabId === null) {
@@ -712,12 +722,15 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       }
       const groups = groupByProfile(targets, plan.profile);
       const ordered = groups.flatMap((group) => group.targets);
-      const tabId = openTab(groups[0]!.profile);
+      // A first search that must wait its spacing gets its tab once the wait is over (`execute`): no
+      // empty tab in front of the user meanwhile.
+      const spaced = spacingLeft(ordered[0]!) > 0;
+      const tabId = spaced ? null : openTab(groups[0]!.profile);
       run.tabId = tabId;
       const runId = uuid(now());
       const base = { runId, projectId: plan.projectId, current: 0, total: ordered.length, omitted: inScope.length - targets.length, screenshot: plan.screenshot, blockedReason: null };
       const initial = ordered.map((target): RunTarget => ({ kind: target.kind, label: target.label, outcome: 'pending', changeCount: null, screenshot: null }));
-      if (tabId === null) {
+      if (tabId === null && !spaced) {
         active = null;
         publish({ ...base, state: 'failed', targets: initial.map((target) => ({ ...target, outcome: 'cancelled' })) });
         return { status: 'refused', reason: 'no-tab' };

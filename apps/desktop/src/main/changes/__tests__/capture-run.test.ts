@@ -1105,6 +1105,70 @@ describe('searches in a run', () => {
     expect(sent[1]![1] - sent[0]![1]).toBeGreaterThanOrEqual(SPACING);
   });
 
+  // spec: specs/projects.feature.md — Searches in a run (Pacing: a run whose first target waits opens its tab after the wait)
+  test('capture-run-opens-its-tab-after-the-spacing', async () => {
+    const fake = setup(readySerpFor([query(DESKTOP)]));
+    const at = timedNavigations(fake);
+    await fake.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 4);
+    expect(fake.runs.state().state).toBe('done');
+    // A rerun at once: no empty tab in front of the user while its first search waits.
+    expect(await fake.runs.start(plan([query(DESKTOP)]))).toMatchObject({ status: 'started' });
+    expect(fake.runs.state().state).toBe('running');
+    await vi.advanceTimersByTimeAsync(SPACING - RETRY * 6);
+    expect(fake.browser.newTab).toHaveBeenCalledOnce();
+    expect(fake.state.activeTabId).toBe(1);
+    await run(RETRY * 4);
+    // The wait over: the tab opens, the search goes, at least the spacing after the last one.
+    expect(fake.browser.newTab).toHaveBeenCalledTimes(2);
+    expect(at).toHaveLength(2);
+    expect(at[1]![1] - at[0]![1]).toBeGreaterThanOrEqual(SPACING);
+    await run(RETRY * 4);
+    expect(fake.runs.state().state).toBe('done');
+    expect(fake.tabs.map((tab) => tab.id)).toEqual([1]);
+
+    // The user moves to another tab during the wait: that tab, the one in front as the run's tab
+    // opened, comes back at the end (not the one in front at the click).
+    fake.tabs.push({ id: 2, loading: false, documentSeq: 1, error: null, crashed: false, url: 'https://example.com/other', own: null });
+    await fake.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 2);
+    fake.state.activeTabId = 2;
+    await run(SPACING + RETRY * 4);
+    expect(fake.runs.state().state).toBe('done');
+    expect(at).toHaveLength(3);
+    expect(fake.state.activeTabId).toBe(2);
+    fake.browser.closeTab(2);
+    fake.state.activeTabId = 1;
+
+    // Cancel, or a stop (quit), during the wait: the run ends cancelled and opens no tab.
+    for (const end of ['cancel', 'stop'] as const) {
+      const ended = setup(readySerpFor([query(DESKTOP)]));
+      await ended.runs.start(plan([query(DESKTOP)]));
+      await run(RETRY * 4);
+      ended.browser.newTab.mockClear();
+      await ended.runs.start(plan([query(DESKTOP)]));
+      await run(RETRY * 2);
+      ended.runs[end]();
+      await run(SPACING);
+      expect(ended.runs.state(), end).toMatchObject({ state: 'cancelled', targets: [{ outcome: 'cancelled' }] });
+      expect(ended.browser.newTab, end).not.toHaveBeenCalled();
+      expect(ended.browser.navigate, end).toHaveBeenCalledOnce();
+      expect(ended.tabs.map((tab) => tab.id)).toEqual([1]);
+      expect(ended.state.activeTabId).toBe(1);
+    }
+
+    // A tab limit once the wait is over: the run fails (it was already under way), nothing navigated.
+    await fake.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 4);
+    expect(fake.runs.state().state).toBe('done');
+    fake.state.tabLimit = true;
+    expect(await fake.runs.start(plan([query(DESKTOP)]))).toMatchObject({ status: 'started' });
+    await run(SPACING + RETRY * 4);
+    expect(fake.runs.state()).toMatchObject({ state: 'failed', targets: [{ outcome: 'cancelled' }] });
+    expect(at).toHaveLength(4);
+    expect(fake.tabs.map((tab) => tab.id)).toEqual([1]);
+  });
+
   // spec: specs/projects.feature.md — Searches in a run (whole-branch review ruling: a page on an engine's host is a search)
   test('capture-run-engine-host-page-is-gated', async () => {
     // Pages on an engine's host that the pack refuses (another vertical): no search parameters, but they query an engine.
