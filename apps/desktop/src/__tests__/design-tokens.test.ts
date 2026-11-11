@@ -1,15 +1,17 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, HEX_COLOUR_RATCHET)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, HEX_COLOUR_RATCHET)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import {
+  CONTRAST_PAIRS,
   HEX_COLOUR_RATCHET,
   LEGACY_TOKEN_MIGRATION,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
   SIGNAL_TOKENS,
   THEMED_SIGNAL_GROUPS,
   TOKENS_STYLESHEET,
+  type ContrastPair,
   type SignalToken,
   type SignalTokenGroup,
 } from '@app/specs/design-tokens.spec';
@@ -81,7 +83,40 @@ const LIGHT = inContext([':root']);
 const DARK_VALUES = inContext([DARK, ':root']);
 const GROUPS = Object.entries(SIGNAL_TOKENS) as [SignalTokenGroup, readonly SignalToken[]][];
 const SIGNAL_NAMES = new Set<string>(GROUPS.flatMap(([, tokens]) => tokens.map((token) => token.name)));
-const KEEPS_LEGACY_VALUE = new Set<string>(SIGNAL_NAMES_WITH_LEGACY_VALUES);
+
+/** An sRGB colour, channels 0–255, alpha 0–1. */
+type Rgba = readonly [r: number, g: number, b: number, a: number];
+
+/** `#rgb`, `#rrggbb` or `rgb(r g b / a)` (the notations `tokens.css` uses for colours). */
+function parseColour(value: string): Rgba {
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value)?.[1];
+  if (hex !== undefined) {
+    const full = hex.length === 3 ? [...hex].map((c) => c + c).join('') : hex;
+    return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)).concat(1) as unknown as Rgba;
+  }
+  const rgb = /^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*(?:\/\s*([\d.]+)\s*)?\)$/.exec(value);
+  if (rgb !== null) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3]), rgb[4] === undefined ? 1 : Number(rgb[4])];
+  throw new Error(`not a colour: ${value}`);
+}
+
+/** `top` laid over the opaque `bottom` (source-over). */
+const composite = (top: Rgba, bottom: Rgba): Rgba =>
+  [0, 1, 2].map((i) => (top[i] ?? 0) * top[3] + (bottom[i] ?? 0) * (1 - top[3])).concat(1) as unknown as Rgba;
+
+/** WCAG 2.x relative luminance of an opaque colour. */
+function luminance([r, g, b]: Rgba): number {
+  const lin = (channel: number) => {
+    const c = channel / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** WCAG 2.x contrast ratio of two opaque colours (1–21). */
+function contrastRatio(a: Rgba, b: Rgba): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
 
 test('tokens-stylesheet-holds-only-root-tokens', () => {
   expect(STYLESHEETS).toContain(TOKENS_STYLESHEET);
@@ -116,11 +151,9 @@ test('signal-tokens-are-defined', () => {
         expect(token.dark, label).toBeUndefined();
         expect(DARK_VALUES.has(token.name), `${label} (dark)`).toBe(false);
       }
-      // A Signal-only token carries its Signal value already; a shared name keeps today's until the values PR.
-      if (!KEEPS_LEGACY_VALUE.has(token.name)) {
-        expect(LIGHT.get(token.name), label).toBe(token.light);
-        if (token.dark !== undefined) expect(DARK_VALUES.get(token.name), `${label} (dark)`).toBe(token.dark);
-      }
+      // Every Signal token carries exactly its Signal value, the shared names included.
+      expect(LIGHT.get(token.name), label).toBe(token.light);
+      if (token.dark !== undefined) expect(DARK_VALUES.get(token.name), `${label} (dark)`).toBe(token.dark);
     }
   }
   // The shared names are Signal tokens, and `--icon` stays a colour beside the `--icon-size` size.
@@ -145,11 +178,56 @@ test('legacy-tokens-are-defined', () => {
 });
 
 test('legacy-token-values-are-pinned', () => {
-  // The foundation changes no value: these are main's values before Signal. The values PR updates
-  // this snapshot on purpose, and its diff lists every value it re-points.
+  // Every change to a legacy value is on purpose: the foundation pinned main's values before Signal,
+  // and the values step re-pointed the aliases and swapped the shared names (its diff lists each).
   const pick = (values: Map<string, string>) =>
     Object.fromEntries(LEGACY_TOKEN_MIGRATION.filter((row) => values.has(row.legacy)).map((row) => [row.legacy, values.get(row.legacy)]));
   expect({ light: pick(LIGHT), dark: pick(DARK_VALUES) }).toMatchSnapshot();
+});
+
+test('legacy-aliases-point-at-signal-tokens', () => {
+  for (const row of LEGACY_TOKEN_MIGRATION) {
+    if (row.kind !== 'alias' || row.signal === null) continue;
+    if (row.signal === row.legacy) continue; // a self-alias: signal-tokens-are-defined checks its value
+    // One light declaration, exactly var(<signal>); dark follows the Signal token's own dark value.
+    expect(LIGHT.get(row.legacy), row.legacy).toBe(`var(${row.signal})`);
+    expect(DARK_VALUES.has(row.legacy), `${row.legacy} (dark)`).toBe(false);
+  }
+  // The self-aliases are exactly the shared names.
+  const selfAliases = LEGACY_TOKEN_MIGRATION.filter((row) => row.kind === 'alias' && row.signal === row.legacy).map((row) => row.legacy);
+  expect([...selfAliases].sort()).toEqual([...SIGNAL_NAMES_WITH_LEGACY_VALUES].sort());
+});
+
+test('signal-contrast-meets-aa', () => {
+  // The ratio helper against known values.
+  expect(contrastRatio(parseColour('#000'), parseColour('#ffffff'))).toBeCloseTo(21, 5);
+  expect(contrastRatio(parseColour('#777'), parseColour('#fff'))).toBeCloseTo(4.48, 2);
+  expect(composite(parseColour('rgb(0 0 0 / 0.5)'), parseColour('#ffffff'))).toEqual([127.5, 127.5, 127.5, 1]);
+
+  const themes = { light: LIGHT, dark: new Map([...LIGHT, ...DARK_VALUES]) };
+  const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
+  expect(pairs.length).toBeGreaterThan(0);
+  for (const [theme, values] of Object.entries(themes)) {
+    /** A token's colour in this theme, a `var()` resolved one level against the same theme. */
+    const colour = (name: string): Rgba => {
+      const raw = values.get(name);
+      if (raw === undefined) throw new Error(`${name} is not declared (${theme})`);
+      const ref = /^var\((--[\w-]+)\)$/.exec(raw)?.[1];
+      const value = ref === undefined ? raw : values.get(ref);
+      if (value === undefined) throw new Error(`${name}: ${raw} is not declared (${theme})`);
+      return parseColour(value);
+    };
+    for (const pair of pairs) {
+      const label = `${pair.fg} on ${pair.bg}${pair.over ? ` over ${pair.over}` : ''} (${theme})`;
+      let bg = colour(pair.bg);
+      if (bg[3] < 1) {
+        expect(pair.over, `${label}: a translucent background needs \`over\``).toBeDefined();
+        bg = composite(bg, colour(pair.over ?? pair.bg));
+      }
+      const fg = composite(colour(pair.fg), bg);
+      expect(contrastRatio(fg, bg), label).toBeGreaterThanOrEqual(pair.min);
+    }
+  }
 });
 
 test('no-other-stylesheet-declares-root-tokens', () => {
