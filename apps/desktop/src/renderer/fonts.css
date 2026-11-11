@@ -1,0 +1,40 @@
+/*
+ * Geist and Geist Mono (specs/design-tokens.spec.ts, BUNDLED_FONTS): one @font-face per bundled
+ * file, nothing else. The files come from the pinned `geist` package through the `@geist-fonts`
+ * alias (vite.renderer.config.ts), which Vite emits as hashed assets served from app:// (the CSP's
+ * font-src is 'self'). `block`: the files are local, so text never flashes in a fallback face.
+ * Available, not applied: no rule names these families until the surface PRs adopt the --text-*
+ * type tokens.
+ */
+
+@font-face {
+  font-family: Geist;
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+  src: url('@geist-fonts/geist-sans/Geist-Regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: Geist;
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+  src: url('@geist-fonts/geist-sans/Geist-Medium.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: Geist;
+  font-weight: 600;
+  font-style: normal;
+  font-display: block;
+  src: url('@geist-fonts/geist-sans/Geist-SemiBold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+  src: url('@geist-fonts/geist-mono/GeistMono-Regular.woff2') format('woff2');
+}
