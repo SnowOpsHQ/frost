@@ -35,3 +35,13 @@ overrides:
   # tar >=7.5.21). The gate never loads node-pre-gyp (no install script runs; Electronegativity's
   # runtime does not require it), and tar 7 keeps the CJS `extract`/`create` API it would call.
   '@mapbox/node-pre-gyp>tar': ^7.5.21
+
+packageExtensions:
+  # geist (Geist and Geist Mono, the chrome's interface fonts) declares a peer dependency on `next`
+  # for its `next/font` wrapper. frost bundles only its woff2 files (vite.renderer.config.ts) and
+  # never imports its JavaScript, so the peer is marked optional: pnpm then neither auto-installs
+  # Next.js (and its native SWC and sharp binaries) nor reports the peer as missing.
+  geist:
+    peerDependenciesMeta:
+      next:
+        optional: true

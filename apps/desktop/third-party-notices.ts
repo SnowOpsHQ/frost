@@ -55,6 +55,8 @@ export const NOTICE_PACKAGES: readonly NoticePackage[] = [
   { name: 'react', from: 'apps/desktop', use: 'The app window’s interface.' },
   { name: 'react-dom', from: 'apps/desktop', use: 'The app window’s interface.' },
   { name: 'scheduler', from: 'node_modules/react-dom', use: 'Used by react-dom.' },
+  // Only its font files are bundled (vite.renderer.config.ts; specs/design-tokens.spec.ts, BUNDLED_FONTS).
+  { name: 'geist', from: 'apps/desktop', use: 'The chrome’s interface fonts, Geist and Geist Mono, bundled as woff2 files.' },
   { name: '@trpc/client', from: 'packages/ipc-contract', use: 'Messages between the app window and the main process.' },
   { name: '@trpc/server', from: 'packages/ipc-contract', use: 'Messages between the app window and the main process.' },
   { name: 'zod', from: 'specs', use: 'Validating messages and page data in the main process.' },
