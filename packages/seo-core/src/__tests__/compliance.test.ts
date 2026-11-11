@@ -117,11 +117,20 @@ describe('CSP', () => {
     expect(frameAncestorsProtect(["'none'"])).toBe(true);
     expect(frameAncestorsProtect(["'self'", 'https://partner.example'])).toBe(true);
     expect(frameAncestorsProtect(['https://*.example.com'])).toBe(true);
-    for (const open of [['*'], ['https:'], ['HTTP:'], ["'self'", 'https:'], ['https://*'], ['*://*'], []]) expect(frameAncestorsProtect(open), open.join(' ')).toBe(false);
+    for (const open of [['*'], ['https:'], ['HTTP:'], ["'self'", 'https:'], ['https://*'], ['*://*']]) expect(frameAncestorsProtect(open), open.join(' ')).toBe(false);
+    // An empty source list matches no ancestor (CSP3): it blocks framing as 'none' does.
+    expect(frameAncestorsProtect([])).toBe(true);
     // In the page: an open frame-ancestors is clickjacking-unprotected (without X-Frame-Options).
     fails('clickjacking-unprotected', withOnly(header('content-security-policy', 'frame-ancestors https:')));
     fails('clickjacking-unprotected', withOnly(header('content-security-policy', 'frame-ancestors *')));
     passes('clickjacking-unprotected', withOnly(header('content-security-policy', "frame-ancestors 'self' https://partner.example")));
+    for (const empty of ['frame-ancestors', 'frame-ancestors;', "frame-ancestors   ; script-src 'self'"]) {
+      expect(frameAncestors(parseCsp(empty, 'header')), empty).toEqual([[]]);
+      passes('clickjacking-unprotected', withOnly(header('content-security-policy', empty)));
+    }
+    // A policy without frame-ancestors sets nothing: without X-Frame-Options framing is allowed.
+    expect(frameAncestors(parseCsp("default-src 'self'", 'header'))).toEqual([]);
+    fails('clickjacking-unprotected', withOnly(header('content-security-policy', "default-src 'self'")));
   });
 
   test('csp-script-src-elem-precedence', () => {

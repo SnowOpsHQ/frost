@@ -96,7 +96,7 @@ Each line maps to one named test.
 - Policies split on commas, directives on semicolons, first occurrence wins, junk names skipped, a meta policy drops frame-ancestors / report-uri / sandbox; linear → `csp-parser-reads-policies`
 - Inline scripts run only if every policy that governs scripts allows `'unsafe-inline'` without a nonce, hash or `'strict-dynamic'` → `csp-inline-scripts`
 - frame-ancestors counts from header policies only → `csp-frame-ancestors-header-only`
-- frame-ancestors with `*`, a bare scheme or a wildcard host does not protect; `'none'`, `'self'` and hosts do → `frame-ancestors-open-sources`
+- frame-ancestors with `*`, a bare scheme or a wildcard host does not protect; `'none'`, `'self'` and hosts do, and so does an empty source list (`frame-ancestors;`: CSP3 matches nothing against it, as `'none'`); a policy without frame-ancestors sets nothing → `frame-ancestors-open-sources`
 - `script-src-elem` decides inline scripts before `script-src` and `default-src` → `csp-script-src-elem-precedence`
 - A cut CSP header leaves inline scripts, frame-ancestors and upgrade-insecure-requests unknown: no rule fails for them → `csp-cut-is-unknown`
 
