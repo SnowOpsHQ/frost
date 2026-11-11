@@ -83,5 +83,5 @@ Global constraints: Secrets). Each line maps to one named test.
 
 ## End to end (`apps/desktop/e2e/settings.e2e.ts`, save dialog stubbed)
 - **Scenario: export-diagnostics-saves-reviewed-report** — main logs lines with a URL, an address and
-  the profile's path; Help › Export Diagnostics… shows the report; Save… writes a file (mode 0600, also over an existing file) equal to the
+  the profile's path; Help › Export Diagnostics… shows the report; Save… writes a file (mode 0600, also over an existing file: a new owner-only file renamed over it) equal to the
   shown text, with no `http`, no address and no profile path.

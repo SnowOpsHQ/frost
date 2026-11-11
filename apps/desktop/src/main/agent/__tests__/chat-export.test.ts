@@ -1,7 +1,7 @@
 // Spec: specs/agent-data.spec.ts (CHAT_EXPORT_FORMAT_VERSION, CHAT_EXPORT_JSON_KIND, ChatExportV1,
 // CHAT_EXPORT_UNTRUSTED_NOTE, chatExportFileName, CHAT_EXPORT_RESULTS)
 // Acceptance: specs/agent-data.feature.md (Export)
-import { mkdtempSync, rmSync } from 'node:fs';
+import { linkSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -10,7 +10,7 @@ import { chatExportObject, chatExportText, chatMarkdown } from '../chat-export';
 import { createMemoryChatsStore } from '../chat-history';
 import { encodeChat, type ChatSnapshot } from '../chat-record';
 import { createMemoryGrantsStore } from '../grants';
-import { createAgentServiceFrom, type AgentDialogs } from '../service';
+import { createAgentServiceFrom, type AgentDialogs, type AgentServiceDeps } from '../service';
 import { createFakeChannel, createFakeFork, createFakeSafeStorage, type FakePort } from './fakes';
 import { KEY, setupSession } from './session-fakes';
 
@@ -86,6 +86,36 @@ const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+/** The agent service with `CHAT` stored, `dialogs`, and `writeExport` (default: main's own). */
+function exportService(userData: string, dialogs: AgentDialogs, writeExport?: AgentServiceDeps['writeExport']) {
+  return createAgentServiceFrom({
+    app: { isPackaged: false, getPath: () => userData, commandLine: { getSwitchValue: () => '' }, once: () => undefined },
+    electron: {
+      utilityProcess: { fork: createFakeFork(() => undefined).fork },
+      MessageChannelMain: class {
+        readonly port1: FakePort;
+        readonly port2: FakePort;
+        constructor() {
+          const channel = createFakeChannel();
+          this.port1 = channel.port1;
+          this.port2 = channel.port2;
+        }
+      },
+      safeStorage: createFakeSafeStorage().storage,
+      session: { fromPartition: () => ({ fetch: async () => Promise.reject(new Error('no network')) }) },
+    },
+    browser: { getState: () => ({ activeTabId: null, tabs: [] }) } as never,
+    webContents: {} as never,
+    sessionStore: { agentGrants: createMemoryGrantsStore(), agentChats: createMemoryChatsStore({ chats: [encodeChat(CHAT)] }) },
+    buildDir: userData,
+    dialogs,
+    ...(writeExport ? { writeExport } : {}),
+    now: () => new Date(2026, 9, 28, 9, 0).getTime(),
+    setInterval: () => 0,
+    clearInterval: () => undefined,
+  });
+}
 
 describe('chat export', () => {
   test('export-markdown-golden', () => {
@@ -227,34 +257,9 @@ hidden
     };
     const writes: [string, string][] = [];
     let failWrite = false;
-    const service = createAgentServiceFrom({
-      app: { isPackaged: false, getPath: () => userData, commandLine: { getSwitchValue: () => '' }, once: () => undefined },
-      electron: {
-        utilityProcess: { fork: createFakeFork(() => undefined).fork },
-        MessageChannelMain: class {
-          readonly port1: FakePort;
-          readonly port2: FakePort;
-          constructor() {
-            const channel = createFakeChannel();
-            this.port1 = channel.port1;
-            this.port2 = channel.port2;
-          }
-        },
-        safeStorage: createFakeSafeStorage().storage,
-        session: { fromPartition: () => ({ fetch: async () => Promise.reject(new Error('no network')) }) },
-      },
-      browser: { getState: () => ({ activeTabId: null, tabs: [] }) } as never,
-      webContents: {} as never,
-      sessionStore: { agentGrants: createMemoryGrantsStore(), agentChats: createMemoryChatsStore({ chats: [encodeChat(CHAT)] }) },
-      buildDir: userData,
-      dialogs,
-      writeExport: async (file, text) => {
-        if (failWrite) throw new Error('disk full');
-        writes.push([file, text]);
-      },
-      now: () => new Date(2026, 9, 28, 9, 0).getTime(),
-      setInterval: () => 0,
-      clearInterval: () => undefined,
+    const service = exportService(userData, dialogs, async (file, text) => {
+      if (failWrite) throw new Error('disk full');
+      writes.push([file, text]);
     });
     // The stored chat is listed at startup; its messages are read when it is exported.
     await vi.waitFor(() => expect(service.getState().chats.map((chat) => chat.id)).toEqual([CHAT.id]));
@@ -284,6 +289,37 @@ hidden
     expect(await service.exportChat(CHAT.id, 'json')).toBe('cancelled');
     release(chosen);
     expect(await first).toBe('saved');
+    service.dispose();
+  });
+
+  test('export-is-owner-only', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'frost-agent-export-'));
+    dirs.push(userData);
+    // An existing file others can read, with a second link to its contents.
+    const chosen = path.join(userData, 'out.md');
+    writeFileSync(chosen, 'old', { mode: 0o644 });
+    const other = path.join(userData, 'other-link.md');
+    linkSync(chosen, other);
+    const fresh = path.join(userData, 'fresh.json');
+    const dialogs: AgentDialogs = {
+      confirmDeleteAllChats: async () => false,
+      confirmRetentionChange: async () => false,
+      confirmMcpStart: async () => false,
+      chooseSkillExportPath: async () => null,
+      chooseSkillImportFile: async () => null,
+      chooseExportPath: async (_name, format) => (format === 'markdown' ? chosen : fresh),
+    };
+    const service = exportService(userData, dialogs);
+    await vi.waitFor(() => expect(service.getState().chats.map((chat) => chat.id)).toEqual([CHAT.id]));
+    expect(await service.exportChat(CHAT.id, 'markdown')).toBe('saved');
+    expect(readFileSync(chosen, 'utf8')).toContain(`# ${CHAT.title}`);
+    // Written to a new file renamed over the old one: the old file's contents (still read through
+    // the other link) never held the export.
+    expect(readFileSync(other, 'utf8')).toBe('old');
+    if (process.platform !== 'win32') expect(statSync(chosen).mode & 0o777).toBe(0o600);
+    // A new file is owner-only too.
+    expect(await service.exportChat(CHAT.id, 'json')).toBe('saved');
+    if (process.platform !== 'win32') expect(statSync(fresh).mode & 0o777).toBe(0o600);
     service.dispose();
   });
 });

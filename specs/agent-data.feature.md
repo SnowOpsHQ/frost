@@ -43,7 +43,9 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
 - **Export goes through main's save dialog only.** `agent.exportChat({ chatId, format })`: main
   shows `dialog.showSaveDialog` parented to the focused window (default name
   `frost-chat-<YYYY-MM-DD>.md` / `.json`), builds the text from the chat's display entries and writes
-  it only to the file chosen there; it answers `saved`, `cancelled` or `failed`. The renderer never
+  it only to the file chosen there, owner-only (mode `0600`, also over an existing file: a new file
+  beside it, renamed over it, so the text is never in a file others can read); it answers `saved`,
+  `cancelled` or `failed`. The renderer never
   names a path. Markdown: a heading, the untrusted-output note, each turn, and each tool card as a
   fenced block (tool name and status in the info string; its fence longer than any backtick run
   inside). JSON: `ChatExportV1` (`kind: 'frost.agent-chat'`, `version: 1`). Neither carries a chat,
@@ -123,6 +125,8 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
 - **Scenario: export-default-file-name** — `frost-chat-<date>.md` / `.json`, local date.
 - **Scenario: export-goes-through-the-save-dialog** — cancelled writes nothing; saved writes only the
   chosen file; a failed write answers `failed`; an unknown chat never opens the dialog.
+- **Scenario: export-is-owner-only** — the written file is mode `0600`, also over an existing `0644`
+  one, whose own contents (another link to it) never hold the export.
 
 ## Skills editor (`apps/desktop/src/main/agent/__tests__/user-skills.test.ts`)
 - **Scenario: skill-save-validates-and-stores** — stored as validated JSON, listed after the

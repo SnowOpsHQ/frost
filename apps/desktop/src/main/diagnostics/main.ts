@@ -124,8 +124,8 @@ async function chooseSavePath(windowId: number, defaultName: string): Promise<st
 
 /**
  * Writes the report: the user's own file, readable by them alone where the platform has modes
- * (`mode` applies only to a new file, so an existing one is narrowed after the write; Windows has
- * no such modes, and a failed narrowing never fails the save).
+ * (`writePrivateFile`: a new owner-only file renamed over an existing one, so the report never sits
+ * in a file others can read; Windows has no such modes).
  */
 export async function writeReport(file: string, text: string): Promise<void> {
   await writePrivateFile(file, text);
