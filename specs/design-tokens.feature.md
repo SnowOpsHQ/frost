@@ -1,9 +1,10 @@
 # Feature: Design tokens (Signal foundation and values)
 
 Spec: `specs/design-tokens.spec.ts` (`TOKENS_STYLESHEET`, `SIGNAL_TOKENS`, `THEMED_SIGNAL_GROUPS`,
-`SIGNAL_NAMES_WITH_LEGACY_VALUES`, `LEGACY_TOKEN_MIGRATION`, `CONTRAST_PAIRS`, `HEX_COLOUR_RATCHET`). Source of truth:
+`SIGNAL_NAMES_WITH_LEGACY_VALUES`, `LEGACY_TOKEN_MIGRATION`, `CONTRAST_PAIRS`, `HEX_COLOUR_RATCHET`,
+`FONTS_STYLESHEET`, `GEIST_PACKAGE`, `GEIST_FONTS_ALIAS`, `TEXT_BODY_EMPHASIS_WEIGHT`, `BUNDLED_FONTS`). Source of truth:
 the Signal token sheet (its values and its Migration table) and the round-2 council decisions.
-Code: `apps/desktop/src/renderer/tokens.css`, imported by `main.tsx`. Each line maps to one named test.
+Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.tsx`. Each line maps to one named test.
 
 ## Decisions
 - **One token source.** Every custom property that lives on `:root` is declared in `tokens.css`,
@@ -41,12 +42,24 @@ Code: `apps/desktop/src/renderer/tokens.css`, imported by `main.tsx`. Each line 
   computed from the values in `tokens.css` (a translucent fill composited over its surface).
 - **Hex ratchet.** Literal hex colours in renderer stylesheets other than `tokens.css` never exceed
   `HEX_COLOUR_RATCHET`; each surface PR lowers it.
+- **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
+  official `geist` npm package (`GEIST_PACKAGE`: pinned exactly, SIL Open Font License 1.1, listed in
+  `THIRD_PARTY_NOTICES` with the licence text). Only static woff2 files, only the weights the type
+  scale uses (`BUNDLED_FONTS`: Geist 400, 500 for body emphasis, 600; Geist Mono 400), no italics,
+  variable or Pixel files. `fonts.css` holds one `@font-face` per file (`font-display: block`: the
+  files are local, so there is no flash of a fallback), each `src` a single
+  `url('@geist-fonts/<file>') format('woff2')`; the renderer's Vite config aliases `@geist-fonts` to
+  the installed package's `dist/fonts/` (its `exports` map hides them). Vite emits the four files as
+  hashed assets served from `app://` (the CSP's `font-src 'self'`): never a CDN, a remote URL or a
+  `data:` URI, and nothing else of the package is bundled. `main.tsx` imports `fonts.css` right after
+  `tokens.css`. The fonts are available, not applied: `--font-ui` and every rule are unchanged until
+  the surface PRs adopt the `--text-*` tokens.
 
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
 2. Foundation (done).
 3. Values (done): re-point the aliases and swap the shared names to their Signal values; Geist is
-   bundled in its own change.
+   bundled (done, its own change) but not yet applied.
 4. Next, one PR per surface: rules move onto Signal tokens, retired names go.
 
 ## Unit (`apps/desktop/src/__tests__/design-tokens.test.ts`)
@@ -75,3 +88,25 @@ Code: `apps/desktop/src/renderer/tokens.css`, imported by `main.tsx`. Each line 
   among stylesheets and before `App`.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
+
+## Unit, fonts (`apps/desktop/src/__tests__/fonts.test.ts`)
+- **Scenario: bundled-fonts-cover-the-type-scale** — the (family, weight) pairs of `BUNDLED_FONTS`
+  are exactly those the `SIGNAL_TOKENS.type` `font` shorthands use (each shorthand's weight and first
+  family), plus Geist at `TEXT_BODY_EMPHASIS_WEIGHT` (which `--text-body`'s `use` names); every file
+  is a static, upright woff2.
+- **Scenario: fonts-stylesheet-declares-bundled-fonts** — `fonts.css` holds only `@font-face` blocks,
+  exactly one per `BUNDLED_FONTS` entry (its family, weight, `font-style: normal`,
+  `font-display: block`), each `src` a single local `url('@geist-fonts/<file>') format('woff2')` (no
+  `http(s):`, no `data:`); the renderer's Vite config aliases `@geist-fonts` to the installed
+  package's `dist/fonts/`; `main.tsx` imports `fonts.css` right after `tokens.css`.
+- **Scenario: geist-is-pinned-and-installed** — `apps/desktop/package.json` pins `geist` to exactly
+  `GEIST_PACKAGE.version` (no range); the installed package has that version; each `BUNDLED_FONTS`
+  file exists there, larger than Vite's 4 KB inline limit (so it is never inlined as `data:`), and
+  starts with the woff2 signature `wOF2`; its `LICENSE.txt` is the SIL Open Font License 1.1; and
+  `NOTICE_PACKAGES` lists `geist`.
+
+## End to end (`apps/desktop/e2e/fonts.e2e.ts`, the built app)
+- **Scenario: geist-fonts-load** — in the chrome (`app://app/`), with a `securitypolicyviolation`
+  listener installed first, `document.fonts.load()` of each `BUNDLED_FONTS` face resolves to a
+  loaded `FontFace` of that family and weight; every woff2 the page fetched came from `app://`, one
+  per bundled face; and no CSP violation was reported (no event, no console message).

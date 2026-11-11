@@ -10,7 +10,8 @@
  * retired name and a layout constant keep their pre-Signal values. The rollout:
  * 1. foundation (done): one token source and the full Signal vocabulary, no pixel changed;
  * 2. values (done, this step): the legacy aliases point at their Signal tokens and the names in
- *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values; Geist is bundled separately;
+ *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values; Geist and Geist Mono are bundled
+ *    (`BUNDLED_FONTS`, declared in `FONTS_STYLESHEET`) but not yet applied;
  * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used.
  */
 
@@ -386,3 +387,59 @@ export const CONTRAST_PAIRS = [
   { fg: '--danger', bg: '--bg-surface', min: 3, why: RING },
   { fg: '--danger', bg: '--bg-sheet', min: 3, why: RING },
 ] as const satisfies readonly ContrastPair[];
+
+// ---- Fonts (step 2: Geist bundled, not yet applied) ----
+
+/**
+ * The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares the bundled
+ * fonts: only `@font-face` rules, one per `BUNDLED_FONTS` entry. `main.tsx` imports it right after
+ * `TOKENS_STYLESHEET`. It applies no font: `--font-ui` and every rule stay as they are until the
+ * surface PRs move onto the `--text-*` type tokens.
+ */
+export const FONTS_STYLESHEET = 'fonts.css';
+
+/**
+ * Where Geist and Geist Mono come from: the official `geist` npm package, pinned exactly (in
+ * `apps/desktop/package.json`) to a release at least two weeks old when it was chosen. Its fonts are
+ * under the SIL Open Font License 1.1 (`LICENSE.txt` in the package; its package.json says
+ * "SIL OPEN FONT LICENSE"), which `THIRD_PARTY_NOTICES` reproduces. Only its font files are bundled,
+ * never its JavaScript (a `next/font` wrapper frost has no use for).
+ */
+export const GEIST_PACKAGE = { name: 'geist', version: '1.8.2', license: 'OFL-1.1' } as const;
+
+/**
+ * The module-path prefix `fonts.css` uses for the package's `dist/fonts/` directory, which its
+ * `exports` map does not expose: the renderer's Vite config aliases it to the installed package's
+ * `dist/fonts/`. Vite then emits each file into the renderer build as a hashed asset served from
+ * `app://`, never a remote URL or a `data:` URI (`APP_CSP_DIRECTIVES` in `security-policy.spec.ts`
+ * allows fonts from `'self'` only).
+ */
+export const GEIST_FONTS_ALIAS = '@geist-fonts';
+
+/**
+ * The weight `--text-body` takes for emphasis (its `use`, "500 for emphasis"): the one weight the
+ * type scale needs that no `font` shorthand names.
+ */
+export const TEXT_BODY_EMPHASIS_WEIGHT = 500;
+
+/** One bundled font face (always `font-style: normal`). */
+export interface BundledFont {
+  /** The `font-family` name the type tokens use. */
+  readonly family: 'Geist' | 'Geist Mono';
+  readonly weight: number;
+  /** The static woff2 file, relative to the package's `dist/fonts/`. */
+  readonly file: string;
+}
+
+/**
+ * The fonts frost bundles: exactly the weights the `SIGNAL_TOKENS.type` shorthands use per family,
+ * plus Geist at `TEXT_BODY_EMPHASIS_WEIGHT`. Static woff2 files only (every Chromium reads woff2,
+ * and it is the smallest): no italics, no variable files, no Geist Pixel, no other weight. Local
+ * only, from `app://` (see `GEIST_FONTS_ALIAS`).
+ */
+export const BUNDLED_FONTS = [
+  { family: 'Geist', weight: 400, file: 'geist-sans/Geist-Regular.woff2' },
+  { family: 'Geist', weight: 500, file: 'geist-sans/Geist-Medium.woff2' },
+  { family: 'Geist', weight: 600, file: 'geist-sans/Geist-SemiBold.woff2' },
+  { family: 'Geist Mono', weight: 400, file: 'geist-mono/GeistMono-Regular.woff2' },
+] as const satisfies readonly BundledFont[];
