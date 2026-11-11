@@ -357,6 +357,44 @@ describe('web storage reader', () => {
     expect(JSON.stringify(await reader.answer(tab, false))).not.toContain('local-secret-1');
   });
 
+  test('tab-close-discards-only-its-reads', async () => {
+    const reader = createWebStorageReader();
+    const closing = new FakeTab(4);
+    const other = new FakeTab(5);
+    const gate = (tab: FakeTab) => {
+      let release: () => void = () => undefined;
+      const opened = new Promise<void>((resolve) => (release = resolve));
+      const run = tab.executeJavaScriptInIsolatedWorld.bind(tab);
+      tab.executeJavaScriptInIsolatedWorld = async (world, scripts) => {
+        await opened;
+        return run(world, scripts);
+      };
+      return () => {
+        tab.executeJavaScriptInIsolatedWorld = run;
+        release();
+      };
+    };
+    const releaseClosing = gate(closing);
+    const releaseOther = gate(other);
+    const closingRead = reader.answer(closing, true);
+    const otherRead = reader.answer(other, true);
+    // Tab 4 closes while both pages answer: only its own read is dropped.
+    reader.forget(closing.id);
+    releaseClosing();
+    releaseOther();
+    await expect(closingRead).resolves.toEqual({ webStorage: null, usage: null, quota: null });
+    expect(ready((await otherRead).webStorage, 'local').total).toBe(2);
+    await expect(reader.answer(closing, false)).resolves.toEqual({ webStorage: null, usage: null, quota: null });
+    // A revealed value read on the other tab survives a close too.
+    expect(reader.reveal(other, 'local', 'token')).toBe(true);
+    const run = other.executeJavaScriptInIsolatedWorld.bind(other);
+    other.executeJavaScriptInIsolatedWorld = (world, scripts) => {
+      reader.forget(closing.id);
+      return run(world, scripts);
+    };
+    expect(ready((await reader.answer(other, false)).webStorage, 'local').items.find((i) => i.key === 'token')!.value).toBe('local-secret-1');
+  });
+
   test('reader-runs-with-javascript-off', async () => {
     // With the page's scripting off (a render profile's JavaScript off), the page's main world runs
     // nothing; the reader does not depend on it: it runs only in its own isolated world, as the
