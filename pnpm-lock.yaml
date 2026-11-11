@@ -165,7 +165,7 @@ settings:
 overrides:
   '@mapbox/node-pre-gyp>tar': ^7.5.21
 
-packageExtensionsChecksum: sha256-xNXJoe/LWZHQMuW9DvRq7vAoP3hgHsiu6+3ydtNSXL8=
+packageExtensionsChecksum: sha256-TvucK1usfDHllMAeR9IN6ppdODqQwx+R2mPy4M4T92U=
 
 importers:
 
@@ -2745,6 +2745,7 @@ packages:
   image-size@0.7.5:
     resolution: {integrity: sha512-Hiyv+mXHfFEP7LzUL/llg9RwFxxY+o9N3JVLIeG5E7iFIFAalxvRU9UZthBdYDEVnzHMgjnKJPPpay5BWf1g9g==}
     engines: {node: '>=6.9.0'}
+    deprecated: Please migrate to image-size@2.x
     hasBin: true
 
   import-fresh@3.3.1:

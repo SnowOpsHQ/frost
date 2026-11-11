@@ -40,8 +40,9 @@ packageExtensions:
   # geist (Geist and Geist Mono, the chrome's interface fonts) declares a peer dependency on `next`
   # for its `next/font` wrapper. frost bundles only its woff2 files (vite.renderer.config.ts) and
   # never imports its JavaScript, so the peer is marked optional: pnpm then neither auto-installs
-  # Next.js (and its native SWC and sharp binaries) nor reports the peer as missing.
-  geist:
+  # Next.js (and its native SWC and sharp binaries) nor reports the peer as missing. Scoped to
+  # geist 1.x: a major upgrade must be looked at again.
+  geist@1:
     peerDependenciesMeta:
       next:
         optional: true

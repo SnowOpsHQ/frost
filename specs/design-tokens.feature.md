@@ -60,7 +60,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 2. Foundation (done).
 3. Values (done): re-point the aliases and swap the shared names to their Signal values; Geist is
    bundled (done, its own change) but not yet applied.
-4. Next, one PR per surface: rules move onto Signal tokens, retired names go.
+4. Next, one PR per surface: rules move onto Signal tokens, retired names go. The first one that
+   applies Geist (a rule reading `--text-*`) makes the fonts load at startup, before
+   `geist-fonts-load` starts watching requests: that PR reworks the scenario.
 
 ## Unit (`apps/desktop/src/__tests__/design-tokens.test.ts`)
 - **Scenario: tokens-stylesheet-holds-only-root-tokens** — `tokens.css` has only `:root` blocks

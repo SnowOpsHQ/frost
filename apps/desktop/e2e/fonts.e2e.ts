@@ -1,6 +1,8 @@
 // Specs: specs/design-tokens.spec.ts (BUNDLED_FONTS), specs/security-policy.spec.ts (APP_CSP_DIRECTIVES: font-src 'self')
 // Acceptance: specs/design-tokens.feature.md (End to end). The fonts are bundled but no rule uses them
-// yet, so nothing loads them until `document.fonts.load()` asks.
+// yet, so nothing loads them until `document.fonts.load()` asks, after the listeners below are in
+// place. (The chrome page can't simply be reloaded: its navigation guard aborts that.) The first
+// surface PR that applies Geist makes the fonts load at startup; it must rework this test.
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
 import { BUNDLED_FONTS } from '@app/specs/design-tokens.spec';
@@ -27,7 +29,10 @@ test('geist-fonts-load', async () => {
   const fontRequests: { url: string; status: number | undefined; type: string | undefined }[] = [];
   page.on('requestfinished', (request) => {
     if (!/\.woff2(?:[?#]|$)/.test(request.url())) return;
-    void request.response().then((response) => fontRequests.push({ url: request.url(), status: response?.status(), type: response?.headers()['content-type'] }));
+    void request
+      .response()
+      .then((response) => fontRequests.push({ url: request.url(), status: response?.status(), type: response?.headers()['content-type'] }))
+      .catch(() => fontRequests.push({ url: request.url(), status: undefined, type: undefined }));
   });
 
   const result = await page.evaluate(async (fonts) => {
