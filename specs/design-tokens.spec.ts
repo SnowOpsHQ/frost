@@ -5,12 +5,13 @@
  *
  * One stylesheet, `apps/desktop/src/renderer/tokens.css` (`TOKENS_STYLESHEET`), declares every
  * custom property that lives on `:root`, light and dark; `main.tsx` imports it before any other
- * stylesheet. It holds the legacy tokens (`LEGACY_TOKEN_MIGRATION`) at their current values and the
- * Signal tokens (`SIGNAL_TOKENS`). The rollout:
- * 1. foundation (this spec): one token source and the full Signal vocabulary, no pixel changed;
- * 2. values: the legacy aliases point at their Signal tokens, the names in
- *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values, and Geist is bundled;
- * 3. one PR per surface moves its rules onto Signal tokens and drops the retired names it used.
+ * stylesheet. It holds the legacy tokens (`LEGACY_TOKEN_MIGRATION`) and the Signal tokens
+ * (`SIGNAL_TOKENS`, every one at its Signal value). A legacy alias is `var()` of its Signal token; a
+ * retired name and a layout constant keep their pre-Signal values. The rollout:
+ * 1. foundation (done): one token source and the full Signal vocabulary, no pixel changed;
+ * 2. values (done, this step): the legacy aliases point at their Signal tokens and the names in
+ *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values; Geist is bundled separately;
+ * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used.
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -46,9 +47,8 @@ const SANS = 'Geist, system-ui, sans-serif';
 const MONO = "'Geist Mono', ui-monospace, monospace";
 
 /**
- * Every Signal token. Values follow `tokens.css` notation (`0.55`, not `.55`). A token named in
- * `SIGNAL_NAMES_WITH_LEGACY_VALUES` already exists with today's meaning: until the values PR,
- * `tokens.css` keeps its current value and the `light` / `dark` here are the values it will take.
+ * Every Signal token. Values follow `tokens.css` notation (`0.55`, not `.55`). `tokens.css` declares
+ * each at exactly these values, the names in `SIGNAL_NAMES_WITH_LEGACY_VALUES` included.
  */
 export const SIGNAL_TOKENS = {
   colour: [
@@ -173,9 +173,10 @@ export const SIGNAL_TOKENS = {
 export const THEMED_SIGNAL_GROUPS = ['colour', 'state', 'elevation'] as const satisfies readonly SignalTokenGroup[];
 
 /**
- * Signal names that already exist in `tokens.css` with today's meaning. Until the values PR they
- * keep their current values (no visual change); then they take the `SIGNAL_TOKENS` values.
- * (`--icon` is not one: it is a colour today, and the Signal icon size is `--icon-size`.)
+ * Signal names that existed before Signal with the same meaning (the Migration table's self-aliases).
+ * The foundation kept their pre-Signal values; since the values step they carry their
+ * `SIGNAL_TOKENS` values, light and dark (they can't be `var()` of themselves). The name is kept for
+ * history. (`--icon` is not one: it is a colour, and the Signal icon size is `--icon-size`.)
  */
 export const SIGNAL_NAMES_WITH_LEGACY_VALUES = [
   '--text',
@@ -194,7 +195,8 @@ export const SIGNAL_NAMES_WITH_LEGACY_VALUES = [
 
 /**
  * A legacy custom property and its Signal replacement, from the token sheet's Migration table.
- * `alias`: same meaning; the old name stays and (from the values PR on) points at `signal`.
+ * `alias`: same meaning; the old name stays and points at `signal` (`var(<signal>)` in light, no dark
+ * override; a self-alias simply carries the Signal value).
  * `retire`: replaced by `signal`; the old name goes once no rule uses it. `signal` is null when
  * nothing replaces it (a layout constant that keeps its own name, or a style Signal drops), and
  * `--text-*` means the type scale. `was` is the sheet's description of the old light value.
@@ -316,3 +318,58 @@ export const LEGACY_TOKEN_MIGRATION = [
  * written as `rgb()`, `hsl()` or a keyword is for review to catch.
  */
 export const HEX_COLOUR_RATCHET = 53;
+
+/**
+ * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
+ * of `min` (4.5 for text, 3 for UI and graphics), in light and in dark. `over` is the opaque surface a
+ * translucent `bg` (`--accent-soft`, a dark `-soft` fill) sits on, so the pair is composited first; a
+ * translucent `fg` is composited over the (composited) `bg`. `why` cites the sheet.
+ */
+export interface ContrastPair {
+  readonly fg: TokenName;
+  readonly bg: TokenName;
+  readonly min: 4.5 | 3;
+  readonly over?: TokenName;
+  readonly why: string;
+}
+
+const BODY = 'body text on every surface (4.5:1)';
+const FAINT = '"--text-faint passes 4.5:1 on window, subtle and white, but stays for secondary text 12px and up."';
+const RING = 'Score rings take their band colour: --ok, --warn, --danger (graphics, 3:1 on --bg-surface and --bg-sheet)';
+const WARN = '"--warn: dots and graphics (≥ 3:1 on white and sheet)"; ' + RING;
+const INK = '"Text on a soft status fill uses its -ink colour (≥ 4.5:1)"';
+
+/** The contrast pairs the Signal token sheet names; checked against `tokens.css` in both themes. */
+export const CONTRAST_PAIRS = [
+  // Text
+  { fg: '--text', bg: '--bg-window', min: 4.5, why: BODY },
+  { fg: '--text', bg: '--bg-sheet', min: 4.5, why: BODY },
+  { fg: '--text', bg: '--bg-subtle', min: 4.5, why: BODY },
+  { fg: '--text', bg: '--bg-surface', min: 4.5, why: BODY },
+  { fg: '--text-muted', bg: '--bg-window', min: 4.5, why: BODY },
+  { fg: '--text-muted', bg: '--bg-sheet', min: 4.5, why: BODY },
+  { fg: '--text-muted', bg: '--bg-subtle', min: 4.5, why: BODY },
+  { fg: '--text-muted', bg: '--bg-surface', min: 4.5, why: BODY },
+  { fg: '--text-faint', bg: '--bg-window', min: 4.5, why: FAINT },
+  { fg: '--text-faint', bg: '--bg-subtle', min: 4.5, why: `${FAINT} "Disabled controls: --text-faint on --bg-subtle"` },
+  { fg: '--text-faint', bg: '--bg-surface', min: 4.5, why: FAINT },
+  { fg: '--accent', bg: '--bg-surface', min: 4.5, why: 'links: --accent as text on a card (4.5:1)' },
+  { fg: '--accent', bg: '--bg-sheet', min: 4.5, why: 'links: --accent as text on a sheet (4.5:1)' },
+  // On-colour
+  { fg: '--on-accent', bg: '--accent', min: 4.5, why: 'accent buttons: --on-accent on --accent (4.5:1)' },
+  { fg: '--on-accent', bg: '--accent-hover', min: 4.5, why: 'accent buttons, hovered: --on-accent on --accent-hover (4.5:1)' },
+  { fg: '--on-inverse', bg: '--inverse', min: 4.5, why: 'inverse buttons (Ask frost): --on-inverse on --inverse (4.5:1)' },
+  // Status text on a soft fill
+  { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
+  { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },
+  { fg: '--danger-ink', bg: '--danger-soft', over: '--bg-surface', min: 4.5, why: INK },
+  // UI and graphics
+  { fg: '--switch-off', bg: '--bg-surface', min: 3, why: '"--switch-off is a switch\'s off track (≥ 3:1 against its card)"' },
+  { fg: '--accent', bg: '--bg-window', min: 3, why: 'focus ring: "a 2px gap in the window colour, then 2px of accent"' },
+  { fg: '--ok', bg: '--bg-surface', min: 3, why: RING },
+  { fg: '--ok', bg: '--bg-sheet', min: 3, why: RING },
+  { fg: '--warn', bg: '--bg-surface', min: 3, why: WARN },
+  { fg: '--warn', bg: '--bg-sheet', min: 3, why: WARN },
+  { fg: '--danger', bg: '--bg-surface', min: 3, why: RING },
+  { fg: '--danger', bg: '--bg-sheet', min: 3, why: RING },
+] as const satisfies readonly ContrastPair[];
