@@ -338,6 +338,8 @@ function start(): void {
     // accessibility world, on request only; its answer is validated in the analysis worker.
     accessibility: runAccessibilityCheck,
     clipboard,
+    // Copy as CSV under "Broken only" keeps the rows the panel lists: the link check's broken targets.
+    brokenLinks: (tabId) => (checks?.state(tabId).links.results ?? []).filter((result) => result.kind === 'broken').map((result) => result.url),
     // The command palette's Clear Browsing Data… (specs/command-palette.feature.md): the menu's own,
     // confirming action, set up once the app is ready (below).
     clearBrowsingData: () => void clearBrowsingData?.(),

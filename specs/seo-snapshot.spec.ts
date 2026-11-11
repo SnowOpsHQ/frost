@@ -438,8 +438,12 @@ export type LinkFilter = z.infer<typeof LinkFilterSchema>;
 export const SeoAuditRefSchema = z.strictObject({ url: urlText.min(1), takenAt: z.number().nonnegative() });
 export type SeoAuditRef = z.infer<typeof SeoAuditRefSchema>;
 
-/** `seo.copyLinksCsv` input: the tab, the audit the panel shows, and the filter whose rows are copied (what the panel shows). */
-export const SeoLinksCsvInputSchema = z.strictObject({ tabId: z.int().positive(), audit: SeoAuditRefSchema, filter: LinkFilterSchema });
+/**
+ * `seo.copyLinksCsv` input: the tab, the audit the panel shows, the filter whose rows are copied (what
+ * the panel shows), and whether "Broken only" is on (`seo-checks.feature.md`): then only the rows
+ * whose target the tab's link check found `broken` are copied, as the panel lists them.
+ */
+export const SeoLinksCsvInputSchema = z.strictObject({ tabId: z.int().positive(), audit: SeoAuditRefSchema, filter: LinkFilterSchema, brokenOnly: z.boolean() });
 export type SeoLinksCsvInput = z.infer<typeof SeoLinksCsvInputSchema>;
 
 /**

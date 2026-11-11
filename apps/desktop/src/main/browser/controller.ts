@@ -1,6 +1,6 @@
 import type { SavedSession } from '@app/db';
 import type { BrowserService, SeoService, TabOverridesService } from '@app/ipc-contract';
-import { copyValueOf, filterLinks, formatJson, linksCsv, pageUrls } from '@app/seo-core';
+import { copyValueOf, filterLinks, formatJson, linkTargetKey, linksCsv, pageUrls } from '@app/seo-core';
 import { APP_WINDOW_TITLE, MAX_TABS, WINDOW_TITLE_SEPARATOR, type BrowserState, type Notice, type NoticeKind } from '@app/specs/browser.spec';
 import { OPEN_IN_TEMPLATES, type OpenInTemplateId, type OpenToolResult, type PaletteReturnFocus } from '@app/specs/command-palette.spec';
 import { isPublicAddress, openInUrl } from '@app/specs/open-in.spec';
@@ -242,6 +242,12 @@ export interface BrowserControllerOptions {
    * through it, so the chrome never needs clipboard access. Without it they copy nothing.
    */
   readonly clipboard?: { writeText(text: string): void };
+  /**
+   * The targets the tab's link check found `broken` (main's checks: `seo-checks.feature.md`), as the
+   * Links panel's "Broken only" reads them: Copy as CSV with `brokenOnly` keeps only those rows.
+   * Without it no link is broken.
+   */
+  readonly brokenLinks?: (tabId: number) => readonly string[];
   /**
    * The menu's Clear Browsing Data… (`createClearBrowsingData` in `../clear-browsing-data.ts`: it
    * asks first): `browser.clearBrowsingData` from the command palette runs it. Without it, a no-op.
@@ -1202,10 +1208,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       },
       // All three copy only what the tab's ready audit holds, through main's clipboard, and only from
       // the audit the panel shows (`SeoAuditRefSchema`).
-      copyLinksCsv: (tabId, shown, filter) => {
+      copyLinksCsv: (tabId, shown, filter, brokenOnly) => {
         const response = audits.response(strip.tabs.find((tab) => tab.id === tabId));
         if (!options.clipboard || response.status !== 'ready' || !sameAudit(response.audit, shown)) return null;
-        const rows = filterLinks(response.audit.page.linkList, filter);
+        const filtered = filterLinks(response.audit.page.linkList, filter);
+        // "Broken only": a row's result is looked up by its target as the panel does (`linkResultIndex`).
+        const broken = brokenOnly ? new Set(options.brokenLinks?.(tabId) ?? []) : null;
+        const rows = broken ? filtered.filter((link) => link.href !== '' && broken.has(linkTargetKey(link.href) ?? link.href)) : filtered;
         options.clipboard.writeText(linksCsv(rows));
         return rows.length;
       },
