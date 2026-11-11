@@ -289,6 +289,13 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 - **Scenario: activate-waits-for-startup** — `reopenOnActivate`: an `activate` before startup is
   complete opens nothing, and once it is, sees the window startup opened (no second one); an
   `activate` after startup with no live window opens one.
+- **Scenario: startup-failure-quits** — a startup that fails after the lock is taken (the
+  `whenReady` chain throws or rejects before the first window opens) is logged (`console.error`),
+  reported to telemetry as the unhandled rejection it would otherwise be (`captureException`,
+  mechanism `onunhandledrejection`, `handled: false`; sent only with `errors` consent), and then the
+  app quits (`quitOnStartupFailure`), even if reporting throws: it never stays running windowless,
+  holding the lock, so a later launch starts normally instead of handing over to an instance that
+  shows nothing. The helper is unit-tested; its wiring in `main/index.ts` is not.
 
 ## Main wiring (`apps/desktop/src/main/__tests__/session-store.test.ts`, real `node:sqlite`, temp dir)
 - **Scenario: session-persists-across-reopen** — tabs, visits and Blocks saved through one

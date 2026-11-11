@@ -57,6 +57,25 @@ export function claimSingleInstance(app: InstanceApp, options: WindowOptions): b
   return true;
 }
 
+/**
+ * The `catch` for startup after the lock is taken: a failed startup is logged, handed to `report`
+ * (telemetry: caught here, it is no longer an unhandled rejection telemetry would see) and the app
+ * quits. Left running with no window it would keep the lock, and every later launch would hand over
+ * to it and show nothing. Quitting runs the same `will-quit` handlers (the session store's flush,
+ * telemetry's) as any quit; a `report` that throws does not stop it.
+ */
+export function quitOnStartupFailure(app: Pick<InstanceApp, 'quit'>, report: (error: unknown) => void): (error: unknown) => void {
+  return (error) => {
+    console.error('startup failed', error);
+    try {
+      report(error);
+    } catch {
+      // Reporting never stops the quit.
+    }
+    app.quit();
+  };
+}
+
 /** macOS: the dock icon (`activate`) opens a window when none is open, once startup is complete. */
 export function reopenOnActivate(app: InstanceApp, options: WindowOptions): void {
   app.on('activate', () => {

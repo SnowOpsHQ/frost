@@ -52,7 +52,7 @@ import { runIntentSelfTestIfAsked } from './intent/selftest';
 import { setupSerp } from './serp/setup';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
-import { claimSingleInstance, reopenOnActivate } from './single-instance';
+import { claimSingleInstance, quitOnStartupFailure, reopenOnActivate } from './single-instance';
 import { handleSquirrelEvent } from './update/squirrel-events';
 import { startUpdateService } from './update/service';
 import { startSyncService } from './sync/service';
@@ -601,7 +601,10 @@ function start(): void {
     browser.restoreSession(saved.session);
     openMainWindow();
     markStarted();
-  });
+  }).catch(
+    // Caught here, a failed startup is no longer an unhandled rejection: reported to telemetry as one.
+    quitOnStartupFailure(app, (error) => telemetryMain.telemetry.captureException(error, { mechanism: 'onunhandledrejection', handled: false })),
+  );
 
   // macOS: re-create a window when the dock icon is clicked and none are open.
   reopenOnActivate(app, windowOptions);

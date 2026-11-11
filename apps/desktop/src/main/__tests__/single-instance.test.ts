@@ -1,7 +1,7 @@
 // Acceptance: specs/browser-session-db.feature.md (Single instance)
 import { EventEmitter } from 'node:events';
 import { describe, expect, test, vi } from 'vitest';
-import { claimSingleInstance, reopenOnActivate, type ShowableWindow } from '../single-instance';
+import { claimSingleInstance, quitOnStartupFailure, reopenOnActivate, type ShowableWindow } from '../single-instance';
 
 class FakeApp extends EventEmitter {
   ready = true;
@@ -100,6 +100,39 @@ describe('single instance', () => {
     app.emit('activate');
     await settle();
     expect(openWindow).toHaveBeenCalledOnce();
+  });
+
+  test('startup-failure-quits', async () => {
+    const app = new FakeApp(true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const failure = new Error('session store failed to open');
+      const report = vi.fn<(error: unknown) => void>();
+      await Promise.reject(failure).catch(quitOnStartupFailure(app, report));
+      expect(error).toHaveBeenCalledOnce();
+      expect(error.mock.calls[0]).toContain(failure);
+      // Reported (telemetry's will-quit hold then flushes it) before the quit.
+      expect(report).toHaveBeenCalledExactlyOnceWith(failure);
+      expect(app.quit).toHaveBeenCalledOnce();
+      expect(report.mock.invocationCallOrder[0]).toBeLessThan(app.quit.mock.invocationCallOrder[0]!);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test('startup-failure-quits even when reporting throws', async () => {
+    const app = new FakeApp(true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const report = vi.fn<(error: unknown) => void>(() => {
+        throw new Error('reporter broke');
+      });
+      await Promise.reject(new Error('boom')).catch(quitOnStartupFailure(app, report));
+      expect(report).toHaveBeenCalledOnce();
+      expect(app.quit).toHaveBeenCalledOnce();
+    } finally {
+      error.mockRestore();
+    }
   });
 });
 
