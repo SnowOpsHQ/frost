@@ -2,7 +2,7 @@
 // Spec: specs/agent-panel.spec.ts (AGENT_APPROVAL_BUTTONS, AGENT_SET_KEY_MESSAGES), specs/agent-session.spec.ts
 // (APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE)
 // Acceptance: specs/agent-panel.feature.md (Components: reasoning-select-sends-set-reasoning-effort, reasoning-auto-only-explained), specs/skills.feature.md (composer-skill-picker),
-// specs/agent-attach.feature.md (composer-at-menu-attaches-a-tab, attachment-chips-render-titles-as-text; specs/agent-panel.spec.ts AGENT_ATTACH_WORDS)
+// specs/agent-attach.feature.md (composer-at-menu-attaches-a-tab, composer-at-menu-drops-a-stale-list, composer-at-menu-is-a-group-of-buttons, attachment-chips-render-titles-as-text; specs/agent-panel.spec.ts AGENT_ATTACH_WORDS)
 import { act, createElement, createRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -392,6 +392,51 @@ describe('agent panel components', () => {
     await flush();
     expect(byTestId('agent-attach-message')!.textContent).toBe(AGENT_ATTACH_WORDS.full);
     expect(calls.attachableTabs).not.toHaveBeenCalled();
+  });
+
+  test('composer-at-menu-drops-a-stale-list', async () => {
+    const inputRef = createRef<HTMLTextAreaElement>();
+    let answerA: (tabs: { tabId: number; title: string; origin: string }[]) => void = () => undefined;
+    calls.attachableTabs.mockImplementationOnce(() => new Promise((resolve) => (answerA = resolve)));
+    render(createElement(AgentComposer, { chatId: 'a', running: false, stopChatId: null, inputRef }));
+    click(byTestId('agent-attach'));
+    await flush();
+    // Chat B selected while A's list is on its way; B's menu opens and gets its own list first.
+    render(createElement(AgentComposer, { chatId: 'b', running: false, stopChatId: null, inputRef }));
+    calls.attachableTabs.mockResolvedValueOnce([{ tabId: 7, title: 'B side', origin: 'https://b.example' }]);
+    click(byTestId('agent-attach'));
+    await flush();
+    expect(calls.attachableTabs.mock.calls).toEqual([['a'], ['b']]);
+    // A's late list (which lists B's tab) is dropped.
+    await act(async () => answerA([{ tabId: 9, title: 'A side', origin: 'https://a.example' }]));
+    const options = [...host.querySelectorAll<HTMLElement>('[data-testid="agent-attach-option"]')];
+    expect(options.map((option) => option.dataset['tabId'])).toEqual(['7']);
+  });
+
+  test('composer-at-menu-is-a-group-of-buttons', async () => {
+    const inputRef = createRef<HTMLTextAreaElement>();
+    render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef }));
+    const button = byTestId('agent-attach')!;
+    expect(button.hasAttribute('aria-haspopup')).toBe(false);
+    click(button);
+    await flush();
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    const menu = byTestId('agent-attach-menu')!;
+    expect(menu.getAttribute('role')).toBe('group');
+    expect(menu.getAttribute('aria-label')).toBe(AGENT_ATTACH_WORDS.menuLabel);
+    expect(host.querySelector('[role="menu"], [role="menuitem"]')).toBeNull();
+    const options = [...menu.querySelectorAll<HTMLButtonElement>('[data-testid="agent-attach-option"]')];
+    expect(options).toHaveLength(2);
+    // Plain buttons in the Tab order.
+    for (const option of options) {
+      expect(option.tagName).toBe('BUTTON');
+      expect(option.tabIndex).toBe(0);
+    }
+    // Escape closes it and puts focus back in the field.
+    options[0]!.focus();
+    act(() => options[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(byTestId('agent-attach-menu')).toBeNull();
+    expect(document.activeElement).toBe(byTestId('agent-input'));
   });
 
   test('attachment-chips-render-titles-as-text', async () => {

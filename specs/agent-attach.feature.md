@@ -48,6 +48,13 @@ named test.
   `text` the attached tab's live `tabOverrides` and `loadedUnderOverrides: true`, each only when set
   (as `page_audit` / `page_text`, `agent-page-tools.feature.md`).
 - **Bounded.** At most `MAX_ATTACHED_READS_PER_TURN` (2) calls per attachment per turn.
+- **The menu belongs to the chat it opened for.** Selecting another chat closes it, and a list main
+  answers for a menu that has since closed (another chat's, or one opened again) is dropped, never
+  shown in the menu open now.
+- **The menu is a group of buttons, not an ARIA menu.** Tab and Shift+Tab move through its tabs,
+  Enter or Space picks one, Escape closes it and returns focus to the message field. It claims no
+  `menu` / `menuitem` roles (and the Attach button no `aria-haspopup`), since it has no arrow-key
+  model.
 
 ## Scenarios (main: `apps/desktop/src/main/agent/__tests__/attached-tabs.test.ts`)
 - Scenario: a ref the chat never attached is refused — `ref-not-attached-refused`
@@ -81,4 +88,8 @@ named test.
   `agent-inputs-are-bounded`, `attach-procedures` (`agent-router.test.ts`)
 - Scenario: the composer's `@` menu lists tabs, attaches one and shows chips as text —
   `composer-at-menu-attaches-a-tab`, `attachment-chips-render-titles-as-text` (`agent-components.test.ts`)
+- Scenario: a late list for a menu that has closed is not shown in another chat's menu —
+  `composer-at-menu-drops-a-stale-list` (`agent-components.test.ts`)
+- Scenario: the `@` menu is a labelled group of buttons, with no menu roles —
+  `composer-at-menu-is-a-group-of-buttons` (`agent-components.test.ts`)
 - Scenario: end to end with the scripted model — `attach-second-tab-and-read-it` (`e2e/agent.e2e.ts`)
