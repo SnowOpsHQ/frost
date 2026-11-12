@@ -100,7 +100,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   wordmark is `--text-display` (the type scale's largest: it was 44px at weight 300, which Geist isn't
   bundled in) and the hint `--text-body` in `--text-muted`. "Jump back in" takes `--text-caps` for its
   title, and its tiles are `--bg-surface` cards at `--r-md` with `--e-ring` in place of their border
-  (`--jump-tile-edge`; a transparent 1px border stays, the edge forced colours draw), the label in `--text-body` at its emphasis weight and the host in `--text-small`
+  (`--jump-tile-edge`; a transparent 1px border stays, the edge forced colours draw), the label in
+  `--text-body` at its emphasis weight and the host in `--text-small`
   (`--text-faint`, 12px). A tile's monogram is an `--h-chip` square at `--r-sm` on `--accent-soft`
   (`--jump-monogram-bg`) with its letter in `--accent` at `--text-body`'s size and weight 600; History's
   monogram, which shared the retired fill, moves to `--accent-soft` too. A hovered tile rings in
