@@ -33,19 +33,28 @@ const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8'
 const RENDERER_FILES = (readdirSync(RENDERER, { recursive: true }) as string[]).map((name) => name.replaceAll('\\', '/')).sort();
 /** Every stylesheet under the renderer, relative to it. */
 const STYLESHEETS = RENDERER_FILES.filter((name) => name.endsWith('.css'));
-/** The renderer's sources: its stylesheets and its scripts (inline styles can read a token too). */
-const RENDERER_SOURCES = RENDERER_FILES.filter((name) => /\.(css|tsx?)$/.test(name));
+/** The renderer's sources: its stylesheets, its scripts and its page (inline styles can read a token too). */
+const RENDERER_SOURCES = RENDERER_FILES.filter((name) => /\.(css|tsx?|html)$/.test(name));
 const MIGRATION: readonly LegacyTokenMigration[] = LEGACY_TOKEN_MIGRATION;
 const REMOVED: readonly string[] = MIGRATION.filter((row) => row.removed === true).map((row) => row.legacy);
 
 const DARK = '@media (prefers-color-scheme: dark)';
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+/** A source without its comments: block comments, `//` line comments in scripts (not `://`), HTML comments. */
+const stripSourceComments = (name: string, text: string) => {
+  const blockless = stripComments(text);
+  if (/\.tsx?$/.test(name)) return blockless.replace(/(^|[^:])\/\/.*$/gm, '$1');
+  if (name.endsWith('.html')) return blockless.replace(/<!--[\s\S]*?-->/g, '');
+  return blockless;
+};
 
 interface Declaration {
   /** The enclosing at-rule preludes and selectors, outermost first, whitespace collapsed. */
   readonly context: readonly string[];
   readonly property: string;
   readonly value: string;
+  /** The index (in `blocks`) of the block that holds it. */
+  readonly block: number;
 }
 
 /** The declarations of `css`, each with its context, and the context of every block. (The
@@ -54,23 +63,26 @@ function parse(css: string): { declarations: Declaration[]; blocks: string[][] }
   const declarations: Declaration[] = [];
   const blocks: string[][] = [];
   const stack: string[] = [];
+  const ids: number[] = [];
   let buffer = '';
   const flush = () => {
     const text = buffer.trim();
     const colon = text.indexOf(':');
     if (colon > 0) {
-      declarations.push({ context: [...stack], property: text.slice(0, colon).trim(), value: text.slice(colon + 1).trim().replace(/\s+/g, ' ') });
+      declarations.push({ context: [...stack], property: text.slice(0, colon).trim(), value: text.slice(colon + 1).trim().replace(/\s+/g, ' '), block: ids.at(-1) ?? -1 });
     }
     buffer = '';
   };
   for (const ch of stripComments(css)) {
     if (ch === '{') {
       stack.push(buffer.trim().replace(/\s+/g, ' '));
+      ids.push(blocks.length);
       blocks.push([...stack]);
       buffer = '';
     } else if (ch === '}') {
       flush();
       stack.pop();
+      ids.pop();
     } else if (ch === ';') {
       flush();
     } else {
@@ -218,7 +230,7 @@ test('removed-legacy-tokens-are-gone', () => {
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
     // `--palette-sheet` must not match `--palette-sheet-height`.
     const mention = new RegExp(`${name}(?![\\w-])`);
-    for (const file of RENDERER_SOURCES) expect(mention.test(stripComments(read(file))), `${file} mentions ${name}`).toBe(false);
+    for (const file of RENDERER_SOURCES) expect(mention.test(stripSourceComments(file, read(file))), `${file} mentions ${name}`).toBe(false);
   }
 });
 
@@ -387,36 +399,93 @@ test('tokens-load-before-every-other-stylesheet', () => {
   expect(imports.indexOf(`./${TOKENS_STYLESHEET}`)).toBeLessThan(imports.indexOf('./App'));
 });
 
-test('surface-rules-read-signal-tokens', () => {
+/** Keywords a colour-bearing value on a surface may hold besides `var()` of a Signal token or alias. */
+const SURFACE_COLOUR_WORDS = new Set(['transparent', 'currentcolor', 'inherit', 'initial', 'unset', 'none', 'solid', 'dashed', 'dotted', 'double', 'inset', 'color-mix', 'in', 'srgb', 'calc', 'min', 'max', 'clamp']);
+/** Properties whose value can carry a colour (only these get the colour allowlist). */
+const COLOUR_PROPERTY = /^(?:color|background(?:-color)?|border(?:-[a-z-]+)?|outline(?:-color)?|box-shadow|text-shadow|fill|stroke|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?)$/;
+
+/**
+ * What breaks `surface`'s rules in `css` (design-tokens.feature.md, surface-rules-read-signal-tokens).
+ * A rule is the surface's when any selector in any level of its context names one of the surface's
+ * classes (`selectorPrefix` itself, or it followed by `-…`, on a class boundary: `.palette`,
+ * `.chrome .palette-option`; never `.palettes` or `.x-palette`), or when it sits in a `@keyframes`
+ * whose name is the prefix's stem or starts with it and `-` (`palette-in`).
+ */
+function surfaceProblems(css: string, surface: SignalSurface): { problems: string[]; checked: number; typeRules: number } {
   const aliases = new Set<string>(MIGRATION.filter((row) => row.kind === 'alias').map((row) => row.legacy));
-  const typeTokens = new Map<string, string>(SIGNAL_TOKENS.type.map((token) => [token.name, token.tracking]));
+  const tracking = new Map<string, string>(SIGNAL_TOKENS.type.map((token) => [token.name, token.tracking]));
   const geistWeights = new Set(BUNDLED_FONTS.filter((font) => font.family === 'Geist').map((font) => String(font.weight)));
-  const NAMED_COLOUR = /(?<![\w-])(white|black|red|green|blue|gray|grey|silver|yellow|orange|purple|navy)(?![\w-])/i;
+  const stem = surface.selectorPrefix.replace(/^\./, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const ownClass = new RegExp(`\\.${stem}(?:-[\\w-]+)?(?![\\w-])`);
+  const ownKeyframes = new RegExp(`^@keyframes\\s+${stem}(?:-[\\w-]+)?$`);
+  const owns = (context: readonly string[]) =>
+    context.some((level) => (level.startsWith('@') ? ownKeyframes.test(level) : level.split(',').some((selector) => ownClass.test(selector))));
+  const own = parse(css).declarations.filter((d) => owns(d.context));
+  const problems: string[] = [];
+  const byBlock = new Map<number, Declaration[]>();
+  for (const d of own) {
+    byBlock.set(d.block, [...(byBlock.get(d.block) ?? []), d]);
+    const label = `${surface.name}: ${d.context.join(' > ')} { ${d.property}: ${d.value} }`;
+    for (const [, name] of d.value.matchAll(/var\(\s*(--[\w-]+)/g)) {
+      if (!SIGNAL_NAMES.has(name!) && !aliases.has(name!)) problems.push(`${label}: ${name} is neither a Signal token nor an alias`);
+    }
+    if (COLOUR_PROPERTY.test(d.property)) {
+      // Only var() of a token (no fallback), the keywords above, numbers and lengths.
+      const rest = d.value.replace(/var\(\s*--[\w-]+\s*\)/g, ' ').toLowerCase();
+      const words = rest.replace(/-?\d*\.?\d+[a-z%]*/g, ' ').match(/[a-z][\w-]*/g) ?? [];
+      const strays = words.filter((word) => !SURFACE_COLOUR_WORDS.has(word));
+      if (rest.includes('#') || strays.length > 0) problems.push(`${label}: a literal colour (${rest.includes('#') ? '#' : strays.join(', ')})`);
+    }
+    if (['font-size', 'font-family', 'line-height'].includes(d.property)) problems.push(`${label}: type comes from a --text-* token`);
+    if (d.property === 'font-weight' && !geistWeights.has(d.value)) problems.push(`${label}: not a bundled Geist weight`);
+  }
+  let typeRules = 0;
+  for (const declarations of byBlock.values()) {
+    const fonts = declarations.filter((d) => d.property === 'font');
+    const spacing = declarations.filter((d) => d.property === 'letter-spacing').at(-1);
+    const token = fonts.length === 0 ? undefined : /^var\((--text-[\w-]+)\)$/.exec(fonts.at(-1)!.value)?.[1];
+    const label = `${surface.name}: ${declarations[0]!.context.join(' > ')}`;
+    if (fonts.length > 0 && (token === undefined || !tracking.has(token))) problems.push(`${label}: font is not a --text-* token (${fonts.at(-1)!.value})`);
+    if (token !== undefined && tracking.has(token)) {
+      typeRules += 1;
+      const wanted = tracking.get(token)!;
+      if (wanted !== '0' && spacing === undefined) problems.push(`${label}: ${token} needs letter-spacing: ${wanted} beside it`);
+      if (spacing !== undefined && spacing.value !== wanted) problems.push(`${label}: letter-spacing ${spacing.value} is not ${token}'s ${wanted}`);
+    } else if (spacing !== undefined) {
+      problems.push(`${label}: letter-spacing without a --text-* font in the same rule`);
+    }
+  }
+  return { problems, checked: own.length, typeRules };
+}
+
+test('surface-rules-read-signal-tokens', () => {
+  const palette: SignalSurface = { name: 'fixture', stylesheet: 'n/a', selectorPrefix: '.palette' };
+  const problemsIn = (css: string, surface = palette) => surfaceProblems(css, surface).problems;
+  // The guard itself: each of these must be caught.
+  const caught: Record<string, string> = {
+    'mixed selector list': '.foo, .palette-option { color: #fff; }',
+    'ancestor-qualified selector': '.chrome .palette-option { background: var(--bg-surface); color: red; }',
+    'var( with a space': '.palette { border: 1px solid var( --palette-edge); }',
+    'named colour': '.palette-hit { color: rebeccapurple; }',
+    'colour in a palette keyframe': '@keyframes palette-in { from { background: #ffffff; } }',
+    'caps without its letter-spacing': '.palette-group-label { font: var(--text-caps); }',
+    'body with caps letter-spacing': '.palette-option { font: var(--text-body); letter-spacing: 0.06em; }',
+    'a var() fallback': '.palette { color: var(--text, black); }',
+  };
+  for (const [name, css] of Object.entries(caught)) expect(problemsIn(css), name).not.toEqual([]);
+  // ... and these pass: a token rule, a class-boundary miss, a caps rule with its tracking.
+  expect(problemsIn('.palette-group-label { font: var(--text-caps); letter-spacing: 0.06em; color: var(--text-muted); }')).toEqual([]);
+  expect(problemsIn('.palette { box-shadow: var(--e-ring), inset 0 0 0 100vmax var(--bg-hover); border: 0; }')).toEqual([]);
+  expect(surfaceProblems('.table-row { color: red; }', { name: 'tab', stylesheet: 'n/a', selectorPrefix: '.tab' }).checked).toBe(0);
+  expect(surfaceProblems('.palettes, .x-palette { color: red; }', palette).checked).toBe(0);
+
   const surfaces: readonly SignalSurface[] = SIGNAL_SURFACES;
   expect(surfaces.length).toBeGreaterThan(0);
   for (const surface of surfaces) {
-    const own = parse(read(surface.stylesheet)).declarations.filter((d) => {
-      const selectors = (d.context.at(-1) ?? '').split(',').map((s) => s.trim());
-      return selectors.every((s) => s.startsWith(surface.selectorPrefix));
-    });
-    expect(own.length, surface.name).toBeGreaterThan(0);
-    let typeSet = 0;
-    for (const d of own) {
-      const label = `${surface.name}: ${d.context.at(-1)} { ${d.property}: ${d.value} }`;
-      for (const [, name] of d.value.matchAll(/var\((--[\w-]+)/g)) {
-        expect(SIGNAL_NAMES.has(name!) || aliases.has(name!), `${label}: ${name} is neither a Signal token nor an alias`).toBe(true);
-      }
-      expect(/#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/i.test(d.value) || NAMED_COLOUR.test(d.value), `${label}: a literal colour`).toBe(false);
-      expect(['font-size', 'font-family', 'line-height'], label).not.toContain(d.property);
-      if (d.property === 'font') {
-        const token = /^var\((--text-[\w-]+)\)$/.exec(d.value)?.[1];
-        expect(token !== undefined && typeTokens.has(token), `${label}: font is a --text-* token`).toBe(true);
-        typeSet += 1;
-      }
-      if (d.property === 'letter-spacing') expect([...typeTokens.values()], label).toContain(d.value);
-      if (d.property === 'font-weight') expect([...geistWeights], label).toContain(d.value);
-    }
-    expect(typeSet, `${surface.name} reads the --text-* tokens`).toBeGreaterThan(0);
+    const result = surfaceProblems(read(surface.stylesheet), surface);
+    expect(result.checked, surface.name).toBeGreaterThan(0);
+    expect(result.problems, surface.name).toEqual([]);
+    expect(result.typeRules, `${surface.name} reads the --text-* tokens`).toBeGreaterThan(0);
   }
 });
 
