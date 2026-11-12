@@ -7756,8 +7756,9 @@ input {
   column-gap: var(--space-4);
   align-items: center;
   width: 100%;
-  padding: var(--space-3) var(--space-4);
-  border: 0;
+  /* A transparent border (forced colours draw it as the edge) inside the same box. */
+  padding: calc(var(--space-3) - 1px) calc(var(--space-4) - 1px);
+  border: 1px solid transparent;
   border-radius: var(--r-md);
   background: var(--jump-tile-bg);
   box-shadow: var(--e-ring);
@@ -7774,7 +7775,9 @@ input {
 }
 
 .jump-tile:focus-visible {
-  outline: 0;
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
 }
 

@@ -204,9 +204,11 @@
 .setup {
   width: min(640px, 92%);
   margin-top: 26px;
-  padding: 12px 14px;
+  /* A transparent border (forced colours draw it as the edge) inside the same box. */
+  padding: 11px 13px;
+  border: 1px solid transparent;
   border-radius: 12px;
-  background: var(--jump-tile-bg, var(--bg-field));
+  background: var(--bg-surface);
   box-shadow: var(--e-ring);
   text-align: start;
 }
