@@ -1331,7 +1331,7 @@ input {
 
 .seo-badge[data-severity='error'] {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .seo-badge[data-severity='warning'] {
@@ -2982,7 +2982,7 @@ input {
 
 .seo-block-status[data-status='invalid'] {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .seo-block-status[data-status='cut'] {
@@ -3871,7 +3871,7 @@ input {
 
 .seo-hreflang-row[data-valid='false'] .seo-hreflang-code {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .seo-hreflang-body {
@@ -5749,7 +5749,7 @@ input {
 /* The overrides' cookie or location part could not be applied (whole-branch review). */
 .status-tab-overrides[data-status='failed'] {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .render-overrides-failed {
@@ -8687,7 +8687,7 @@ input {
 .changes-segment[data-op='del'] {
   border-radius: 3px;
   background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  color: var(--danger-ink);
   text-decoration: line-through;
 }
 

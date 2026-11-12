@@ -49,8 +49,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   and a hovered tab past it): `TAB_STRIP` keeps the active tab at least 1.1:1 off the strip, a
   hovered tab's luminance between the two and the divider between inactive tabs at least 1.1:1 off
   the strip, in both themes, until the chrome's surface PR.
-- **Known exception.** `--ok` as text (21 rules) is under 4.5:1 in light: `KNOWN_CONTRAST_EXCEPTIONS`
-  records it and the surface PRs move those rules to `--ok-ink`; only the 11px chips moved now.
+- **Known exceptions.** `KNOWN_CONTRAST_EXCEPTIONS` records what still misses its minimum, for the
+  surface PRs: `--ok` as text (21 rules) is under 4.5:1 in light, and those rules move to `--ok-ink`
+  (only the 11px chips moved now); the status bar's failed-overrides chip, now `--danger-ink` on the
+  14% danger tint over `--bg-chrome`, is 4.46:1 in light (from 3.33), and the status bar's surface
+  PR settles its fill.
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
   (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`.
@@ -98,8 +101,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   contrast ratio in light and in dark, read from `tokens.css` (`var()` resolved, translucent colours
   composited); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
 - **Scenario: known-contrast-exceptions-are-current** — each `KNOWN_CONTRAST_EXCEPTIONS` pair still
-  misses its minimum in at least one theme, is not in `CONTRAST_PAIRS`, and exactly `rules`
-  declarations in the renderer's stylesheets draw text in its `fg` (so fixing them removes the entry).
+  misses its minimum in at least one theme (a tint composited as in `CONTRAST_PAIRS`), is not in
+  `CONTRAST_PAIRS`, and is located exactly: either `rules` declarations in the renderer's stylesheets
+  draw text in its `fg`, or its one `element` resolves `color` to its `fg` (so fixing it removes the
+  entry).
 - **Scenario: tab-strip-orders-strip-hover-active** — in light and dark, the active tab
   (`TAB_STRIP.active`) against the strip reaches `TAB_STRIP.minActiveOnStrip`, and the hover fill
   composited over the strip has a luminance strictly between the strip's and the active tab's; the
