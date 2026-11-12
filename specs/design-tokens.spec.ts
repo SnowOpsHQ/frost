@@ -388,6 +388,22 @@ export const CONTRAST_PAIRS = [
   { fg: '--danger', bg: '--bg-sheet', min: 3, why: RING },
 ] as const satisfies readonly ContrastPair[];
 
+/**
+ * The tab row until the chrome's surface PR rebuilds it as one row on `--bg-window`: the strip
+ * (`--bg-strip`), a hovered inactive tab (`--bg-tab-hover`, laid over the strip) and the active tab
+ * (`--bg-chrome`). The values step moved the active tab onto Signal (`--bg-chrome` is
+ * `var(--bg-window)`), so the two retired names were retuned for the interim: in light and dark the
+ * active tab stands off the strip by at least `minActiveOnStrip` (a contrast ratio), and a hovered
+ * tab's luminance lies strictly between the strip's and the active tab's (hover previews the active
+ * tab: lighter in light, darker in dark).
+ */
+export const TAB_STRIP = {
+  strip: '--bg-strip',
+  hover: '--bg-tab-hover',
+  active: '--bg-chrome',
+  minActiveOnStrip: 1.1,
+} as const satisfies { readonly strip: TokenName; readonly hover: TokenName; readonly active: TokenName; readonly minActiveOnStrip: number };
+
 // ---- Fonts (the values step: Geist bundled, not yet applied) ----
 
 /**

@@ -9,6 +9,7 @@ import {
   LEGACY_TOKEN_MIGRATION,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
   SIGNAL_TOKENS,
+  TAB_STRIP,
   THEMED_SIGNAL_GROUPS,
   TOKENS_STYLESHEET,
   type ContrastPair,
@@ -119,6 +120,25 @@ function contrastRatio(a: Rgba, b: Rgba): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+/** Each theme's declared values: dark is light with the dark block's overrides. */
+const THEMES = { light: LIGHT, dark: new Map([...LIGHT, ...DARK_VALUES]) };
+const THEME_NAMES = ['light', 'dark'] as const;
+
+/** A token's colour in a theme, following `var()` references in the same theme. */
+function colourIn(theme: keyof typeof THEMES, name: string): Rgba {
+  const values = THEMES[theme];
+  const seen = new Set<string>();
+  for (let current = name; ; ) {
+    if (seen.has(current)) throw new Error(`${name}: var() cycle through ${current} (${theme})`);
+    seen.add(current);
+    const raw = values.get(current);
+    if (raw === undefined) throw new Error(`${name}: ${current} is not declared (${theme})`);
+    const ref = /^var\((--[\w-]+)\)$/.exec(raw)?.[1];
+    if (ref === undefined) return parseColour(raw);
+    current = ref;
+  }
+}
+
 test('tokens-stylesheet-holds-only-root-tokens', () => {
   expect(STYLESHEETS).toContain(TOKENS_STYLESHEET);
   // tokens.css has :root blocks only, light or dark (no other selector, no other at-rule), and they
@@ -208,23 +228,10 @@ test('signal-contrast-meets-aa', () => {
   expect(contrastRatio(parseColour('#777'), parseColour('#fff'))).toBeCloseTo(4.48, 2);
   expect(composite(parseColour('rgb(0 0 0 / 0.5)'), parseColour('#ffffff'))).toEqual([127.5, 127.5, 127.5, 1]);
 
-  const themes = { light: LIGHT, dark: new Map([...LIGHT, ...DARK_VALUES]) };
   const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
   expect(pairs.length).toBeGreaterThan(0);
-  for (const [theme, values] of Object.entries(themes)) {
-    /** A token's colour in this theme, following `var()` references in the same theme. */
-    const colour = (name: string): Rgba => {
-      const seen = new Set<string>();
-      for (let current = name; ; ) {
-        if (seen.has(current)) throw new Error(`${name}: var() cycle through ${current} (${theme})`);
-        seen.add(current);
-        const raw = values.get(current);
-        if (raw === undefined) throw new Error(`${name}: ${current} is not declared (${theme})`);
-        const ref = /^var\((--[\w-]+)\)$/.exec(raw)?.[1];
-        if (ref === undefined) return parseColour(raw);
-        current = ref;
-      }
-    };
+  for (const theme of THEME_NAMES) {
+    const colour = (name: string) => colourIn(theme, name);
     for (const pair of pairs) {
       const label = `${pair.fg} on ${pair.bg}${pair.over ? ` over ${pair.over}` : ''} (${theme})`;
       let bg = colour(pair.bg);
@@ -237,6 +244,19 @@ test('signal-contrast-meets-aa', () => {
       const fg = composite(colour(pair.fg), bg);
       expect(contrastRatio(fg, bg), label).toBeGreaterThanOrEqual(pair.min);
     }
+  }
+});
+
+test('tab-strip-orders-strip-hover-active', () => {
+  for (const theme of THEME_NAMES) {
+    const strip = colourIn(theme, TAB_STRIP.strip);
+    const active = colourIn(theme, TAB_STRIP.active);
+    const hover = composite(colourIn(theme, TAB_STRIP.hover), strip);
+    expect(strip[3], `${TAB_STRIP.strip} is opaque (${theme})`).toBe(1);
+    expect(contrastRatio(active, strip), `active tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minActiveOnStrip);
+    const [lo, hi] = [luminance(strip), luminance(active)].sort((a, b) => a - b) as [number, number];
+    const lit = luminance(hover);
+    expect(lit > lo && lit < hi, `hover luminance ${lit} between the strip and the active tab (${lo}–${hi}, ${theme})`).toBe(true);
   }
 });
 

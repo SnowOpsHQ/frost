@@ -32,7 +32,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `alias` (the name stays) or `retire` (replaced; removed once no rule uses it). Since the values
   step, an alias whose Signal token has another name is exactly `var(<signal>)` in light with no dark
   override, so it follows the Signal token in both themes (`--bg-chrome: var(--bg-window)`,
-  `--seo-panel-width: var(--w-panel)`). Retired names keep their values until their surface PR;
+  `--seo-panel-width: var(--w-panel)`). Retired names keep their values until their surface PR (but
+  `--bg-strip` and `--bg-tab-hover`, see Tab row);
   layout constants (aliases with `signal: null`) keep theirs. No rule outside `tokens.css` changes.
   A retired value that reads an alias moves with it: `--palette-sheet`'s gradient starts at
   `var(--bg-chrome)`, so its first stop is now `--bg-window` (its second stays a literal until the
@@ -41,6 +42,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   token sheet names, plus body text, links and on-colour buttons on every surface) reaches its
   WCAG 2.x minimum, 4.5:1 for text and 3:1 for UI, in light and dark, computed from the values in
   `tokens.css` (a translucent fill composited over its opaque surface).
+- **Tab row, interim.** The active tab follows `--bg-window`, so the retired `--bg-strip` and
+  `--bg-tab-hover` were retuned (they would otherwise leave the active tab about 1.05:1 off the strip
+  and a hovered tab past it): `TAB_STRIP` keeps the active tab at least 1.1:1 off the strip and a
+  hovered tab's luminance between the two, in both themes, until the chrome's surface PR.
 - **Hex ratchet.** Literal hex colours in renderer stylesheets other than `tokens.css` never exceed
   `HEX_COLOUR_RATCHET`; each surface PR lowers it.
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
@@ -84,6 +89,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: signal-contrast-meets-aa** — every `CONTRAST_PAIRS` pair reaches its minimum WCAG 2.x
   contrast ratio in light and in dark, read from `tokens.css` (`var()` resolved, translucent colours
   composited); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
+- **Scenario: tab-strip-orders-strip-hover-active** — in light and dark, the active tab
+  (`TAB_STRIP.active`) against the strip reaches `TAB_STRIP.minActiveOnStrip`, and the hover fill
+  composited over the strip has a luminance strictly between the strip's and the active tab's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).
