@@ -104,7 +104,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (running: `--accent` on `--accent-soft`); buttons `--h-control` pills on `--bg-surface` with
   `--e-raised` (hover lays `--bg-hover` over them), the primary one `--accent`; fields and selects with
   `--e-raised` and no border (`--border-field`), `--r-sm` inside cards and the composer's textarea at
-  `--r-lg`, the fields `--h-control` tall (the skill picker `--h-chip`); focus shows `--focus-ring`;
+  `--r-lg`, the fields and selects `--h-control` tall; focus shows `--focus-ring`;
   the attach menu an `--e-overlay` menu at `--r-md`. Where the screen and the Migration table differ,
   the table wins: the approval card and the revoke-all confirmation keep their warning fill and edge
   (`--agent-approval-bg` → `--warn-soft`, `--agent-approval-edge` → `--warn`), where the screen draws a
