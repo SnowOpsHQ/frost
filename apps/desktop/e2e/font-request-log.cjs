@@ -4,8 +4,9 @@
 // as soon as text in it is drawn, which may be before the test can attach a request listener (and
 // the chrome page can't be reloaded: its navigation guard aborts that). So this wraps
 // `protocol.handle` to log every `app:` request for a woff2 with the response the app's handler gave,
-// and logs every page's console messages; the test reads both with `app.evaluate`. It changes no
-// response.
+// and logs every page's console messages with that page's URL (so a tab's own console can be told
+// from the chrome's); the test reads both with `app.evaluate`. It changes no response, and it adds
+// no `session.webRequest` listener (one per event per session: it would replace the app's own).
 'use strict';
 
 if (process.type === 'browser') {
@@ -24,6 +25,6 @@ if (process.type === 'browser') {
       return response;
     });
   app.on('web-contents-created', (_event, contents) => {
-    contents.on('console-message', (details) => consoleMessages.push(String(details?.message ?? '')));
+    contents.on('console-message', (details) => consoleMessages.push({ url: contents.getURL(), message: String(details?.message ?? '') }));
   });
 }
