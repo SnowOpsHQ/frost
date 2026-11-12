@@ -188,7 +188,7 @@ function MixedCard({ security }: { readonly security: SecurityReport }) {
 
 // ---- Accessibility -------------------------------------------------------------------------------
 
-export function RunProgress({ startedAt }: { readonly startedAt: number }) {
+function RunProgress({ startedAt }: { readonly startedAt: number }) {
   const now = useNow(true);
   const fill = Math.round(runProgress(startedAt, now) * 1000) / 10;
   return (
@@ -197,12 +197,9 @@ export function RunProgress({ startedAt }: { readonly startedAt: number }) {
         <rect className="seo-a11y-progress-track" x="0" y="0" width="100" height="4" rx="2" />
         <rect className="seo-a11y-progress-fill" x="0" y="0" width={Math.max(fill, 3)} height="4" rx="2" />
       </svg>
-      {/* Only the stable message is live: the seconds tick every second and would be re-announced. */}
+      {/* The card's live region says the running message; the seconds tick every second and stay out of it. */}
       <span className="seo-a11y-progress-text">
-        <span role="status" aria-live="polite">
-          {A11Y_RUN_MESSAGES.running}
-        </span>{' '}
-        {elapsedSeconds(startedAt, now)} s of at most {A11Y_TIMEOUT_MS / 1_000} s
+        <span aria-hidden="true">{A11Y_RUN_MESSAGES.running}</span> {elapsedSeconds(startedAt, now)} s of at most {A11Y_TIMEOUT_MS / 1_000} s
       </span>
     </div>
   );
@@ -342,12 +339,16 @@ function Results({ report, flash }: { readonly report: Extract<AccessibilityRepo
   );
 }
 
-function AccessibilityCard({ tab, run, report, flash }: { readonly tab: TabState; readonly run: AccessibilityRunState; readonly report: AccessibilityReport; readonly flash: (message: string) => void }) {
+export function AccessibilityCard({ tab, run, report, flash }: { readonly tab: TabState; readonly run: AccessibilityRunState; readonly report: AccessibilityReport; readonly flash: (message: string) => void }) {
   const view: A11yView = a11yView(run, report);
   const busy = view.kind === 'running' || view.kind === 'scoring';
   return (
     <Card title="Accessibility" icon={<AccessibilityIcon />} testId="seo-a11y">
       <div className="seo-a11y" data-testid="seo-a11y-state" data-state={view.kind}>
+        {/* Mounted empty in every state (a region inserted with its text is often not announced); visually hidden, out of the flex flow. */}
+        <span className="visually-hidden" role="status" aria-live="polite" data-testid="seo-a11y-live">
+          {view.kind === 'running' ? A11Y_RUN_MESSAGES.running : ''}
+        </span>
         {view.kind === 'idle' ? (
           <div className="seo-a11y-intro">
             <span className="seo-a11y-art" aria-hidden="true">
