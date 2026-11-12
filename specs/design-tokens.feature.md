@@ -46,8 +46,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `tokens.css` (a translucent fill composited over its opaque surface).
 - **Tab row, interim.** The active tab follows `--bg-window`, so the retired `--bg-strip` and
   `--bg-tab-hover` were retuned (they would otherwise leave the active tab about 1.05:1 off the strip
-  and a hovered tab past it): `TAB_STRIP` keeps the active tab at least 1.1:1 off the strip and a
-  hovered tab's luminance between the two, in both themes, until the chrome's surface PR.
+  and a hovered tab past it): `TAB_STRIP` keeps the active tab at least 1.1:1 off the strip, a
+  hovered tab's luminance between the two and the divider between inactive tabs at least 1.1:1 off
+  the strip, in both themes, until the chrome's surface PR.
 - **Known exception.** `--ok` as text (21 rules) is under 4.5:1 in light: `KNOWN_CONTRAST_EXCEPTIONS`
   records it and the surface PRs move those rules to `--ok-ink`; only the 11px chips moved now.
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
@@ -101,7 +102,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   declarations in the renderer's stylesheets draw text in its `fg` (so fixing them removes the entry).
 - **Scenario: tab-strip-orders-strip-hover-active** — in light and dark, the active tab
   (`TAB_STRIP.active`) against the strip reaches `TAB_STRIP.minActiveOnStrip`, and the hover fill
-  composited over the strip has a luminance strictly between the strip's and the active tab's.
+  composited over the strip has a luminance strictly between the strip's and the active tab's; the
+  divider between inactive tabs (`TAB_STRIP.divider`) reaches `TAB_STRIP.minDividerOnStrip` against
+  the strip.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
   the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)`.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a

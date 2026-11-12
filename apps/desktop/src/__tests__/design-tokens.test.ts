@@ -274,6 +274,9 @@ test('tab-strip-orders-strip-hover-active', () => {
     const [lo, hi] = [luminance(strip), luminance(active)].sort((a, b) => a - b) as [number, number];
     const lit = luminance(hover);
     expect(lit > lo && lit < hi, `hover luminance ${lit} between the strip and the active tab (${lo}–${hi}, ${theme})`).toBe(true);
+    expect(contrastRatio(colourIn(theme, TAB_STRIP.divider), strip), `divider between inactive tabs on the strip (${theme})`).toBeGreaterThanOrEqual(
+      TAB_STRIP.minDividerOnStrip,
+    );
   }
 });
 

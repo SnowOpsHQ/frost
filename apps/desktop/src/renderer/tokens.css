@@ -34,8 +34,9 @@
   --bg-chrome: var(--bg-window);
   --bg-chrome-edge: #e2e6ec;
   /* Retuned for the values step (TAB_STRIP in the spec): the active tab is --bg-chrome, now
-     --bg-window, so the strip sits ≥ 1.1:1 below it and a hovered tab between the two. */
-  --bg-strip: #dcdce0;
+     --bg-window, so the strip sits ≥ 1.1:1 below it, a hovered tab between the two, and the
+     divider between inactive tabs (--border-field) ≥ 1.1:1 off the strip. */
+  --bg-strip: #d0d0d5;
   --bg-tab-hover: rgb(255 255 255 / 0.3);
   --bg-field: var(--bg-surface);
   --bg-field-hover: #ffffff;

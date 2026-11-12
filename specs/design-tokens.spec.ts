@@ -476,14 +476,25 @@ export const TEXT_COLOUR_RULES = [
  * `var(--bg-window)`), so the two retired names were retuned for the interim: in light and dark the
  * active tab stands off the strip by at least `minActiveOnStrip` (a contrast ratio), and a hovered
  * tab's luminance lies strictly between the strip's and the active tab's (hover previews the active
- * tab: lighter in light, darker in dark).
+ * tab: lighter in light, darker in dark). The divider between inactive tabs (`--border-field`, retired)
+ * stands at least `minDividerOnStrip` off the strip, so the strip's own value can't swallow it.
  */
 export const TAB_STRIP = {
   strip: '--bg-strip',
   hover: '--bg-tab-hover',
   active: '--bg-chrome',
   minActiveOnStrip: 1.1,
-} as const satisfies { readonly strip: TokenName; readonly hover: TokenName; readonly active: TokenName; readonly minActiveOnStrip: number };
+  /** The hairline between inactive tabs (`.tab + .tab::before`), against the strip. */
+  divider: '--border-field',
+  minDividerOnStrip: 1.1,
+} as const satisfies {
+  readonly strip: TokenName;
+  readonly hover: TokenName;
+  readonly active: TokenName;
+  readonly minActiveOnStrip: number;
+  readonly divider: TokenName;
+  readonly minDividerOnStrip: number;
+};
 
 // ---- Fonts (the values step: Geist bundled, not yet applied) ----
 
