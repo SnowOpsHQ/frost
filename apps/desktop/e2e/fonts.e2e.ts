@@ -35,6 +35,9 @@ test('geist-fonts-load', async () => {
       .catch(() => fontRequests.push({ url: request.url(), status: undefined, type: undefined }));
   });
 
+  // The stylesheets, and so their @font-face rules, are in place once the document has loaded:
+  // document.fonts.load() asked earlier would find no face to load.
+  await page.waitForLoadState('load');
   const result = await page.evaluate(async (fonts) => {
     // Installed before any font is requested.
     const violations: string[] = [];

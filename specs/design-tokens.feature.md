@@ -124,8 +124,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `NOTICE_PACKAGES` lists `geist`.
 
 ## End to end (`apps/desktop/e2e/fonts.e2e.ts`, the built app)
-- **Scenario: geist-fonts-load** — in the chrome (`app://app/`), with a `securitypolicyviolation`
-  listener installed first, `document.fonts.load()` of each `BUNDLED_FONTS` face resolves to a
+- **Scenario: geist-fonts-load** — in the chrome (`app://app/`), once the document has loaded (so
+  the `@font-face` rules are registered) and with a `securitypolicyviolation` listener installed
+  first, `document.fonts.load()` of each `BUNDLED_FONTS` face resolves to a
   loaded `FontFace` of that family and weight; every woff2 request the page made was to `app://`
   (200, `font/woff2`), one per bundled face; and no CSP violation was reported (no event, no console
   message).
