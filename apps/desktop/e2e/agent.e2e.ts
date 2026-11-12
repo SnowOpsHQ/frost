@@ -281,6 +281,13 @@ test('agent-pane-resize', async () => {
     await expect(separator).toHaveAttribute('aria-label', AGENT_PANEL_RESIZE_LABEL);
     await expect(separator).toHaveAttribute('aria-valuenow', String(AGENT_PANEL_WIDTH));
     await expect.poll(async () => (await viewBounds())!.x + (await viewBounds())!.width).toBeLessThanOrEqual(Math.ceil((await panel().boundingBox())!.x));
+    // The view follows the page area's rectangle, which the renderer reports to main after a resize.
+    // Until the report made at the size set above arrives, the view keeps the bounds it had at the
+    // window's own size, which also pass the check above. On macOS CI the window is 1024 px wide,
+    // so that view is 594 px, not this layout's 850: `before` would be 594, and the 750 px the drag
+    // leaves would not be 100 less (seen once, run 43140643852). So wait for the view to be as wide
+    // as the page area is now.
+    await expect.poll(async () => Math.abs((await viewBounds())!.width - (await page.getByTestId('page-area').boundingBox())!.width)).toBeLessThanOrEqual(1);
     const before = (await viewBounds())!;
     // Dragged 100 px towards the page (left): the panel widens, the tab's view narrows by as much.
     const box = (await separator.boundingBox())!;

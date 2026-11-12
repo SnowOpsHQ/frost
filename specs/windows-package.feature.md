@@ -6,8 +6,8 @@ Config tests: `apps/desktop/src/__tests__/windows-package-config.test.ts` (every
 Squirrel event tests: `apps/desktop/src/main/update/__tests__/squirrel-events.test.ts` (same runs).
 Workflow tests: `apps/desktop/src/__tests__/platform-workflows.test.ts` (same runs).
 Package checks: `apps/desktop/scripts/verify-windows-package.mjs`, with the checks shared with Linux
-in `verify-package-common.mjs` (on Windows; run by `.github/workflows/windows.yml` after `make:win`,
-and by hand; `--static` runs the file checks anywhere). Each scenario maps to one named test or check.
+in `verify-package-common.mjs` (on Windows; run by the `package-windows` job of
+`.github/workflows/ci.yml` after `make:win`, and by hand; `--static` runs the file checks anywhere). Each scenario maps to one named test or check.
 
 Build: `pnpm make:win` (= `electron-forge make --platform win32 --arch x64` in `@app/desktop`), then
 `pnpm verify:win`.
@@ -122,17 +122,19 @@ nupkgs are extracted with Windows' own `%SystemRoot%\System32\tar.exe` into temp
   and size 0). A signed file fails the check with a message to update this spec, the feature file
   and the README first.
 
-## CI (`.github/workflows/windows.yml`)
-Checked by `platform-workflows.test.ts` (the named test below), by actionlint
-(`uvx --from actionlint-py actionlint`, by hand) and by the workflow runs themselves.
-- **Scenario: windows-ci-job** — job `windows` on `windows-2025`, for pull requests touching the app
-  (`apps/desktop`, `packages`, `specs`, the lockfile, workspace and root `package.json`,
-  `turbo.json`, `tsconfig.base.json`, the workflow itself), pushes to `main` and manual dispatch.
-  Before checkout, `git config --global core.autocrlf false` (the tests read repo files and match on
-  `\n`). Then: install (frozen lockfile), `turbo run lint test`, `build`, the e2e as a step of its
-  own (not reliable on Windows yet: it runs only on pushes to `main` and manual dispatch, never on
-  pull requests, with `continue-on-error`; a failure still uploads its Playwright report), `make:win`, `verify:win` (never `--static`), then uploads `Setup.exe` and the zip
-  (7 days) only if `verify:win` succeeded. Every action is pinned to a commit SHA.
+## CI (`.github/workflows/ci.yml`, job `package-windows`)
+Checked by `platform-workflows.test.ts` (the named test below), by actionlint (the pipeline's
+`Gate: actionlint`) and by the workflow runs themselves. When the job runs is the pipeline's plan
+(`ci-pipeline.feature.md`): always, except for a pull request that changes only Linux-only paths.
+The unit tests run in the pipeline's `unit` jobs on the same image. The e2e is not reliable on
+Windows yet: its shards run for pushes and manual runs only, never for a pull request, and do not
+fail the run (`CI_E2E_GATING`); a failed shard still uploads its Playwright report.
+- **Scenario: windows-ci-job** — job `package-windows` (`Package · Windows x64`) on
+  `windows-2025`. Before checkout, `git config --global core.autocrlf false` (the packaged files
+  keep the repository's LF line endings). Then: the shared setup (frozen-lockfile install),
+  `make:win` (which packages the app itself), `verify:win` (never `--static`), then uploads
+  `Setup.exe` and the zip as `frost-windows-x64` (7 days) only if `verify:win` succeeded. Every
+  action is pinned to a commit SHA (`actions-are-pinned`, `ci-pipeline.feature.md`).
 
 ## Known limits
 - No signing (see above); x64 only; Electron's default icon.

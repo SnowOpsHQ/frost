@@ -177,7 +177,10 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
   lists); every scenario maps to a named test.
 - `docs/design/IMPLEMENTATION-PLAN.md` — the design doc (intent, stack, security model, phased roadmap).
 - `docs/plans/` — the executable, spec-driven phase plans (Phases 0–12 and the ChatGPT plan route).
-- `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner, and
+- `.github/` — the CI pipeline (`workflows/ci.yml`, one staged run ending in the `CI passed` check;
+  `specs/ci-pipeline.feature.md`) and its shared install steps (`actions/setup`).
+- `semgrep/`, `security/`, `scripts/` — the CI security gates' rules, baseline and runner,
+  `scripts/ci-plan.mjs` (what a CI run covers, and its verdict), and
   `scripts/sign-selectors.mjs` (`pnpm sign:selectors`, for maintainers signing a selector pack) and
   `scripts/sign-update-manifest.mjs` (`pnpm sign:update-manifest`, for signing an update manifest).
 

@@ -109,6 +109,9 @@ none at all over HTTP (`mcp-client-answers-ping-refuses-other-server-requests`).
   an unlisted file in the real home, can't see a host `/tmp` file, the session bus
   (`/run/user/<uid>/bus`) or `userData`, can't write outside its folder, has no network
   → `mcp-bubblewrap-contains-the-server`
+- That run skips itself where bubblewrap can't make a sandbox. Where `CI_REQUIRE_BUBBLEWRAP_ENV`
+  (`ci-pipeline.spec.ts`) is `1`, as in CI's Linux unit jobs after they install bubblewrap, such a
+  machine fails instead → `mcp-bubblewrap-required-where-asked`
 - No launcher, or one that doesn't answer as expected: `none`, said plainly ("This server runs
   without a sandbox. It can do anything your user account can.") → `mcp-sandbox-fallback-reported-as-none`
 - A launcher that fails is reported (`sandbox-failed`) and nothing else runs
