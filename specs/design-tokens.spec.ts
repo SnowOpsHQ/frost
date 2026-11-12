@@ -16,8 +16,9 @@
  *    tokens from step 3 on (`--font-ui` stays the system stack);
  * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used
  *    (the command palette first: its retired `--palette-*` names are `removed`, and it is the first
- *    surface to read the `--text-*` type tokens, so the first to draw Geist; the agent panel next, its
- *    retired `--agent-*` names `removed`).
+ *    surface to read the `--text-*` type tokens, so the first to draw Geist; then the new-tab view,
+ *    whose retired `--start-*` and `--jump-*` names are `removed`, and the agent panel, whose retired
+ *    `--agent-*` names are `removed`).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -278,8 +279,8 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--danger', kind: 'alias', signal: '--danger', was: '#d23f3f', note: '' },
   { legacy: '--caution', kind: 'retire', signal: '--warn', was: '#b7791f', note: 'fair band ring' },
   { legacy: '--info-tone', kind: 'retire', signal: '--accent', was: '#4b72b8', note: 'info = accent ring' },
-  { legacy: '--start-mark', kind: 'retire', signal: '--accent', was: '#5b8def', note: 'FrostMark' },
-  { legacy: '--start-glow', kind: 'retire', signal: null, was: 'glow', note: 'none: no gradient washes' },
+  { legacy: '--start-mark', kind: 'retire', signal: '--accent', was: '#5b8def', note: 'FrostMark', removed: true },
+  { legacy: '--start-glow', kind: 'retire', signal: null, was: 'glow', note: 'none: no gradient washes', removed: true },
   // SEO sidebar (--seo-*)
   { legacy: '--seo-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '' },
   { legacy: '--seo-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
@@ -307,8 +308,8 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--serp-glyph', kind: 'retire', signal: '--bg-subtle', was: '#e3e8f1', note: '' },
   { legacy: '--serp-glyph-mark', kind: 'retire', signal: '--text-muted', was: '#6b7a90', note: '' },
   { legacy: '--jump-tile-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
-  { legacy: '--jump-tile-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '' },
-  { legacy: '--jump-monogram-bg', kind: 'retire', signal: '--accent-soft', was: '.12 accent', note: '' },
+  { legacy: '--jump-tile-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '', removed: true },
+  { legacy: '--jump-monogram-bg', kind: 'retire', signal: '--accent-soft', was: '.12 accent', note: '', removed: true },
   { legacy: '--gsc-line', kind: 'alias', signal: '--accent', was: 'accent', note: '' },
   { legacy: '--gsc-grid', kind: 'retire', signal: '--divider', was: '#e7ebf1', note: '' },
   { legacy: '--gsc-axis', kind: 'alias', signal: '--text-faint', was: 'faint', note: '' },
@@ -350,6 +351,10 @@ export interface SignalSurface {
 export const SIGNAL_SURFACES = [
   // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).
   { name: 'command palette', stylesheet: 'styles.css', selectorPrefix: '.palette' },
+  // The new-tab view (specs/browser-chrome.feature.md, browser-polish.feature.md): `.start`, `.start-mark`,
+  // `.start-wordmark`, `.start-hint`, then "Jump back in": `.jump`, `.jump-title`, `.jump-tile`, `.jump-monogram`, ….
+  { name: 'new tab', stylesheet: 'styles.css', selectorPrefix: '.start' },
+  { name: 'new tab: Jump back in', stylesheet: 'styles.css', selectorPrefix: '.jump' },
   // Every rule in the panel's own stylesheet (specs/agent-panel.feature.md, agent-styles-are-delimited).
   { name: 'agent panel', stylesheet: 'components/agent/agent.css', selectorPrefix: '.agent' },
 ] as const satisfies readonly SignalSurface[];
@@ -449,6 +454,16 @@ export const CONTRAST_PAIRS = [
     over: '--bg-surface',
     min: 3,
     why: 'the palette\'s confirm step: its icon (--accent on an --accent-soft tile) (graphics, 3:1)',
+  },
+  // The new-tab view (its surface PR). Already covered above: the wordmark, hint, "Jump back in" title,
+  // a tile's label and host on --bg-surface (--text, --text-muted, --text-faint at 12px), the FrostMark
+  // (--accent on --bg-surface) and a hovered tile's --accent ring. New with it:
+  {
+    fg: '--accent',
+    bg: '--accent-soft',
+    over: '--bg-surface',
+    min: 4.5,
+    why: 'a "Jump back in" tile\'s monogram: its letter (13px, --accent) on an --accent-soft tile (was --jump-monogram-bg) (4.5:1)',
   },
   // The agent panel (its surface PR). Already covered above: body and muted text on the sheet and on
   // its cards (--bg-sheet, --bg-surface), code on --bg-subtle, your messages (--text on --accent-soft
