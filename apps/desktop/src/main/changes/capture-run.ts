@@ -408,14 +408,22 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
    * Before the run's first tab opens late (after a search's spacing): waits until the tab in front at
    * Start (`run.previous`) is in front again (`null`), so the new tab never takes the front from a user
    * who moved on (none remembered: at once); `cancelled` when the run was cancelled, or that tab is
-   * gone (the run gives way).
+   * gone or the browser cannot be asked (the run gives way).
    */
   async function untilStartTabActive(run: Run): Promise<'cancelled' | null> {
     for (;;) {
       if (run.cancelled) return 'cancelled';
-      const { activeTabId, tabs } = browser.getState();
       // None remembered at Start (the browser could not be asked): nothing to wait for.
-      if (run.previous === null || activeTabId === run.previous) return null;
+      if (run.previous === null) return null;
+      let state: ReturnType<RunBrowser['getState']>;
+      try {
+        state = browser.getState();
+      } catch {
+        log('the run gave way: the browser could not be asked');
+        return 'cancelled';
+      }
+      const { activeTabId, tabs } = state;
+      if (activeTabId === run.previous) return null;
       if (!tabs.some((tab) => tab.id === run.previous)) {
         log('the run gave way: the tab it started from is gone');
         return 'cancelled';

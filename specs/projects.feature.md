@@ -173,7 +173,8 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   front, as a later group's tab opens only with the run's last tab in front: a new tab never takes the
   front from the user. A user who moved to another tab meanwhile is waited for (`waiting-for-tab`, no
   target's time) until that tab is in front again (the label names both tabs: the run has none yet); if it was closed meanwhile, the run gives way and
-  ends `cancelled`, opening no tab. The first group's tab then opens, in front (a tab limit then is
+  ends `cancelled`, opening no tab; a browser that cannot be asked during that wait ends the run
+  `cancelled` too. The first group's tab then opens, in front (a tab limit then is
   `failed`, as for a later group); a run cancelled or stopped during either wait opens no tab. Fixed:
   no jitter, no user-agent change.
 - **Stop at the first challenge, checked before capture.** Once a search target has landed:

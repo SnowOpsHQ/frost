@@ -1192,6 +1192,23 @@ describe('searches in a run', () => {
     expect(gone.tabs.map((tab) => tab.id)).toEqual([2]);
     expect(gone.state.activeTabId).toBe(2);
 
+    // The browser cannot be asked once the spacing is over (council review): the run gives way,
+    // cancelled (not `done`), and opens no tab.
+    const unasked = setup(readySerpFor([query(DESKTOP)]));
+    await unasked.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 4);
+    unasked.browser.newTab.mockClear();
+    await unasked.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 2);
+    unasked.browser.getState.mockImplementationOnce(() => {
+      throw new Error('no window');
+    });
+    await run(SPACING + RETRY * 4);
+    expect(unasked.runs.state()).toMatchObject({ state: 'cancelled', targets: [{ outcome: 'cancelled' }] });
+    expect(unasked.browser.newTab).not.toHaveBeenCalled();
+    expect(unasked.browser.navigate).toHaveBeenCalledOnce();
+    expect(unasked.tabs.map((tab) => tab.id)).toEqual([1]);
+
     // No tab remembered at Start (the browser could not be asked): nothing to wait for; the tab opens
     // once the spacing is over, as before.
     const unknown = setup(readySerpFor([query(DESKTOP)]));
