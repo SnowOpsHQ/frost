@@ -103,7 +103,7 @@ export function AgentComposer({
   const [fields, setFields] = useState<SkillFieldValues>({});
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState<AttachMenu | null>(null);
-  // Counts menu openings: a list main answers for an earlier one (another chat's) is dropped.
+  // Counts menu openings (and chat switches): a list or attach answer for an earlier one (another chat's) is dropped.
   const menuOpenings = useRef(0);
   const wasRunning = useRef(running);
   const full = attachments.length >= MAX_CHAT_ATTACHMENTS;
@@ -159,10 +159,15 @@ export function AgentComposer({
   };
   const closeMenu = () => setMenu(null);
   // Another chat selected: its own menu, if any, starts afresh.
-  useEffect(() => setMenu(null), [chatId]);
+  useEffect(() => {
+    menuOpenings.current += 1;
+    setMenu(null);
+  }, [chatId]);
   const attach = (tab: AgentAttachableTab) => {
     const at = menu?.at ?? null;
+    const opening = menuOpenings.current;
     void agentActions.attachTab(chatId, tab.tabId, tab.origin).then((result) => {
+      if (opening !== menuOpenings.current) return;
       if (result !== 'attached') {
         setMenu((current) => (current === null ? null : { ...current, message: AGENT_ATTACH_MESSAGES[result] }));
         return;

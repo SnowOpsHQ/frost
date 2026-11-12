@@ -413,6 +413,42 @@ describe('agent panel components', () => {
     expect(options.map((option) => option.dataset['tabId'])).toEqual(['7']);
   });
 
+  test('composer-at-menu-drops-a-stale-attach-answer', async () => {
+    const inputRef = createRef<HTMLTextAreaElement>();
+    const answers: ((result: string) => void)[] = [];
+    for (let i = 0; i < 3; i += 1) calls.attachTab.mockImplementationOnce(() => new Promise((resolve) => answers.push(resolve)));
+    render(createElement(AgentComposer, { chatId: 'a', running: false, stopChatId: null, inputRef }));
+    const field = () => byTestId('agent-input') as HTMLTextAreaElement;
+    const type = (value: string) =>
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field(), value);
+        field().dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    // In chat A an `@` opens the menu and three picks go to main; their answers are held.
+    type('@');
+    await flush();
+    for (let i = 0; i < 3; i += 1) click(host.querySelector('[data-testid="agent-attach-option"]'));
+    expect(calls.attachTab.mock.calls).toEqual([['a', 4, 'https://other.example'], ['a', 4, 'https://other.example'], ['a', 4, 'https://other.example']]);
+    // Chat B selected: A's 'attached' answer drops no `@` from the text and moves no focus.
+    render(createElement(AgentComposer, { chatId: 'b', running: false, stopChatId: null, inputRef }));
+    type('@ for B');
+    await act(async () => answers[0]!('attached'));
+    expect(field().value).toBe('@ for B');
+    expect(document.activeElement).not.toBe(field());
+    // B's own menu open (focus on its option): neither a refusal nor 'attached' for A touches it.
+    calls.attachableTabs.mockResolvedValueOnce([{ tabId: 7, title: 'B side', origin: 'https://b.example' }]);
+    type('@ for B @');
+    await flush();
+    const option = host.querySelector<HTMLElement>('[data-testid="agent-attach-option"]')!;
+    option.focus();
+    await act(async () => answers[1]!('full'));
+    await act(async () => answers[2]!('attached'));
+    expect([...host.querySelectorAll<HTMLElement>('[data-testid="agent-attach-option"]')].map((o) => o.dataset['tabId'])).toEqual(['7']);
+    expect(byTestId('agent-attach-message')).toBeNull();
+    expect(field().value).toBe('@ for B @');
+    expect(document.activeElement).toBe(option);
+  });
+
   test('composer-at-menu-is-a-group-of-buttons', async () => {
     const inputRef = createRef<HTMLTextAreaElement>();
     render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef }));
