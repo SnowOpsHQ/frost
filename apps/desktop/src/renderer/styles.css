@@ -5373,26 +5373,22 @@ input {
   margin-top: var(--space-3);
 }
 
-/* A band button: --h-chip, --r-pill, --e-raised on the card. */
+/* A band button: --h-chip, --r-pill. The secondary one (Back) is a --bg-subtle fill with an --e-ring
+   edge, so it stands off the --bg-surface card; hover lays --bg-hover over that fill. */
 .palette-button {
   height: var(--h-chip);
   padding: 0 var(--space-4);
   border: 0;
   border-radius: var(--r-pill);
-  background: var(--bg-surface);
-  box-shadow: var(--e-raised);
+  background: var(--bg-subtle);
+  box-shadow: var(--e-ring);
   color: var(--text);
   font: var(--text-body);
   font-weight: 500;
 }
 
 .palette-button:hover {
-  background: var(--bg-hover);
-}
-
-.palette-button:focus-visible {
-  outline: 0;
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--e-ring), inset 0 0 0 100vmax var(--bg-hover);
 }
 
 .palette-button-primary {
@@ -5403,6 +5399,12 @@ input {
 
 .palette-button-primary:hover {
   background: var(--accent-hover);
+  box-shadow: none;
+}
+
+.palette-button:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus-ring);
 }
 
 .palette-foot[data-step='confirm'] .palette-foot-list {
