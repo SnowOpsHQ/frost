@@ -45,8 +45,6 @@
 
   --icon: #3a4556;
 
-  --start-glow: rgb(82 145 255 / 0.13);
-  --start-mark: #5b8def;
   --shadow-field: 0 1px 2px rgb(16 24 40 / 0.06);
 
   --panel-art: #6b7a90;
@@ -94,8 +92,6 @@
   --find-height: 40px;
   --history-width: 760px;
   --jump-tile-bg: var(--bg-surface);
-  --jump-tile-edge: #e3e7ee;
-  --jump-monogram-bg: rgb(47 111 228 / 0.12);
 
   /* ---- Projects (was in styles.css) */
   --projects-width: 980px;
@@ -135,8 +131,6 @@
 
     --icon: #c9d0db;
 
-    --start-glow: rgb(108 157 255 / 0.12);
-    --start-mark: #7ea8ff;
     --shadow-field: none;
 
     --panel-art: #8f9bad;
@@ -162,10 +156,6 @@
     --serp-path: #9aa3b2;
     --serp-glyph: #2c3139;
     --serp-glyph-mark: #a3acba;
-
-    /* ---- Browser polish: find bar, History, "Jump back in" (was in styles.css) */
-    --jump-tile-edge: #2c3038;
-    --jump-monogram-bg: rgb(108 157 255 / 0.18);
 
     /* ---- Settings (was in settings.css) */
     --settings-switch-off: #454b56;
