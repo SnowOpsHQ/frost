@@ -51,12 +51,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the strip, in both themes, until the chrome's surface PR.
 - **Known exceptions.** `KNOWN_CONTRAST_EXCEPTIONS` records what still misses its minimum, for the
   surface PRs: `--ok` as text (21 rules) is under 4.5:1 in light, and those rules move to `--ok-ink`
-  (only the 11px chips moved now). The status bar's failed-overrides chip, at 4.46:1 with
-  `--danger-ink` on its 14% tint over `--bg-chrome`, takes the sheet's -ink-on-soft pairing instead:
-  `--danger-soft` fill (5.30:1 light, 8.68:1 dark).
+  (only the 11px chips moved now).
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
-  (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`.
+  (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`. The status bar's failed-overrides
+  chip, at 4.46:1 with `--danger-ink` on its 14% tint over `--bg-chrome`, takes the sheet's
+  -ink-on-soft pairing instead: `--danger-soft` fill (5.30:1 light, 8.68:1 dark).
 - **Hex ratchet.** Literal hex colours in renderer stylesheets other than `tokens.css` never exceed
   `HEX_COLOUR_RATCHET`; each surface PR lowers it.
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
@@ -101,10 +101,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   contrast ratio in light and in dark, read from `tokens.css` (`var()` resolved, translucent colours
   composited); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
 - **Scenario: known-contrast-exceptions-are-current** — each `KNOWN_CONTRAST_EXCEPTIONS` pair still
-  misses its minimum in at least one theme (a tint composited as in `CONTRAST_PAIRS`), is not in
-  `CONTRAST_PAIRS`, and is located exactly: either `rules` declarations in the renderer's stylesheets
-  draw text in its `fg`, or its one `element` resolves `color` to its `fg` (so fixing it removes the
-  entry).
+  misses its minimum in at least one theme, is not in `CONTRAST_PAIRS`, and exactly `rules`
+  declarations in the renderer's stylesheets draw text in its `fg` (so fixing them removes the entry).
 - **Scenario: tab-strip-orders-strip-hover-active** — in light and dark, the active tab
   (`TAB_STRIP.active`) against the strip reaches `TAB_STRIP.minActiveOnStrip`, and the hover fill
   composited over the strip has a luminance strictly between the strip's and the active tab's; the

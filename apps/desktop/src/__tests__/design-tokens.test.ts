@@ -255,34 +255,18 @@ test('signal-contrast-meets-aa', () => {
 });
 
 test('known-contrast-exceptions-are-current', () => {
-  const pairs: readonly { fg: string; bg: string; min: number; over?: string; alpha?: number }[] = CONTRAST_PAIRS;
+  const pairs: readonly { fg: string; bg: string; min: number }[] = CONTRAST_PAIRS;
   const exceptions: readonly ContrastException[] = KNOWN_CONTRAST_EXCEPTIONS;
   for (const exception of exceptions) {
-    const label = `${exception.fg} on ${exception.bg}${exception.alpha === undefined ? '' : ` at ${exception.alpha}`}${exception.over ? ` over ${exception.over}` : ''}`;
-    const ratios = THEME_NAMES.map((theme) => {
-      let bg = colourIn(theme, exception.bg);
-      if (exception.alpha !== undefined) bg = [bg[0], bg[1], bg[2], bg[3] * exception.alpha];
-      if (bg[3] < 1) bg = composite(bg, colourIn(theme, exception.over ?? exception.bg));
-      return contrastRatio(composite(colourIn(theme, exception.fg), bg), bg);
-    });
+    const label = `${exception.fg} on ${exception.bg}`;
+    const ratios = THEME_NAMES.map((theme) => contrastRatio(colourIn(theme, exception.fg), colourIn(theme, exception.bg)));
     expect(Math.min(...ratios), `${label} still misses ${exception.min}:1 somewhere`).toBeLessThan(exception.min);
     expect(
-      pairs.some((p) => p.fg === exception.fg && p.bg === exception.bg && p.min === exception.min && p.over === exception.over && p.alpha === exception.alpha),
+      pairs.some((p) => p.fg === exception.fg && p.bg === exception.bg && p.min === exception.min),
       `${label} is not also a CONTRAST_PAIRS pair`,
     ).toBe(false);
-    // Exactly one way of saying where it is: a rule count, or the one element.
-    expect((exception.rules === undefined) !== (exception.element === undefined), label).toBe(true);
-    if (exception.rules !== undefined) {
-      const uses = STYLESHEETS.flatMap((name) => parse(read(name)).declarations.filter((d) => d.property === 'color' && d.value === `var(${exception.fg})`));
-      expect(uses.length, `${label}: rules drawing text in ${exception.fg}`).toBe(exception.rules);
-    }
-    if (exception.element !== undefined) {
-      for (const theme of THEME_NAMES) {
-        expect(resolveOnElement(read(exception.element.stylesheet), exception.element.selectors, 'color', theme), `${label} (${theme})`).toBe(
-          `var(${exception.fg})`,
-        );
-      }
-    }
+    const uses = STYLESHEETS.flatMap((name) => parse(read(name)).declarations.filter((d) => d.property === 'color' && d.value === `var(${exception.fg})`));
+    expect(uses.length, `${label}: rules drawing text in ${exception.fg}`).toBe(exception.rules);
   }
 });
 

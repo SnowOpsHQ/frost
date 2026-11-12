@@ -414,18 +414,14 @@ export const CONTRAST_PAIRS = [
  * Known contrast exceptions, left for the surface PRs: a token some rules still use in a way that
  * misses the pair's minimum. Each is recorded, not fixed, in the values step; a surface PR that moves
  * the rules off it removes its entry (the guard fails once the pair would pass, or once no rule uses
- * the token that way). Either `rules`, how many `color: var(<fg>)` declarations the renderer's
- * stylesheets hold today, or the one `element` (as in `TextColourRule`) whose text it is. `alpha` and
- * `over` composite a tinted `bg` as in `ContrastPair`.
+ * the token that way). `rules` is how many `color: var(<fg>)` declarations the renderer's stylesheets
+ * hold today.
  */
 export interface ContrastException {
   readonly fg: TokenName;
   readonly bg: TokenName;
   readonly min: 4.5 | 3;
-  readonly alpha?: number;
-  readonly over?: TokenName;
-  readonly rules?: number;
-  readonly element?: { readonly stylesheet: string; readonly selectors: readonly string[] };
+  readonly rules: number;
   readonly why: string;
 }
 
