@@ -958,7 +958,7 @@ input {
 
 /* A notice (e.g. the tab limit) replaces the status text while it shows. */
 .status-notice {
-  color: var(--warn);
+  color: var(--warn-ink);
   font-weight: 500;
 }
 

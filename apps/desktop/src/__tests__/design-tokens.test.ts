@@ -10,6 +10,7 @@ import {
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
   SIGNAL_TOKENS,
   TAB_STRIP,
+  TEXT_COLOUR_RULES,
   THEMED_SIGNAL_GROUPS,
   TOKENS_STYLESHEET,
   type ContrastPair,
@@ -257,6 +258,62 @@ test('tab-strip-orders-strip-hover-active', () => {
     const [lo, hi] = [luminance(strip), luminance(active)].sort((a, b) => a - b) as [number, number];
     const lit = luminance(hover);
     expect(lit > lo && lit < hi, `hover luminance ${lit} between the strip and the active tab (${lo}–${hi}, ${theme})`).toBe(true);
+  }
+});
+
+/** A selector's specificity as one number (ids aside: the renderer's rules use none). */
+function specificity(selector: string): number {
+  const classes = selector.match(/\.[\w-]+|\[[^\]]+\]|(?<!:):(?!not\(|is\(|where\()[\w-]+/g)?.length ?? 0;
+  const types = selector.replace(/\[[^\]]+\]|\([^)]*\)/g, '').match(/(?:^|[\s>+~])[a-z][\w-]*/gi)?.length ?? 0;
+  return classes * 1000 + types;
+}
+
+/**
+ * The value `property` resolves to for an element matching exactly the selectors `element` in `css`:
+ * rules whose selector list holds one of them (top level, or in the dark media block for dark),
+ * ordered by specificity then source order; custom properties set by those rules followed through
+ * `var()`. Returns the final value (a `var(--token)` that the element itself does not set).
+ */
+function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark'): string {
+  const wanted = new Set(element.map((s) => s.replace(/\s+/g, ' ').trim()));
+  const matched: { order: number; spec: number; property: string; value: string }[] = [];
+  parse(css).declarations.forEach((d, order) => {
+    const outer = d.context.slice(0, -1);
+    if (!(outer.length === 0 || (theme === 'dark' && outer.length === 1 && outer[0] === DARK))) return;
+    const selectors = (d.context.at(-1) ?? '').split(',').map((s) => s.replace(/\s+/g, ' ').trim());
+    const hits = selectors.filter((s) => wanted.has(s));
+    if (hits.length === 0) return;
+    matched.push({ order, spec: Math.max(...hits.map(specificity)), property: d.property, value: d.value });
+  });
+  matched.sort((a, b) => a.spec - b.spec || a.order - b.order);
+  const own = new Map<string, string>();
+  for (const m of matched) own.set(m.property, m.value);
+  let value = own.get(property);
+  if (value === undefined) throw new Error(`${element.join(' + ')}: no ${property} (${theme})`);
+  const seen = new Set<string>();
+  for (let ref = /^var\((--[\w-]+)\)$/.exec(value)?.[1]; ref !== undefined && own.has(ref); ref = /^var\((--[\w-]+)\)$/.exec(value)?.[1]) {
+    if (seen.has(ref)) throw new Error(`${element.join(' + ')}: var() cycle through ${ref}`);
+    seen.add(ref);
+    value = own.get(ref)!;
+  }
+  return value;
+}
+
+test('text-colour-rules-resolve', () => {
+  // The resolver itself: specificity, then source order; a component property followed.
+  const sample = `.a { color: var(--x); --t: var(--one); } .a[data-k='v'] { --t: var(--two); } .a { color: var(--t); }
+    @media (prefers-color-scheme: dark) { .a { color: var(--three); } }`;
+  expect(resolveOnElement(sample, ['.a'], 'color', 'light')).toBe('var(--one)');
+  expect(resolveOnElement(sample, ['.a', ".a[data-k='v']"], 'color', 'light')).toBe('var(--two)');
+  expect(resolveOnElement(sample, ['.a'], 'color', 'dark')).toBe('var(--three)');
+  expect(specificity('.update-button.update-primary:hover:not(:disabled)')).toBe(4000);
+
+  const pairs: readonly { fg: string; bg: string }[] = CONTRAST_PAIRS;
+  for (const rule of TEXT_COLOUR_RULES) {
+    for (const theme of THEME_NAMES) {
+      expect(resolveOnElement(read(rule.stylesheet), rule.element, 'color', theme), `${rule.element.at(-1)} (${theme})`).toBe(`var(${rule.color})`);
+    }
+    expect(pairs.some((pair) => pair.fg === rule.color), `${rule.color} has a CONTRAST_PAIRS entry`).toBe(true);
   }
 });
 

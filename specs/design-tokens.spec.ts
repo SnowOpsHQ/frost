@@ -386,7 +386,32 @@ export const CONTRAST_PAIRS = [
   { fg: '--warn', bg: '--bg-sheet', min: 3, why: WARN },
   { fg: '--danger', bg: '--bg-surface', min: 3, why: RING },
   { fg: '--danger', bg: '--bg-sheet', min: 3, why: RING },
+  // Rules the values step pinned (TEXT_COLOUR_RULES)
+  { fg: '--warn-ink', bg: '--bg-chrome', min: 4.5, why: 'the status bar\'s notice (.status-notice) on --bg-chrome (4.5:1)' },
 ] as const satisfies readonly ContrastPair[];
+
+/**
+ * A rule whose text colour the values step pins to a token, because the Signal value of the token it
+ * used left its text under 4.5:1 (found in review). `element` lists the selectors, in `stylesheet`
+ * (relative to the renderer), that such an element matches; resolving the cascade over them
+ * (specificity, then source order; light, or light then the dark media block; component custom
+ * properties followed through `var()`) gives `color: var(<color>)`. Its pair is in `CONTRAST_PAIRS`.
+ */
+export interface TextColourRule {
+  readonly stylesheet: string;
+  readonly element: readonly string[];
+  readonly color: TokenName;
+  readonly why: string;
+}
+
+export const TEXT_COLOUR_RULES = [
+  {
+    stylesheet: 'styles.css',
+    element: ['.status-notice'],
+    color: '--warn-ink',
+    why: '--warn on --bg-chrome is 4.26:1 in light; the notice is 11.5px text',
+  },
+] as const satisfies readonly TextColourRule[];
 
 /**
  * The tab row until the chrome's surface PR rebuilds it as one row on `--bg-window`: the strip

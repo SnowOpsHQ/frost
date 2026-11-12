@@ -34,7 +34,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   override, so it follows the Signal token in both themes (`--bg-chrome: var(--bg-window)`,
   `--seo-panel-width: var(--w-panel)`). Retired names keep their values until their surface PR (but
   `--bg-strip` and `--bg-tab-hover`, see Tab row);
-  layout constants (aliases with `signal: null`) keep theirs. No rule outside `tokens.css` changes.
+  layout constants (aliases with `signal: null`) keep theirs. Rules outside `tokens.css` change only
+  where a Signal value left text under its minimum (`TEXT_COLOUR_RULES`, below) or a review asked
+  for it (the tab spinner's track).
   A retired value that reads an alias moves with it: `--palette-sheet`'s gradient starts at
   `var(--bg-chrome)`, so its first stop is now `--bg-window` (its second stays a literal until the
   palette's surface PR).
@@ -46,6 +48,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--bg-tab-hover` were retuned (they would otherwise leave the active tab about 1.05:1 off the strip
   and a hovered tab past it): `TAB_STRIP` keeps the active tab at least 1.1:1 off the strip and a
   hovered tab's luminance between the two, in both themes, until the chrome's surface PR.
+- **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
+  falls under 4.5:1 where they use it; the values step points them at a token that passes
+  (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`.
 - **Hex ratchet.** Literal hex colours in renderer stylesheets other than `tokens.css` never exceed
   `HEX_COLOUR_RATCHET`; each surface PR lowers it.
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
@@ -92,6 +97,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: tab-strip-orders-strip-hover-active** — in light and dark, the active tab
   (`TAB_STRIP.active`) against the strip reaches `TAB_STRIP.minActiveOnStrip`, and the hover fill
   composited over the strip has a luminance strictly between the strip's and the active tab's.
+- **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
+  the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)`.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).
