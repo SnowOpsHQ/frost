@@ -1,14 +1,16 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, HEX_COLOUR_RATCHET)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import {
+  BUNDLED_FONTS,
   CONTRAST_PAIRS,
   HEX_COLOUR_RATCHET,
   KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
+  SIGNAL_SURFACES,
   SIGNAL_TOKENS,
   TAB_STRIP,
   TEXT_COLOUR_RULES,
@@ -16,6 +18,8 @@ import {
   TOKENS_STYLESHEET,
   type ContrastException,
   type ContrastPair,
+  type LegacyTokenMigration,
+  type SignalSurface,
   type TextColourRule,
   type SignalToken,
   type SignalTokenGroup,
@@ -25,20 +29,32 @@ import { SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.
 const RENDERER = fileURLToPath(new URL('../renderer/', import.meta.url));
 const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8');
 
+/** Every file under the renderer, relative to it. */
+const RENDERER_FILES = (readdirSync(RENDERER, { recursive: true }) as string[]).map((name) => name.replaceAll('\\', '/')).sort();
 /** Every stylesheet under the renderer, relative to it. */
-const STYLESHEETS = (readdirSync(RENDERER, { recursive: true }) as string[])
-  .map((name) => name.replaceAll('\\', '/'))
-  .filter((name) => name.endsWith('.css'))
-  .sort();
+const STYLESHEETS = RENDERER_FILES.filter((name) => name.endsWith('.css'));
+/** The renderer's sources: its stylesheets, its scripts and its page (inline styles can read a token too). */
+const RENDERER_SOURCES = RENDERER_FILES.filter((name) => /\.(css|tsx?|html)$/.test(name));
+const MIGRATION: readonly LegacyTokenMigration[] = LEGACY_TOKEN_MIGRATION;
+const REMOVED: readonly string[] = MIGRATION.filter((row) => row.removed === true).map((row) => row.legacy);
 
 const DARK = '@media (prefers-color-scheme: dark)';
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+/** A source without its comments: block comments, `//` line comments in scripts (not `://`), HTML comments. */
+const stripSourceComments = (name: string, text: string) => {
+  const blockless = stripComments(text);
+  if (/\.tsx?$/.test(name)) return blockless.replace(/(^|[^:])\/\/.*$/gm, '$1');
+  if (name.endsWith('.html')) return blockless.replace(/<!--[\s\S]*?-->/g, '');
+  return blockless;
+};
 
 interface Declaration {
   /** The enclosing at-rule preludes and selectors, outermost first, whitespace collapsed. */
   readonly context: readonly string[];
   readonly property: string;
   readonly value: string;
+  /** The index (in `blocks`) of the block that holds it. */
+  readonly block: number;
 }
 
 /** The declarations of `css`, each with its context, and the context of every block. (The
@@ -47,23 +63,26 @@ function parse(css: string): { declarations: Declaration[]; blocks: string[][] }
   const declarations: Declaration[] = [];
   const blocks: string[][] = [];
   const stack: string[] = [];
+  const ids: number[] = [];
   let buffer = '';
   const flush = () => {
     const text = buffer.trim();
     const colon = text.indexOf(':');
     if (colon > 0) {
-      declarations.push({ context: [...stack], property: text.slice(0, colon).trim(), value: text.slice(colon + 1).trim().replace(/\s+/g, ' ') });
+      declarations.push({ context: [...stack], property: text.slice(0, colon).trim(), value: text.slice(colon + 1).trim().replace(/\s+/g, ' '), block: ids.at(-1) ?? -1 });
     }
     buffer = '';
   };
   for (const ch of stripComments(css)) {
     if (ch === '{') {
       stack.push(buffer.trim().replace(/\s+/g, ' '));
+      ids.push(blocks.length);
       blocks.push([...stack]);
       buffer = '';
     } else if (ch === '}') {
       flush();
       stack.pop();
+      ids.pop();
     } else if (ch === ';') {
       flush();
     } else {
@@ -191,7 +210,7 @@ test('legacy-tokens-are-defined', () => {
   const legacy: string[] = LEGACY_TOKEN_MIGRATION.map((row) => row.legacy);
   expect(legacy).toHaveLength(89);
   expect(new Set(legacy).size).toBe(legacy.length);
-  for (const name of legacy) expect(LIGHT.has(name), name).toBe(true);
+  for (const name of legacy) if (!REMOVED.includes(name)) expect(LIGHT.has(name), name).toBe(true);
   // tokens.css holds the legacy names and the Signal vocabulary, nothing else.
   for (const name of LIGHT.keys()) expect(legacy.includes(name) || SIGNAL_NAMES.has(name), name).toBe(true);
   // Every replacement named is a Signal token (`--text-*` is the type scale).
@@ -199,6 +218,19 @@ test('legacy-tokens-are-defined', () => {
     if (row.signal === null) continue;
     if (row.signal === '--text-*') expect(row.legacy).toBe('--font-ui');
     else expect(SIGNAL_NAMES.has(row.signal), `${row.legacy} -> ${row.signal}`).toBe(true);
+  }
+});
+
+test('removed-legacy-tokens-are-gone', () => {
+  for (const row of MIGRATION) if (row.removed === true) expect(row.kind, `${row.legacy} is removed, so retired`).toBe('retire');
+  // The command palette's surface PR removed its retired names (the rollout only ever adds to this).
+  expect(REMOVED).toEqual(expect.arrayContaining(['--palette-edge', '--palette-shadow', '--palette-sheet', '--palette-row-active', '--palette-hit', '--palette-kbd-bg', '--palette-kbd-edge']));
+  for (const name of REMOVED) {
+    expect(LIGHT.has(name), `${name} (light)`).toBe(false);
+    expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
+    // `--palette-sheet` must not match `--palette-sheet-height`.
+    const mention = new RegExp(`${name}(?![\\w-])`);
+    for (const file of RENDERER_SOURCES) expect(mention.test(stripSourceComments(file, read(file))), `${file} mentions ${name}`).toBe(false);
   }
 });
 
@@ -365,6 +397,142 @@ test('tokens-load-before-every-other-stylesheet', () => {
   // First stylesheet imported, and before `App`, whose components import the feature stylesheets.
   expect(imports.filter((path) => path.endsWith('.css'))[0]).toBe(`./${TOKENS_STYLESHEET}`);
   expect(imports.indexOf(`./${TOKENS_STYLESHEET}`)).toBeLessThan(imports.indexOf('./App'));
+});
+
+/** Keywords a colour-bearing value on a surface may hold besides `var()` of a Signal token or alias. */
+const SURFACE_COLOUR_WORDS = new Set(['transparent', 'currentcolor', 'inherit', 'none', 'solid', 'dashed', 'dotted', 'double', 'inset', 'color-mix', 'in', 'srgb', 'calc', 'min', 'max', 'clamp']);
+/** `text-decoration`'s line and style keywords: not colours (a colour in it still needs the allowlist). */
+const TEXT_DECORATION_WORDS = new Set(['underline', 'overline', 'line-through', 'wavy']);
+/** A literal colour in any property: hex or a colour function. */
+const COLOUR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
+/** Properties whose value can carry a colour (these, and custom properties, get the colour allowlist). */
+const COLOUR_PROPERTY = /^(?:color|background(?:-color|-image)?|border(?:-[a-z-]+)?|outline(?:-color)?|box-shadow|text-shadow|fill|stroke|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?)$/;
+
+/**
+ * What breaks `surface`'s rules in `css` (design-tokens.feature.md, surface-rules-read-signal-tokens).
+ * A rule is the surface's when any selector in any level of its context names one of the surface's
+ * classes (`selectorPrefix` itself, or it followed by `-…`, on a class boundary: `.palette`,
+ * `.chrome .palette-option`; never `.palettes` or `.x-palette`), or when it sits in a `@keyframes`
+ * whose name is the prefix's stem or starts with it and `-` (`palette-in`).
+ */
+function surfaceProblems(css: string, surface: SignalSurface): { problems: string[]; checked: number; typeRules: number } {
+  const aliases = new Set<string>(MIGRATION.filter((row) => row.kind === 'alias').map((row) => row.legacy));
+  const tracking = new Map<string, string>(SIGNAL_TOKENS.type.map((token) => [token.name, token.tracking]));
+  // The weights BUNDLED_FONTS has per family, and each type token's family (its shorthand's first one).
+  const weightsOf = (family: string) => new Set(BUNDLED_FONTS.filter((font) => font.family === family).map((font) => String(font.weight)));
+  const familyOf = new Map<string, string>(
+    SIGNAL_TOKENS.type.map((token) => [token.name, (/^\S+\s+\S+\s+(.*)$/.exec(token.light)?.[1] ?? '').split(',')[0]!.trim().replace(/^(['"])(.*)\1$/, '$2')]),
+  );
+  const stem = surface.selectorPrefix.replace(/^\./, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const ownClass = new RegExp(`\\.${stem}(?:-[\\w-]+)?(?![\\w-])`);
+  const ownKeyframes = new RegExp(`^@keyframes\\s+${stem}(?:-[\\w-]+)?$`);
+  const owns = (context: readonly string[]) =>
+    context.some((level) => (level.startsWith('@') ? ownKeyframes.test(level) : level.split(',').some((selector) => ownClass.test(selector))));
+  const all = parse(css).declarations;
+  const own = all.filter((d) => owns(d.context));
+  // A component-scoped custom property (`--tone-ink`): declared in this stylesheet, neither a Signal nor a legacy name.
+  const legacy = new Set<string>(MIGRATION.map((row) => row.legacy));
+  const reserved = (name: string) => SIGNAL_NAMES.has(name) || legacy.has(name);
+  const components = new Set(all.filter((d) => d.property.startsWith('--') && !reserved(d.property)).map((d) => d.property));
+  const problems: string[] = [];
+  const byBlock = new Map<number, Declaration[]>();
+  for (const d of own) {
+    byBlock.set(d.block, [...(byBlock.get(d.block) ?? []), d]);
+    const label = `${surface.name}: ${d.context.join(' > ')} { ${d.property}: ${d.value} }`;
+    if (/var\(\s*--[\w-]+\s*,/.test(d.value)) problems.push(`${label}: a var() fallback`);
+    for (const [, name] of d.value.matchAll(/var\(\s*(--[\w-]+)/g)) {
+      if (!SIGNAL_NAMES.has(name!) && !aliases.has(name!) && !components.has(name!)) problems.push(`${label}: ${name} is neither a Signal token, an alias nor a component property`);
+    }
+    if (d.property.startsWith('--') && reserved(d.property)) problems.push(`${label}: ${d.property} is a token: only tokens.css declares it`);
+    if (COLOUR_LITERAL.test(d.value)) problems.push(`${label}: a literal colour (hex or a colour function)`);
+    if (COLOUR_PROPERTY.test(d.property) || d.property.startsWith('--')) {
+      // Only var() of a token (no fallback), the keywords above, numbers and lengths.
+      const rest = d.value.replace(/var\(\s*--[\w-]+\s*\)/g, ' ').toLowerCase();
+      const words = rest.replace(/-?\d*\.?\d+[a-z%]*/g, ' ').match(/[a-z][\w-]*/g) ?? [];
+      const decoration = d.property.startsWith('text-decoration');
+      const strays = words.filter((word) => !SURFACE_COLOUR_WORDS.has(word) && !(decoration && TEXT_DECORATION_WORDS.has(word)));
+      if (rest.includes('#') || strays.length > 0) problems.push(`${label}: a literal colour (${rest.includes('#') ? '#' : strays.join(', ')})`);
+    }
+    if (['font-size', 'font-family', 'line-height'].includes(d.property)) problems.push(`${label}: type comes from a --text-* token`);
+  }
+  let typeRules = 0;
+  for (const declarations of byBlock.values()) {
+    const fonts = declarations.filter((d) => d.property === 'font');
+    const spacing = declarations.filter((d) => d.property === 'letter-spacing').at(-1);
+    const token = fonts.length === 0 ? undefined : /^var\((--text-[\w-]+)\)$/.exec(fonts.at(-1)!.value)?.[1];
+    const label = `${surface.name}: ${declarations[0]!.context.join(' > ')}`;
+    // A --focus-ring (a box-shadow, which forced colours drop) needs an outline they draw: a non-zero
+    // width that isn't `none`, e.g. `outline: 2px solid transparent`.
+    if (declarations.some((d) => d.property === 'box-shadow' && /var\(\s*--focus-ring\s*\)/.test(d.value))) {
+      const outline = declarations.filter((d) => d.property === 'outline').at(-1)?.value ?? '';
+      if (!/(?:^|\s)(?:\d*\.)?\d*[1-9]\d*(?:\.\d+)?(?:px|em|rem)?(?:\s|$)/.test(outline) || /(?:^|\s)none(?:\s|$)/.test(outline)) {
+        problems.push(`${label}: --focus-ring needs an outline forced colours draw (outline: 2px solid transparent), not \`${outline || 'none set'}\``);
+      }
+    }
+    // A weight must be one the rule's own type token's family is bundled in. A rule without its own
+    // `font` is checked against Geist (what every surface rule inherits today), not its real inherited family.
+    const weight = declarations.filter((d) => d.property === 'font-weight').at(-1);
+    const ownToken = /^var\((--text-[\w-]+)\)$/.exec(declarations.filter((d) => d.property === 'font').at(-1)?.value ?? '')?.[1];
+    const family = (ownToken !== undefined && familyOf.get(ownToken)) || 'Geist';
+    if (weight !== undefined && !weightsOf(family).has(weight.value)) problems.push(`${label}: font-weight ${weight.value} is not bundled for ${family}`);
+    if (fonts.length > 0 && (token === undefined || !tracking.has(token))) problems.push(`${label}: font is not a --text-* token (${fonts.at(-1)!.value})`);
+    if (token !== undefined && tracking.has(token)) {
+      typeRules += 1;
+      const wanted = tracking.get(token)!;
+      if (wanted !== '0' && spacing === undefined) problems.push(`${label}: ${token} needs letter-spacing: ${wanted} beside it`);
+      if (spacing !== undefined && spacing.value !== wanted) problems.push(`${label}: letter-spacing ${spacing.value} is not ${token}'s ${wanted}`);
+    } else if (spacing !== undefined) {
+      problems.push(`${label}: letter-spacing without a --text-* font in the same rule`);
+    }
+  }
+  return { problems, checked: own.length, typeRules };
+}
+
+test('surface-rules-read-signal-tokens', () => {
+  const palette: SignalSurface = { name: 'fixture', stylesheet: 'n/a', selectorPrefix: '.palette' };
+  const problemsIn = (css: string, surface = palette) => surfaceProblems(css, surface).problems;
+  // The guard itself: each of these must be caught.
+  const caught: Record<string, string> = {
+    'mixed selector list': '.foo, .palette-option { color: #fff; }',
+    'ancestor-qualified selector': '.chrome .palette-option { background: var(--bg-surface); color: red; }',
+    'var( with a space': '.palette { border: 1px solid var( --palette-edge); }',
+    'named colour': '.palette-hit { color: rebeccapurple; }',
+    'colour in a palette keyframe': '@keyframes palette-in { from { background: #ffffff; } }',
+    'caps without its letter-spacing': '.palette-group-label { font: var(--text-caps); }',
+    'body with caps letter-spacing': '.palette-option { font: var(--text-body); letter-spacing: 0.06em; }',
+    'a var() fallback': '.palette { color: var(--text, black); }',
+    'a gradient background-image': '.palette-sheet { background-image: linear-gradient(red, blue); }',
+    'a var() fallback outside colour': '.palette { padding: var(--space-4, 7px); }',
+    'color: unset': '.palette-option { color: unset; }',
+    'Geist Mono at 500': '.palette-kbd { font: var(--text-mono); font-weight: 500; }',
+    'redeclaring a Signal token': '.palette { --bg-surface: tomato; }',
+    'redeclaring a legacy name': '.palette { --palette-bg: red; background: var(--palette-bg); }',
+    'a component property with a literal colour': '.palette { --x: rgb(1 2 3); }',
+    'a colour function in filter': '.palette { filter: drop-shadow(0 0 2px rgb(255 0 0)); }',
+    'hex in scrollbar-color': '.palette-list { scrollbar-color: #f00 #00f; }',
+    'focus ring with outline: 0': '.palette-x:focus-visible { outline: 0; box-shadow: var(--focus-ring); }',
+    'focus ring with no outline': '.palette-x:focus-visible { box-shadow: var(--focus-ring); }',
+  };
+  for (const [name, css] of Object.entries(caught)) expect(problemsIn(css), name).not.toEqual([]);
+  // ... and these pass: a token rule, a class-boundary miss, a caps rule with its tracking.
+  expect(problemsIn('.palette-group-label { font: var(--text-caps); letter-spacing: 0.06em; color: var(--text-muted); }')).toEqual([]);
+  expect(problemsIn('.palette { box-shadow: var(--e-ring), inset 0 0 0 100vmax var(--bg-hover); border: 0; }')).toEqual([]);
+  // A component-scoped property (the values step's --tone-ink pattern), and text-decoration's keywords.
+  expect(problemsIn('.palette { --tone-ink: var(--ok-ink); color: var(--tone-ink); }')).toEqual([]);
+  expect(problemsIn('.palette-hit { text-decoration: underline; }')).toEqual([]);
+  // A focus ring forced colours still draw (they drop box-shadows): a transparent outline beside it.
+  expect(problemsIn('.palette-x:focus-visible { outline: 2px solid transparent; outline-offset: 2px; box-shadow: var(--focus-ring); }')).toEqual([]);
+  expect(surfaceProblems('.table-row { color: red; }', { name: 'tab', stylesheet: 'n/a', selectorPrefix: '.tab' }).checked).toBe(0);
+  expect(surfaceProblems('.palettes, .x-palette { color: red; }', palette).checked).toBe(0);
+
+  const surfaces: readonly SignalSurface[] = SIGNAL_SURFACES;
+  expect(surfaces.length).toBeGreaterThan(0);
+  for (const surface of surfaces) {
+    const result = surfaceProblems(read(surface.stylesheet), surface);
+    expect(result.checked, surface.name).toBeGreaterThan(0);
+    expect(result.problems, surface.name).toEqual([]);
+    expect(result.typeRules, `${surface.name} reads the --text-* tokens`).toBeGreaterThan(0);
+  }
 });
 
 test('hex-colours-do-not-grow', () => {

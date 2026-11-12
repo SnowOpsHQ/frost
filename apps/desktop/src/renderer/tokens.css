@@ -76,13 +76,6 @@
   --palette-sheet-min-height: 180px;
   --palette-width: 640px;
   --palette-bg: var(--bg-surface);
-  --palette-edge: #dfe4eb;
-  --palette-sheet: linear-gradient(180deg, var(--bg-chrome) 0%, #eceff4 100%);
-  --palette-shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 10px 28px rgb(16 24 40 / 0.1);
-  --palette-row-active: rgb(47 111 228 / 0.1);
-  --palette-hit: rgb(47 111 228 / 0.16);
-  --palette-kbd-bg: #f1f3f7;
-  --palette-kbd-edge: #d7dce4;
 
   /* ---- Render profiles (was in styles.css) */
   --render-accent: #7a4fe0;
@@ -158,15 +151,6 @@
     --caution: #f0b552;
     --info-tone: #8fb0e8;
     --shadow-card: none;
-
-    /* ---- Command palette (was in styles.css) */
-    --palette-edge: #353a44;
-    --palette-sheet: linear-gradient(180deg, var(--bg-chrome) 0%, #191b20 100%);
-    --palette-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 30px rgb(0 0 0 / 0.38);
-    --palette-row-active: rgb(108 157 255 / 0.14);
-    --palette-hit: rgb(108 157 255 / 0.22);
-    --palette-kbd-bg: #2c3038;
-    --palette-kbd-edge: #3d424d;
 
     /* ---- Render profiles (was in styles.css) */
     --render-accent: #a98bff;

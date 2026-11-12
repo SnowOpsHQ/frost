@@ -7,12 +7,16 @@
  * custom property that lives on `:root`, light and dark; `main.tsx` imports it before any other
  * stylesheet. It holds the legacy tokens (`LEGACY_TOKEN_MIGRATION`) and the Signal tokens
  * (`SIGNAL_TOKENS`, every one at its Signal value). A legacy alias is `var()` of its Signal token; a
- * retired name and a layout constant keep their pre-Signal values. The rollout:
+ * retired name and a layout constant keep their pre-Signal values until a surface PR drops the
+ * retired name (`removed`). The rollout:
  * 1. foundation (done): one token source and the full Signal vocabulary, no pixel changed;
  * 2. values (done, this step): the legacy aliases point at their Signal tokens and the names in
  *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values; Geist and Geist Mono are bundled
- *    (`BUNDLED_FONTS`, declared in `FONTS_STYLESHEET`) but not yet applied;
- * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used.
+ *    (`BUNDLED_FONTS`, declared in `FONTS_STYLESHEET`), applied per surface through the `--text-*`
+ *    tokens from step 3 on (`--font-ui` stays the system stack);
+ * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used
+ *    (the command palette first: its retired `--palette-*` names are `removed`, and it is the first
+ *    surface to read the `--text-*` type tokens, so the first to draw Geist).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -201,6 +205,8 @@ export const SIGNAL_NAMES_WITH_LEGACY_VALUES = [
  * `retire`: replaced by `signal`; the old name goes once no rule uses it. `signal` is null when
  * nothing replaces it (a layout constant that keeps its own name, or a style Signal drops), and
  * `--text-*` means the type scale. `was` is the sheet's description of the old light value.
+ * `removed`: a `retire` row whose surface PR moved every rule off it, so `tokens.css` no longer declares
+ * it (light or dark) and no renderer source reads it. The row stays as the record of its replacement.
  */
 export interface LegacyTokenMigration {
   readonly legacy: TokenName;
@@ -208,9 +214,13 @@ export interface LegacyTokenMigration {
   readonly signal: TokenName | null;
   readonly was: string;
   readonly note: string;
+  readonly removed?: true;
 }
 
-/** Every custom property that was declared on `:root` before Signal: 89 names, each mapped. */
+/**
+ * Every custom property that was declared on `:root` before Signal: 89 names, each mapped. The ones
+ * not `removed` are declared in `tokens.css`.
+ */
 export const LEGACY_TOKEN_MIGRATION = [
   // Chrome sizes
   { legacy: '--tabstrip-height', kind: 'retire', signal: '--h-chrome', was: '40px', note: 'with --toolbar-height: one 56px row' },
@@ -276,15 +286,15 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--seo-track', kind: 'alias', signal: '--track', was: '#e7ebf1', note: '' },
   { legacy: '--seo-skeleton', kind: 'retire', signal: '--bg-subtle', was: '#e9edf3', note: '' },
   { legacy: '--seo-skeleton-shine', kind: 'retire', signal: '--bg-sheet', was: '#f4f6f9', note: 'sweep over --bg-subtle' },
-  // Command palette (--palette-*)
+  // Command palette (--palette-*): its surface PR moved every rule onto Signal and dropped the retired names.
   { legacy: '--palette-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
-  { legacy: '--palette-edge', kind: 'retire', signal: '--e-ring', was: '#dfe4eb', note: 'outlines; --divider for separator borders' },
-  { legacy: '--palette-shadow', kind: 'retire', signal: '--e-ring', was: 'shadow', note: 'a band, not a floating sheet' },
-  { legacy: '--palette-sheet', kind: 'retire', signal: '--bg-window', was: 'gradient', note: 'no gradients' },
-  { legacy: '--palette-row-active', kind: 'retire', signal: '--accent-soft', was: '.10 accent', note: '' },
-  { legacy: '--palette-hit', kind: 'retire', signal: '--accent-soft', was: '.16 accent', note: 'match highlight, --r-xs; --bg-surface on the selected row' },
-  { legacy: '--palette-kbd-bg', kind: 'retire', signal: '--bg-surface', was: '#f1f3f7', note: 'key hint, --h-badge' },
-  { legacy: '--palette-kbd-edge', kind: 'retire', signal: '--e-ring', was: '#d7dce4', note: '' },
+  { legacy: '--palette-edge', kind: 'retire', signal: '--e-ring', was: '#dfe4eb', note: 'outlines; --divider for separator borders', removed: true },
+  { legacy: '--palette-shadow', kind: 'retire', signal: '--e-ring', was: 'shadow', note: 'a band, not a floating sheet', removed: true },
+  { legacy: '--palette-sheet', kind: 'retire', signal: '--bg-window', was: 'gradient', note: 'no gradients', removed: true },
+  { legacy: '--palette-row-active', kind: 'retire', signal: '--accent-soft', was: '.10 accent', note: '', removed: true },
+  { legacy: '--palette-hit', kind: 'retire', signal: '--accent-soft', was: '.16 accent', note: 'match highlight, --r-xs; --bg-surface on the selected row', removed: true },
+  { legacy: '--palette-kbd-bg', kind: 'retire', signal: '--bg-surface', was: '#f1f3f7', note: 'key hint, --h-badge', removed: true },
+  { legacy: '--palette-kbd-edge', kind: 'retire', signal: '--e-ring', was: '#d7dce4', note: '', removed: true },
   // Feature colours
   { legacy: '--render-accent', kind: 'retire', signal: '--accent', was: '#7a4fe0', note: 'one accent: no second hue' },
   { legacy: '--render-soft', kind: 'retire', signal: '--accent-soft', was: '.13 violet', note: '' },
@@ -311,6 +321,35 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--agent-approval-edge', kind: 'retire', signal: '--warn', was: '#c98b16', note: '' },
   { legacy: '--agent-approval-bg', kind: 'retire', signal: '--warn-soft', was: '#fffaf0', note: '' },
 ] as const satisfies readonly LegacyTokenMigration[];
+
+/**
+ * A surface whose rules a surface PR moved onto Signal (`surface-rules-read-signal-tokens`). The rollout
+ * adds one entry per surface PR. A rule in `stylesheet` (relative to the renderer) is the surface's
+ * when any selector in its list, at any nesting, names a class `selectorPrefix` or `selectorPrefix-…`
+ * on a class boundary (`.palette` covers `.palette`, `.palette-option` and `.chrome .palette-hit`,
+ * never `.palettes` or `.x-palette`; `.tab` would never cover `.table-row`), or when it sits in a
+ * `@keyframes` named the prefix's stem or stem-… (`palette-in`). Such a rule reads only Signal tokens,
+ * legacy aliases and component-scoped custom properties (declared in the same stylesheet, e.g.
+ * `--tone-ink`) in `var()`, never with a fallback (in any property); it declares no Signal or legacy
+ * name; no value of it holds a hex colour or a colour function; its colour-bearing values
+ * (`background-image` and custom properties included) hold nothing else but `transparent`,
+ * `currentColor`, `inherit`, `none`, lengths and `color-mix()` of those (plus `text-decoration`'s line
+ * and style keywords); a rule whose `box-shadow` reads `--focus-ring` also sets an `outline` forced
+ * colours draw (they drop box-shadows): a non-zero width, not `none`, e.g. `2px solid transparent`; its type comes from a `--text-*` token (`font: var(--text-*)`,
+ * with that token's `tracking` as `letter-spacing` in the same rule when it isn't `0`); a
+ * `font-weight` beside it is one `BUNDLED_FONTS` has for that token's family (Geist Mono: 400 only).
+ */
+export interface SignalSurface {
+  readonly name: string;
+  readonly stylesheet: string;
+  /** A class name with its dot (`.palette`): the surface's classes are it and it followed by `-…`. */
+  readonly selectorPrefix: string;
+}
+
+export const SIGNAL_SURFACES = [
+  // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).
+  { name: 'command palette', stylesheet: 'styles.css', selectorPrefix: '.palette' },
+] as const satisfies readonly SignalSurface[];
 
 /**
  * The most literal hex colours (`#rgb`, `#rrggbb`, …, outside comments) the renderer's stylesheets
@@ -374,8 +413,40 @@ export const CONTRAST_PAIRS = [
     why: '"An inverse button (Ask frost) uses --bg-active-inverse when pressed or open" (4.5:1)',
   },
   // Text on the accent tint
-  { fg: '--text', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'the palette\'s active row (--palette-row-active → --accent-soft) (4.5:1)' },
+  {
+    fg: '--text',
+    bg: '--accent-soft',
+    over: '--bg-surface',
+    min: 4.5,
+    why: 'the palette\'s selected row, and a match highlight on any other row (--palette-row-active, --palette-hit → --accent-soft) (4.5:1)',
+  },
   { fg: '--text', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'your messages in the agent panel (--agent-user → --accent-soft) (4.5:1)' },
+  // The command palette (its surface PR). Already covered above: body text on its card and footer
+  // (--bg-surface, --bg-subtle), a match highlight on the selected row (--text on --bg-surface), a key
+  // hint (--text-muted on --bg-surface), the selected row's icon (--on-accent on --accent) and its
+  // status pill (--on-inverse on --inverse). New with it:
+  {
+    fg: '--text-muted',
+    bg: '--accent-soft',
+    over: '--bg-surface',
+    min: 4.5,
+    why: 'the palette\'s selected row: its detail line and group name (12px, --text-muted) (4.5:1)',
+  },
+  { fg: '--warn-ink', bg: '--bg-surface', min: 4.5, why: 'the palette\'s confirm step: its caution note (12px, was --caution) on the card (4.5:1)' },
+  {
+    fg: '--text',
+    bg: '--bg-hover',
+    over: '--bg-subtle',
+    min: 4.5,
+    why: 'the palette\'s confirm step: its Back button (--bg-subtle fill, --e-ring edge), hovered (--bg-hover laid over the fill) (4.5:1)',
+  },
+  {
+    fg: '--accent',
+    bg: '--accent-soft',
+    over: '--bg-surface',
+    min: 3,
+    why: 'the palette\'s confirm step: its icon (--accent on an --accent-soft tile) (graphics, 3:1)',
+  },
   // Status text on a soft fill
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },
@@ -523,13 +594,14 @@ export const TAB_STRIP = {
   readonly minDividerOnStrip: number;
 };
 
-// ---- Fonts (the values step: Geist bundled, not yet applied) ----
+// ---- Fonts (bundled in the values step; applied per surface through the --text-* tokens) ----
 
 /**
  * The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares the bundled
  * fonts: only `@font-face` rules, one per `BUNDLED_FONTS` entry. `main.tsx` imports it right after
- * `TOKENS_STYLESHEET`. It applies no font: `--font-ui` and every rule stay as they are until the
- * surface PRs move onto the `--text-*` type tokens.
+ * `TOKENS_STYLESHEET`. It applies no font itself: a surface draws Geist once its rules read the
+ * `--text-*` type tokens (the command palette first); `--font-ui`, the rest of the chrome's face,
+ * stays the system stack until its own surface PR.
  */
 export const FONTS_STYLESHEET = 'fonts.css';
 

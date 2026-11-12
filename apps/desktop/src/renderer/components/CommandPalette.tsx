@@ -393,7 +393,7 @@ export function CommandPalette({
                 }}
                 onKeyDown={onKeyDown}
               />
-              <kbd className="palette-kbd palette-esc" aria-hidden="true">
+              <kbd className="palette-kbd" aria-hidden="true">
                 Esc
               </kbd>
             </div>
