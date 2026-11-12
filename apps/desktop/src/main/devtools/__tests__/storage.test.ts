@@ -103,6 +103,25 @@ describe('site storage', () => {
     expect(await failing.clearSiteData(TAB, PAGE)).toBe('cancelled');
   });
 
+  test('clear-site-data-failure-is-failed', async () => {
+    const changed = vi.fn();
+    const log = vi.fn();
+    const confirmClear = vi.fn(async (_origin: string) => true);
+    const clearOrigin = vi.fn(async (_origin: string, _contentsId: number) => Promise.reject(new Error('clearData threw')));
+    const storage = createSiteStorage({ cookies: async () => [SESSION, THEME], confirmClear, clearOrigin, changed, log });
+    expect(await storage.reveal(TAB, PAGE, { name: 'sid', domain: 'shop.example.com', path: '/' })).toBe(true);
+    changed.mockClear();
+    // Confirmed, but clearing throws: `failed`, never `cleared` (Phase 12 Task 10a).
+    expect(await storage.clearSiteData(TAB, PAGE)).toBe('failed');
+    expect(confirmClear).toHaveBeenCalledExactlyOnceWith('https://shop.example.com');
+    expect(clearOrigin).toHaveBeenCalledExactlyOnceWith('https://shop.example.com', TAB);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('clearing site data failed (clearData threw)'));
+    // Reveals are forgotten all the same (some data may be gone), and the drawer is told.
+    expect(changed).toHaveBeenCalledExactlyOnceWith(TAB);
+    const after = await storage.storage(TAB, PAGE);
+    expect(after.status === 'ready' && after.cookies.map((c) => c.value)).toEqual([null, null]);
+  });
+
   test('cookie-reveal-stamped-with-commit', async () => {
     // The store answers when the test says so: the commit lands while main reads it.
     let release: () => void = () => undefined;

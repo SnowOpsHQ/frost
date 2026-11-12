@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CheckKind, ChecksState } from '@app/specs/seo-checks.spec';
-import { rememberChecks } from '../checks-view';
+import { forgetChecks, rememberChecks } from '../checks-view';
 import { ipc } from '../ipc';
 
 // The active tab's link, sitemap and hreflang checks (acceptance `seo-checks.feature.md`, Panels):
@@ -41,6 +41,7 @@ export function useChecks(tabId: number | undefined): ChecksState | null {
     void loop();
     return () => {
       live = false;
+      forgetChecks(tabId);
     };
   }, [tabId]);
   return state !== null && state.tabId === tabId ? state : null;

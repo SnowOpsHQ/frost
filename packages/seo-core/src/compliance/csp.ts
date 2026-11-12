@@ -96,10 +96,10 @@ export function allowsInlineScripts(policies: readonly CspPolicy[]): boolean {
 /**
  * Whether a `frame-ancestors` source list keeps other sites from framing the page: it holds no source
  * that matches any site (`FRAME_ANCESTORS_OPEN`: `*`, a bare scheme such as `https:`, a scheme with a
- * wildcard host such as `https://*`) and is not empty.
+ * wildcard host such as `https://*`). An empty list (`frame-ancestors;`) matches no ancestor in CSP3,
+ * as `'none'`, so it protects; a policy without the directive is `frameAncestors`' concern.
  */
 export function frameAncestorsProtect(sources: readonly string[]): boolean {
-  if (sources.length === 0) return false;
   return !sources.some((source) => {
     const s = source.toLowerCase();
     return s === '*' || /^[a-z][a-z0-9+.-]*:$/.test(s) || /^([a-z][a-z0-9+.-]*|\*):\/\/\*(:[0-9*]+)?\/?$/.test(s);

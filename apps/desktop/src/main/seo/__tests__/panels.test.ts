@@ -43,6 +43,8 @@ let clipboard: { writeText: ReturnType<typeof vi.fn<(text: string) => void>> };
 let snapshotOf: (url: string) => unknown;
 /** The stored target query of each page URL (the content notes main holds). */
 let storedQueries: Map<string, string>;
+/** The broken targets of each tab's link check (what main's checks answer; the panel's "Broken only"). */
+let brokenOf: Map<number, readonly string[]>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -52,6 +54,7 @@ beforeEach(() => {
   clipboard = { writeText: vi.fn<(text: string) => void>() };
   snapshotOf = (url) => rawSnapshot(url);
   storedQueries = new Map();
+  brokenOf = new Map();
   win = new FakeHostWindow();
   controller = createBrowserController({
     createView: () => {
@@ -74,6 +77,7 @@ beforeEach(() => {
     },
     clipboard,
     targetQuery: (url) => storedQueries.get(url) ?? null,
+    brokenLinks: (tabId) => brokenOf.get(tabId) ?? [],
   });
   controller.attach(win as unknown as HostWindow);
 });
@@ -429,24 +433,50 @@ describe('copy', () => {
     load(A);
     const shown = { url: A, takenAt: rawSnapshot(A).extractedAt };
     // No ready audit yet: nothing is written.
-    expect(controller.seo.copyLinksCsv(activeId(), shown, { type: 'all', rel: 'all', query: '' })).toBeNull();
+    expect(controller.seo.copyLinksCsv(activeId(), shown, { type: 'all', rel: 'all', query: '' }, false)).toBeNull();
     expect(clipboard.writeText).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(AUDIT_DEBOUNCE_MS);
     await flush();
     const tabId = activeId();
     // Not the audit on screen (another URL or another run): nothing is written.
-    expect(controller.seo.copyLinksCsv(tabId, { ...shown, takenAt: shown.takenAt + 1 }, { type: 'all', rel: 'all', query: '' })).toBeNull();
-    expect(controller.seo.copyLinksCsv(tabId, { ...shown, url: B }, { type: 'all', rel: 'all', query: '' })).toBeNull();
+    expect(controller.seo.copyLinksCsv(tabId, { ...shown, takenAt: shown.takenAt + 1 }, { type: 'all', rel: 'all', query: '' }, false)).toBeNull();
+    expect(controller.seo.copyLinksCsv(tabId, { ...shown, url: B }, { type: 'all', rel: 'all', query: '' }, false)).toBeNull();
     expect(clipboard.writeText).not.toHaveBeenCalled();
-    expect(controller.seo.copyLinksCsv(tabId, shown, { type: 'all', rel: 'all', query: '' })).toBe(2);
+    expect(controller.seo.copyLinksCsv(tabId, shown, { type: 'all', rel: 'all', query: '' }, false)).toBe(2);
     expect(clipboard.writeText).toHaveBeenLastCalledWith(linksCsv(LINKS));
     // The rows the panel's filter shows.
-    expect(controller.seo.copyLinksCsv(tabId, shown, { type: 'external', rel: 'nofollow', query: 'other' })).toBe(1);
+    expect(controller.seo.copyLinksCsv(tabId, shown, { type: 'external', rel: 'nofollow', query: 'other' }, false)).toBe(1);
     expect(clipboard.writeText).toHaveBeenLastCalledWith(linksCsv([LINKS[1]!]));
     // The formula guard is on: page text never reaches a spreadsheet as a formula.
     expect(clipboard.writeText.mock.lastCall![0]).toContain(",'=SUM(1),");
-    expect(controller.seo.copyLinksCsv(tabId, shown, { type: 'internal', rel: 'ugc', query: '' })).toBe(0);
-    expect(controller.seo.copyLinksCsv(999, shown, { type: 'all', rel: 'all', query: '' })).toBeNull();
+    expect(controller.seo.copyLinksCsv(tabId, shown, { type: 'internal', rel: 'ugc', query: '' }, false)).toBe(0);
+    expect(controller.seo.copyLinksCsv(999, shown, { type: 'all', rel: 'all', query: '' }, false)).toBeNull();
+  });
+
+  test('copy-links-csv-broken-only', async () => {
+    const links = [...LINKS, { href: 'https://example.com/dead#part', scheme: 'https:', rel: 'ugc', text: 'Dead', kind: 'internal' as const, target: null }, { href: 'mailto:a@example.com', scheme: 'mailto:', rel: '', text: 'Mail', kind: 'other' as const, target: null }];
+    snapshotOf = (url) => rawSnapshot(url, { links, linkTotal: links.length });
+    await audited(A);
+    const tabId = activeId();
+    const shown = { url: A, takenAt: rawSnapshot(A).extractedAt };
+    const all = { type: 'all', rel: 'all', query: '' } as const;
+    // No link check yet: "Broken only" lists nothing, so only the header is written.
+    expect(controller.seo.copyLinksCsv(tabId, shown, all, true)).toBe(0);
+    expect(clipboard.writeText).toHaveBeenLastCalledWith(linksCsv([]));
+    // The check found the external link and /dead broken (results are keyed without the fragment).
+    brokenOf.set(tabId, ['https://other.org/', 'https://example.com/dead']);
+    expect(controller.seo.copyLinksCsv(tabId, shown, all, true)).toBe(2);
+    expect(clipboard.writeText).toHaveBeenLastCalledWith(linksCsv([links[1]!, links[2]!]));
+    // Combined with the panel's filter, as the rows it shows.
+    expect(controller.seo.copyLinksCsv(tabId, shown, { ...all, type: 'internal' }, true)).toBe(1);
+    expect(clipboard.writeText).toHaveBeenLastCalledWith(linksCsv([links[2]!]));
+    // Off: every filtered row, broken or not.
+    expect(controller.seo.copyLinksCsv(tabId, shown, all, false)).toBe(4);
+    expect(clipboard.writeText).toHaveBeenLastCalledWith(linksCsv(links));
+    // Another tab's broken targets never select this tab's rows.
+    brokenOf.clear();
+    brokenOf.set(tabId + 1, ['https://other.org/']);
+    expect(controller.seo.copyLinksCsv(tabId, shown, all, true)).toBe(0);
   });
 
   test('copy-url-only-copies-audit-urls', async () => {

@@ -79,6 +79,18 @@ describe('Search Console configuration', () => {
     }
     // An API base with a trailing slash is used without it.
     expect(resolve(false, {}, { ...client(), [GSC_ENDPOINT_ENV.apiBase]: 'http://127.0.0.1:4100/webmasters/v3/' })?.endpoints.apiBase).toBe('http://127.0.0.1:4100/webmasters/v3');
+    // So is an origin-only one (its path is `/`): every form joins to one slash, never `//sites`.
+    for (const [value, base] of [
+      ['https://gsc.test.example', 'https://gsc.test.example'],
+      ['https://gsc.test.example/', 'https://gsc.test.example'],
+      ['https://gsc.test.example/base/', 'https://gsc.test.example/base'],
+    ]) {
+      for (const key of ['apiBase', 'inspectionBase'] as const) {
+        const resolved = resolve(false, {}, { ...client(), [GSC_ENDPOINT_ENV[key]]: value })?.endpoints[key];
+        expect(resolved, `${key} ${value}`).toBe(base);
+        expect(`${resolved}/sites`, `${key} ${value}`).toBe(`${base}/sites`);
+      }
+    }
   });
 
   test('inspection-base-override-unpackaged-only', () => {

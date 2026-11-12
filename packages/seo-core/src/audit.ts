@@ -3,6 +3,7 @@ import type { PanelStatus } from '@app/specs/seo-sidebar.spec';
 import { RULES } from './rules';
 import type { Finding, PageFacts, PageSnapshot, SeoAudit, SeoRule, SeverityCounts } from './types';
 import { described, robotsWith } from './rules/head';
+import { ruleRan } from './rules/ran';
 import { aiReadinessReport } from './ai-readiness';
 import { complianceReport } from './compliance';
 import { contentReport } from './content/report';
@@ -102,12 +103,16 @@ export function pageFacts(s: PageSnapshot): PageFacts {
   };
 }
 
-/** Runs `rules` (default: every catalog rule) over `snapshot`: ranked findings, counts, score and page facts. */
+/** Runs `rules` (default: every catalog rule) over `snapshot`: ranked findings, counts, the rules that ran and passed, score and page facts. */
 export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RULES): SeoAudit {
   const findings: Finding[] = [];
+  let passed = 0;
   for (const rule of rules) {
     const result = rule.check(snapshot);
-    if (result === null) continue;
+    if (result === null) {
+      if (ruleRan(rule.id, snapshot)) passed += 1;
+      continue;
+    }
     findings.push({ ruleId: rule.id, category: rule.category, severity: rule.severity, title: rule.title, why: rule.why, fix: rule.fix, details: result });
   }
   const ranked = rankFindings(findings);
@@ -124,6 +129,7 @@ export function runAudit(snapshot: PageSnapshot, rules: readonly SeoRule[] = RUL
     indexable: indexability.verdict !== 'not-indexable',
     counts: countSeverities(ranked),
     findings: ranked,
+    passed,
     page,
     schema: analyseSchema(snapshot),
     indexability,

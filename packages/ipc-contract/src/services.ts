@@ -137,10 +137,11 @@ export interface SeoService {
   setHighlight(tabId: number, mode: HighlightMode, phrase?: string): boolean;
   /**
    * Writes the links `filter` selects from the tab's ready audit to the system clipboard as CSV
-   * (`seo-sidebar.spec.ts`, `LINKS_CSV_COLUMNS`); answers how many rows, or `null` (nothing
+   * (`seo-sidebar.spec.ts`, `LINKS_CSV_COLUMNS`), with `brokenOnly` only those the tab's link check
+   * found `broken` (the panel's "Broken only"); answers how many rows, or `null` (nothing
    * written) without a ready audit, or when it is not the audit the panel shows (`audit`).
    */
-  copyLinksCsv(tabId: number, audit: SeoAuditRef, filter: LinkFilter): number | null;
+  copyLinksCsv(tabId: number, audit: SeoAuditRef, filter: LinkFilter, brokenOnly: boolean): number | null;
   /**
    * Writes `url` to the system clipboard if the tab's ready audit is the one the panel shows
    * (`audit`) and lists it (`pageUrls`, parsed hrefs); else `false`, nothing written.

@@ -476,16 +476,20 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
 
   const fork = () => {
     if (disposed) return;
-    let instance: Instance;
+    let channel: ReturnType<AgentHostDeps['createChannel']> | null = null;
+    let child: HostChild | null = null;
+    let made: Instance | null = null;
     try {
-      const { port1, port2 } = deps.createChannel();
-      const child = deps.fork(path.join(deps.buildDir, AGENT_RUNTIME_FILE), [], {
+      channel = deps.createChannel();
+      const { port1, port2 } = channel;
+      child = deps.fork(path.join(deps.buildDir, AGENT_RUNTIME_FILE), [], {
         serviceName: AGENT_SERVICE_NAME,
         env: { NODE_ENV: deps.nodeEnv ?? 'production', ...(!deps.packaged && typeof deps.e2eAgentScript === 'string' ? { [AGENT_E2E_SCRIPT_ENV]: deps.e2eAgentScript } : {}) },
         execArgv: ['--permission', `--allow-fs-read=${deps.buildDir}`],
         stdio: deps.packaged ? 'ignore' : 'inherit',
       });
-      instance = { child, port: port1, ready: false, readyAt: 0, readyTimer: null, abandoned: false };
+      const instance: Instance = { child, port: port1, ready: false, readyAt: 0, readyTimer: null, abandoned: false };
+      made = instance;
       if (forks > 0) stats.restarts += 1;
       forks += 1;
       current = instance;
@@ -500,10 +504,17 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
       }, AGENT_HOST_LIMITS.readyTimeoutMs);
       child.postMessage(null, [port2]);
     } catch {
-      // `fork` itself threw (a missing bundle): treated like an exit.
-      const dead: Instance = {
-        child: { postMessage: () => undefined, kill: () => true, on: () => undefined },
-        port: { postMessage: () => undefined, on: () => undefined, start: () => undefined, close: () => undefined },
+      // `fork` itself threw (a missing bundle), or handing the child its port did: treated like an
+      // exit. What was made goes with it (audit #25): both ports closed and a child already forked
+      // killed and abandoned, so its later exit or missed `ready` counts no second failure.
+      try {
+        channel?.port2.close();
+      } catch {
+        // Already closed.
+      }
+      const dead: Instance = made ?? {
+        child: child ?? { postMessage: () => undefined, kill: () => true, on: () => undefined },
+        port: channel?.port1 ?? { postMessage: () => undefined, on: () => undefined, start: () => undefined, close: () => undefined },
         ready: false,
         readyAt: 0,
         readyTimer: null,

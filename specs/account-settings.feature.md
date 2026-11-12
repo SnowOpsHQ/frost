@@ -18,7 +18,8 @@ to one named test.
   History). **While a sign-in waits for its confirmation** page changes and History do not close it
   (History is closed instead), and Close or Esc cancel the sign-in (main revokes the exchanged token)
   before closing: a waiting confirmation is never hidden. When the sheet closes with focus inside it,
-  focus goes to the page, else to the address bar.
+  focus goes to the page, else to the address bar, unless another sheet replaced it (that sheet keeps
+  focus; `help.feature.md`, `a-replacing-sheet-keeps-focus`).
 - **Opening.** The palette ("Settings", "Sign in to frost" while signed out, "Search Console
   settings", "Telemetry settings", each on its section) and the menu item "Settings…" (`SETTINGS_MENU`,
   Mod+,: the macOS app menu, elsewhere the end of Edit). The menu is main's, so main signals the chrome

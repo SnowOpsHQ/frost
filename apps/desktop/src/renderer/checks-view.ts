@@ -85,7 +85,8 @@ export function checksFor(state: ChecksState | null, tabId: number): ChecksState
   return state !== null && state.tabId === tabId ? state : null;
 }
 
-// The latest state seen per tab (the command palette's "Stop" asks whether a check runs).
+// The latest state seen per tab while it is watched (the command palette's "Stop" asks whether a
+// check runs). A tab nothing watches is forgotten: its run may end unseen.
 const latest = new Map<number, ChecksState>();
 
 export function rememberChecks(state: ChecksState): void {
@@ -95,4 +96,9 @@ export function rememberChecks(state: ChecksState): void {
 
 export function knownChecks(tabId: number): ChecksState | undefined {
   return latest.get(tabId);
+}
+
+/** The tab's watch ended (its panel closed, the tab switched or closed): its last state may go stale. */
+export function forgetChecks(tabId: number): void {
+  latest.delete(tabId);
 }

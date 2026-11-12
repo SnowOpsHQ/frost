@@ -248,7 +248,7 @@ const seoRouter = router({
     .use(requireSeo)
     .input(SeoLinksCsvInputSchema)
     .mutation(({ ctx, input }) => {
-      const rows = ctx.seo.copyLinksCsv(input.tabId, input.audit, input.filter);
+      const rows = ctx.seo.copyLinksCsv(input.tabId, input.audit, input.filter, input.brokenOnly);
       return typeof rows === 'number' ? rows : null;
     }),
   copyUrl: publicProcedure

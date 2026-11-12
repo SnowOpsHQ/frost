@@ -280,6 +280,8 @@ line maps to one named test.
   a tab.
 - **Scenario: clear-during-read-saves-nothing** — a clear while a keys or value read runs leaves
   nothing listed or shown.
+- **Scenario: tab-close-discards-only-its-reads** — closing a tab (`forget`) drops its keys or value
+  read in flight; another tab's read in flight still lands.
 - **Scenario: reader-runs-with-javascript-off** — the reader does not depend on the page's scripting
   (an isolated world runs with JavaScript off, as the extractor's does).
 

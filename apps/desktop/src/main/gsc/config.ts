@@ -52,7 +52,8 @@ function overrideOf(value: string): string | null {
   if (url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') return null;
   const allowed = url.protocol === 'https:' || (url.protocol === 'http:' && UNPACKAGED_HTTP_GSC_HOSTS.includes(url.hostname));
   if (!allowed) return null;
-  return url.href.endsWith('/') && url.pathname !== '/' ? url.href.slice(0, -1) : url.href;
+  // No trailing slash, an origin-only one's (`/`) included: callers append `/path`, never `//path`.
+  return url.href.endsWith('/') ? url.href.slice(0, -1) : url.href;
 }
 
 /** The Search Console configuration for this build, or `null` (unconfigured: nothing is sent to Google). */

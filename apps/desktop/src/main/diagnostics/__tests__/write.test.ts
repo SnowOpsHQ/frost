@@ -1,6 +1,6 @@
 // Spec: specs/diagnostics.spec.ts (DIAGNOSTICS_SAVE_DIALOG)
 // Acceptance: specs/diagnostics.feature.md (End to end: the file is written with mode 0600, also over an existing file)
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -13,8 +13,13 @@ test('report-file-is-private-even-when-overwritten', async () => {
   try {
     const file = path.join(dir, 'report.txt');
     await writeFile(file, 'old', { mode: 0o644 });
+    const other = path.join(dir, 'other-link.txt');
+    await link(file, other);
     await writeReport(file, 'frost diagnostics report\n');
     expect(await readFile(file, 'utf8')).toBe('frost diagnostics report\n');
+    // Written to a new owner-only file renamed over the old one: the old file's contents (still read
+    // through the other link) never held the report, not even before a narrowing.
+    expect(await readFile(other, 'utf8')).toBe('old');
     if (process.platform !== 'win32') expect((await stat(file)).mode & 0o777).toBe(0o600);
     const fresh = path.join(dir, 'fresh.txt');
     await writeReport(fresh, 'x\n');

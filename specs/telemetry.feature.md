@@ -160,8 +160,10 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
   `UnhandledPromiseRejectionWarning` itself, and the process keeps running as before. An error seen by
   both is reported once.
 - **One `app.start` span** from telemetry's creation to the first window (`platform`, `outcome: ok`,
-  `duration_ms`). Main's startup promise never rejects: a startup that does not complete leaves the
-  span open, and it is never sent. (One that rejected would end it with the error status only.)
+  `duration_ms`). Main's startup promise rejects when startup fails (before the app quits:
+  `browser-session-db.feature.md`, `startup-failure-quits`), which ends the span with the error
+  status only. The quit waits a task after that rejection, so the ended span is queued when the
+  `will-quit` hold starts and is sent within its bounded flush (with `usage` on).
 - **Quitting is bounded.** On `will-quit`, with a channel on, the quit waits for `shutdown()` (at most
   `shutdownTimeoutMs`) and then goes on; with both off it is not held.
 - **Renderer errors** are the chrome's `error` and `unhandledrejection` events, cut to
@@ -237,6 +239,9 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
 - `app-start-span` — one `app.start` span ends when startup completes, with `platform`, `outcome` and
   `duration_ms`; the resource carries the version and platform only; a rejected startup ends it with
   the error status and no outcome, and is not an unhandled rejection.
+- `app-start-span-sent-on-failed-startup` — with `usage` on and an app whose `quit()` fires
+  `will-quit` at once (no window open), a startup run through `createStartup` that rejects sends the
+  `app.start` span with the error status within the quit's flush.
 - `shutdown-on-will-quit-is-bounded` — with a channel on, the first `will-quit` is held until
   `shutdown` finishes (at most `shutdownTimeoutMs` with a collector that never answers), then the app
   quits again and that `will-quit` passes.

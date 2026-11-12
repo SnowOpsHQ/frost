@@ -16,7 +16,7 @@ import { LinkChecks, LinkStatusChip } from './LinkChecks';
 
 // Links (acceptance `seo-panels.feature.md`, Links): the page's links (the snapshot's first
 // `maxLinks`) with their type, rel flags and target; filters by type and rel and a text search;
-// Copy as CSV (main formats the filtered rows and writes its own clipboard); the highlight toggle.
+// Copy as CSV (main formats the rows shown, "Broken only" included, and writes its own clipboard); the highlight toggle.
 // Every href is text: a row opens its actions (open in a background tab through main, copy).
 
 const TYPE_LABELS: Readonly<Record<LinkTypeFilter, string>> = { all: 'All', internal: 'Internal', external: 'External', other: 'Other' };
@@ -136,9 +136,9 @@ export function Links({ audit, tab }: { readonly audit: SeoAudit; readonly tab: 
             type="button"
             className="seo-toggle"
             data-testid="seo-links-copy-csv"
-            disabled={rows.length === 0}
+            disabled={shown.length === 0}
             onClick={() => {
-              void actions.copyLinksCsv(tab.id, auditRef(audit), filter).then((copied) => flash(copied === null ? 'Nothing to copy' : `Copied ${formatCount(copied)} ${copied === 1 ? 'link' : 'links'} as CSV`));
+              void actions.copyLinksCsv(tab.id, auditRef(audit), filter, brokenOnly).then((copied) => flash(copied === null ? 'Nothing to copy' : `Copied ${formatCount(copied)} ${copied === 1 ? 'link' : 'links'} as CSV`));
             }}
           >
             <CopyIcon />

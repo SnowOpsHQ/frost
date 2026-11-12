@@ -86,7 +86,12 @@ Each line maps to one named test.
 - **Panel.** A verdict card (Secure / Needs attention / Not secure / Local page, with HTTPS, mixed
   content and HSTS signals), the ranked security issues, the security header table (present / weak /
   missing / unknown / not applicable, the values as text and frost's reading of them), the mixed
-  content list, then the accessibility card: the run button, progress against the time cap, then a
+  content list, then the accessibility card: the run button, progress against the time cap (the
+  card keeps one visually hidden polite live status mounted in every state, empty until a run
+  starts, which then sets it to the running message once, since a region inserted with its text
+  already in it is often not announced; the message shown on the progress line is hidden from screen
+  readers so it is not read twice; the elapsed seconds are plain text outside the live status, so a
+  screen reader does not re-announce them every second), then a
   tally by impact, the groups (worst first) and each rule expandable to its description, help URL
   (text, "Open in new tab" through `browser.openBackgroundTab`, http(s) only) and elements (selector
   text and axe's failure summary). Light and dark; inline SVG icons drawn for frost; no `style`
@@ -96,7 +101,7 @@ Each line maps to one named test.
 - Policies split on commas, directives on semicolons, first occurrence wins, junk names skipped, a meta policy drops frame-ancestors / report-uri / sandbox; linear → `csp-parser-reads-policies`
 - Inline scripts run only if every policy that governs scripts allows `'unsafe-inline'` without a nonce, hash or `'strict-dynamic'` → `csp-inline-scripts`
 - frame-ancestors counts from header policies only → `csp-frame-ancestors-header-only`
-- frame-ancestors with `*`, a bare scheme or a wildcard host does not protect; `'none'`, `'self'` and hosts do → `frame-ancestors-open-sources`
+- frame-ancestors with `*`, a bare scheme or a wildcard host does not protect; `'none'`, `'self'` and hosts do, and so does an empty source list (`frame-ancestors;`: CSP3 matches nothing against it, as `'none'`); a policy without frame-ancestors sets nothing → `frame-ancestors-open-sources`
 - `script-src-elem` decides inline scripts before `script-src` and `default-src` → `csp-script-src-elem-precedence`
 - A cut CSP header leaves inline scripts, frame-ancestors and upgrade-insecure-requests unknown: no rule fails for them → `csp-cut-is-unknown`
 
@@ -165,6 +170,7 @@ Each line maps to one named test.
 - What the accessibility section shows for each run state and report → `a11y-view-states`
 - Upgraded mixed content in the signals; partial and timed-out notes → `compliance-notes`
 - Progress, impact counts and node lists → `a11y-progress-and-counts`
+- The run's progress: the card's live status is mounted empty before the run, the same element gets only the running message when the run starts, the ticking elapsed seconds sit outside it (`apps/desktop/src/renderer/__tests__/compliance-run-progress.test.ts`) → `a11y-progress-announced-once`
 
 ## End to end (`apps/desktop/e2e/seo-compliance.e2e.ts`)
 https cases use a loopback https server with a fresh self-signed certificate that the suite's own

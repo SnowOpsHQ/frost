@@ -61,9 +61,13 @@ function SettingsView({ section, focusSeq, account, tabId, closeLabel, onClose, 
     heading?.scrollIntoView({ block: 'start' });
   }, [section, focusSeq]);
   // Closed for any reason with focus inside: the sheet's nodes are gone, so focus fell to the body.
+  // Checked once this commit's effects ran: a sheet that replaced this one has focused itself by then
+  // (React runs this cleanup before the new sheet's mount effect), and keeps focus.
   useEffect(
     () => () => {
-      if (document.activeElement === null || document.activeElement === document.body) focusAfterClose();
+      queueMicrotask(() => {
+        if (document.activeElement === null || document.activeElement === document.body) focusAfterClose();
+      });
     },
     [],
   );

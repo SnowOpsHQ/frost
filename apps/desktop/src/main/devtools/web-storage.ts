@@ -201,8 +201,17 @@ export function createWebStorageReader(options: WebStorageReaderOptions = {}): W
   const reveals = new Map<number, { readonly area: WebStorageArea; readonly key: string; readonly document: number }>();
   const documents = new Map<number, number>();
   const documentOf = (id: number): number => documents.get(id) ?? 0;
-  /** Bumped by `clear` and `forget`: a read in flight across one never saves or shows what it read. */
-  let generation = 0;
+  /**
+   * Per tab, the epoch its reads start in, dropped by `forget` (that tab) and `clear` (every tab): a
+   * read in flight across one never saves or shows what it read; another tab's read is not touched.
+   */
+  const epochs = new Map<number, number>();
+  let lastEpoch = 0;
+  const epochOf = (id: number): number => {
+    let epoch = epochs.get(id);
+    if (epoch === undefined) epochs.set(id, (epoch = ++lastEpoch));
+    return epoch;
+  };
   /** Per tab, the keys read in flight: a second request while it runs shares it (one script at a time per tab). */
   const reading = new Map<number, Promise<void>>();
   const log = (message: string): void => options.log?.(`devtools: ${message}`);
@@ -247,9 +256,9 @@ export function createWebStorageReader(options: WebStorageReaderOptions = {}): W
   const readKeys = async (target: WebStorageTarget, pageOrigin: string): Promise<void> => {
     const id = target.id;
     const stamp = documentOf(id);
-    const started = generation;
+    const started = epochOf(id);
     const raw = await run(target, { op: 'keys' });
-    if (generation !== started) return;
+    if (epochs.get(id) !== started) return;
     if (documentOf(id) !== stamp || target.isDestroyed() || parseWebUrl(target.getURL())?.origin !== pageOrigin) {
       listings.delete(id);
       return;
@@ -276,7 +285,7 @@ export function createWebStorageReader(options: WebStorageReaderOptions = {}): W
     if (!shown || shown.document !== listing.document) return null;
     const area = listing.view[shown.area];
     if (area.status !== 'ready' || !area.items.some((i) => i.key === shown.key && !i.keyTruncated)) return null;
-    const started = generation;
+    const started = epochOf(id);
     const shareKey = JSON.stringify([started, listing.document, shown.area, shown.key]);
     let shared = valueReads.get(id);
     if (shared?.key !== shareKey) {
@@ -289,7 +298,7 @@ export function createWebStorageReader(options: WebStorageReaderOptions = {}): W
     }
     const raw = await shared.read;
     // Overtaken by a commit, a clear (or the tab went): the value belongs to no document the chrome shows.
-    if (generation !== started || documentOf(id) !== listing.document || target.isDestroyed() || parseWebUrl(target.getURL())?.origin !== listing.origin) return null;
+    if (epochs.get(id) !== started || documentOf(id) !== listing.document || target.isDestroyed() || parseWebUrl(target.getURL())?.origin !== listing.origin) return null;
     const parsed = WebStorageValueAnswerSchema.safeParse(raw);
     if (!parsed.success || parsed.data.status !== 'ready') return null;
     const answer = parsed.data;
@@ -351,14 +360,14 @@ export function createWebStorageReader(options: WebStorageReaderOptions = {}): W
     },
 
     forget(contentsId) {
-      generation += 1;
+      epochs.delete(contentsId);
       listings.delete(contentsId);
       reveals.delete(contentsId);
       documents.delete(contentsId);
     },
 
     clear() {
-      generation += 1;
+      epochs.clear();
       listings.clear();
       reveals.clear();
     },

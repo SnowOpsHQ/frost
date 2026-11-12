@@ -142,6 +142,29 @@ changes nothing); rules over images and links look at the snapshot's (capped) li
 - **Scenario: score-caps-noindex** — `robots-noindex` alone scores `NOINDEX_SCORE_CAP` (59, band
   `poor`) instead of 93, the audit is `indexable: false` and its page facts name the tags that ask
   (`noindexFor`); a lower score with noindex stays lower; without it the audit is `indexable`.
+- **Scenario: passed-counts-rules-that-ran** — the audit's `passed` (the Overview's "N checks
+  passed") counts the rules that ran and found nothing. A rule ran when its input is known; a rule
+  whose input is unknown, or that does not apply to the page (HSTS or mixed content on a page not
+  served over https), has no finding but is not counted either. Not counted: the `http-status-*`
+  rules without a status (no response recorded, or an `in-page` one); `http-redirect-chain` unless
+  the redirects were recorded (a `network` or `cache` response); the `x-robots-*`,
+  `canonical-header-conflict` and security header rules without the response's headers (the `csp-*`
+  rules also run on a meta policy that is not empty, the `referrer-policy-*` rules on a meta
+  referrer); `canonical-elsewhere` without an HTML canonical, and without the headers;
+  `csp-unsafe-inline` with a cut CSP header, `clickjacking-unprotected` with one (a
+  `frame-ancestors` after the cut would override X-Frame-Options), and a `mixed-content-*` rule with
+  one while it has resources of its kind; the HSTS and mixed-content rules over http; the robots.txt
+  rules until robots.txt is read (`robots-txt-unreachable` until its fetch settles); the measured
+  speed rules without a measurement, and a Core Web Vital's two rules without its value;
+  `render-blocking-scripts` without the extractor's count; the accessibility rules until a check has
+  run; the JavaScript rules without a complete comparison; the link, sitemap and hreflang-return
+  rules until that check has run, and `sitemap-page-not-listed` while frost cannot tell (`listed`
+  null). The hreflang rules count as ran on the HTML alone, even with unknown headers (an hreflang
+  only in a `Link` header is then missed). The clean fixture (no measurement, served HTML, accessibility check or site checks)
+  counts every other rule; with all of them collected and passing, every rule. Every catalog rule is
+  either one that needs input (it has one in `rules/ran.ts`) or one that reads only the page's HTML
+  and URL, and on a page with nothing collected exactly the latter run, so a new rule must be
+  classified.
 - **Scenario: panel-status** — `panelStatus` is `error` with an error in the panel's categories,
   `warn` with a warning and no error, `pass` with only info findings or none.
 - **Scenario: page-facts-summarise-links-images-and-social** — the audit's facts count internal,
