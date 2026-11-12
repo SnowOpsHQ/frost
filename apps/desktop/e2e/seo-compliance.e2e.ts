@@ -317,6 +317,11 @@ test('huge-dom-run-stays-bounded-e2e', async () => {
   // A run in progress is cancelled by navigation: the next page starts idle, and back on the huge
   // page (a new document) the old run's answer never lands, however long it takes.
   await compliance(`${origin}/huge`);
+  // The audit shown is already this URL's, so `compliance` can return before the reload commits. The
+  // first run's answer goes when the new document takes over: wait for that, or the click starts a
+  // run on the old document, which the reload then cancels (seen once on macOS CI, run 43143106511:
+  // the state below never left idle).
+  await expect(a11yState()).toHaveAttribute('data-state', 'idle');
   await page.getByTestId('seo-a11y-run').click();
   await expect(a11yState()).toHaveAttribute('data-state', /running|scoring|results|timed-out/);
   await compliance(`${origin}/next`);
