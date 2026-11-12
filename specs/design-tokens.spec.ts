@@ -7,12 +7,15 @@
  * custom property that lives on `:root`, light and dark; `main.tsx` imports it before any other
  * stylesheet. It holds the legacy tokens (`LEGACY_TOKEN_MIGRATION`) and the Signal tokens
  * (`SIGNAL_TOKENS`, every one at its Signal value). A legacy alias is `var()` of its Signal token; a
- * retired name and a layout constant keep their pre-Signal values. The rollout:
+ * retired name and a layout constant keep their pre-Signal values until a surface PR drops the
+ * retired name (`removed`). The rollout:
  * 1. foundation (done): one token source and the full Signal vocabulary, no pixel changed;
  * 2. values (done, this step): the legacy aliases point at their Signal tokens and the names in
  *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values; Geist and Geist Mono are bundled
  *    (`BUNDLED_FONTS`, declared in `FONTS_STYLESHEET`) but not yet applied;
- * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used.
+ * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used
+ *    (the command palette first: its retired `--palette-*` names are `removed`, and it is the first
+ *    surface to read the `--text-*` type tokens, so the first to draw Geist).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -201,6 +204,8 @@ export const SIGNAL_NAMES_WITH_LEGACY_VALUES = [
  * `retire`: replaced by `signal`; the old name goes once no rule uses it. `signal` is null when
  * nothing replaces it (a layout constant that keeps its own name, or a style Signal drops), and
  * `--text-*` means the type scale. `was` is the sheet's description of the old light value.
+ * `removed`: a `retire` row whose surface PR moved every rule off it, so `tokens.css` no longer declares
+ * it (light or dark) and no renderer source reads it. The row stays as the record of its replacement.
  */
 export interface LegacyTokenMigration {
   readonly legacy: TokenName;
@@ -208,9 +213,13 @@ export interface LegacyTokenMigration {
   readonly signal: TokenName | null;
   readonly was: string;
   readonly note: string;
+  readonly removed?: true;
 }
 
-/** Every custom property that was declared on `:root` before Signal: 89 names, each mapped. */
+/**
+ * Every custom property that was declared on `:root` before Signal: 89 names, each mapped. The ones
+ * not `removed` are declared in `tokens.css`.
+ */
 export const LEGACY_TOKEN_MIGRATION = [
   // Chrome sizes
   { legacy: '--tabstrip-height', kind: 'retire', signal: '--h-chrome', was: '40px', note: 'with --toolbar-height: one 56px row' },
@@ -276,15 +285,15 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--seo-track', kind: 'alias', signal: '--track', was: '#e7ebf1', note: '' },
   { legacy: '--seo-skeleton', kind: 'retire', signal: '--bg-subtle', was: '#e9edf3', note: '' },
   { legacy: '--seo-skeleton-shine', kind: 'retire', signal: '--bg-sheet', was: '#f4f6f9', note: 'sweep over --bg-subtle' },
-  // Command palette (--palette-*)
+  // Command palette (--palette-*): its surface PR moved every rule onto Signal and dropped the retired names.
   { legacy: '--palette-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
-  { legacy: '--palette-edge', kind: 'retire', signal: '--e-ring', was: '#dfe4eb', note: 'outlines; --divider for separator borders' },
-  { legacy: '--palette-shadow', kind: 'retire', signal: '--e-ring', was: 'shadow', note: 'a band, not a floating sheet' },
-  { legacy: '--palette-sheet', kind: 'retire', signal: '--bg-window', was: 'gradient', note: 'no gradients' },
-  { legacy: '--palette-row-active', kind: 'retire', signal: '--accent-soft', was: '.10 accent', note: '' },
-  { legacy: '--palette-hit', kind: 'retire', signal: '--accent-soft', was: '.16 accent', note: 'match highlight, --r-xs; --bg-surface on the selected row' },
-  { legacy: '--palette-kbd-bg', kind: 'retire', signal: '--bg-surface', was: '#f1f3f7', note: 'key hint, --h-badge' },
-  { legacy: '--palette-kbd-edge', kind: 'retire', signal: '--e-ring', was: '#d7dce4', note: '' },
+  { legacy: '--palette-edge', kind: 'retire', signal: '--e-ring', was: '#dfe4eb', note: 'outlines; --divider for separator borders', removed: true },
+  { legacy: '--palette-shadow', kind: 'retire', signal: '--e-ring', was: 'shadow', note: 'a band, not a floating sheet', removed: true },
+  { legacy: '--palette-sheet', kind: 'retire', signal: '--bg-window', was: 'gradient', note: 'no gradients', removed: true },
+  { legacy: '--palette-row-active', kind: 'retire', signal: '--accent-soft', was: '.10 accent', note: '', removed: true },
+  { legacy: '--palette-hit', kind: 'retire', signal: '--accent-soft', was: '.16 accent', note: 'match highlight, --r-xs; --bg-surface on the selected row', removed: true },
+  { legacy: '--palette-kbd-bg', kind: 'retire', signal: '--bg-surface', was: '#f1f3f7', note: 'key hint, --h-badge', removed: true },
+  { legacy: '--palette-kbd-edge', kind: 'retire', signal: '--e-ring', was: '#d7dce4', note: '', removed: true },
   // Feature colours
   { legacy: '--render-accent', kind: 'retire', signal: '--accent', was: '#7a4fe0', note: 'one accent: no second hue' },
   { legacy: '--render-soft', kind: 'retire', signal: '--accent-soft', was: '.13 violet', note: '' },
@@ -311,6 +320,23 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--agent-approval-edge', kind: 'retire', signal: '--warn', was: '#c98b16', note: '' },
   { legacy: '--agent-approval-bg', kind: 'retire', signal: '--warn-soft', was: '#fffaf0', note: '' },
 ] as const satisfies readonly LegacyTokenMigration[];
+
+/**
+ * A surface whose rules a surface PR moved onto Signal: every rule in `stylesheet` (relative to the
+ * renderer) whose selectors all start with `selectorPrefix` reads only Signal tokens and legacy
+ * aliases, writes no literal colour, and takes its type from the `--text-*` tokens (a bundled weight
+ * may override the token's). The rollout adds one entry per surface PR.
+ */
+export interface SignalSurface {
+  readonly name: string;
+  readonly stylesheet: string;
+  readonly selectorPrefix: string;
+}
+
+export const SIGNAL_SURFACES = [
+  // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).
+  { name: 'command palette', stylesheet: 'styles.css', selectorPrefix: '.palette' },
+] as const satisfies readonly SignalSurface[];
 
 /**
  * The most literal hex colours (`#rgb`, `#rrggbb`, …, outside comments) the renderer's stylesheets
@@ -374,8 +400,33 @@ export const CONTRAST_PAIRS = [
     why: '"An inverse button (Ask frost) uses --bg-active-inverse when pressed or open" (4.5:1)',
   },
   // Text on the accent tint
-  { fg: '--text', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'the palette\'s active row (--palette-row-active → --accent-soft) (4.5:1)' },
+  {
+    fg: '--text',
+    bg: '--accent-soft',
+    over: '--bg-surface',
+    min: 4.5,
+    why: 'the palette\'s selected row, and a match highlight on any other row (--palette-row-active, --palette-hit → --accent-soft) (4.5:1)',
+  },
   { fg: '--text', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'your messages in the agent panel (--agent-user → --accent-soft) (4.5:1)' },
+  // The command palette (its surface PR). Already covered above: body text on its card and footer
+  // (--bg-surface, --bg-subtle), a match highlight on the selected row (--text on --bg-surface), a key
+  // hint (--text-muted on --bg-surface), the selected row's icon (--on-accent on --accent) and its
+  // status pill (--on-inverse on --inverse). New with it:
+  {
+    fg: '--text-muted',
+    bg: '--accent-soft',
+    over: '--bg-surface',
+    min: 4.5,
+    why: 'the palette\'s selected row: its detail line and group name (12px, --text-muted) (4.5:1)',
+  },
+  { fg: '--warn-ink', bg: '--bg-surface', min: 4.5, why: 'the palette\'s confirm step: its caution note (12px, was --caution) on the card (4.5:1)' },
+  {
+    fg: '--accent',
+    bg: '--accent-soft',
+    over: '--bg-surface',
+    min: 3,
+    why: 'the palette\'s confirm step: its icon (--accent on an --accent-soft tile) (graphics, 3:1)',
+  },
   // Status text on a soft fill
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },

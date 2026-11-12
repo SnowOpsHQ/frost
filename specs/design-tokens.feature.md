@@ -1,7 +1,7 @@
 # Feature: Design tokens (Signal foundation and values)
 
 Spec: `specs/design-tokens.spec.ts` (`TOKENS_STYLESHEET`, `SIGNAL_TOKENS`, `THEMED_SIGNAL_GROUPS`,
-`SIGNAL_NAMES_WITH_LEGACY_VALUES`, `LEGACY_TOKEN_MIGRATION`, `CONTRAST_PAIRS`, `HEX_COLOUR_RATCHET`,
+`SIGNAL_NAMES_WITH_LEGACY_VALUES`, `LEGACY_TOKEN_MIGRATION`, `CONTRAST_PAIRS`, `HEX_COLOUR_RATCHET`, `SIGNAL_SURFACES`,
 `FONTS_STYLESHEET`, `GEIST_PACKAGE`, `GEIST_FONTS_ALIAS`, `TEXT_BODY_EMPHASIS_WEIGHT`, `BUNDLED_FONTS`). Source of truth:
 the Signal token sheet (its values and its Migration table) and the round-2 council decisions.
 Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.tsx`. Each line maps to one named test.
@@ -33,13 +33,14 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   step, an alias whose Signal token has another name is exactly `var(<signal>)` in light with no dark
   override, so it follows the Signal token in both themes (`--bg-chrome: var(--bg-window)`,
   `--seo-panel-width: var(--w-panel)`). Retired names keep their values until their surface PR (but
-  `--bg-strip` and `--bg-tab-hover`, see Tab row);
+  `--bg-strip` and `--bg-tab-hover`, see Tab row), which moves every rule off them and drops them from
+  `tokens.css`: the row stays in the map, marked `removed`;
   layout constants (aliases with `signal: null`) keep theirs. Rules outside `tokens.css` change only
   where a Signal value left text under its minimum (`TEXT_COLOUR_RULES`, below) or a review asked
   for it (the tab spinner's track).
-  A retired value that reads an alias moves with it: `--palette-sheet`'s gradient starts at
-  `var(--bg-chrome)`, so its first stop is now `--bg-window` (its second stays a literal until the
-  palette's surface PR).
+  A retired value that reads an alias moved with it: `--palette-sheet`'s gradient started at
+  `var(--bg-chrome)`, so its first stop became `--bg-window` in the values step; the palette's surface
+  PR then dropped the gradient for a flat `--bg-window`.
 - **Contrast.** Every pair in `CONTRAST_PAIRS` (the text/background and UI/background pairs the
   token sheet names, plus body text, links and on-colour buttons on every surface) reaches its
   WCAG 2.x minimum, 4.5:1 for text and 3:1 for UI, in light and dark, computed from the values in
@@ -69,17 +70,32 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the installed package's `dist/fonts/` (its `exports` map hides them). Vite emits the four files as
   hashed assets served from `app://` (the CSP's `font-src 'self'`): never a CDN, a remote URL or a
   `data:` URI, and nothing else of the package is bundled. `main.tsx` imports `fonts.css` right after
-  `tokens.css`. The fonts are available, not applied: `--font-ui` and every rule are unchanged until
-  the surface PRs adopt the `--text-*` tokens.
+  `tokens.css`. The fonts are applied surface by surface, as each surface PR moves its text onto the
+  `--text-*` tokens (the command palette first); `--font-ui`, the rest of the chrome's face, stays the
+  system stack until its own surface PR.
+- **Surface PRs.** A surface's rules (`SIGNAL_SURFACES`: its stylesheet and the selector prefix of
+  its rules) read only Signal tokens and legacy aliases, never a retired name or a literal colour;
+  its text takes its face and size from a `--text-*` token (`font: var(--text-*)`, with that token's
+  letter-spacing beside it when it has one), at most changing the weight to a bundled one.
+- **The command palette** (the first surface PR) follows the token sheet's Migration notes and the
+  approved palette screen: a flat `--bg-window` band (`--palette-sheet`: "no gradients") holding a
+  `--bg-surface` card at `--r-lg` with `--e-ring` and no border or drop shadow (`--palette-shadow`:
+  "a band, not a floating sheet"); `--divider` for its rules; rows at `--r-sm` with the selected one
+  on `--accent-soft` (no side bar) and its icon tile on `--accent`; a match highlight on
+  `--accent-soft` at `--r-xs`, `--bg-surface` on the selected row; key hints on `--bg-surface` with
+  `--e-ring` at `--h-badge`, in `--text-mono`; a `--bg-subtle` footer. Matched letters take
+  `--text-body`'s emphasis weight (`TEXT_BODY_EMPHASIS_WEIGHT`), where the screen draws 600. Help's
+  key hints (`help.css`), which read the palette's key-hint names, move to the same Signal tokens.
 
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
 2. Foundation (done).
 3. Values (done): re-point the aliases and swap the shared names to their Signal values; Geist is
    bundled (done, its own change) but not yet applied.
-4. Next, one PR per surface: rules move onto Signal tokens, retired names go. The first one that
-   applies Geist (a rule reading `--text-*`) makes the fonts load at startup, before
-   `geist-fonts-load` starts watching requests: that PR reworks the scenario.
+4. One PR per surface: rules move onto Signal tokens, retired names go (`removed`). The command
+   palette is first, and the first to apply Geist (a rule reading `--text-*`); a font can now load
+   whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not from the
+   moment the test starts watching.
 
 ## Unit (`apps/desktop/src/__tests__/design-tokens.test.ts`)
 - **Scenario: tokens-stylesheet-holds-only-root-tokens** — `tokens.css` has only `:root` blocks
@@ -88,11 +104,15 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: signal-tokens-are-defined** — every Signal token is in light; every colour, state and
   elevation token is in dark too, and nothing else is; every Signal token, shared names included,
   has exactly its spec values; `--icon` stays a colour.
-- **Scenario: legacy-tokens-are-defined** — all 89 legacy names are in `tokens.css`, which holds
-  nothing beyond legacy and Signal names, and every replacement named is a Signal token.
+- **Scenario: legacy-tokens-are-defined** — the migration map has all 89 legacy names; every one not
+  `removed` is in `tokens.css`, which holds nothing beyond legacy and Signal names, and every
+  replacement named is a Signal token.
+- **Scenario: removed-legacy-tokens-are-gone** — only `retire` rows are `removed`; a `removed` name is
+  declared in neither theme of `tokens.css`, and no renderer source (`.css`, `.ts`, `.tsx`) mentions it.
 - **Scenario: legacy-token-values-are-pinned** — the 89 legacy names' light and dark values match a
   committed snapshot (the values step updated it on purpose: the aliases became `var()`, their dark
-  entries went, and the shared names took their Signal values).
+  entries went, and the shared names took their Signal values; each surface PR drops its `removed`
+  names from it).
 - **Scenario: legacy-aliases-point-at-signal-tokens** — every alias whose Signal token has another
   name is exactly `var(<signal>)` in light and has no dark override; the self-aliases are exactly
   the shared names; `--w-panel` and `--w-rail` equal `SIDEBAR_PANEL_WIDTH` / `SIDEBAR_RAIL_WIDTH`
@@ -117,6 +137,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `:where(:root)`, … included).
 - **Scenario: tokens-load-before-every-other-stylesheet** — `main.tsx` imports `tokens.css` first
   among stylesheets and before `App`.
+- **Scenario: surface-rules-read-signal-tokens** — for each `SIGNAL_SURFACES` entry, every rule in its
+  stylesheet whose selectors all start with its prefix (at any nesting: `@media`, `@container`) reads
+  only Signal tokens and legacy aliases in `var()`, writes no literal colour (hex, `rgb()`, `hsl()`,
+  a named colour), sets no `font-size`, `font-family` or `line-height`, sets `font` only to
+  `var(--text-*)` and `letter-spacing` only to a type token's tracking, and `font-weight` only to a
+  bundled Geist weight; at least one of its rules sets `font: var(--text-*)`.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
 
@@ -137,9 +163,13 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `NOTICE_PACKAGES` lists `geist`.
 
 ## End to end (`apps/desktop/e2e/fonts.e2e.ts`, the built app)
-- **Scenario: geist-fonts-load** — in the chrome (`app://app/`), once the document has loaded (so
-  the `@font-face` rules are registered) and with a `securitypolicyviolation` listener installed
-  first, `document.fonts.load()` of each `BUNDLED_FONTS` face resolves to a
-  loaded `FontFace` of that family and weight; every woff2 request the page made was to `app://`
-  (200, `font/woff2`), one per bundled face; and no CSP violation was reported (no event, no console
-  message).
+- **Scenario: geist-fonts-load** — a test-only main-process preload (`e2e/font-request-log.cjs`,
+  required before the app's own code) records, from launch, every `app:` request for a woff2 with its
+  response, and every console message of every page. In the chrome (`app://app/`), once the document
+  has loaded (so the `@font-face` rules are registered) and with a `securitypolicyviolation` listener
+  installed first, `document.fonts.load()` of each `BUNDLED_FONTS` face resolves to a loaded
+  `FontFace` of that family and weight, whether or not a rule had already drawn it. The recorded font
+  requests name exactly one URL per bundled face, all under `app://app/assets/` and each answered
+  200 `font/woff2` (never a CDN or `data:`); and no CSP violation was reported (no event, and no
+  console message since launch). (The chrome page can't be reloaded to start clean: its navigation
+  guard aborts that.)
