@@ -17,7 +17,8 @@
  * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used
  *    (the command palette first: its retired `--palette-*` names are `removed`, and it is the first
  *    surface to read the `--text-*` type tokens, so the first to draw Geist; then the new-tab view,
- *    whose retired `--start-*` and `--jump-*` names are `removed`).
+ *    whose retired `--start-*` and `--jump-*` names are `removed`, and the agent panel, whose retired
+ *    `--agent-*` names are `removed`).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -313,14 +314,14 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--gsc-grid', kind: 'retire', signal: '--divider', was: '#e7ebf1', note: '' },
   { legacy: '--gsc-axis', kind: 'alias', signal: '--text-faint', was: 'faint', note: '' },
   { legacy: '--settings-switch-off', kind: 'retire', signal: '--switch-off', was: '#c9cfd9', note: '' },
-  // Agent panel (--agent-*)
+  // Agent panel (--agent-*): its surface PR moved every rule onto Signal and dropped the retired names.
   { legacy: '--agent-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '' },
   { legacy: '--agent-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
-  { legacy: '--agent-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '--divider for rules' },
-  { legacy: '--agent-user', kind: 'retire', signal: '--accent-soft', was: '#e6eefc', note: 'your messages' },
-  { legacy: '--agent-code-bg', kind: 'retire', signal: '--bg-subtle', was: '#f1f3f7', note: '' },
-  { legacy: '--agent-approval-edge', kind: 'retire', signal: '--warn', was: '#c98b16', note: '' },
-  { legacy: '--agent-approval-bg', kind: 'retire', signal: '--warn-soft', was: '#fffaf0', note: '' },
+  { legacy: '--agent-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '--divider for rules', removed: true },
+  { legacy: '--agent-user', kind: 'retire', signal: '--accent-soft', was: '#e6eefc', note: 'your messages', removed: true },
+  { legacy: '--agent-code-bg', kind: 'retire', signal: '--bg-subtle', was: '#f1f3f7', note: '', removed: true },
+  { legacy: '--agent-approval-edge', kind: 'retire', signal: '--warn', was: '#c98b16', note: '', removed: true },
+  { legacy: '--agent-approval-bg', kind: 'retire', signal: '--warn-soft', was: '#fffaf0', note: '', removed: true },
 ] as const satisfies readonly LegacyTokenMigration[];
 
 /**
@@ -354,6 +355,8 @@ export const SIGNAL_SURFACES = [
   // `.start-wordmark`, `.start-hint`, then "Jump back in": `.jump`, `.jump-title`, `.jump-tile`, `.jump-monogram`, ….
   { name: 'new tab', stylesheet: 'styles.css', selectorPrefix: '.start' },
   { name: 'new tab: Jump back in', stylesheet: 'styles.css', selectorPrefix: '.jump' },
+  // Every rule in the panel's own stylesheet (specs/agent-panel.feature.md, agent-styles-are-delimited).
+  { name: 'agent panel', stylesheet: 'components/agent/agent.css', selectorPrefix: '.agent' },
 ] as const satisfies readonly SignalSurface[];
 
 /**
@@ -462,6 +465,28 @@ export const CONTRAST_PAIRS = [
     min: 4.5,
     why: 'a "Jump back in" tile\'s monogram: its letter (13px, --accent) on an --accent-soft tile (was --jump-monogram-bg) (4.5:1)',
   },
+  // The agent panel (its surface PR). Already covered above: body and muted text on the sheet and on
+  // its cards (--bg-sheet, --bg-surface), code on --bg-subtle, your messages (--text on --accent-soft
+  // over --bg-sheet), a search match on the selected chat (--text-muted on --bg-surface), links on the
+  // sheet, status chips (-ink on -soft over a card) and the risk note (--warn-ink on a card). New with it:
+  { fg: '--text-faint', bg: '--bg-sheet', min: 4.5, why: `${FAINT} the agent panel's chat heading, context meter and plan line (12px) on the sheet` },
+  { fg: '--accent', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'the agent panel\'s running chip and a pressed catalogue chip (11px, --accent on --accent-soft) on a card (4.5:1)' },
+  { fg: '--accent', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s pressed chat filter chip (11px) and its header mark, on the sheet (4.5:1)' },
+  { fg: '--text-muted', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s selected chat: its snippet (--text-muted), and a search match in any snippet (4.5:1)' },
+  { fg: '--text', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s approval card and notice banner (--agent-approval-bg → --warn-soft) on the sheet (4.5:1)' },
+  { fg: '--text-muted', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: 'the approval card\'s labels and page key (12px, --text-muted) (4.5:1)' },
+  { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: `${INK}: the approval card's note and its "More code below" hint (12px, was --caution)` },
+  { fg: '--text', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: 'the agent settings\' revoke-all confirmation (--warn-soft) inside a card (4.5:1)' },
+  { fg: '--text-muted', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: 'the revoke-all confirmation\'s muted text inside a card (4.5:1)' },
+  { fg: '--text', bg: '--danger-soft', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s error banner (was a 13% --danger tint) on the sheet (4.5:1)' },
+  { fg: '--accent', bg: '--danger-soft', over: '--bg-sheet', min: 4.5, why: 'a link in the agent panel\'s error banner (the plan failure\'s "Manage usage") (4.5:1)' },
+  { fg: '--accent', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: 'a link in the agent panel\'s notice banner (4.5:1)' },
+  { fg: '--danger-ink', bg: '--bg-surface', min: 4.5, why: 'the agent panel\'s field errors (12px, was --danger) in a settings card (4.5:1)' },
+  { fg: '--danger-ink', bg: '--bg-sheet', min: 4.5, why: 'the agent panel\'s field errors (12px, was --danger) on the sheet (4.5:1)' },
+  { fg: '--text', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'the agent panel\'s buttons, hovered (--bg-field-hover → --bg-hover over --bg-surface) (4.5:1)' },
+  { fg: '--text', bg: '--bg-hover', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s chat rows, hovered (--bg-hover over the sheet) (4.5:1)' },
+  { fg: '--text', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'the agent panel\'s attach menu: an option hovered or focused (--agent-user → --accent-soft) on the menu\'s card (4.5:1)' },
+  { fg: '--warn-ink', bg: '--bg-subtle', min: 4.5, why: 'the agent panel\'s risk chip: --warn-ink (was the approval edge) on the chip\'s --bg-subtle fill (11px) (4.5:1)' },
   // Status text on a soft fill
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },
@@ -490,10 +515,10 @@ export const CONTRAST_PAIRS = [
     min: 4.5,
     why: 'the update bar\'s primary button, hovered (.update-primary on --bg-field-hover) (4.5:1)',
   },
-  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
-  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
-  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
-  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
+  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
+  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
+  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
+  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
 ] as const satisfies readonly ContrastPair[];
 
 /**
@@ -559,9 +584,10 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'styles.css', element: ['.seo-pill', ".seo-pill[data-tone='error']"], color: '--danger-ink', why: DANGER_TINT },
   { stylesheet: 'styles.css', element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
   { stylesheet: 'styles.css', element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='error']"], color: '--danger-ink', why: DANGER_TINT },
-  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
-  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='denied']"], color: '--danger-ink', why: DANGER_TINT },
-  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='failed']"], color: '--danger-ink', why: DANGER_TINT },
+  // The agent panel's surface PR put its chips on the sheet's -soft fills, so the pair is -ink on -soft.
+  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='ok']"], color: '--ok-ink', background: '--ok-soft', why: OK_TINT },
+  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='denied']"], color: '--danger-ink', background: '--danger-soft', why: DANGER_TINT },
+  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='failed']"], color: '--danger-ink', background: '--danger-soft', why: DANGER_TINT },
   // More danger text on its 14% tint (3.7–3.9:1 on a card, light). The status bar's chip was 3.33:1
   // over --bg-chrome, and still 4.46:1 with the ink on the tint: it takes --danger-soft as its fill.
   {

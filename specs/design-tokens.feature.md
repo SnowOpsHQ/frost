@@ -109,6 +109,30 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--focus-ring` beside a transparent 2px outline (forced colours drop the shadow and draw the
   outline). The setup checklist under it (`help.css`), which read `--jump-tile-edge` for its border
   and `--jump-tile-bg` for its fill, takes `--e-ring` and `--bg-surface` the same way.
+- **The agent panel** (every rule of `components/agent/agent.css`) follows the Migration notes and
+  the approved agent screen, where they agree: Geist on the `--text-*` tokens (the panel's own text at `--text-body`, its title at `--text-title`, secondary lines at `--text-small`,
+  code, the context meter and skill instructions at `--text-mono`, chips at `--text-micro`); the open
+  panel, its header and its footer on `--bg-sheet`, the header's rule `--divider`, its mark an
+  `--accent` icon on an `--accent-soft` tile at `--r-md` (its tools keep the chrome's shared `.tool`
+  style until the chrome's surface PR); your messages on `--accent-soft` at `--r-md`;
+  tool cards, settings sections and the empty and setup hints `--bg-surface` cards at `--r-md` with
+  `--e-ring` and no border (`--agent-edge`: "--e-ring", the hint's dashed outline included); code on
+  `--bg-subtle` at `--r-sm`; status chips at `--h-badge` on their `-soft` fill with `-ink` text
+  (running: `--accent` on `--accent-soft`); buttons `--h-control` pills on `--bg-surface` with
+  `--e-raised` (hover lays `--bg-hover` over them), the primary one `--accent`; fields and selects with
+  `--e-raised` and no border (`--border-field`), `--r-sm` inside cards and the composer's textarea at
+  `--r-lg`, the fields and selects `--h-control` tall; focus shows `--focus-ring`;
+  the attach menu an `--e-overlay` menu at `--r-md`. Where the screen and the Migration table differ,
+  the table wins: the approval card and the revoke-all confirmation keep their warning fill and edge
+  (`--agent-approval-bg` → `--warn-soft`, `--agent-approval-edge` → `--warn`), where the screen draws a
+  plain `--bg-surface` card with `--e-overlay`, and its note and its "More code below" hint take
+  `--warn-ink`. Warning text elsewhere
+  (`--caution` and the approval edge used as text: the risk note, the "Untrusted" chip) takes
+  `--warn-ink`, field errors `--danger-ink`; the collapsed rail stays on `--bg-window` (it shows in
+  every other capture) with a `--divider` edge, and the open panel stays flush with the page (the
+  screen's floating sheet, with gaps and `--r-lg` corners, is the workspace's surface PR). Nothing in
+  the panel drew `--ok` as text, and it held no literal hex, so `KNOWN_CONTRAST_EXCEPTIONS` and
+  `HEX_COLOUR_RATCHET` stay.
 
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
@@ -117,9 +141,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    bundled (done, its own change), applied per surface through the `--text-*` tokens from step 4 on
    (the command palette first); `--font-ui` stays the system stack.
 4. One PR per surface: rules move onto Signal tokens, retired names go (`removed`). The command
-   palette is first, and the first to apply Geist (a rule reading `--text-*`); a font can now load
-   whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not from the
-   moment the test starts watching. The new-tab view is next.
+   palette is first (its `--palette-*` names `removed`), then the new-tab view (its `--start-*` and
+   `--jump-*` names) and the agent panel (its `--agent-*` names, but the aliases `--agent-bg` and
+   `--agent-card`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
+   now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
+   from the moment the test starts watching.
 
 ## Unit (`apps/desktop/src/__tests__/design-tokens.test.ts`)
 - **Scenario: tokens-stylesheet-holds-only-root-tokens** — `tokens.css` has only `:root` blocks

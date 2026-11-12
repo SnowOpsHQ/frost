@@ -112,11 +112,6 @@
   --agent-rail-width: 40px;
   --agent-bg: var(--bg-sheet);
   --agent-card: var(--bg-surface);
-  --agent-edge: #e3e7ee;
-  --agent-user: #e6eefc;
-  --agent-code-bg: #f1f3f7;
-  --agent-approval-edge: #c98b16;
-  --agent-approval-bg: #fffaf0;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -162,13 +157,6 @@
 
     /* ---- Search Console panel (was in gsc-panel.css) */
     --gsc-grid: #30353e;
-
-    /* ---- Agent panel (was in components/agent/agent.css) */
-    --agent-edge: #2c3038;
-    --agent-user: #243251;
-    --agent-code-bg: #15171b;
-    --agent-approval-edge: #d9a441;
-    --agent-approval-bg: #2a2518;
   }
 }
 
