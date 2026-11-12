@@ -1,14 +1,16 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, HEX_COLOUR_RATCHET)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import {
+  BUNDLED_FONTS,
   CONTRAST_PAIRS,
   HEX_COLOUR_RATCHET,
   KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
+  SIGNAL_SURFACES,
   SIGNAL_TOKENS,
   TAB_STRIP,
   TEXT_COLOUR_RULES,
@@ -16,6 +18,8 @@ import {
   TOKENS_STYLESHEET,
   type ContrastException,
   type ContrastPair,
+  type LegacyTokenMigration,
+  type SignalSurface,
   type TextColourRule,
   type SignalToken,
   type SignalTokenGroup,
@@ -25,11 +29,14 @@ import { SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.
 const RENDERER = fileURLToPath(new URL('../renderer/', import.meta.url));
 const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8');
 
+/** Every file under the renderer, relative to it. */
+const RENDERER_FILES = (readdirSync(RENDERER, { recursive: true }) as string[]).map((name) => name.replaceAll('\\', '/')).sort();
 /** Every stylesheet under the renderer, relative to it. */
-const STYLESHEETS = (readdirSync(RENDERER, { recursive: true }) as string[])
-  .map((name) => name.replaceAll('\\', '/'))
-  .filter((name) => name.endsWith('.css'))
-  .sort();
+const STYLESHEETS = RENDERER_FILES.filter((name) => name.endsWith('.css'));
+/** The renderer's sources: its stylesheets and its scripts (inline styles can read a token too). */
+const RENDERER_SOURCES = RENDERER_FILES.filter((name) => /\.(css|tsx?)$/.test(name));
+const MIGRATION: readonly LegacyTokenMigration[] = LEGACY_TOKEN_MIGRATION;
+const REMOVED = MIGRATION.filter((row) => row.removed === true).map((row) => row.legacy);
 
 const DARK = '@media (prefers-color-scheme: dark)';
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -191,7 +198,7 @@ test('legacy-tokens-are-defined', () => {
   const legacy: string[] = LEGACY_TOKEN_MIGRATION.map((row) => row.legacy);
   expect(legacy).toHaveLength(89);
   expect(new Set(legacy).size).toBe(legacy.length);
-  for (const name of legacy) expect(LIGHT.has(name), name).toBe(true);
+  for (const name of legacy) if (!REMOVED.includes(name)) expect(LIGHT.has(name), name).toBe(true);
   // tokens.css holds the legacy names and the Signal vocabulary, nothing else.
   for (const name of LIGHT.keys()) expect(legacy.includes(name) || SIGNAL_NAMES.has(name), name).toBe(true);
   // Every replacement named is a Signal token (`--text-*` is the type scale).
@@ -199,6 +206,19 @@ test('legacy-tokens-are-defined', () => {
     if (row.signal === null) continue;
     if (row.signal === '--text-*') expect(row.legacy).toBe('--font-ui');
     else expect(SIGNAL_NAMES.has(row.signal), `${row.legacy} -> ${row.signal}`).toBe(true);
+  }
+});
+
+test('removed-legacy-tokens-are-gone', () => {
+  for (const row of MIGRATION) if (row.removed === true) expect(row.kind, `${row.legacy} is removed, so retired`).toBe('retire');
+  // The command palette's surface PR removed its retired names (the rollout only ever adds to this).
+  expect(REMOVED).toEqual(expect.arrayContaining(['--palette-edge', '--palette-shadow', '--palette-sheet', '--palette-row-active', '--palette-hit', '--palette-kbd-bg', '--palette-kbd-edge']));
+  for (const name of REMOVED) {
+    expect(LIGHT.has(name), `${name} (light)`).toBe(false);
+    expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
+    // `--palette-sheet` must not match `--palette-sheet-height`.
+    const mention = new RegExp(`${name}(?![\\w-])`);
+    for (const file of RENDERER_SOURCES) expect(mention.test(stripComments(read(file))), `${file} mentions ${name}`).toBe(false);
   }
 });
 
@@ -365,6 +385,39 @@ test('tokens-load-before-every-other-stylesheet', () => {
   // First stylesheet imported, and before `App`, whose components import the feature stylesheets.
   expect(imports.filter((path) => path.endsWith('.css'))[0]).toBe(`./${TOKENS_STYLESHEET}`);
   expect(imports.indexOf(`./${TOKENS_STYLESHEET}`)).toBeLessThan(imports.indexOf('./App'));
+});
+
+test('surface-rules-read-signal-tokens', () => {
+  const aliases = new Set<string>(MIGRATION.filter((row) => row.kind === 'alias').map((row) => row.legacy));
+  const typeTokens = new Map<string, string>(SIGNAL_TOKENS.type.map((token) => [token.name, token.tracking]));
+  const geistWeights = new Set(BUNDLED_FONTS.filter((font) => font.family === 'Geist').map((font) => String(font.weight)));
+  const NAMED_COLOUR = /(?<![\w-])(white|black|red|green|blue|gray|grey|silver|yellow|orange|purple|navy)(?![\w-])/i;
+  const surfaces: readonly SignalSurface[] = SIGNAL_SURFACES;
+  expect(surfaces.length).toBeGreaterThan(0);
+  for (const surface of surfaces) {
+    const own = parse(read(surface.stylesheet)).declarations.filter((d) => {
+      const selectors = (d.context.at(-1) ?? '').split(',').map((s) => s.trim());
+      return selectors.every((s) => s.startsWith(surface.selectorPrefix));
+    });
+    expect(own.length, surface.name).toBeGreaterThan(0);
+    let typeSet = 0;
+    for (const d of own) {
+      const label = `${surface.name}: ${d.context.at(-1)} { ${d.property}: ${d.value} }`;
+      for (const [, name] of d.value.matchAll(/var\((--[\w-]+)/g)) {
+        expect(SIGNAL_NAMES.has(name!) || aliases.has(name!), `${label}: ${name} is neither a Signal token nor an alias`).toBe(true);
+      }
+      expect(/#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/i.test(d.value) || NAMED_COLOUR.test(d.value), `${label}: a literal colour`).toBe(false);
+      expect(['font-size', 'font-family', 'line-height'], label).not.toContain(d.property);
+      if (d.property === 'font') {
+        const token = /^var\((--text-[\w-]+)\)$/.exec(d.value)?.[1];
+        expect(token !== undefined && typeTokens.has(token), `${label}: font is a --text-* token`).toBe(true);
+        typeSet += 1;
+      }
+      if (d.property === 'letter-spacing') expect([...typeTokens.values()], label).toContain(d.value);
+      if (d.property === 'font-weight') expect([...geistWeights], label).toContain(d.value);
+    }
+    expect(typeSet, `${surface.name} reads the --text-* tokens`).toBeGreaterThan(0);
+  }
 });
 
 test('hex-colours-do-not-grow', () => {
