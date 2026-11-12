@@ -291,9 +291,17 @@ jobs:
 
       - uses: ./.github/actions/setup
 
+      # The DMG maker (appdmg) sometimes cannot unmount its temporary volume on the runner
+      # ("hdiutil: detach failed", also seen under the old macOS workflow, run 40789376462). That
+      # one failure is made again, once, with a warning on the run. Any other failure fails the step.
       - name: Make (zip + dmg, arm64)
         id: make
-        run: pnpm make:mac
+        run: |
+          if ! pnpm make:mac 2>&1 | tee "$RUNNER_TEMP/make.log"; then
+            grep -q 'hdiutil: detach failed' "$RUNNER_TEMP/make.log" || exit 1
+            echo "::warning title=DMG maker retried::hdiutil could not detach the DMG maker's volume; making the packages again."
+            pnpm make:mac
+          fi
 
       - name: Verify package
         id: verify

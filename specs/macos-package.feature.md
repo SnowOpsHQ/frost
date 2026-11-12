@@ -92,7 +92,10 @@ the pipeline's `unit` and `e2e` jobs on the same image.
 - **Scenario: macos-ci-job** — job `package-macos` (`Package · macOS arm64`) on `macos-15`
   (arm64): the shared setup (frozen-lockfile install), `make:mac` (which packages the app itself),
   `verify:mac`, then uploads the zip and dmg as `frost-macos-arm64` (14 days) only if `verify:mac`
-  succeeded. No signing secret reaches the job. The upload no longer waits for the e2e, which runs
+  succeeded. `make:mac` is run a second time only when the first failed with
+  `hdiutil: detach failed` (the DMG maker now and then cannot unmount its temporary volume on the
+  runner), once, with a warning on the run; any other failure, and a second such failure, fails
+  the job. No signing secret reaches the job. The upload no longer waits for the e2e, which runs
   in other jobs: use a run's artifacts only when its `ci-passed` check succeeded.
 
 ## Follow-ups (not in this task)

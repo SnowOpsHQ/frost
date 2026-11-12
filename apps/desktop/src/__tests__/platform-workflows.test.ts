@@ -68,7 +68,17 @@ describe('CI pipeline (platform packages)', () => {
     expect(CI_RUNNERS.macos).toBe('macos-15'); // arm64
     startsWithSetup(job, 0);
     expect(names(job)).toEqual(['Make (zip + dmg, arm64)', 'Verify package', 'Upload zip + dmg']);
-    expect(stepNamed(job.steps, 'Make (zip + dmg, arm64)')).toMatchObject({ id: 'make', run: 'pnpm make:mac' });
+    // Made again, once, only when the DMG maker could not unmount its volume (a runner flake).
+    expect(stepNamed(job.steps, 'Make (zip + dmg, arm64)')).toMatchObject({
+      id: 'make',
+      run: [
+        'if ! pnpm make:mac 2>&1 | tee "$RUNNER_TEMP/make.log"; then',
+        `grep -q 'hdiutil: detach failed' "$RUNNER_TEMP/make.log" || exit 1`,
+        `echo "::warning title=DMG maker retried::hdiutil could not detach the DMG maker's volume; making the packages again."`,
+        'pnpm make:mac',
+        'fi',
+      ].join('\n'),
+    });
     expect(stepNamed(job.steps, 'Verify package')).toMatchObject({ id: 'verify', run: 'pnpm verify:mac' });
     onlyPackages(job);
     // Ad-hoc signed: no signing secret reaches the job (specs/macos-package.spec.ts MAC_SIGNING_ENV).
