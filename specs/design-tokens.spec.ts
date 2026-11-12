@@ -380,6 +380,13 @@ export const CONTRAST_PAIRS = [
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--danger-ink', bg: '--danger-soft', over: '--bg-surface', min: 4.5, why: INK },
+  {
+    fg: '--danger-ink',
+    bg: '--danger-soft',
+    over: '--bg-chrome',
+    min: 4.5,
+    why: `${INK}: the status bar's failed-overrides chip (11.5px), --danger-soft over --bg-chrome`,
+  },
   // UI and graphics
   { fg: '--switch-off', bg: '--bg-surface', min: 3, why: '"--switch-off is a switch\'s off track (≥ 3:1 against its card)"' },
   { fg: '--accent', bg: '--bg-window', min: 3, why: 'focus ring: "a 2px gap in the window colour, then 2px of accent"' },
@@ -430,15 +437,6 @@ export const KNOWN_CONTRAST_EXCEPTIONS = [
     rules: 21,
     why: '--ok as body text ("Good length", passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink.',
   },
-  {
-    fg: '--danger-ink',
-    bg: '--danger',
-    alpha: 0.14,
-    over: '--bg-chrome',
-    min: 4.5,
-    element: { stylesheet: 'styles.css', selectors: [".status-tab-overrides[data-status='failed']"] },
-    why: 'the status bar\'s failed-overrides chip (11.5px): --danger-ink on the 14% danger tint over --bg-chrome is 4.46:1 in light (--danger was 3.33). Still under 4.5:1: the status bar\'s surface PR settles the fill (a 10% tint gives 4.73, --danger-soft 5.30).',
-  },
 ] as const satisfies readonly ContrastException[];
 
 /**
@@ -452,6 +450,8 @@ export interface TextColourRule {
   readonly stylesheet: string;
   readonly element: readonly string[];
   readonly color: TokenName;
+  /** The fill the text sits on, when the rule pins that too (resolved the same way). */
+  readonly background?: TokenName;
   readonly why: string;
 }
 
@@ -480,12 +480,14 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
   { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='denied']"], color: '--danger-ink', why: DANGER_TINT },
   { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='failed']"], color: '--danger-ink', why: DANGER_TINT },
-  // More danger text on its 14% tint (3.7–3.9:1 on a card, 3.33:1 on the status bar, light).
+  // More danger text on its 14% tint (3.7–3.9:1 on a card, light). The status bar's chip was 3.33:1
+  // over --bg-chrome, and still 4.46:1 with the ink on the tint: it takes --danger-soft as its fill.
   {
     stylesheet: 'styles.css',
     element: [".status-tab-overrides[data-status='failed']"],
     color: '--danger-ink',
-    why: 'the status bar\'s failed-overrides chip: 3.33:1 over --bg-chrome (a known exception at 4.46:1 with the ink)',
+    background: '--danger-soft',
+    why: 'the status bar\'s failed-overrides chip: --danger on its 14% tint over --bg-chrome is 3.33:1 (light); -ink on -soft is 5.30',
   },
   { stylesheet: 'styles.css', element: ['.seo-badge', ".seo-badge[data-severity='error']"], color: '--danger-ink', why: DANGER_TINT },
   { stylesheet: 'styles.css', element: ['.seo-block-status', ".seo-block-status[data-status='invalid']"], color: '--danger-ink', why: DANGER_TINT },

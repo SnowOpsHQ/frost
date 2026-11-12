@@ -5748,7 +5748,8 @@ input {
 
 /* The overrides' cookie or location part could not be applied (whole-branch review). */
 .status-tab-overrides[data-status='failed'] {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  /* -ink on -soft (the token sheet's pairing): the 14% tint over --bg-chrome left the ink at 4.46:1. */
+  background: var(--danger-soft);
   color: var(--danger-ink);
 }
 

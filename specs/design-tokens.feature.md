@@ -51,9 +51,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the strip, in both themes, until the chrome's surface PR.
 - **Known exceptions.** `KNOWN_CONTRAST_EXCEPTIONS` records what still misses its minimum, for the
   surface PRs: `--ok` as text (21 rules) is under 4.5:1 in light, and those rules move to `--ok-ink`
-  (only the 11px chips moved now); the status bar's failed-overrides chip, now `--danger-ink` on the
-  14% danger tint over `--bg-chrome`, is 4.46:1 in light (from 3.33), and the status bar's surface
-  PR settles its fill.
+  (only the 11px chips moved now). The status bar's failed-overrides chip, at 4.46:1 with
+  `--danger-ink` on its 14% tint over `--bg-chrome`, takes the sheet's -ink-on-soft pairing instead:
+  `--danger-soft` fill (5.30:1 light, 8.68:1 dark).
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
   (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`.
@@ -111,7 +111,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   divider between inactive tabs (`TAB_STRIP.divider`) reaches `TAB_STRIP.minDividerOnStrip` against
   the strip.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
-  the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)`.
+  the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)` (and
+  `background` to `var(<background>)` where the entry names one), and that pair is in
+  `CONTRAST_PAIRS`.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).

@@ -16,6 +16,7 @@ import {
   TOKENS_STYLESHEET,
   type ContrastException,
   type ContrastPair,
+  type TextColourRule,
   type SignalToken,
   type SignalTokenGroup,
 } from '@app/specs/design-tokens.spec';
@@ -349,11 +350,19 @@ test('text-colour-rules-resolve', () => {
   expect(specificity('.update-button.update-primary:hover:not(:disabled)')).toBe(4000);
 
   const pairs: readonly { fg: string; bg: string }[] = CONTRAST_PAIRS;
-  for (const rule of TEXT_COLOUR_RULES) {
+  const rules: readonly TextColourRule[] = TEXT_COLOUR_RULES;
+  for (const rule of rules) {
     for (const theme of THEME_NAMES) {
-      expect(resolveOnElement(read(rule.stylesheet), rule.element, 'color', theme), `${rule.element.at(-1)} (${theme})`).toBe(`var(${rule.color})`);
+      const css = read(rule.stylesheet);
+      expect(resolveOnElement(css, rule.element, 'color', theme), `${rule.element.at(-1)} (${theme})`).toBe(`var(${rule.color})`);
+      if (rule.background !== undefined) {
+        expect(resolveOnElement(css, rule.element, 'background', theme), `${rule.element.at(-1)} background (${theme})`).toBe(`var(${rule.background})`);
+      }
     }
-    expect(pairs.some((pair) => pair.fg === rule.color), `${rule.color} has a CONTRAST_PAIRS entry`).toBe(true);
+    expect(
+      pairs.some((pair) => pair.fg === rule.color && (rule.background === undefined || pair.bg === rule.background)),
+      `${rule.color}${rule.background ? ` on ${rule.background}` : ''} has a CONTRAST_PAIRS entry`,
+    ).toBe(true);
   }
 });
 
