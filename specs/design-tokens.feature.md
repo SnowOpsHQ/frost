@@ -60,7 +60,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   -ink-on-soft pairing instead: `--danger-soft` fill (5.30:1 light, 8.68:1 dark).
 - **Hex ratchet.** Literal hex colours in renderer stylesheets other than `tokens.css` never exceed
   `HEX_COLOUR_RATCHET`; each surface PR lowers it to its new count (the command palette's rules held
-  no literal hex, their colours were all tokens, so it stayed at 53).
+  no literal hex, their colours were all tokens, so it stayed at 53; the new-tab view's held none
+  either, so it stays there).
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
   official `geist` npm package (`GEIST_PACKAGE`: pinned exactly, SIL Open Font License 1.1, listed in
   `THIRD_PARTY_NOTICES` with the licence text). Only static woff2 files, only the weights the type
@@ -92,6 +93,20 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--e-ring` edge, `--bg-hover` laid over it on hover (the screen's only secondary button, `--bg-surface`
   with `--e-raised`, sits on a tinted band and would vanish on the card). Help's
   key hints (`help.css`), which read the palette's key-hint names, move to the same Signal tokens.
+- **The new-tab view** (the start view and "Jump back in") follows the token sheet's Migration notes;
+  the approved canvas has no new-tab screen, so the rest comes from the token `use` notes. The view is
+  flat `--bg-page` (`--start-glow`: "no gradient washes"); the FrostMark is `--accent` (`--start-mark`),
+  in the tab row's empty-tab glyph too; the mark eases in over `--dur-slow` with `--ease-out`. The
+  wordmark is `--text-display` (the type scale's largest: it was 44px at weight 300, which Geist isn't
+  bundled in) and the hint `--text-body` in `--text-muted`. "Jump back in" takes `--text-caps` for its
+  title, and its tiles are `--bg-surface` cards at `--r-md` with `--e-ring` and no border
+  (`--jump-tile-edge`), the label in `--text-body` at its emphasis weight and the host in `--text-small`
+  (`--text-faint`, 12px). A tile's monogram is an `--h-chip` square at `--r-sm` on `--accent-soft`
+  (`--jump-monogram-bg`) with its letter in `--accent` at `--text-body`'s size and weight 600; History's
+  monogram, which shared the retired fill, moves to `--accent-soft` too. A hovered tile rings in
+  `--accent` (it was an accent border) and lifts 1px over `--dur-fast`; a focused one takes
+  `--focus-ring`. The setup checklist under it (`help.css`), which read `--jump-tile-edge` for its
+  border, takes `--e-ring` the same way.
 
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
@@ -102,7 +117,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 4. One PR per surface: rules move onto Signal tokens, retired names go (`removed`). The command
    palette is first, and the first to apply Geist (a rule reading `--text-*`); a font can now load
    whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not from the
-   moment the test starts watching.
+   moment the test starts watching. The new-tab view is next.
 
 ## Unit (`apps/desktop/src/__tests__/design-tokens.test.ts`)
 - **Scenario: tokens-stylesheet-holds-only-root-tokens** — `tokens.css` has only `:root` blocks
