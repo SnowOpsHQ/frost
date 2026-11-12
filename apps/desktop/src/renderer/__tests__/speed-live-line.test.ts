@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Spec: specs/seo-speed.spec.ts (SPEED_LIVE_MAX_POLLS)
 // Acceptance: specs/seo-speed.feature.md (Live updates; Renderer helpers, paused-line-age-keeps-counting)
-import { act, createElement } from 'react';
+import { act, createElement, Fragment, useLayoutEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { SpeedReport } from '@app/seo-core';
@@ -17,6 +17,7 @@ const MEASURED_AT = Date.UTC(2026, 10, 11, 12, 0, 0);
 // The line reads only `measuredAt` of the report.
 const report = { measuredAt: MEASURED_AT } as SpeedReport;
 const paused: SpeedPollState = { session: { tabId: 1, url: A, document: 1 }, response: { status: 'ready', url: A, report }, polls: SPEED_LIVE_MAX_POLLS, paused: true };
+const live: SpeedPollState = { ...paused, polls: SPEED_LIVE_MAX_POLLS - 1, paused: false };
 
 let host: HTMLDivElement;
 let root: Root;
@@ -44,5 +45,33 @@ describe('the Speed live line', () => {
     expect(text()).toBe(`Paused after ${SPEED_LIVE_MAX_POLLS} updates · last 30 s ago`);
     await act(() => vi.advanceTimersByTimeAsync(150_000));
     expect(text()).toBe(`Paused after ${SPEED_LIVE_MAX_POLLS} updates · last 3 min ago`);
+  });
+
+  test('paused-line-age-keeps-counting: the render that pauses a live line already shows the age', () => {
+    // Records the line's text on every commit the parent renders, before any effect can redraw it.
+    const committed: (string | null | undefined)[] = [];
+    function Probe(_: { readonly state: SpeedPollState }) {
+      useLayoutEffect(() => {
+        committed.push(text());
+      });
+      return null;
+    }
+    const draw = (state: SpeedPollState) => createElement(Fragment, null, createElement(LiveLine, { state, report, source: 'live', onResume: () => {} }), createElement(Probe, { state }));
+    act(() => root.render(draw(live)));
+    expect(text()).toBe('Live · updated just now');
+    // Five minutes pass while the line is live (no poll lands), then the last poll pauses it.
+    vi.setSystemTime(MEASURED_AT + 300_000);
+    act(() => root.render(draw(paused)));
+    expect(committed.at(-1)).toBe(`Paused after ${SPEED_LIVE_MAX_POLLS} updates · last 5 min ago`);
+    expect(text()).toBe(`Paused after ${SPEED_LIVE_MAX_POLLS} updates · last 5 min ago`);
+  });
+
+  test('paused-line-age-keeps-counting: a paused line that shows no age keeps no clock', () => {
+    act(() => root.render(createElement(LiveLine, { state: { ...paused, response: null }, report: null, source: null, onResume: () => {} })));
+    expect(text()).toBe('Paused');
+    expect(vi.getTimerCount()).toBe(0);
+    act(() => root.render(createElement(LiveLine, { state: paused, report, source: 'audit', onResume: () => {} })));
+    expect(text()).toBe('Paused');
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

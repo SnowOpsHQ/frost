@@ -6,9 +6,14 @@ import { useEffect, useState } from 'react';
  */
 export function useNow(on: boolean): number {
   const [now, setNow] = useState(() => Date.now());
+  const [wasOn, setWasOn] = useState(on);
+  // Turning on refreshes `now` before that render commits, so it never shows a time from while off.
+  if (on !== wasOn) {
+    setWasOn(on);
+    if (on) setNow(Date.now());
+  }
   useEffect(() => {
     if (!on) return;
-    setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(timer);
   }, [on]);

@@ -233,7 +233,8 @@ many visits on many devices), which can be very different. The panel says so und
   hook, paused at the poll limit, starts polling again with no answer shown once the tab's
   `documentSeq` changes for the same URL.
 - **Scenario: paused-line-age-keeps-counting** (`speed-live-line.test.ts`, the line in a DOM) — paused
-  at the poll limit, with no poll left to re-render it, the line's "last … ago" follows the clock.
+  at the poll limit, with no poll left to re-render it, the line's "last … ago" follows the clock, already true on the render that pauses it; a paused line that shows no age (no
+  live report) keeps no clock.
 - **Scenario: meter-geometry**, **missing-vital-text**, **waterfall-geometry**, **bars-and-shares**,
   **shown-speed-prefers-live-for-this-url**, **speed-issues-merge-measured-and-snapshot-rules**,
   **openable-resources-and-ago**, **speed-notes** (Wayland, route change, too few requests, a full

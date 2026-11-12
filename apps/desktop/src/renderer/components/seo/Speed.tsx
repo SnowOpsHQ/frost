@@ -181,10 +181,11 @@ const VERDICT_SUMMARY: Readonly<Record<VitalBand, string>> = {
 /**
  * The live line: updating, paused, waiting for the first answer, or why there is none. Each poll
  * re-renders a live line; a paused one has no poll left, so its clock (`useNow`) keeps the age current.
+ * Only a paused line that shows an age keeps that clock.
  */
 export function LiveLine({ state, report, source, onResume }: { readonly state: SpeedPollState; readonly report: SpeedReport | null; readonly source: 'live' | 'audit' | null; readonly onResume: () => void }) {
   const response = state.response;
-  const now = useNow(state.paused);
+  const now = useNow(state.paused && source === 'live' && report !== null);
   let kind: 'live' | 'paused' | 'measuring' | 'unavailable' = 'measuring';
   let text = 'Measuring…';
   if (response?.status === 'unavailable') {
