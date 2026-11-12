@@ -9,7 +9,7 @@ import { AGENT_HOST_LIMITS, MAX_MODEL_REQUESTS_PER_CHECK, MAX_MODEL_REQUESTS_PER
 import { AI_CHECK_LIMITS } from '@app/specs/ai-checks.spec';
 import { AGENT_CRASHED_MESSAGE, createAgentHost, type AgentChatEvent, type AgentFetchEvent, type AgentHostDeps } from '../host';
 import { anthropicReply, createCheckHarness } from './check-harness';
-import { createFakeChannel, createFakeFork, type FakeChild, type FakePort } from './fakes';
+import { createFakeChannel, createFakeFork, FakePort, type FakeChild } from './fakes';
 
 const BUILD = path.join(path.sep, 'app', '.vite', 'build');
 const LOCKDOWN = { removed: ['fetch', 'WebSocket'] as const, failed: [] as const, permissionModel: false };
@@ -243,6 +243,67 @@ describe('agent host', () => {
     expect(host.lastFailure()).toBeNull();
     expect(host.stats().restarts).toBe(1);
     expect(log.mock.calls.flat().join('\n')).toContain('did not start in time');
+  });
+
+  test('host-fork-failed', async () => {
+    // Audit #25: a `fork` that threw left both ports open; a hand-over that threw left the child
+    // running, and its later exit counted a second failure (failing the next runtime's chats).
+    const channels: { port1: FakePort; port2: FakePort }[] = [];
+    // The failing starts get unlinked ports (closing one end does not close the other, so each must
+    // be closed itself); the restart after them gets a working pair.
+    const createChannel = () => {
+      const channel = channels.length < 2 ? { port1: new FakePort(), port2: new FakePort() } : createFakeChannel();
+      channels.push(channel);
+      return channel;
+    };
+    const throwing = setup({
+      createChannel,
+      fork: () => {
+        throw new Error('ENOENT agent-runtime.cjs');
+      },
+    });
+    void throwing.host.start();
+    expect(throwing.host.lastFailure()).toBe('fork-failed');
+    expect(throwing.host.status()).toBe('crashed');
+    expect(channels[0]!.port1.closed).toBe(true);
+    expect(channels[0]!.port2.closed).toBe(true);
+    throwing.host.dispose();
+
+    const children: FakeChild[] = [];
+    const runtimes: FakePort[] = [];
+    const forks = createFakeFork((child) => {
+      children.push(child);
+      child.onPort = (port) => runtimes.push(port);
+      if (children.length > 1) return;
+      // The hand-over throws; the child stays up until killed (and a real one exits later still).
+      child.postMessage = () => {
+        throw new Error('the child is gone');
+      };
+      child.kill = () => {
+        child.killed = true;
+        return true;
+      };
+    });
+    const { host, chat } = setup({ createChannel, fork: forks.fork });
+    const started = host.start();
+    expect(host.lastFailure()).toBe('fork-failed');
+    expect(children[0]!.killed).toBe(true);
+    expect(channels[1]!.port1.closed).toBe(true);
+    expect(channels[1]!.port2.closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(restartDelayMs(1));
+    expect(forks.calls.length).toBe(2);
+    runtimes[0]!.postMessage(ready());
+    await expect(started).resolves.toBe(true);
+    host.send(chatStart('chat-a'));
+    // The first child exits late, and its ready deadline passes: nothing more is counted, and the
+    // running runtime is untouched.
+    children[0]!.exit(1);
+    await vi.advanceTimersByTimeAsync(AGENT_HOST_LIMITS.readyTimeoutMs);
+    expect(host.status()).toBe('ready');
+    expect(host.lastFailure()).toBeNull();
+    expect(host.activeChats()).toEqual(['chat-a']);
+    expect(chat).toEqual([]);
+    expect(host.stats().restarts).toBe(1);
   });
 
   test('host-protocol-mismatch', async () => {

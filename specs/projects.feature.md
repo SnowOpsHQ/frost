@@ -168,7 +168,15 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   keeps its time **across runs** (Cancel then Check rankings, or a rerun after a blocked run, still
   waits); a navigation the browse guard refused was never sent and adds none. The wait is not part of
   any target's `targetActiveTimeoutMs`; Cancel (or a stop on quit) ends it at once. Page targets that
-  are not result pages never wait. Fixed: no jitter, no user-agent change.
+  are not result pages never wait. A run whose **first** target waits opens its tab only once the wait
+  is over (no empty tab in front of the user meanwhile), and only with the tab remembered at Start in
+  front, as a later group's tab opens only with the run's last tab in front: a new tab never takes the
+  front from the user. A user who moved to another tab meanwhile is waited for (`waiting-for-tab`, no
+  target's time) until that tab is in front again (the label names both tabs: the run has none yet); if it was closed meanwhile, the run gives way and
+  ends `cancelled`, opening no tab; a browser that cannot be asked during that wait ends the run
+  `cancelled` too. The first group's tab then opens, in front (a tab limit then is
+  `failed`, as for a later group); a run cancelled or stopped during either wait opens no tab. Fixed:
+  no jitter, no user-agent change.
 - **Stop at the first challenge, checked before capture.** Once a search target has landed:
   1. the landed URL must be a result page of the target's engine (`searchParamsForUrl(landed, device)`
      with the bundled pack): none, or another engine's (a consent page on another host, a `/sorry/`
@@ -288,13 +296,14 @@ purge in `workspace-db.feature.md` (API readings (Phase 12)) and `retention.feat
 ## Capture now
 - One run at a time, app-wide (`busy`, reserved as it starts). A project with no pages or queries is
   `no-targets`; the project is checked again as the run starts (`not-found`).
-- **Start:** remember the active tab.
+- **Start:** remember the active tab (a run whose first tab opens only after a search's spacing opens it
+  with that tab in front again; Pacing).
 - **Targets:** each page, then each query's canonical URL (`params.url`), at most `maxRunTargets`
   (the rest are `omitted`, and the progress says so).
 - **Render profiles:** the targets are grouped by the profile they need (a `mobile` or `tablet`
   query's `QUERY_DEVICE_PROFILES` profile, a `desktop` query's the default, a page's the project's), groups in the order of their first target, and listed in
   the order they are visited. Each group gets a fresh browse tab through the browser controller (it
-  is active; a tab limit is `no-tab`, or `failed` for a later group), whose own profile is set once,
+  is active; a tab limit is `no-tab`, or `failed` once the run is under way (a later group, or after the first search's spacing)), whose own profile is set once,
   without `pin`, before its first navigation; a group needing the default gets no profile set at all.
   The run never sets the default profile on a tab (a Reset, which also unpins the site the tab shows)
   and never changes a tab's profile after it has loaded, so it never removes a pin. A site's pinned
@@ -551,7 +560,10 @@ purge in `workspace-db.feature.md` (API readings (Phase 12)) and `retention.feat
   `capture-run-after-blocked-starts-normally`, `capture-run-no-wait-after-a-failed-load` (a
   navigation the guard refused), `capture-run-ready-needs-tab-params`; the review rulings'
   `capture-run-stops-after-a-failed-search-load`, `capture-run-result-page-target-is-gated`,
-  `capture-run-blocks-a-reload-after-the-check`, `capture-run-spacing-holds-across-runs`; the
+  `capture-run-blocks-a-reload-after-the-check`, `capture-run-spacing-holds-across-runs`,
+  `capture-run-opens-its-tab-after-the-spacing` (a rerun's first search: no tab until the wait is over,
+  and none while the user is on another tab; the tab started from closed meanwhile: `cancelled`; Cancel
+  or a stop during either wait opens none); the
   whole-branch review's `capture-run-engine-host-page-is-gated` (a page target on an engine's result
   path that the pack refuses, e.g. Google `udm=50`: spaced and blocked `not-a-result-page`, nothing
   captured; the council review: a page off the result paths, e.g. `/maps/…`, is a page target, captured,

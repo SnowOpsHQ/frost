@@ -211,7 +211,7 @@ export const LINK_FILTER_QUERY_MAX_CHARS = 200;
 
 /**
  * Copy as CSV (`seo.copyLinksCsv`): main formats the rows the filter selects from the tab's ready
- * audit (the panel's rows) and writes them with Electron's `clipboard` in main; the chrome never
+ * audit (the panel's rows, "Broken only" included) and writes them with Electron's `clipboard` in main; the chrome never
  * touches the system clipboard (it has no clipboard permission). Columns, in order (header row
  * first), with `\r\n` line ends (RFC 4180):
  * - `URL`: the resolved `href`;

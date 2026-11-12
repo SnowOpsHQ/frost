@@ -1,18 +1,17 @@
-import { chmod, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import { writeFileAtomically } from './durable';
 
-// A file main writes for the user that may hold what they would not share (Export Diagnostics,
-// Phase 11 Task 12; the network export, Task 4): readable by them alone where the platform has modes.
+// A file main writes for the user that may hold what they would not share (a chat export, Phase 5
+// Task 9; Export Diagnostics, Phase 11 Task 12; the network export, Task 4): readable by them alone
+// where the platform has modes.
 
 /**
- * Writes `text` to `file` with mode 0600. `mode` applies only to a new file, so an existing one is
- * narrowed after the write; Windows has no such modes, and a failed narrowing never fails the save.
+ * Writes `text` to `file` owner-only (mode 0600) and atomically, as a skills export: a new file
+ * beside it, flushed, renamed over it. `mode` applies only to a new file, so an existing one is never
+ * written in place (its mode would stay, and the text would sit in it); Windows has no such modes.
+ * Rejects if the file could not be written.
  */
 export async function writePrivateFile(file: string, text: string): Promise<void> {
-  await writeFile(file, text, { encoding: 'utf8', mode: 0o600 });
-  if (process.platform === 'win32') return;
-  try {
-    await chmod(file, 0o600);
-  } catch {
-    // Written; the mode stays as it was.
-  }
+  if (!(await writeFileAtomically(fs, file, text, `${process.pid}-${randomUUID()}`))) throw new Error('the file could not be written');
 }

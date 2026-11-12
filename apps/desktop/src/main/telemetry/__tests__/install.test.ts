@@ -9,6 +9,7 @@ import { APP_FRAME_PREFIX, DEFAULT_CONSENT, RESOURCE_ATTRIBUTE_KEYS, TELEMETRY_L
 import type { ConsentStore } from '../consent-store';
 import type { TelemetryConfig } from '../config';
 import { installTelemetry, TELEMETRY_REQUEST_HEADERS, type TelemetryAppLike, type TelemetryFetch, type TelemetryMain, type TelemetryProcessLike } from '../install';
+import { createStartup } from '../../single-instance';
 
 const OTEL_ENDPOINT = 'https://otel.example.test/v1/traces';
 const SENTRY_DSN = 'https://publickey@errors.example.test/42';
@@ -372,7 +373,7 @@ describe('telemetry main wiring', () => {
     expect(net.calls[0]!.init).toMatchObject({ method: 'POST', credentials: 'omit', redirect: 'error' });
     expect(new Headers(net.calls[0]!.init.headers).get('user-agent')).toBe('frost-telemetry');
 
-    // A startup that rejects (main's never does) ends the span as an error, without an outcome, and
+    // A startup that rejects (main's does when it fails) ends the span as an error, without an outcome, and
     // is not an unhandled rejection.
     const failed = setup({ consent: { usage: true, errors: false } });
     failed.started.reject(new Error('startup failed'));
@@ -382,6 +383,37 @@ describe('telemetry main wiring', () => {
     expect(errored?.name).toBe('app.start');
     expect(errored?.status.code).toBe(2);
     expect(attrs(errored!.attributes)).toEqual({ platform: 'linux' });
+  });
+
+  test('app-start-span-sent-on-failed-startup', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const app = fakeApp();
+      // No window open: Electron fires `will-quit` inside `quit()`.
+      app.quit.mockImplementation(() => void app.willQuit());
+      const startup = createStartup(app);
+      const net = fakeFetch();
+      const main = installTelemetry({
+        app,
+        process: fakeProcess(),
+        fetch: net.fetch,
+        store: fakeStore({ usage: true, errors: false }),
+        config: CONFIG,
+        started: startup.started,
+        log: () => undefined,
+        redact: [],
+      });
+      installed.push(main);
+      await startup.run(() => Promise.reject(new Error('startup failed')), () => undefined);
+      expect(app.quit).toHaveBeenCalled();
+      // The quit's hold flushes (bounded by `shutdownTimeoutMs`); the span is in that flush.
+      await vi.waitFor(() => expect(otlp(net.calls).spans).toHaveLength(1), { timeout: TELEMETRY_LIMITS.shutdownTimeoutMs + 500 });
+      const [span] = otlp(net.calls).spans as (OtlpSpan & { status: { code: number } })[];
+      expect(span?.name).toBe('app.start');
+      expect(span?.status.code).toBe(2);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   test('shutdown-on-will-quit-is-bounded', async () => {

@@ -173,7 +173,7 @@ line maps to one named test.
 - `gsc-config-missing-is-unconfigured` — no client ID, or no client secret, is `null`.
 - `gsc-config-baked-build-ignores-runtime` — a build with a value baked in uses Google's endpoints and ignores every run-time value (client and `FROST_GSC_*`), packaged or not; so does a build with only the account's or telemetry's value baked in.
 - `gsc-config-runtime-only-unpackaged-unbaked` — only an unpackaged build with nothing baked in reads the run-time client and endpoint overrides; a packaged one never does.
-- `gsc-config-endpoint-overrides-validated` — an override must be `https:` or loopback `http:` without credentials, query or fragment; a refused one leaves Search Console unconfigured.
+- `gsc-config-endpoint-overrides-validated` — an override must be `https:` or loopback `http:` without credentials, query or fragment; a refused one leaves Search Console unconfigured. A trailing `/` is dropped, an origin-only override's too, so a base joins its paths with one `/`.
 - `gsc-config-malformed-client-refused` — a client ID or secret outside its pattern is unconfigured.
 
 ## Properties (`apps/desktop/src/main/gsc/__tests__/properties.test.ts`)

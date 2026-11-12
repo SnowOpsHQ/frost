@@ -85,9 +85,14 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
   closes Settings (unless a sign-in waits there: the editor then stays shut), Projects, History and
   the Help sheets; any of those opening closes it. Projects tells the others on every open request,
   the first one after start included (`onProjectsOpened`; `projects-open-requests-are-told-from-the-first`).
+- **Scenario: a-replacing-sheet-keeps-focus** (`renderer/__tests__/sheet-focus.test.ts`) — a Help sheet or
+  Settings closed by another sheet opening does not give focus to the page: the new sheet keeps it; closed
+  on its own with focus inside, it still does.
 - **Scenario: setup-checklist-done-states** (`renderer/__tests__/start-view.test.ts`) — the new-tab page
   lists `SETUP_CHECKLIST_ITEMS`; agent ready, Search Console connected, a project besides Unfiled, and
-  the stored privacy / shortcuts marks show as done; each item's button opens where it is done.
+  the stored privacy / shortcuts marks show as done; each item's button opens where it is done. The
+  shortcuts mark is set when the shortcuts sheet opens, not by the click: while a sign-in waits for its
+  confirmation in Settings the sheet stays shut and the item stays undone (issue #25).
 - **Scenario: setup-checklist-dismiss** (`start-view.test.ts`) — Hide this checklist stores
   `dismissed` and the checklist is gone on every later new tab; when every item is done it is gone too.
 - **Scenario: setup-checklist-storage-tolerant** (`start-view.test.ts`) — a missing, malformed or

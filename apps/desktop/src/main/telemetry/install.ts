@@ -43,8 +43,7 @@ export interface TelemetryMainDeps {
   readonly config: TelemetryConfig;
   /**
    * Resolves when startup is complete (the first window is open): the end of the `app.start` span.
-   * Main's never rejects (a startup that does not complete leaves the span open: it is never sent);
-   * one that did would end the span as an error.
+   * Main's rejects when startup fails (before the app quits), which ends the span as an error.
    */
   readonly started: Promise<void>;
   readonly log: (message: string) => void;

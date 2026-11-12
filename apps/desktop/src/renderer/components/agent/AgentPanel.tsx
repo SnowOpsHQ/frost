@@ -64,8 +64,13 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
   const aside = useRef<HTMLElement>(null);
   const { separator } = usePaneLayout('agent', open, aside);
   const toggle = useRef<HTMLButtonElement>(null);
+  const settingsToggle = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLTextAreaElement | null>(null);
-  const focusAfter = useRef<'input' | 'toggle' | null>(null);
+  // The composer's skill picker: the focus target while a picked skill replaces the message field.
+  const picker = useRef<HTMLSelectElement | null>(null);
+  const focusAfter = useRef<'input' | 'toggle' | 'settings' | null>(null);
+  // Bumped by each palette request, so focus moves even when the panel already shows that view.
+  const [requestSeq, setRequestSeq] = useState(0);
   // The latest state, for the palette's requests (a skill runs in the chat on screen).
   const latest = useRef(state);
   latest.current = state;
@@ -89,6 +94,8 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
   useEffect(
     () =>
       onAgentPanelRequest((request) => {
+        // The palette restores no focus for these (`focus: 'handler'`): the panel takes it.
+        setRequestSeq((seq) => seq + 1);
         if (request.kind === 'toggle') {
           setOpen((was) => {
             focusAfter.current = was ? 'toggle' : 'input';
@@ -96,14 +103,14 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
           });
           setView('chat');
         } else if (request.kind === 'settings') {
-          focusAfter.current = null;
+          focusAfter.current = 'settings';
           setOpen(true);
           setView('settings');
         } else if (request.kind === 'run-skill') {
           // Runs at once with no inputs (the composer's picker is where a note is added), on the
           // active tab: in the chat on screen if that chat works on it, else in a new chat (which
           // main binds to the active tab).
-          focusAfter.current = null;
+          focusAfter.current = 'input';
           setOpen(true);
           setView('chat');
           void agentActions.send(skillRunChatId(latest.current?.active ?? null, activeTab.current?.id ?? null), { skillId: request.skillId });
@@ -129,12 +136,14 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
   useEffect(() => {
     const target = focusAfter.current;
     if (target === 'toggle' && !open) toggle.current?.focus();
+    else if (target === 'settings' && open && view === 'settings') settingsToggle.current?.focus();
     else if (target === 'input' && open && view === 'chat') {
-      if (input.current === null) return;
-      input.current.focus();
+      const field = input.current ?? picker.current;
+      if (field === null) return;
+      field.focus();
     }
     focusAfter.current = null;
-  }, [open, view, loaded]);
+  }, [open, view, loaded, requestSeq]);
 
   const badge = railBadge(state);
   if (!open) {
@@ -183,7 +192,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
           <button type="button" className="tool agent-head-tool" data-testid="agent-chats-toggle" aria-label="Chats" title="Chats" aria-pressed={view === 'chats'} onClick={() => setView(view === 'chats' ? 'chat' : 'chats')}>
             <ChatsIcon />
           </button>
-          <button type="button" className="tool agent-head-tool" data-testid="agent-settings-toggle" aria-label="Agent settings" title="Agent settings" aria-pressed={view === 'settings' || view === 'grants' || view === 'skills'} onClick={() => setView(view === 'settings' ? 'chat' : 'settings')}>
+          <button ref={settingsToggle} type="button" className="tool agent-head-tool" data-testid="agent-settings-toggle" aria-label="Agent settings" title="Agent settings" aria-pressed={view === 'settings' || view === 'grants' || view === 'skills'} onClick={() => setView(view === 'settings' ? 'chat' : 'settings')}>
             <SlidersIcon />
           </button>
           <button type="button" className="tool agent-head-tool" data-testid="agent-collapse" aria-label="Collapse the AI agent" title="Collapse the AI agent" onClick={() => show(false)}>
@@ -224,7 +233,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
             <footer className="agent-foot">
               <AgentContextMeter active={active} />
               <ChatgptComposerBar setup={state.setup} />
-              <AgentComposer chatId={active?.id ?? null} running={state.running} stopChatId={runningChatId(state)} inputRef={input} skills={state.skills} attachments={active?.attachments ?? state.draftAttachments ?? []} />
+              <AgentComposer chatId={active?.id ?? null} running={state.running} stopChatId={runningChatId(state)} inputRef={input} pickerRef={picker} skills={state.skills} attachments={active?.attachments ?? state.draftAttachments ?? []} />
             </footer>
           </>
         )}

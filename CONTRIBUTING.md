@@ -32,6 +32,12 @@ task, a fresh reviewer before the next starts, and a whole-branch review at the 
   Run them locally with `pnpm security:electronegativity`, `pnpm security:semgrep` (needs `uv`) and
   `pnpm test:e2e` (needs a display). Accepting an Electronegativity finding means adding it, with a
   one-line rationale, to `security/electronegativity-baseline.json` in a reviewed PR.
+- CI is one workflow, `.github/workflows/ci.yml` (`specs/ci-pipeline.feature.md`): a `preflight` job
+  plans the run, then lint, the security gates, the unit and e2e shards on Linux, macOS and Windows
+  and the three package jobs run side by side, and `CI passed` is green only if every one of them
+  did what the plan said. A pull request that changes only `docs/`, `semgrep/`, `security/`,
+  `LICENSE` or a root Markdown file runs the Linux jobs only. Shard counts and runner images live in
+  `specs/ci-pipeline.spec.ts`; check a workflow change with `pnpm lint:workflows` (needs `uv`).
 
 ## Commits & branches
 - Conventional commits (`feat:`, `fix:`, `chore:`, `ci:`, `docs:` …).

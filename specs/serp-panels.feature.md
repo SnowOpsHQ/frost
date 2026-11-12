@@ -96,16 +96,17 @@ are this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second 
 - **Scenario: serp-palette-jumps** — "Open SERP panel" and "Open Visibility panel" are always offered
   and open their panel with focus on its rail item; the built-ins offer neither again.
 - **Scenario: serp-palette-outlines** — "Outline SERP features" on a web page whose last known reading
-  is `ready` without outlines (or not known yet), opening the SERP panel; "Hide SERP outlines" while
-  they are drawn; neither on a page known not to be a result page.
+  is `ready` without outlines (or not known yet), opening the SERP panel with focus on its rail item
+  (the palette restores none); "Hide SERP outlines" while they are drawn; neither on a page known
+  not to be a result page.
 - **Scenario: serp-palette-pack-update** — "Check for selector updates" unless the pack is disabled or
   a check runs; it reports `PACK_UPDATE_MESSAGES[outcome]`.
 - **Scenario: serp-palette-intent** — "Enable on-device intent" only while the model is missing (or the
   state is not known yet), asking first with `INTENT_ENABLE_PROMPT`; it reports
   `INTENT_ENABLE_MESSAGES[outcome]` and refreshes what the palette knows of the intent state.
 - **Scenario: serp-palette-probes** — "Run visibility probes" on a web page with no run under way,
-  asking first with `PROBE_DISCLOSURE` and opening the Visibility panel; "Stop visibility probes"
-  while one runs.
+  asking first with `PROBE_DISCLOSURE` and opening the Visibility panel with focus on its rail item;
+  "Stop visibility probes" while one runs.
 
 ## Edit search (Phase 10 Task 9; `specs/serp-param-editor.spec.ts`; plan Decisions 4 and 12)
 On a result page the parameters bar offers **Edit search** and **Track this search…**. The editor

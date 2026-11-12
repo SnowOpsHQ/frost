@@ -11,6 +11,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
+    "lint:workflows": "uvx --from actionlint-py==1.7.12.25 actionlint -shellcheck= -pyflakes=",
     "test:e2e": "turbo run test:e2e",
     "make:mac": "pnpm --filter @app/desktop make:mac",
     "verify:mac": "pnpm --filter @app/desktop verify:mac",

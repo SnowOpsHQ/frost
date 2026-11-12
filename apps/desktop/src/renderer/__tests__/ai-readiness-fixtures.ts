@@ -65,6 +65,7 @@ export function audit(changes: AuditChanges = {}): SeoAudit {
     indexable: true,
     counts: { error: 0, warning: 0, info: 0 },
     findings: [],
+    passed: 0,
     page: { url: PAGE, title: { text: 'Green tea', length: 9 }, description: { text: 'All about green tea.', length: 20 }, partial: false },
     indexability: { verdict: changes.verdict ?? 'indexable', reasons: [], robots: { outcome: 'ok', agents: [agent('Googlebot'), agent('Bingbot')] } },
     javascript: changes.javascript ?? { status: 'ready', verdict: 'independent' },

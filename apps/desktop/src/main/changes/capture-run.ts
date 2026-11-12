@@ -299,6 +299,8 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
   let lastSearchAt: number | null = null;
   /** The run under way (reserved as soon as one starts): its cancel flag and the wake-up of its current wait. */
   let active: Run | null = null;
+  /** What is left of `querySpacingMs` before `target` may go (none, or below zero: it goes at once; only a search waits). */
+  const spacingLeft = (target: RunPlanTarget): number => (queriesAnEngine(target) && lastSearchAt !== null ? lastSearchAt + limits.querySpacingMs - now() : 0);
 
   /**
    * Closes the run's tab if it is still open; the tab in front before comes back, but only if the
@@ -398,6 +400,35 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       if (tab === null) return 'tab-closed';
       showActive(isActive);
       if (isActive) return null;
+      await pause(run, limits.captureRetryMs);
+    }
+  }
+
+  /**
+   * Before the run's first tab opens late (after a search's spacing): waits until the tab in front at
+   * Start (`run.previous`) is in front again (`null`), so the new tab never takes the front from a user
+   * who moved on (none remembered: at once); `cancelled` when the run was cancelled, or that tab is
+   * gone or the browser cannot be asked (the run gives way).
+   */
+  async function untilStartTabActive(run: Run): Promise<'cancelled' | null> {
+    for (;;) {
+      if (run.cancelled) return 'cancelled';
+      // None remembered at Start (the browser could not be asked): nothing to wait for.
+      if (run.previous === null) return null;
+      let state: ReturnType<RunBrowser['getState']>;
+      try {
+        state = browser.getState();
+      } catch {
+        log('the run gave way: the browser could not be asked');
+        return 'cancelled';
+      }
+      const { activeTabId, tabs } = state;
+      if (activeTabId === run.previous) return null;
+      if (!tabs.some((tab) => tab.id === run.previous)) {
+        log('the run gave way: the tab it started from is gone');
+        return 'cancelled';
+      }
+      showActive(false);
       await pause(run, limits.captureRetryMs);
     }
   }
@@ -609,28 +640,37 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
      * cancelled meanwhile.
      */
     const spaceBefore = async (target: RunPlanTarget): Promise<boolean> => {
-      if (queriesAnEngine(target) && lastSearchAt !== null) {
-        const wait = lastSearchAt + limits.querySpacingMs - now();
-        if (wait > 0) await pause(run, wait);
-      }
+      const wait = spacingLeft(target);
+      if (wait > 0) await pause(run, wait);
       return run.cancelled;
     };
     try {
       groups: for (let g = 0; g < groups.length; g++) {
-        if (g > 0) {
+        // A later group, or a first one whose search had to wait (`start` opened no tab for it).
+        if (g > 0 || tabId === null) {
           // A search that comes next waits its spacing before the new tab opens (not in front of the user empty).
           if (await spaceBefore(groups[g]!.targets[0]!)) {
             end = 'cancelled';
             break;
           }
-          // The last group's tab gives way to the next group's: only with it in front, so a new tab
-          // never takes the front from the user.
-          const ready = await untilActive(run, tabId!);
-          if (ready !== null) {
-            end = ready;
-            break;
+          if (tabId !== null) {
+            // The last group's tab gives way to the next group's: only with it in front, so a new tab
+            // never takes the front from the user.
+            const ready = await untilActive(run, tabId);
+            if (ready !== null) {
+              end = ready;
+              break;
+            }
+            browser.closeTab(tabId);
+          } else {
+            // The run's first tab opens only now, and only with the tab it started from in front (the
+            // one given back at the end): a new tab never takes the front from the user.
+            const ready = await untilStartTabActive(run);
+            if (ready !== null) {
+              end = ready;
+              break;
+            }
           }
-          browser.closeTab(tabId!);
           tabId = openTab(groups[g]!.profile);
           run.tabId = tabId;
           if (tabId === null) {
@@ -712,12 +752,15 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       }
       const groups = groupByProfile(targets, plan.profile);
       const ordered = groups.flatMap((group) => group.targets);
-      const tabId = openTab(groups[0]!.profile);
+      // A first search that must wait its spacing gets its tab once the wait is over (`execute`): no
+      // empty tab in front of the user meanwhile.
+      const spaced = spacingLeft(ordered[0]!) > 0;
+      const tabId = spaced ? null : openTab(groups[0]!.profile);
       run.tabId = tabId;
       const runId = uuid(now());
       const base = { runId, projectId: plan.projectId, current: 0, total: ordered.length, omitted: inScope.length - targets.length, screenshot: plan.screenshot, blockedReason: null };
       const initial = ordered.map((target): RunTarget => ({ kind: target.kind, label: target.label, outcome: 'pending', changeCount: null, screenshot: null }));
-      if (tabId === null) {
+      if (tabId === null && !spaced) {
         active = null;
         publish({ ...base, state: 'failed', targets: initial.map((target) => ({ ...target, outcome: 'cancelled' })) });
         return { status: 'refused', reason: 'no-tab' };

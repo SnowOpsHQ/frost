@@ -202,6 +202,8 @@ describe('proxied fetch', () => {
     const { proxy, posted } = setup();
     const url = 'https://api.anthropic.com/v1/messages';
     await expect(proxy.fetch(url, { method: 'POST', body: 'x'.repeat(AGENT_PROTOCOL_LIMITS.maxRequestBodyBytes + 1) })).rejects.toMatchObject({ code: 'too-large' });
+    // Counted in UTF-8 bytes, as main counts it: under the cap in UTF-16 units, over it in bytes.
+    await expect(proxy.fetch(url, { method: 'POST', body: 'é'.repeat(AGENT_PROTOCOL_LIMITS.maxRequestBodyBytes / 2 + 1) })).rejects.toMatchObject({ code: 'too-large' });
     await expect(proxy.fetch(url, { method: 'PUT', body: '{}' })).rejects.toMatchObject({ code: 'invalid-request' });
     await expect(proxy.fetch(url, { method: 'POST', body: new ReadableStream(), duplex: 'half' } as RequestInit)).rejects.toMatchObject({ code: 'invalid-request' });
     await expect(proxy.fetch(url, { method: 'GET', body: '{}' } as RequestInit)).rejects.toMatchObject({ code: 'invalid-request' });

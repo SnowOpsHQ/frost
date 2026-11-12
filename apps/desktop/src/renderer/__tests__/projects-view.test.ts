@@ -170,6 +170,8 @@ describe('projects view', () => {
     for (const ended of ['idle', 'done', 'cancelled', 'tab-closed', 'failed'] as const) expect(runActive(ended)).toBe(false);
     expect(runProgressText(run({ current: 2 }))).toBe(`${RUN_STATE_LABELS.running} 2 of 3`);
     expect(runProgressText(run({ state: 'waiting-for-tab', current: 1 }))).toBe(`${RUN_STATE_LABELS['waiting-for-tab']} 1 of 3`);
+    // A rerun's late first tab waits for the tab it started from, before the run has a tab of its own.
+    expect(RUN_STATE_LABELS['waiting-for-tab']).toContain('the tab you started from');
     const targets = [
       { kind: 'page' as const, label: 'a', outcome: 'captured' as const, changeCount: 0, screenshot: null },
       { kind: 'page' as const, label: 'b', outcome: 'timed-out' as const, changeCount: null, screenshot: null },
@@ -603,5 +605,9 @@ describe('projects view', () => {
     expect(api.open).toHaveBeenLastCalledWith({ projectId: P1 });
     expect(api.purgeNow).toHaveBeenCalledWith(P1);
     expect(await action('projects.compact').run(ctx)).toBe('Compacted the change database: 2.0 kB → 1.0 kB.');
+    // Purge opens the sheet (it takes focus); Compact shows only main's message box, so the palette
+    // puts focus back where it was (issue #25: not left on <body>).
+    expect(action('projects.purge-now').focus).toBe('handler');
+    expect(action('projects.compact').focus ?? 'restore').toBe('restore');
   });
 });

@@ -40,8 +40,8 @@ export const actions = {
   openBackgroundTab: (url: string, options: { readonly inherit?: boolean } = {}) => ipc.browser.openBackgroundTab.mutate({ url, ...(options.inherit === true ? { inherit: true } : {}) }).catch(() => null),
   /** Sets the tab's highlight overlay (`seo.setHighlight`; `phrase` only for `keyphrase`); resolves whether it was set. */
   setHighlight: (tabId: number, mode: HighlightMode, phrase?: string) => ipc.seo.setHighlight.mutate(phrase === undefined ? { tabId, mode } : { tabId, mode, phrase }).catch(() => false),
-  /** Copies the filtered links of the audit on screen as CSV through main's clipboard; resolves how many rows (`null`: nothing copied). */
-  copyLinksCsv: (tabId: number, audit: SeoAuditRef, filter: LinkFilter) => ipc.seo.copyLinksCsv.mutate({ tabId, audit, filter }).catch(() => null),
+  /** Copies the filtered links of the audit on screen (with `brokenOnly`, the broken ones) as CSV through main's clipboard; resolves how many rows (`null`: nothing copied). */
+  copyLinksCsv: (tabId: number, audit: SeoAuditRef, filter: LinkFilter, brokenOnly: boolean) => ipc.seo.copyLinksCsv.mutate({ tabId, audit, filter, brokenOnly }).catch(() => null),
   /** Copies a URL the audit on screen lists through main's clipboard; resolves whether it was copied. */
   copyUrl: (tabId: number, audit: SeoAuditRef, url: string) => ipc.seo.copyUrl.mutate({ tabId, audit, url }).catch(() => false),
   /** Copies one JSON-LD block of the audit on screen through main's clipboard (main formats it); resolves whether it was copied. */

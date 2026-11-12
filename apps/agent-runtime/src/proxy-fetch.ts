@@ -194,7 +194,7 @@ async function requestBody(body: BodyInit | null | undefined): Promise<string | 
     value = new Uint8Array(body.byteLength);
     value.set(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
   } else throw new ProxyFetchError('invalid-request', 'the request body is not a string or bytes');
-  const size = typeof value === 'string' ? value.length : value.byteLength;
+  const size = typeof value === 'string' ? Buffer.byteLength(value, 'utf8') : value.byteLength;
   if (size > L.maxRequestBodyBytes) throw new ProxyFetchError('too-large', 'the request body is too large');
   return value;
 }

@@ -1,3 +1,4 @@
+import type { ServedSnapshot } from '@app/specs/seo-javascript.schema';
 import type { CappedText, PageSnapshot, ResponseMeta, RobotsFetch } from '../types';
 
 // Snapshot fixtures for the rule tests (`seo-rules.feature.md`): a clean page that passes every
@@ -186,4 +187,37 @@ export function robots(content: string, name: PageSnapshot['metaRobots'][number]
 /** The clean snapshot with `changes` applied. */
 export function page(changes: Partial<PageSnapshot> = {}): PageSnapshot {
   return { ...cleanSnapshot(), ...changes };
+}
+
+/** The served snapshot of `page` as a static page would serve it (the same fields). */
+export function servedOf(page: PageSnapshot, changes: Partial<ServedSnapshot> = {}): ServedSnapshot {
+  return {
+    url: page.url,
+    lang: page.lang,
+    titles: page.titles,
+    titleTotal: page.titleTotal,
+    metaDescriptions: page.metaDescriptions,
+    metaDescriptionTotal: page.metaDescriptionTotal,
+    metaRobots: page.metaRobots,
+    canonicals: page.canonicals,
+    canonicalTotal: page.canonicalTotal,
+    ogUrl: page.ogUrl,
+    viewport: page.viewport,
+    headings: page.headings,
+    headingTotal: page.headingTotal,
+    links: page.links,
+    linkTotal: page.linkTotal,
+    images: page.images.map((image) => ({ src: image.src, alt: image.alt })),
+    imageTotal: page.imageTotal,
+    jsonLd: page.jsonLd,
+    jsonLdTotal: page.jsonLdTotal,
+    hreflang: page.hreflang,
+    hreflangTotal: page.hreflangTotal,
+    wordCount: page.wordCount,
+    textTruncated: false,
+    noscript: { count: 0, wordCount: 0, linkCount: 0 },
+    nodes: 400,
+    partial: false,
+    ...changes,
+  };
 }

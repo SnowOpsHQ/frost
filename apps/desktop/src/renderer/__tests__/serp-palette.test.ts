@@ -99,7 +99,9 @@ describe('SERP palette actions', () => {
     expect(ready.ids()).not.toContain('serp.outline-hide');
     expect(ready.action('serp.outline').label).toBe('Outline SERP features');
     await expect(Promise.resolve(ready.action('serp.outline').run(ready.ctx))).resolves.toBe('Outlining SERP features');
-    expect(ready.chrome.openPanel).toHaveBeenCalledWith('serp');
+    // The palette restores no focus for it, so the panel takes it (issue #25: not left on <body>).
+    expect(ready.action('serp.outline').focus).toBe('handler');
+    expect(ready.chrome.openPanel).toHaveBeenCalledWith('serp', { focus: true });
     expect(ready.api.setOutlines).toHaveBeenCalledWith(3, true);
     // A known state of another tab says nothing about this one.
     expect(setup({}, { serp: { ...serpState('not-serp'), tabId: 9 } }).ids()).toContain('serp.outline');
@@ -159,7 +161,8 @@ describe('SERP palette actions', () => {
     expect(confirm.note).toBe(PROBE_DISCLOSURE);
     expect(confirm.confirmLabel).toBe('Run probes');
     await expect(Promise.resolve(action('probes.run').run(ctx))).resolves.toBe('Running visibility probes');
-    expect(chrome.openPanel).toHaveBeenCalledWith('visibility');
+    expect(action('probes.run').focus).toBe('handler');
+    expect(chrome.openPanel).toHaveBeenCalledWith('visibility', { focus: true });
     expect(api.runProbes).toHaveBeenCalledWith(3);
     // Only on a web page; not while a run is under way (Stop instead).
     expect(setup({ tab: tab({ url: 'about:blank' }) }).ids()).not.toContain('probes.run');

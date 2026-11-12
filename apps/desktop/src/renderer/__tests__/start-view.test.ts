@@ -51,16 +51,18 @@ vi.mock('../ipc', () => ({
       return main.projects;
     },
     navigate: vi.fn(),
+    focusPage: async () => true,
   },
 }));
 const openProjects = vi.fn();
-vi.mock('../components/changes/projects-sheet', () => ({ openProjects: (...args: unknown[]) => openProjects(...args) }));
+vi.mock('../components/changes/projects-sheet', () => ({ openProjects: (...args: unknown[]) => openProjects(...args), closeProjects: () => undefined, onProjectsOpened: () => () => undefined }));
 
 const { StartView } = await import('../components/StartView');
 const { onAgentPanelRequest } = await import('../agent-palette');
-const { onSettingsRequest } = await import('../settings-open');
+const { onSettingsCloseAsked, onSettingsRequest } = await import('../settings-open');
 const { onHelpSheetRequest } = await import('../help-palette');
 const { readSetupMarks } = await import('../components/SetupChecklist');
+const { ShortcutsSheet } = await import('../components/ShortcutsView');
 
 let root: Root;
 let host: HTMLElement;
@@ -91,7 +93,9 @@ const done = () => items().filter((item) => item.dataset['done'] === 'true').map
 const actionOf = (id: string) => host.querySelector<HTMLButtonElement>(`[data-testid="setup-item"][data-item="${id}"] [data-testid="setup-action"]`)!;
 
 async function show(tabId = 1): Promise<void> {
-  await act(async () => root.render(createElement(StartView, { tabId })));
+  // The App's shortcuts sheet beside the start view: it is what the checklist's "shortcuts" button opens.
+  const sheetProps = { tab: { id: tabId, documentSeq: 1, loading: false }, historySeq: undefined, onOpen: () => undefined };
+  await act(async () => root.render(createElement('div', null, createElement(StartView, { tabId }), createElement(ShortcutsSheet, sheetProps))));
   // Main's answers arrive.
   await act(async () => undefined);
 }
@@ -122,8 +126,18 @@ test('setup-checklist-done-states', async () => {
   // Privacy and shortcuts are the chrome's own marks: opening them marks them done.
   act(() => actionOf('privacy').click());
   expect(settingsRequests).toEqual(['search-console', 'telemetry']);
+  // A sign-in waiting for its confirmation in Settings keeps the shortcuts sheet shut: not done (issue #25).
+  const stopHolding = onSettingsCloseAsked(() => false);
   act(() => actionOf('shortcuts').click());
   expect(helpRequests).toEqual(['shortcuts']);
+  expect(host.querySelector('[data-testid="shortcuts-view"]')).toBeNull();
+  expect(done()).toEqual(['privacy']);
+  expect(readSetupMarks()).toEqual({ dismissed: false, privacy: true, shortcuts: false });
+  stopHolding();
+  // Settings lets go: the sheet opens, and that marks the item done.
+  act(() => actionOf('shortcuts').click());
+  expect(helpRequests).toEqual(['shortcuts', 'shortcuts']);
+  expect(host.querySelector('[data-testid="shortcuts-view"]')).not.toBeNull();
   for (const stop of stops) stop();
   expect(done()).toEqual(['privacy', 'shortcuts']);
   expect(readSetupMarks()).toEqual({ dismissed: false, privacy: true, shortcuts: true });

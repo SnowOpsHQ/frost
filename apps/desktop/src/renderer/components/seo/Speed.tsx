@@ -22,6 +22,7 @@ import {
 import { CopyIcon, OpenTabIcon, ReloadIcon } from '../../icons';
 import { exportStatus } from '../../export-palette';
 import { actions } from '../../ipc';
+import { useNow } from '../../hooks/useNow';
 import { useSpeed } from '../../hooks/useSpeed';
 import { formatCount } from '../../seo-view';
 import { agoText, barWidth, meterGeometry, missingVitalText, openableResource, PHASE_LABELS, shareText, shownSpeed, speedIssues, speedNotes, waterfall } from '../../speed-view';
@@ -177,9 +178,14 @@ const VERDICT_SUMMARY: Readonly<Record<VitalBand, string>> = {
   poor: 'At least one Core Web Vital measured on this visit is poor.',
 };
 
-/** The live line: updating, paused, waiting for the first answer, or why there is none. */
-function LiveLine({ state, report, source, onResume }: { readonly state: SpeedPollState; readonly report: SpeedReport | null; readonly source: 'live' | 'audit' | null; readonly onResume: () => void }) {
+/**
+ * The live line: updating, paused, waiting for the first answer, or why there is none. Each poll
+ * re-renders a live line; a paused one has no poll left, so its clock (`useNow`) keeps the age current.
+ * Only a paused line that shows an age keeps that clock.
+ */
+export function LiveLine({ state, report, source, onResume }: { readonly state: SpeedPollState; readonly report: SpeedReport | null; readonly source: 'live' | 'audit' | null; readonly onResume: () => void }) {
   const response = state.response;
+  const now = useNow(state.paused && source === 'live' && report !== null);
   let kind: 'live' | 'paused' | 'measuring' | 'unavailable' = 'measuring';
   let text = 'Measuring…';
   if (response?.status === 'unavailable') {
@@ -187,7 +193,7 @@ function LiveLine({ state, report, source, onResume }: { readonly state: SpeedPo
     text = SPEED_UNAVAILABLE_MESSAGES[response.reason];
   } else if (source === 'live' && report) {
     kind = state.paused ? 'paused' : 'live';
-    text = state.paused ? `Paused after ${formatCount(SPEED_LIVE_MAX_POLLS)} updates · last ${agoText(report.measuredAt, Date.now())}` : `Live · updated ${agoText(report.measuredAt, Date.now())}`;
+    text = state.paused ? `Paused after ${formatCount(SPEED_LIVE_MAX_POLLS)} updates · last ${agoText(report.measuredAt, now)}` : `Live · updated ${agoText(report.measuredAt, Date.now())}`;
   } else if (state.paused) {
     kind = 'paused';
     text = 'Paused';

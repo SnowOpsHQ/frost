@@ -1,5 +1,5 @@
 import { CREDENTIAL_LIMITS, isCredentialSlot, normalizeKey, type CredentialSlot, type KeyProtection } from '@app/specs/agent-proxy.spec';
-import { syncDirectoryOf, type DirectorySync } from './durable';
+import { syncDirectoryOf, type DirectorySync } from '../durable';
 
 // The agent's key store (Phase 5 Task 3, plan decision 1; acceptance `specs/agent-host.feature.md`,
 // Credentials): one key per slot (`anthropic`, `openai`, `gateway`), each encrypted with Electron's

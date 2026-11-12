@@ -15,7 +15,7 @@ import {
 } from '@app/specs/agent-data.spec';
 import { SkillFileEnvelopeSchema, SkillFileSchema, SkillIdSchema, SkillSchema } from '@app/specs/skills-schema';
 import { SKILL_ACTING_TOOLS } from '@app/specs/skills.spec';
-import { syncDirectoryOf } from './durable';
+import { writeFileAtomically } from '../durable';
 import { skillErrors, type UserSkills } from './user-skills';
 
 // Skill files (Phase 8 Task 6; spec `specs/agent-data.spec.ts`, Skill files; acceptance
@@ -94,20 +94,6 @@ export function skillFileText(skills: readonly Skill[], exportedAt: number): str
   const text = `${JSON.stringify(parsed.data, null, 2)}\n`;
   // Never written if import would refuse it.
   return Buffer.byteLength(text, 'utf8') > SKILL_FILE_MAX_BYTES ? null : text;
-}
-
-/** Writes `text` to `file` atomically: a new owner-only file beside it, flushed, renamed over it. Removes the temporary file on failure. */
-export async function writeFileAtomically(fs: SkillFilesFs, file: string, text: string, suffix: string): Promise<boolean> {
-  const temp = `${file}.${suffix}.tmp`;
-  try {
-    await fs.writeFile(temp, text, { mode: 0o600, flag: 'wx', flush: true });
-    await fs.rename(temp, file);
-  } catch {
-    await fs.rm(temp, { force: true }).catch(() => undefined);
-    return false;
-  }
-  await syncDirectoryOf(fs, file);
-  return true;
 }
 
 /** At most `max` bytes of a regular file: its bytes, `too-large`, or `failed` (not a regular file, or unreadable). */

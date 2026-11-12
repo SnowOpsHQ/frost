@@ -3,6 +3,7 @@ import { createBuiltinSkillRegistry, type SkillRegistry } from '@app/ai-skills/s
 import { CHAT_PRUNE_INTERVAL_MS, chatExportFileName, type ChatExportFormat, type ChatExportResult, type ChatRetention } from '@app/specs/agent-data.spec';
 import type { AgentGrantsStore } from './grants';
 import { AGENT_E2E_SCRIPT_SWITCH } from '@app/specs/agent-session.spec';
+import { writePrivateFile } from '../private-file';
 import { chatExportText } from './chat-export';
 import { createChatHistory, createMemoryChatsStore, type AgentChatsStore } from './chat-history';
 import type { ChatSnapshot } from './chat-record';
@@ -85,7 +86,7 @@ export interface AgentServiceDeps {
   readonly skills?: SkillRegistry;
   /** main's dialogs (Task 9); default: "Delete all chats" and deleting retention changes never confirmed, every export cancelled. */
   readonly dialogs?: AgentDialogs;
-  /** Writes an export's text to the file the user chose (default: `fs.writeFile`, owner-only). */
+  /** Writes an export's text to the file the user chose (default: `writePrivateFile`, owner-only and atomic). */
   readonly writeExport?: (file: string, text: string) => Promise<void>;
   /** The skills files' reads and writes (Phase 8 Task 6; default: `node:fs/promises`). */
   readonly skillFilesFs?: SkillFilesFs;
@@ -134,7 +135,7 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSessionWith
   const log = deps.log ?? (() => undefined);
   const now = deps.now ?? Date.now;
   const dialogs = deps.dialogs ?? NO_DIALOGS;
-  const writeExport = deps.writeExport ?? ((file: string, text: string) => fs.writeFile(file, text, { encoding: 'utf8', mode: 0o600 }));
+  const writeExport = deps.writeExport ?? writePrivateFile;
   const history = createChatHistory({ store: deps.sessionStore.agentChats ?? createMemoryChatsStore(), now, log });
   // Each in memory when the database is absent (nothing persists); one memory store holds both, so a re-key moves the switch.
   const memorySkills = createMemorySkillsStore();

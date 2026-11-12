@@ -98,6 +98,8 @@ export interface SeoAudit {
   readonly indexable: boolean;
   readonly counts: SeverityCounts;
   readonly findings: readonly Finding[];
+  /** How many rules ran and found nothing (the Overview's "N checks passed"); a rule without its input, which has no finding either, is not counted. */
+  readonly passed: number;
   readonly page: PageFacts;
   /** The page's structured data, read into one tree with its issues (the Schema panel, Task 3). */
   readonly schema: SchemaReport;

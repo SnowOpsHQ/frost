@@ -107,10 +107,8 @@ const OPEN: Record<SetupChecklistItemId, () => void> = {
     markSetupStep('privacy');
     requestSettings('telemetry');
   },
-  shortcuts: () => {
-    markSetupStep('shortcuts');
-    requestHelpSheet('shortcuts');
-  },
+  // The sheet marks the step when it opens (`ShortcutsSheet`): it stays shut while a sign-in waits in Settings.
+  shortcuts: () => void requestHelpSheet('shortcuts'),
 };
 
 /** The checklist on an empty tab's start view (`tabId`: read again for each empty tab shown). */

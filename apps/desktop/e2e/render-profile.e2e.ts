@@ -340,7 +340,12 @@ test('render-profile-is-tab-scoped', async () => {
   const own = await sees(plain);
   expect(own.ua).not.toContain('Googlebot');
   expect(own.width).not.toBe(DEVICE_PRESETS.phone.width);
-  expect(requests.filter((r) => r.path === '/page').at(-1)!.userAgent).toBe(own.ua);
+  // This tab's own requests, told apart by their query: frost also fetches a tab's page itself with
+  // that tab's user agent (seo/served.ts), so the last request for /page may be the profiled tab's,
+  // as Googlebot (seen once on Linux CI, run 43146442578).
+  const plainRequests = () => requests.filter((r) => r.path === '/page' && r.query === '?plain');
+  expect(plainRequests().length).toBeGreaterThan(0);
+  for (const request of plainRequests()) expect(request.userAgent).toBe(own.ua);
   await expect(h.activeTab().getByTestId('tab-render-profile')).toHaveCount(0);
   await expect(chrome.getByTestId('status-render-profile')).toHaveCount(0);
   await expect(chrome.getByTestId('render-frame')).toHaveCount(0);
@@ -355,7 +360,7 @@ test('render-profile-is-tab-scoped', async () => {
   await expect.poll(async () => (await h.browseContents()).map((c) => c.id)).toEqual([plain]);
   await reload(plain, '/page');
   expect((await sees(plain)).ua).toBe(own.ua);
-  expect(requests.filter((r) => r.path === '/page').at(-1)!.userAgent).toBe(own.ua);
+  expect(plainRequests().at(-1)!.userAgent).toBe(own.ua);
   expect(await isAttached(plain)).toBe(false);
 });
 

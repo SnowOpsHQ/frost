@@ -90,8 +90,9 @@ export function serpPaletteSources(api: SerpPaletteApi): PaletteSource[] {
         return known === undefined || (known.serp.status === 'ready' && !known.outlines);
       },
       run: async (ctx) => {
-        // The outlines live with the SERP panel's toggle (leaving the panel turns them off).
-        ctx.chrome.openPanel('serp');
+        // The outlines live with the SERP panel's toggle (leaving the panel turns them off); the
+        // palette restores no focus, so the panel takes it.
+        ctx.chrome.openPanel('serp', { focus: true });
         return (await api.setOutlines(ctx.tab!.id, true)) ? 'Outlining SERP features' : 'Nothing to outline on this page';
       },
     },
@@ -205,8 +206,8 @@ export function serpPaletteSources(api: SerpPaletteApi): PaletteSource[] {
       available: (ctx) => onWebPage(ctx.tab) && api.knownProbes(ctx.tab.id)?.status !== 'running',
       confirm: () => ({ message: 'Fetch this page once as each crawler and as frost?', note: PROBE_DISCLOSURE, confirmLabel: 'Run probes', accept: () => undefined }),
       run: async (ctx) => {
-        // The panel shows the run, its disclosure and Stop.
-        ctx.chrome.openPanel('visibility');
+        // The panel shows the run, its disclosure and Stop (and takes focus).
+        ctx.chrome.openPanel('visibility', { focus: true });
         return (await api.runProbes(ctx.tab!.id)) ? 'Running visibility probes' : 'The probes could not start';
       },
     },

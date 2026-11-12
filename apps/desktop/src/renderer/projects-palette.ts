@@ -153,7 +153,7 @@ export function retentionPaletteSources(api: RetentionPaletteApi): PaletteSource
       group: 'browser',
       keywords: [...RETENTION_KEYWORDS, 'compact', 'vacuum', 'shrink', 'changes'],
       icon: 'panel-changes',
-      focus: 'handler',
+      // Only main's message box: focus goes back where it was.
       run: async () => compactText(await api.compact()),
     },
   ];

@@ -3,7 +3,7 @@ import type { Finding, SeoAudit } from '@app/seo-core';
 import { AI_READINESS_COPY } from '@app/specs/ai-readiness.spec';
 import type { TabState } from '@app/specs/browser.spec';
 import { PAGE_TYPE_COPY } from '@app/specs/page-type.spec';
-import { NOT_INDEXABLE_LABEL, SCORE_BANDS, SEO_CATEGORIES, SEO_CATEGORY_LABELS, SEO_RULE_SPECS, SEO_SEVERITIES, type SeoCategory } from '@app/specs/seo-rules.spec';
+import { NOT_INDEXABLE_LABEL, SCORE_BANDS, SEO_CATEGORIES, SEO_CATEGORY_LABELS, SEO_SEVERITIES, type SeoCategory } from '@app/specs/seo-rules.spec';
 import { OVERVIEW_TOP_ISSUES, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { aiTileView } from '../../ai-readiness-view';
 import { usePageIntent } from '../../hooks/usePageIntent';
@@ -253,7 +253,7 @@ export function Overview({
   const [all, setAll] = useState(false);
   const band = SCORE_BANDS.find((b) => b.id === audit.band)!;
   const shown = all ? audit.findings : audit.findings.slice(0, OVERVIEW_TOP_ISSUES);
-  const passed = SEO_RULE_SPECS.length - audit.findings.length;
+  const passed = audit.passed;
   const blocking = audit.counts.error + audit.counts.warning;
   return (
     <div className="seo-overview" data-testid="seo-overview">

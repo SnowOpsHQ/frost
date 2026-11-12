@@ -9,9 +9,10 @@ image and social rules: `seo-rules.feature.md`) and `specs/browser.spec.ts` (`Ta
 `OpenBackgroundTabInputSchema`). Phase 2 Task 2. Each line maps to one named test.
 
 ## Decisions
-- **Copy as CSV goes through main.** `seo.copyLinksCsv({ tabId, audit, filter })` (`enforceSender`
-  first, Zod input) filters the tab's ready audit with the same pure `filterLinks` the panel uses,
-  formats it with `linksCsv` and writes it with Electron's `clipboard` in main. The chrome has no
+- **Copy as CSV goes through main.** `seo.copyLinksCsv({ tabId, audit, filter, brokenOnly })`
+  (`enforceSender` first, Zod input) filters the tab's ready audit with the same pure `filterLinks`
+  the panel uses (and, with `brokenOnly`, keeps only the rows the tab's link check found `broken`,
+  as "Broken only" does: `seo-checks.feature.md`), formats it with `linksCsv` and writes it with Electron's `clipboard` in main. The chrome has no
   clipboard access at all (no `navigator.clipboard`, no clipboard permission for `app://app`), and
   what can reach the clipboard is only ever the audit's own rows, never a string the chrome made
   up. "Copy URL" is the same: `seo.copyUrl({ tabId, audit, url })` writes only a URL the ready audit
@@ -203,6 +204,9 @@ page", the Images panel "Highlight lazy images", Overview "Highlight everything"
 - **Scenario: copy-links-csv** — without a ready audit, or for another audit than the one shown
   (another `url` or `takenAt`), nothing is written (`null`); with it, the filtered rows are written
   as `linksCsv` and their count answered; the formula guard is on.
+- **Scenario: copy-links-csv-broken-only** — with `brokenOnly`, only the filtered rows whose target
+  (fragment aside) the tab's link check found `broken` are written, as "Broken only" lists them; no
+  link check, or none broken, writes the header alone (`0`).
 - **Scenario: copy-url-only-copies-audit-urls** — the audit's link, image, social image (parsed) and
   page URLs are written; any other string, a raw tag value, another audit than the one shown, or
   another tab's id, writes nothing (`false`).
@@ -211,7 +215,7 @@ page", the Images panel "Highlight lazy images", Overview "Highlight everything"
 - `seo-procedures-reject-foreign-sender-first`, `seo-procedures-validate-input`,
   `seo-procedures-call-service` and `missing-seo-service-is-internal-error` cover
   `seo.setHighlight`, `seo.copyLinksCsv` and `seo.copyUrl` (unknown modes, filters with unknown
-  values, an over-long query, a missing or malformed `audit` reference, extra keys, an empty or
+  values, an over-long query, a missing or non-boolean `brokenOnly`, a missing or malformed `audit` reference, extra keys, an empty or
   over-long URL are `BAD_REQUEST`).
 - **Scenario: open-background-tab-calls-service** — `browser.openBackgroundTab` passes the URL to the
   service and answers its id or `null`; the browser router tests cover its sender check and input.
@@ -232,7 +236,7 @@ page", the Images panel "Highlight lazy images", Overview "Highlight everything"
   still to come.
   Links, Images and Social each start with their own ranked issues (expandable, as in Overview).
 - Links: counts (internal, external, other; nofollow, sponsored, ugc), the highlight toggle, Copy as
-  CSV (the rows shown), a search box, type buttons with counts, a rel select; each row shows the
+  CSV (the rows shown, "Broken only" included; disabled when none are), a search box, type buttons with counts, a rel select; each row shows the
   type, anchor text (or "No anchor text"), rel flags, target and href; clicking it offers "Open in
   new tab" (`http(s)` only) and "Copy URL". Capped: "Showing the first N of M links."
 - Images: counts (missing alt, no width/height, oversized, lazy in the first screen), filter chips;

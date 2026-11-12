@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'vitest';
 import type { PageLink } from '@app/seo-core';
 import { IDLE_HREFLANG_RUN, IDLE_LINK_RUN, IDLE_SITEMAP_RUN, type LinkCheckResult } from '@app/specs/seo-checks.spec';
-import { checksFor, knownChecks, linkKindCounts, linkResultIndex, linkStatusText, linkTone, reciprocityText, reciprocityTone, rememberChecks, runSummary } from '../checks-view';
+import { checksFor, forgetChecks, knownChecks, linkKindCounts, linkResultIndex, linkStatusText, linkTone, reciprocityText, reciprocityTone, rememberChecks, runSummary } from '../checks-view';
 
 const result = (url: string, changes: Partial<LinkCheckResult> = {}): LinkCheckResult => ({ url, kind: 'ok', status: 200, finalUrl: null, redirects: 0, reason: null, method: 'HEAD', cached: false, ...changes });
 const link = (href: string): PageLink => ({ href, scheme: '', rel: '', text: '', kind: 'internal', target: null });
@@ -40,5 +40,18 @@ describe('checks view', () => {
     rememberChecks(state);
     expect(knownChecks(4)).toBe(state);
     expect(knownChecks(5)).toBeUndefined();
+  });
+
+  test('checks-view-forgets-unwatched-tab', () => {
+    // The palette's "Stop link check" reads this: once a tab's watch ends (its panel closed, the
+    // tab switched or closed), a run it last saw "running" may finish unseen, so it is forgotten.
+    const running = { version: 3, tabId: 7, url: 'https://example.com/', links: { ...IDLE_LINK_RUN, status: 'running' as const, total: 4 }, sitemaps: IDLE_SITEMAP_RUN, hreflang: IDLE_HREFLANG_RUN };
+    const other = { ...running, tabId: 8 };
+    rememberChecks(running);
+    rememberChecks(other);
+    expect(knownChecks(7)?.links.status).toBe('running');
+    forgetChecks(7);
+    expect(knownChecks(7)).toBeUndefined();
+    expect(knownChecks(8)).toBe(other);
   });
 });

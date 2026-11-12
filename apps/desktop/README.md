@@ -1066,16 +1066,18 @@ From the repo root (`pnpm install` first):
 - `pnpm sign:selectors` (from the repo root) — signs or verifies a selector pack (maintainers; see
   [SERP, intent and indexability](#serp-intent-and-indexability-phase-3)).
 - `pnpm security:electronegativity`, `pnpm security:semgrep` (needs `uv`) — the CI security gates.
+- `pnpm lint:workflows` (needs `uv`) — actionlint over `.github/workflows/`, the pipeline's own gate
+  (`specs/ci-pipeline.feature.md`).
 - `pnpm make:mac` (on macOS) — `electron-forge make --platform darwin --arch arm64`
   (see [Building on a Mac](#building-on-a-mac)).
 - `pnpm verify:mac` (on macOS, after `make:mac`) — checks the bundle id, arch, signature and
   entitlements, fuses, libSQL's unpacked module, launch and debugging lockdown, that the intent runtime
   is unpacked and loads in the packaged utility process (`intent-runtime-loads`, the self-test), and
-  that the `.app` inside the published zip and dmg verifies too (`specs/macos-package.feature.md`). CI: `.github/workflows/macos.yml`.
+  that the `.app` inside the published zip and dmg verifies too (`specs/macos-package.feature.md`). CI: the `package-macos` job of `.github/workflows/ci.yml`.
 - `pnpm make:linux`, `pnpm verify:linux` (on Linux) — the AppImage, deb and zip for x64, and their
-  checks (see [Building on Linux](#building-on-linux)). CI: `.github/workflows/linux-package.yml`.
+  checks (see [Building on Linux](#building-on-linux)). CI: the `package-linux` job of `.github/workflows/ci.yml`.
 - `pnpm make:win`, `pnpm verify:win` (on Windows) — the Squirrel installer and zip for x64, and
-  their checks (see [Building on Windows](#building-on-windows)). CI: `.github/workflows/windows.yml`.
+  their checks (see [Building on Windows](#building-on-windows)). CI: the `package-windows` job of `.github/workflows/ci.yml`.
 
 If your shell exports `ELECTRON_RUN_AS_NODE` (some terminals and agent harnesses do), unset it for
 manual launches (`env -u ELECTRON_RUN_AS_NODE …`); the e2e harness strips it itself.
@@ -1260,7 +1262,7 @@ Artifacts, under `apps/desktop/out/`:
 
 ## macOS signing
 By default the app is **ad-hoc signed**. A build made on your own Mac is not quarantined and opens
-normally. A **downloaded** build (e.g. the `frost-macos-arm64` artifact of the macOS workflow, a zip
+normally. A **downloaded** build (e.g. the `frost-macos-arm64` artifact of a CI run, a zip
 holding the `.zip` and the `.dmg` above) is quarantined, and Gatekeeper refuses it because it is not
 notarized. macOS 15 and later no longer offer Control-click › Open; either:
 
@@ -1304,8 +1306,8 @@ Artifacts, under `apps/desktop/out/`:
 
 **The packages are unsigned.** frost has no Linux repository key: the deb is not served from an
 apt repository and carries no signature, and the AppImage embeds none. The `frost-linux-x64`
-artifact of the Linux package workflow is built and checked in CI; trust it as far as you trust that
-run. The deb runs no maintainer scripts; its only setuid file is Chromium's `chrome-sandbox`, used
+artifact of a CI run is built and checked there; trust it as far as you trust that run, and only
+when the run's `CI passed` check succeeded. The deb runs no maintainer scripts; its only setuid file is Chromium's `chrome-sandbox`, used
 only where unprivileged user namespaces are unavailable.
 
 `verify:linux` checks the fuses, the files in `resources/` and `app.asar`, libSQL (unpacked prebuild, `node_modules`, that it loads), launch and debugging
@@ -1343,8 +1345,8 @@ Artifacts, under `apps/desktop/out/`:
 
 **The installer and the app are unsigned.** frost has no Authenticode certificate, so SmartScreen
 warns before `Setup.exe` runs ("Windows protected your PC": More info › Run anyway). The
-`frost-windows-x64` artifact of the Windows workflow is built and checked in CI; trust it as far as
-you trust that run. `verify:win` fails if a signature ever appears, until the docs say otherwise.
+`frost-windows-x64` artifact of a CI run is built and checked there; trust it as far as you trust
+that run, and only when the run's `CI passed` check succeeded. `verify:win` fails if a signature ever appears, until the docs say otherwise.
 
 `Setup.exe` installs per user into `%LocalAppData%\frost` (no administrator rights; there is no MSI)
 and starts frost. Installing creates Start-menu and desktop shortcuts and uninstalling removes them:

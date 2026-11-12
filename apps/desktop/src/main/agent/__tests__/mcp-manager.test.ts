@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { MCP_ERRORS, MCP_NO_SANDBOX_SENTENCE, mcpCommandLine, type McpSandboxMode } from '@app/specs/agent-mcp.spec';
+import { CI_REQUIRE_BUBBLEWRAP_ENV } from '@app/specs/ci-pipeline.spec';
 import type { AgentFeature } from '../entitlements';
 import type { ToolRunContext } from '../approvals';
 import { createMcpManager, createMemoryMcpStore, createMemoryMcpSecrets, nodeMcpDeps, type McpManager, type McpManagerDeps, type McpStartPrompt } from '../mcp';
@@ -457,6 +458,12 @@ function bubblewrapWorks(): boolean {
   const probe = spawnSync(bwrap, ['--unshare-all', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', 'true'], { timeout: 5000 });
   return probe.status === 0;
 }
+
+// CI's Linux unit jobs install bubblewrap, allow user namespaces and set this: there the block
+// below must run, so a machine that would skip it fails here instead.
+test.runIf(process.env[CI_REQUIRE_BUBBLEWRAP_ENV] === '1')('mcp-bubblewrap-required-where-asked', () => {
+  expect(bubblewrapWorks()).toBe(true);
+});
 
 describe.skipIf(!bubblewrapWorks())('MCP manager with the fake server under bubblewrap', () => {
   test('mcp-bubblewrap-contains-the-server', async () => {

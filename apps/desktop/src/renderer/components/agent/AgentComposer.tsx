@@ -24,7 +24,8 @@ import { SendIcon, StopSquareIcon } from './agent-icons';
 // the Attach button, opens a menu of the other open web tabs main lists (title as React text, and
 // origin); picking one asks main to attach it (to the selected chat, or the new chat the next message
 // starts) and drops the `@` typed. The chips show each attachment's (untrusted) title, origin and
-// state, with Detach. The user alone attaches: nothing the model says reaches this menu.
+// state, with Detach. The user alone attaches: nothing the model says reaches this menu. The menu is a
+// labelled group of buttons (Tab moves through them, Escape closes it), not an ARIA menu.
 
 /** The `@` menu: main's list (`null` while it loads), a refusal to show, and where the `@` was typed. */
 interface AttachMenu {
@@ -78,6 +79,7 @@ export function AgentComposer({
   running,
   stopChatId,
   inputRef,
+  pickerRef,
   skills = [],
   attachments = [],
 }: {
@@ -87,6 +89,8 @@ export function AgentComposer({
   /** The running chat, for Stop. */
   readonly stopChatId: string | null;
   readonly inputRef: RefObject<HTMLTextAreaElement | null>;
+  /** The skill picker, which takes focus in the message field's place while a skill is picked. */
+  readonly pickerRef?: RefObject<HTMLSelectElement | null>;
   /** The skills main lists (`AgentState.skills`). */
   readonly skills?: readonly AgentSkillView[];
   /** The selected chat's attached tabs, or the new chat's (`AgentState.draftAttachments`). */
@@ -99,20 +103,23 @@ export function AgentComposer({
   const [fields, setFields] = useState<SkillFieldValues>({});
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState<AttachMenu | null>(null);
+  // Counts menu openings (and chat switches): a list or attach answer for an earlier one (another chat's) is dropped.
+  const menuOpenings = useRef(0);
   const wasRunning = useRef(running);
   const full = attachments.length >= MAX_CHAT_ATTACHMENTS;
   const offered = enabledSkills(skills);
   const skill = pickedSkill(offered, skillId);
   const matching = pickerSkills(skills, query, skillId);
 
-  // Back from a turn: focus returns to the field if disabling it had dropped focus.
+  // Back from a turn: focus returns to the field (the picker while a skill is picked) if disabling it
+  // had dropped focus.
   useEffect(() => {
     if (wasRunning.current && !running) {
       setStopping(false);
-      if (document.activeElement === null || document.activeElement === document.body) inputRef.current?.focus();
+      if (document.activeElement === null || document.activeElement === document.body) (inputRef.current ?? pickerRef?.current)?.focus();
     }
     wasRunning.current = running;
-  }, [running, inputRef]);
+  }, [running, inputRef, pickerRef]);
 
   const send = () => {
     if (!canSend(text, running, sending)) return;
@@ -143,16 +150,24 @@ export function AgentComposer({
 
   // ---- The `@` menu ----
   const openMenu = (at: number | null) => {
+    const opening = ++menuOpenings.current;
     setMenu({ tabs: null, message: full ? AGENT_ATTACH_WORDS.full : null, at });
     if (full) return;
-    void agentActions.attachableTabs(chatId).then((tabs) => setMenu((current) => (current === null ? null : { ...current, tabs })));
+    void agentActions.attachableTabs(chatId).then((tabs) => {
+      if (opening === menuOpenings.current) setMenu((current) => (current === null ? null : { ...current, tabs }));
+    });
   };
   const closeMenu = () => setMenu(null);
   // Another chat selected: its own menu, if any, starts afresh.
-  useEffect(() => setMenu(null), [chatId]);
+  useEffect(() => {
+    menuOpenings.current += 1;
+    setMenu(null);
+  }, [chatId]);
   const attach = (tab: AgentAttachableTab) => {
     const at = menu?.at ?? null;
+    const opening = menuOpenings.current;
     void agentActions.attachTab(chatId, tab.tabId, tab.origin).then((result) => {
+      if (opening !== menuOpenings.current) return;
       if (result !== 'attached') {
         setMenu((current) => (current === null ? null : { ...current, message: AGENT_ATTACH_MESSAGES[result] }));
         return;
@@ -173,7 +188,6 @@ export function AgentComposer({
         data-testid="agent-attach"
         aria-label={AGENT_ATTACH_WORDS.button}
         title={AGENT_ATTACH_WORDS.button}
-        aria-haspopup="menu"
         aria-expanded={menu !== null}
         disabled={running || sending}
         onClick={() => (menu === null ? openMenu(null) : closeMenu())}
@@ -183,7 +197,7 @@ export function AgentComposer({
       {menu !== null ? (
         <div
           className="agent-attach-menu"
-          role="menu"
+          role="group"
           aria-label={AGENT_ATTACH_WORDS.menuLabel}
           data-testid="agent-attach-menu"
           onKeyDown={(event) => {
@@ -205,7 +219,7 @@ export function AgentComposer({
             </p>
           ) : null}
           {(menu.tabs ?? []).map((tab) => (
-            <button key={tab.tabId} type="button" role="menuitem" className="agent-attach-option" data-testid="agent-attach-option" data-tab-id={tab.tabId} onClick={() => attach(tab)}>
+            <button key={tab.tabId} type="button" className="agent-attach-option" data-testid="agent-attach-option" data-tab-id={tab.tabId} onClick={() => attach(tab)}>
               <bdi dir="auto" className="agent-attachment-title">
                 {attachmentName(tab)}
               </bdi>
@@ -248,6 +262,7 @@ export function AgentComposer({
         <label className="agent-skill-bar">
           <span className="agent-skill-bar-label">Skill</span>
           <select
+            ref={pickerRef}
             className="agent-select agent-skill-select"
             data-testid="agent-skill-picker"
             aria-label="Run a skill"
