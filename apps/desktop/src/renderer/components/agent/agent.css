@@ -108,8 +108,9 @@
   }
 }
 
-/* The header: an --accent mark on an --accent-soft tile, the title at --text-title, its tools --h-control
-   pills, a --divider rule under it. */
+/* The header: an --accent mark on an --accent-soft tile, the title at --text-title, a --divider rule
+   under it. Its tools keep the chrome's shared `.tool` style (styles.css, which loads after this
+   file) until the chrome's surface PR. */
 .agent-head {
   display: flex;
   align-items: center;
@@ -158,10 +159,6 @@
 
 .agent-head-tool {
   flex: none;
-  width: var(--h-control);
-  height: var(--h-control);
-  border-radius: var(--r-pill);
-  color: var(--text-muted);
 }
 
 .agent-head-tool .icon {
@@ -345,6 +342,13 @@
   color: var(--text-muted);
 }
 
+/* Inside the approval card (a capped flex column), a code or input block never shrinks under three
+   lines: the card scrolls instead. */
+.agent-approval .agent-code,
+.agent-approval .agent-pre {
+  min-height: calc(3lh + 2 * var(--space-3));
+}
+
 /* Approved code wraps: nothing may hide past the right edge (a long run of spaces included). */
 .agent-code {
   max-height: 260px;
@@ -354,7 +358,7 @@
 
 .agent-approval-more {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--warn-ink);
   font: var(--text-small);
 }
 

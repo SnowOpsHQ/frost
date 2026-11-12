@@ -97,7 +97,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   panel's own text at `--text-body`, its title at `--text-title`, secondary lines at `--text-small`,
   code, the context meter and skill instructions at `--text-mono`, chips at `--text-micro`); the open
   panel, its header and its footer on `--bg-sheet`, the header's rule `--divider`, its mark an
-  `--accent` icon on an `--accent-soft` tile at `--r-md`; your messages on `--accent-soft` at `--r-md`;
+  `--accent` icon on an `--accent-soft` tile at `--r-md` (its tools keep the chrome's shared `.tool`
+  style until the chrome's surface PR); your messages on `--accent-soft` at `--r-md`;
   tool cards, settings sections and the empty and setup hints `--bg-surface` cards at `--r-md` with
   `--e-ring` and no border (`--agent-edge`: "--e-ring", the hint's dashed outline included); code on
   `--bg-subtle` at `--r-sm`; status chips at `--h-badge` on their `-soft` fill with `-ink` text
@@ -108,7 +109,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the attach menu an `--e-overlay` menu at `--r-md`. Where the screen and the Migration table differ,
   the table wins: the approval card and the revoke-all confirmation keep their warning fill and edge
   (`--agent-approval-bg` → `--warn-soft`, `--agent-approval-edge` → `--warn`), where the screen draws a
-  plain `--bg-surface` card with `--e-overlay`, and its note takes `--warn-ink`. Warning text elsewhere
+  plain `--bg-surface` card with `--e-overlay`, and its note and its "More code below" hint take
+  `--warn-ink`. Warning text elsewhere
   (`--caution` and the approval edge used as text: the risk note, the "Untrusted" chip) takes
   `--warn-ink`, field errors `--danger-ink`; the collapsed rail stays on `--bg-window` (it shows in
   every other capture) with a `--divider` edge, and the open panel stays flush with the page (the
