@@ -58,7 +58,9 @@
 }
 
 .agent-rail-toggle:focus-visible {
-  outline: none;
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
 }
 
@@ -113,7 +115,7 @@
   align-items: center;
   gap: var(--space-1);
   flex: none;
-  padding: var(--space-4) var(--space-4) var(--space-4) var(--space-5);
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--divider);
 }
 
@@ -137,9 +139,13 @@
 }
 
 .agent-head-title {
+  min-width: 0;
   margin: 0;
+  overflow: hidden;
   font: var(--text-title);
   letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-head-sub {
@@ -151,6 +157,7 @@
 }
 
 .agent-head-tool {
+  flex: none;
   width: var(--h-control);
   height: var(--h-control);
   border-radius: var(--r-pill);
@@ -436,7 +443,7 @@
   border: 0;
   background: transparent;
   color: var(--accent);
-  text-decoration: underline;
+  text-decoration-line: underline;
 }
 
 /* The approval card: above the composer, one at a time. Its warning fill and edge are the Migration
@@ -446,7 +453,7 @@
   flex-direction: column;
   gap: var(--space-3);
   flex: none;
-  max-height: 55%;
+  max-height: 45%;
   margin: 0 var(--space-4) var(--space-4);
   padding: var(--space-4) var(--space-5) var(--space-5);
   overflow-y: auto;
@@ -457,7 +464,9 @@
 }
 
 .agent-approval:focus-visible {
-  outline: none;
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
 }
 
@@ -516,7 +525,7 @@
   gap: var(--space-2);
   height: var(--h-control);
   padding: 0 var(--space-5);
-  border: 0;
+  border: 1px solid transparent;
   border-radius: var(--r-pill);
   background: var(--bg-surface);
   box-shadow: var(--e-raised);
@@ -529,11 +538,6 @@
   box-shadow:
     inset 0 0 0 var(--h-control) var(--bg-hover),
     var(--e-raised);
-}
-
-.agent-button:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
 }
 
 .agent-button:disabled {
@@ -551,6 +555,14 @@
   box-shadow: none;
 }
 
+/* After both hovers, at their specificity: a hovered button keeps its focus ring. */
+.agent-button:focus-visible:not(:disabled) {
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
 .agent-button .icon {
   width: var(--icon-sm);
   height: var(--icon-sm);
@@ -563,6 +575,7 @@
   gap: var(--space-3);
   flex: none;
   padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--divider);
 }
 
 .agent-meter {
@@ -614,7 +627,7 @@
   min-height: 40px;
   max-height: 160px;
   padding: var(--space-3) var(--space-4);
-  border: 0;
+  border: 1px solid transparent;
   border-radius: var(--r-lg);
   background: var(--bg-surface);
   box-shadow: var(--e-raised);
@@ -625,7 +638,9 @@
 }
 
 .agent-input:focus-visible {
-  outline: none;
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
 }
 
@@ -738,7 +753,9 @@
 }
 
 .agent-chat-select:focus-visible {
-  outline: none;
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
 }
 
@@ -810,7 +827,7 @@
   height: var(--h-control);
   min-width: 0;
   padding: 0 var(--space-3);
-  border: 0;
+  border: 1px solid transparent;
   border-radius: var(--r-sm);
   background: var(--bg-surface);
   box-shadow: var(--e-raised);
@@ -830,7 +847,9 @@
 
 .agent-select:focus-visible,
 .agent-text-field:focus-visible {
-  outline: none;
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
 }
 
