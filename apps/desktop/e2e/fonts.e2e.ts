@@ -1,45 +1,47 @@
 // Specs: specs/design-tokens.spec.ts (BUNDLED_FONTS), specs/security-policy.spec.ts (APP_CSP_DIRECTIVES: font-src 'self')
-// Acceptance: specs/design-tokens.feature.md (End to end). The fonts are bundled but no rule uses them
-// yet, so nothing loads them until `document.fonts.load()` asks, after the listeners below are in
-// place. (The chrome page can't simply be reloaded: its navigation guard aborts that.) The first
-// surface PR that applies Geist makes the fonts load at startup; it must rework this test.
+// Acceptance: specs/design-tokens.feature.md (End to end). Surfaces draw Geist (the command palette
+// first), so a font can load whenever such text is drawn, before this test could watch the page's
+// requests (and the chrome page can't be reloaded to start clean: its navigation guard aborts that).
+// So the font requests and the console are recorded in main from launch (`font-request-log.cjs`),
+// and the test reads them once every face has loaded, whenever that happened.
+import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
 import { BUNDLED_FONTS } from '@app/specs/design-tokens.spec';
-import { closeApp, launchApp } from './harness';
+import { APP_DIR, closeApp, launchApp } from './harness';
+
+const FONT_REQUEST_LOG = path.join(APP_DIR, 'e2e', 'font-request-log.cjs');
+
+interface FontRequest {
+  readonly scheme: string;
+  readonly url: string;
+  readonly status: number;
+  readonly type: string | null;
+}
 
 let app: ElectronApplication;
 let page: Page;
 
 test.beforeAll(async () => {
-  ({ app, page } = await launchApp());
+  ({ app, page } = await launchApp([], { mainPreload: [FONT_REQUEST_LOG] }));
 });
 
 test.afterAll(async () => {
   await closeApp(app);
 });
 
+const fontRequests = () => app.evaluate(() => [...((globalThis as { __frostFontRequests?: FontRequest[] }).__frostFontRequests ?? [])]);
+const consoleMessages = () => app.evaluate(() => [...((globalThis as { __frostConsoleMessages?: string[] }).__frostConsoleMessages ?? [])]);
+
 test('geist-fonts-load', async () => {
-  const consoleProblems: string[] = [];
-  page.on('console', (message) => {
-    if (/content.security.policy|refused to load/i.test(message.text())) consoleProblems.push(message.text());
-  });
-  // The font requests, as the page made them. (Chromium keeps no Resource Timing entries for a
-  // non-HTTP scheme such as app://, so the page's own performance timeline can't show them.)
-  const fontRequests: { url: string; status: number | undefined; type: string | undefined }[] = [];
-  page.on('requestfinished', (request) => {
-    if (!/\.woff2(?:[?#]|$)/.test(request.url())) return;
-    void request
-      .response()
-      .then((response) => fontRequests.push({ url: request.url(), status: response?.status(), type: response?.headers()['content-type'] }))
-      .catch(() => fontRequests.push({ url: request.url(), status: undefined, type: undefined }));
-  });
+  // The log is in place (the preload ran before the app's own code).
+  expect(await app.evaluate(() => Array.isArray((globalThis as { __frostFontRequests?: unknown }).__frostFontRequests))).toBe(true);
 
   // The stylesheets, and so their @font-face rules, are in place once the document has loaded:
   // document.fonts.load() asked earlier would find no face to load.
   await page.waitForLoadState('load');
   const result = await page.evaluate(async (fonts) => {
-    // Installed before any font is requested.
+    // Installed before this test asks for any font (a face already loaded is not fetched again).
     const violations: string[] = [];
     document.addEventListener('securitypolicyviolation', (event) => violations.push(`${event.effectiveDirective} ${event.blockedURI}`));
     const loaded: { family: string; weight: number; faces: { family: string; weight: string; style: string; status: string }[] }[] = [];
@@ -57,13 +59,14 @@ test('geist-fonts-load', async () => {
     const match = faces.filter((face) => unquote(face.family) === family && face.weight === String(weight) && face.style === 'normal' && face.status === 'loaded');
     expect(match.length, `${family} ${weight}: ${JSON.stringify(faces)}`).toBeGreaterThanOrEqual(1);
   }
-  // One woff2 per bundled face, each fetched from the app's own scheme (never a CDN, never data:).
-  await expect.poll(() => fontRequests.length).toBe(BUNDLED_FONTS.length);
-  expect(new Set(fontRequests.map((request) => request.url)).size).toBe(BUNDLED_FONTS.length);
-  for (const request of fontRequests) {
+  // Every woff2 the app served since launch: one URL per bundled face, each from the app's own scheme
+  // (never a CDN, never data:: those would not reach the app: handler, and the faces would not load).
+  await expect.poll(async () => new Set((await fontRequests()).map((request) => request.url)).size).toBe(BUNDLED_FONTS.length);
+  const requests = await fontRequests();
+  for (const request of requests) {
     expect(request.url.startsWith(`${APP_ENTRY_URL}assets/`), request.url).toBe(true);
-    expect(request, request.url).toMatchObject({ status: 200, type: 'font/woff2' });
+    expect(request, request.url).toMatchObject({ scheme: 'app', status: 200, type: 'font/woff2' });
   }
   expect(result.violations).toEqual([]);
-  expect(consoleProblems).toEqual([]);
+  expect((await consoleMessages()).filter((message) => /content.security.policy|refused to load/i.test(message))).toEqual([]);
 });
