@@ -103,6 +103,9 @@ test('geist-fonts-load', async () => {
     expect(request, request.url).toMatchObject({ scheme: 'app', status: 200, type: 'font/woff2' });
   }
   expect(result.violations).toEqual([]);
+  // The console log records the chrome: a probe the chrome logs now arrives with its app: URL.
+  await page.evaluate(() => console.log('frost-font-log-probe'));
+  await expect.poll(async () => (await consoleMessages()).some((entry) => entry.message === 'frost-font-log-probe' && entry.url.startsWith(APP_ENTRY_URL))).toBe(true);
   // The app's own pages only: a tab's console (a dev-only CSP warning of its own) is not the chrome's.
   const cspMessages = (await consoleMessages()).filter((entry) => entry.url.startsWith('app:') && /content.security.policy|refused to load/i.test(entry.message));
   expect(cspMessages).toEqual([]);
