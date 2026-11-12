@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isChatgptHostId } from '@app/specs/agent-chatgpt.spec';
 import { ChatgptHostFileSchema } from '@app/specs/agent-chatgpt.schema';
 import type { CredentialFs } from '../credentials';
-import { syncDirectoryOf } from '../durable';
+import { syncDirectoryOf } from '../../durable';
 
 // This install's ChatGPT host id (spec `agent-chatgpt.spec.ts`, `CHATGPT_HOST_ID_FILE`,
 // `isChatgptHostId`; acceptance `agent-chatgpt.feature.md`, Decisions, "Host id"): `urn:uuid:` and

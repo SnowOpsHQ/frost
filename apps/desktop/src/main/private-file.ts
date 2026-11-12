@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { writeFileAtomically } from './agent/skill-files';
+import { writeFileAtomically } from './durable';
 
 // A file main writes for the user that may hold what they would not share (a chat export, Phase 5
 // Task 9; Export Diagnostics, Phase 11 Task 12; the network export, Task 4): readable by them alone
