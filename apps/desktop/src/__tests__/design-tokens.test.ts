@@ -225,6 +225,8 @@ test('removed-legacy-tokens-are-gone', () => {
   for (const row of MIGRATION) if (row.removed === true) expect(row.kind, `${row.legacy} is removed, so retired`).toBe('retire');
   // The command palette's surface PR removed its retired names (the rollout only ever adds to this).
   expect(REMOVED).toEqual(expect.arrayContaining(['--palette-edge', '--palette-shadow', '--palette-sheet', '--palette-row-active', '--palette-hit', '--palette-kbd-bg', '--palette-kbd-edge']));
+  // So did the agent panel's.
+  expect(REMOVED).toEqual(expect.arrayContaining(['--agent-edge', '--agent-user', '--agent-code-bg', '--agent-approval-edge', '--agent-approval-bg']));
   for (const name of REMOVED) {
     expect(LIGHT.has(name), `${name} (light)`).toBe(false);
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);

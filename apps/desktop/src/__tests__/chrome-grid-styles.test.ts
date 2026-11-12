@@ -65,12 +65,13 @@ test('no-style-drops-a-chrome-slot', () => {
 
 test('agent-text-fields-hold-their-height', () => {
   // The search fields (the composer's skills, the chat list, the skill library) sit in column flex boxes,
-  // where `flex: 1` would size their height from 0; the field keeps the 30 px of the panel's selects.
+  // where `flex: 1` would size their height from 0; the field keeps the height of the panel's selects,
+  // Signal's --h-control (specs/design-tokens.feature.md, The agent panel).
   const shared = rule('components/agent/agent.css', '.agent-select,\n.agent-text-field');
-  expect(shared).toMatch(/height:\s*30px;/);
+  expect(shared).toMatch(/height:\s*var\(--h-control\);/);
   const field = rule('components/agent/agent.css', '.agent-text-field');
-  expect(field).toMatch(/min-height:\s*30px;/);
-  expect(field).toMatch(/max-height:\s*30px;/);
+  expect(field).toMatch(/min-height:\s*var\(--h-control\);/);
+  expect(field).toMatch(/max-height:\s*var\(--h-control\);/);
 });
 
 test('screenshot-swatch-has-no-button-face-and-keeps-its-outline', () => {
