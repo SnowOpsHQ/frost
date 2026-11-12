@@ -404,6 +404,31 @@ export const CONTRAST_PAIRS = [
 ] as const satisfies readonly ContrastPair[];
 
 /**
+ * Known contrast exceptions, left for the surface PRs: a token some rules still use in a way that
+ * misses the pair's minimum. Each is recorded, not fixed, in the values step; a surface PR that moves
+ * the rules off it removes its entry (the guard fails once the pair would pass, or once no rule uses
+ * the token that way). `rules` is how many `color: var(<fg>)` declarations the renderer's stylesheets
+ * hold today.
+ */
+export interface ContrastException {
+  readonly fg: TokenName;
+  readonly bg: TokenName;
+  readonly min: 4.5 | 3;
+  readonly rules: number;
+  readonly why: string;
+}
+
+export const KNOWN_CONTRAST_EXCEPTIONS = [
+  {
+    fg: '--ok',
+    bg: '--bg-surface',
+    min: 4.5,
+    rules: 21,
+    why: '--ok as body text ("Good length", passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink.',
+  },
+] as const satisfies readonly ContrastException[];
+
+/**
  * A rule whose text colour the values step pins to a token, because the Signal value of the token it
  * used left its text under 4.5:1 (found in review). `element` lists the selectors, in `stylesheet`
  * (relative to the renderer), that such an element matches; resolving the cascade over them

@@ -6,6 +6,7 @@ import { expect, test } from 'vitest';
 import {
   CONTRAST_PAIRS,
   HEX_COLOUR_RATCHET,
+  KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
   SIGNAL_TOKENS,
@@ -248,6 +249,18 @@ test('signal-contrast-meets-aa', () => {
       const fg = composite(colour(pair.fg), bg);
       expect(contrastRatio(fg, bg), label).toBeGreaterThanOrEqual(pair.min);
     }
+  }
+});
+
+test('known-contrast-exceptions-are-current', () => {
+  const pairs: readonly { fg: string; bg: string }[] = CONTRAST_PAIRS;
+  for (const exception of KNOWN_CONTRAST_EXCEPTIONS) {
+    const label = `${exception.fg} on ${exception.bg}`;
+    const ratios = THEME_NAMES.map((theme) => contrastRatio(colourIn(theme, exception.fg), colourIn(theme, exception.bg)));
+    expect(Math.min(...ratios), `${label} still misses ${exception.min}:1 somewhere`).toBeLessThan(exception.min);
+    expect(pairs.some((pair) => pair.fg === exception.fg && pair.bg === exception.bg && 'min' in pair && pair.min === exception.min), label).toBe(false);
+    const uses = STYLESHEETS.flatMap((name) => parse(read(name)).declarations.filter((d) => d.property === 'color' && d.value === `var(${exception.fg})`));
+    expect(uses.length, `${label}: rules drawing text in ${exception.fg}`).toBe(exception.rules);
   }
 });
 
