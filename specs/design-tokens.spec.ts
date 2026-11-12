@@ -324,13 +324,16 @@ export const HEX_COLOUR_RATCHET = 53;
  * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
  * of `min` (4.5 for text, 3 for UI and graphics), in light and in dark. `over` is the opaque surface a
  * translucent `bg` (`--accent-soft`, a dark `-soft` fill) sits on, so the pair is composited first; a
- * translucent `fg` is composited over the (composited) `bg`. `why` cites the sheet.
+ * translucent `fg` is composited over the (composited) `bg`. `alpha` makes `bg` a tint: the token at
+ * that opacity, as `color-mix(in srgb, <bg> <alpha × 100>%, transparent)` draws it (then `over` is
+ * needed). `why` cites the sheet.
  */
 export interface ContrastPair {
   readonly fg: TokenName;
   readonly bg: TokenName;
   readonly min: 4.5 | 3;
   readonly over?: TokenName;
+  readonly alpha?: number;
   readonly why: string;
 }
 
@@ -394,6 +397,10 @@ export const CONTRAST_PAIRS = [
     min: 4.5,
     why: 'the update bar\'s primary button, hovered (.update-primary on --bg-field-hover) (4.5:1)',
   },
+  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
+  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
+  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
+  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
 ] as const satisfies readonly ContrastPair[];
 
 /**
@@ -410,6 +417,9 @@ export interface TextColourRule {
   readonly why: string;
 }
 
+const OK_TINT = '--ok as text on its own 14% tint is 2.82:1 in light (11px chips)';
+const DANGER_TINT = '--danger as text on its own 14% tint is 3.88:1 in light (11px chips)';
+
 export const TEXT_COLOUR_RULES = [
   {
     stylesheet: 'styles.css',
@@ -423,6 +433,15 @@ export const TEXT_COLOUR_RULES = [
     color: '--accent-hover',
     why: '--accent on the hovered button (--bg-field-hover) is 4.23:1 in dark',
   },
+  // 11px chips on their tone's tint: --ok text is 2.82:1 on its 14% tint and --danger 3.88:1 (light).
+  // The tint and .seo-signal's dot keep the tone; .seo-signal draws no tone text, so it has no entry.
+  { stylesheet: 'styles.css', element: ['.seo-pill', ".seo-pill[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
+  { stylesheet: 'styles.css', element: ['.seo-pill', ".seo-pill[data-tone='error']"], color: '--danger-ink', why: DANGER_TINT },
+  { stylesheet: 'styles.css', element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
+  { stylesheet: 'styles.css', element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='error']"], color: '--danger-ink', why: DANGER_TINT },
+  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
+  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='denied']"], color: '--danger-ink', why: DANGER_TINT },
+  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='failed']"], color: '--danger-ink', why: DANGER_TINT },
 ] as const satisfies readonly TextColourRule[];
 
 /**

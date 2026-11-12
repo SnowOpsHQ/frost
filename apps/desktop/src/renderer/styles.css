@@ -3398,12 +3398,15 @@ input {
 .seo-signal,
 .seo-flag-chip {
   --tone: var(--text-faint);
+  /* Text on the tone's tint: the tone itself, but ok and error take their -ink (≥ 4.5:1). */
+  --tone-ink: var(--tone);
 }
 
 .seo-pill[data-tone='ok'],
 .seo-signal[data-tone='ok'],
 .seo-flag-chip[data-tone='ok'] {
   --tone: var(--ok);
+  --tone-ink: var(--ok-ink);
 }
 
 .seo-pill[data-tone='warn'],
@@ -3416,6 +3419,7 @@ input {
 .seo-signal[data-tone='error'],
 .seo-flag-chip[data-tone='error'] {
   --tone: var(--danger);
+  --tone-ink: var(--danger-ink);
 }
 
 .seo-pill {
@@ -3428,7 +3432,7 @@ input {
   overflow: hidden;
   border-radius: 999px;
   background: color-mix(in srgb, var(--tone) 14%, transparent);
-  color: var(--tone);
+  color: var(--tone-ink);
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -3886,7 +3890,7 @@ input {
   padding: 0 6px;
   border-radius: 5px;
   background: color-mix(in srgb, var(--tone) 13%, transparent);
-  color: var(--tone);
+  color: var(--tone-ink);
   font-size: 10.5px;
   font-weight: 600;
 }

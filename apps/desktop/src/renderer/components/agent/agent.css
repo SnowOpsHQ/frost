@@ -269,13 +269,13 @@
 
 .agent-chip[data-tone='ok'] {
   background: color-mix(in srgb, var(--ok) 14%, transparent);
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 
 .agent-chip[data-tone='denied'],
 .agent-chip[data-tone='failed'] {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .agent-chip[data-tone='expired'] {

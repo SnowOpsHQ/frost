@@ -228,6 +228,8 @@ test('signal-contrast-meets-aa', () => {
   expect(contrastRatio(parseColour('#000'), parseColour('#ffffff'))).toBeCloseTo(21, 5);
   expect(contrastRatio(parseColour('#777'), parseColour('#fff'))).toBeCloseTo(4.48, 2);
   expect(composite(parseColour('rgb(0 0 0 / 0.5)'), parseColour('#ffffff'))).toEqual([127.5, 127.5, 127.5, 1]);
+  // A tint (color-mix with transparent) composites like the token at that opacity.
+  expect(composite([0, 0, 0, 0.14], parseColour('#ffffff'))[0]).toBeCloseTo(219.3, 5);
 
   const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
   expect(pairs.length).toBeGreaterThan(0);
@@ -236,6 +238,7 @@ test('signal-contrast-meets-aa', () => {
     for (const pair of pairs) {
       const label = `${pair.fg} on ${pair.bg}${pair.over ? ` over ${pair.over}` : ''} (${theme})`;
       let bg = colour(pair.bg);
+      if (pair.alpha !== undefined) bg = [bg[0], bg[1], bg[2], bg[3] * pair.alpha];
       if (bg[3] < 1) {
         expect(pair.over, `${label}: a translucent background needs \`over\``).toBeDefined();
         const surface = colour(pair.over ?? pair.bg);
