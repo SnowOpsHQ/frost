@@ -400,9 +400,9 @@ test('tokens-load-before-every-other-stylesheet', () => {
 });
 
 /** Keywords a colour-bearing value on a surface may hold besides `var()` of a Signal token or alias. */
-const SURFACE_COLOUR_WORDS = new Set(['transparent', 'currentcolor', 'inherit', 'initial', 'unset', 'none', 'solid', 'dashed', 'dotted', 'double', 'inset', 'color-mix', 'in', 'srgb', 'calc', 'min', 'max', 'clamp']);
+const SURFACE_COLOUR_WORDS = new Set(['transparent', 'currentcolor', 'inherit', 'none', 'solid', 'dashed', 'dotted', 'double', 'inset', 'color-mix', 'in', 'srgb', 'calc', 'min', 'max', 'clamp']);
 /** Properties whose value can carry a colour (only these get the colour allowlist). */
-const COLOUR_PROPERTY = /^(?:color|background(?:-color)?|border(?:-[a-z-]+)?|outline(?:-color)?|box-shadow|text-shadow|fill|stroke|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?)$/;
+const COLOUR_PROPERTY = /^(?:color|background(?:-color|-image)?|border(?:-[a-z-]+)?|outline(?:-color)?|box-shadow|text-shadow|fill|stroke|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?)$/;
 
 /**
  * What breaks `surface`'s rules in `css` (design-tokens.feature.md, surface-rules-read-signal-tokens).
@@ -414,7 +414,11 @@ const COLOUR_PROPERTY = /^(?:color|background(?:-color)?|border(?:-[a-z-]+)?|out
 function surfaceProblems(css: string, surface: SignalSurface): { problems: string[]; checked: number; typeRules: number } {
   const aliases = new Set<string>(MIGRATION.filter((row) => row.kind === 'alias').map((row) => row.legacy));
   const tracking = new Map<string, string>(SIGNAL_TOKENS.type.map((token) => [token.name, token.tracking]));
-  const geistWeights = new Set(BUNDLED_FONTS.filter((font) => font.family === 'Geist').map((font) => String(font.weight)));
+  // The weights BUNDLED_FONTS has per family, and each type token's family (its shorthand's first one).
+  const weightsOf = (family: string) => new Set(BUNDLED_FONTS.filter((font) => font.family === family).map((font) => String(font.weight)));
+  const familyOf = new Map<string, string>(
+    SIGNAL_TOKENS.type.map((token) => [token.name, (/^\S+\s+\S+\s+(.*)$/.exec(token.light)?.[1] ?? '').split(',')[0]!.trim().replace(/^(['"])(.*)\1$/, '$2')]),
+  );
   const stem = surface.selectorPrefix.replace(/^\./, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const ownClass = new RegExp(`\\.${stem}(?:-[\\w-]+)?(?![\\w-])`);
   const ownKeyframes = new RegExp(`^@keyframes\\s+${stem}(?:-[\\w-]+)?$`);
@@ -426,6 +430,7 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
   for (const d of own) {
     byBlock.set(d.block, [...(byBlock.get(d.block) ?? []), d]);
     const label = `${surface.name}: ${d.context.join(' > ')} { ${d.property}: ${d.value} }`;
+    if (/var\(\s*--[\w-]+\s*,/.test(d.value)) problems.push(`${label}: a var() fallback`);
     for (const [, name] of d.value.matchAll(/var\(\s*(--[\w-]+)/g)) {
       if (!SIGNAL_NAMES.has(name!) && !aliases.has(name!)) problems.push(`${label}: ${name} is neither a Signal token nor an alias`);
     }
@@ -437,7 +442,6 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
       if (rest.includes('#') || strays.length > 0) problems.push(`${label}: a literal colour (${rest.includes('#') ? '#' : strays.join(', ')})`);
     }
     if (['font-size', 'font-family', 'line-height'].includes(d.property)) problems.push(`${label}: type comes from a --text-* token`);
-    if (d.property === 'font-weight' && !geistWeights.has(d.value)) problems.push(`${label}: not a bundled Geist weight`);
   }
   let typeRules = 0;
   for (const declarations of byBlock.values()) {
@@ -445,6 +449,11 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
     const spacing = declarations.filter((d) => d.property === 'letter-spacing').at(-1);
     const token = fonts.length === 0 ? undefined : /^var\((--text-[\w-]+)\)$/.exec(fonts.at(-1)!.value)?.[1];
     const label = `${surface.name}: ${declarations[0]!.context.join(' > ')}`;
+    // A weight must be one the rule's own type token's family is bundled in (inherited: Geist).
+    const weight = declarations.filter((d) => d.property === 'font-weight').at(-1);
+    const ownToken = /^var\((--text-[\w-]+)\)$/.exec(declarations.filter((d) => d.property === 'font').at(-1)?.value ?? '')?.[1];
+    const family = (ownToken !== undefined && familyOf.get(ownToken)) || 'Geist';
+    if (weight !== undefined && !weightsOf(family).has(weight.value)) problems.push(`${label}: font-weight ${weight.value} is not bundled for ${family}`);
     if (fonts.length > 0 && (token === undefined || !tracking.has(token))) problems.push(`${label}: font is not a --text-* token (${fonts.at(-1)!.value})`);
     if (token !== undefined && tracking.has(token)) {
       typeRules += 1;
@@ -471,6 +480,10 @@ test('surface-rules-read-signal-tokens', () => {
     'caps without its letter-spacing': '.palette-group-label { font: var(--text-caps); }',
     'body with caps letter-spacing': '.palette-option { font: var(--text-body); letter-spacing: 0.06em; }',
     'a var() fallback': '.palette { color: var(--text, black); }',
+    'a gradient background-image': '.palette-sheet { background-image: linear-gradient(red, blue); }',
+    'a var() fallback outside colour': '.palette { padding: var(--space-4, 7px); }',
+    'color: unset': '.palette-option { color: unset; }',
+    'Geist Mono at 500': '.palette-kbd { font: var(--text-mono); font-weight: 500; }',
   };
   for (const [name, css] of Object.entries(caught)) expect(problemsIn(css), name).not.toEqual([]);
   // ... and these pass: a token rule, a class-boundary miss, a caps rule with its tracking.
