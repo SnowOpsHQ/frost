@@ -469,6 +469,9 @@ export const CONTRAST_PAIRS = [
   { fg: '--danger-ink', bg: '--bg-surface', min: 4.5, why: 'the agent panel\'s field errors (12px, was --danger) in a settings card (4.5:1)' },
   { fg: '--danger-ink', bg: '--bg-sheet', min: 4.5, why: 'the agent panel\'s field errors (12px, was --danger) on the sheet (4.5:1)' },
   { fg: '--text', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'the agent panel\'s buttons, hovered (--bg-field-hover → --bg-hover over --bg-surface) (4.5:1)' },
+  { fg: '--text', bg: '--bg-hover', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s chat rows, hovered (--bg-hover over the sheet) (4.5:1)' },
+  { fg: '--text', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'the agent panel\'s attach menu: an option hovered or focused (--agent-user → --accent-soft) on the menu\'s card (4.5:1)' },
+  { fg: '--warn-ink', bg: '--bg-subtle', min: 4.5, why: 'the agent panel\'s risk chip: --warn-ink (was the approval edge) on the chip\'s --bg-subtle fill (11px) (4.5:1)' },
   // Status text on a soft fill
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },
