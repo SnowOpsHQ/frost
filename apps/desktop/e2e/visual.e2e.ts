@@ -9,7 +9,7 @@
 // Linux only, and the baselines come from CI only (`xvfb-run` on ubuntu-24.04): a local run writes
 // missing images (`updateSnapshots: 'missing'`) for looking at, but they differ from CI's and are
 // never committed. To add or update baselines, follow "Baseline procedure" in the spec: run CI on
-// the branch, download the `playwright-report` artifact, copy each `*-actual.png` to its baseline
+// the branch, download the failed shard's `playwright-report-linux-<n>` artifact, copy each `*-actual.png` to its baseline
 // path, review, commit.
 import { X509Certificate, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -837,7 +837,7 @@ test('every capture has a baseline', () => {
       .map((file) => path.basename(file));
     expect(
       expected.filter((file) => !committed.includes(file)),
-      'captures without a committed baseline: adopt their *-actual.png from the playwright-report artifact (specs/visual-baseline.feature.md, Baseline procedure)',
+      'captures without a committed baseline: adopt their *-actual.png from the playwright-report artifact of this shard (specs/visual-baseline.feature.md, Baseline procedure)',
     ).toEqual([]);
   }
 });

@@ -22,7 +22,7 @@ export default defineConfig({
   snapshotPathTemplate: '{testDir}/__screenshots__/{testFilePath}/{arg}{ext}',
   // 'missing', in CI too. For a missing baseline Playwright renders the state, writes it as the
   // baseline (into CI's throwaway checkout) and as `*-actual.png` under test-results/ (kept for
-  // passing tests too: `preserveOutput` is 'always'; uploaded as the `playwright-report` artifact,
+  // passing tests too: `preserveOutput` is 'always'; uploaded in the shard's `playwright-report-…` artifact,
   // the spec's baseline procedure), and the test passes, so the suite's apps stay shared as in a
   // green run. Not 'none': it fails a missing baseline without rendering anything, so there is no
   // actual to adopt. Not 'default': it writes the actual but fails each test that had a missing

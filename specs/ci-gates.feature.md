@@ -2,14 +2,14 @@
 
 Design doc §3 (security model) and §5 (testing & quality gates); Phase 0 Task 5. Specs:
 `security-policy.spec.ts`, `window-hardening.spec.ts`, `ipc-sender.spec.ts`,
-`ipc-transport.spec.ts`. Workflow: `.github/workflows/ci.yml`. Each gate and scenario below maps to
-one named CI step, check or test; any failure fails the workflow.
+`ipc-transport.spec.ts`. Workflow: `.github/workflows/ci.yml`; when it runs, its jobs and what a
+pull request may skip are in `ci-pipeline.feature.md`. Each gate and scenario below maps to one
+named CI step, check or test; any failure fails the run.
 
-## Gates (`.github/workflows/ci.yml`, in order)
-Runs on every pull request and on pushes to `main`, and on demand (`workflow_dispatch`) for a branch
-without a pull request; a superseded PR run is cancelled, a `main` run never is.
-- **Gate: lint-test-build** — `pnpm turbo run lint test build` (strict TypeScript, vitest suites,
-  Forge package).
+## Gates (`.github/workflows/ci.yml`)
+Each gate is a step named `Gate: <name>` in the job given (`gates-map-to-steps`,
+`ci-workflows.test.ts`). A failed gate fails its job, and so the run's `ci-passed` check.
+- **Gate: lint** (job `lint`) — `pnpm turbo run lint` (strict TypeScript over every workspace).
   - **Scenario: turbo-cache-follows-dependencies** (`ci-workflows.test.ts`) — Turbo's cache never
     replays a package's `lint` or `test` after a workspace dependency's sources changed: both
     depend on the package's `transit` task, which depends on its dependencies' `transit`
@@ -17,22 +17,32 @@ without a pull request; a superseded PR run is cancelled, a `main` run never is.
     hashes). Checked with `pnpm turbo run lint test --dry=json`: a change under `packages/db/src`
     changes the hashes of `@app/desktop#lint` and `#test`, and likewise for `@app/ipc-contract` and
     `@app/specs`.
-- **Gate: electronegativity** — `pnpm security:electronegativity`
+- **Gate: actionlint** (job `lint`) — `pnpm lint:workflows`: actionlint (pinned, run through
+  `uvx`) over `.github/workflows/`, with its shellcheck and pyflakes passes off so the result does
+  not depend on what the runner image has installed.
+- **Gate: unit** (job `unit`) — `pnpm turbo run test`, every workspace's vitest suites, on Linux,
+  macOS and Windows. Where the plan shards `@app/desktop`'s suite, one job runs the other
+  workspaces (the same command without `@app/desktop`) and each shard runs
+  `pnpm --filter @app/desktop test` with its `--shard` (`unit-job`, `ci-pipeline.feature.md`).
+- **Gate: electronegativity** (job `security`) — `pnpm security:electronegativity`
   (`scripts/electronegativity.mjs`): Electronegativity (pinned devDependency) over
   `apps/desktop/src`, `apps/desktop/forge.config.ts` and `packages`, for the installed Electron
   version. Fails on any finding not accepted in `security/electronegativity-baseline.json`, on an
   accepted entry that matches more or fewer findings than its `count` (stale or duplicated), and on
   any file the scanner could not parse.
-- **Gate: semgrep-rule-test** — `pnpm security:semgrep:test`: Semgrep's native rule test of each
-  `semgrep/<name>.yml` (`ipc-sender-guard`, `webcontents-factory`, `debugger-allowlist`,
-  `webrequest-blocking-allowlist`) against
+- **Gate: semgrep-rule-test** (job `security`) — `pnpm security:semgrep:test`: Semgrep's native
+  rule test of each `semgrep/<name>.yml` (`ipc-sender-guard`, `webcontents-factory`,
+  `debugger-allowlist`, `webrequest-blocking-allowlist`) against
   `semgrep/__fixtures__/<name>.ts`; every `// ruleid:` line must be flagged and every `// ok:` line
   must not.
-- **Gate: semgrep-repo-scan** — `pnpm security:semgrep:scan`: all those rules over `apps`,
-  `packages` and `specs` (tracked and untracked files; only git-ignored paths are skipped) report
-  **zero** findings.
-- **Gate: e2e** — `pnpm --filter @app/desktop test:e2e` under `xvfb-run` against the unpackaged
-  build (`ipc-e2e.feature.md` and the scenarios below), Chromium sandbox on.
+- **Gate: semgrep-repo-scan** (job `security`) — `pnpm security:semgrep:scan`: all those rules over
+  `apps`, `packages` and `specs` (tracked and untracked files; only git-ignored paths are skipped)
+  report **zero** findings.
+- **Gate: e2e** (job `e2e`) — `pnpm --filter @app/desktop test:e2e` against the unpackaged build
+  (which the job makes first with `electron-forge package`, so the Forge build is a gate too), in
+  shards, on Linux under `xvfb-run` and on macOS (`ipc-e2e.feature.md` and the scenarios below),
+  Chromium sandbox on. Windows shards run for pushes and manual runs and do not fail the run
+  (`e2e-job`, `ci-pipeline.feature.md`).
 
 ## Semgrep `ipc-sender-guard` rules (Review Focus `semgrep-flags-unguarded-handler`)
 Exercised by **semgrep-rule-test** (fixture `semgrep/__fixtures__/ipc-sender-guard.ts`) and

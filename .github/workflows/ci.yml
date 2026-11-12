@@ -1,12 +1,16 @@
-# CI security gates (acceptance: specs/ci-gates.feature.md). Every gate must pass.
+# The CI pipeline (acceptance: specs/ci-pipeline.feature.md; the security gates:
+# specs/ci-gates.feature.md; the packages: specs/{linux,macos,windows}-package.feature.md).
+# `preflight` plans the run, the jobs after it run side by side, and `ci-passed` folds every result
+# into the one check to require.
 name: CI
 
-# Branch pushes are covered by their pull request; `main` runs on push (merges). A branch without a
-# pull request runs on demand (`gh workflow run ci.yml --ref <branch>`), e.g. to fetch its
+# Branch pushes are covered by their pull request; `main` and `v*` tags run on push. A branch
+# without a pull request runs on demand (`gh workflow run ci.yml --ref <branch>`), e.g. to fetch its
 # screenshot baselines (specs/visual-baseline.feature.md).
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -15,11 +19,214 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  # Superseded PR runs are cancelled; every run on main completes.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Superseded pull-request runs are cancelled; every run on main, on a tag or on demand completes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    # Git Bash on Windows (part of the runner image): the same shell semantics in every job.
+    shell: bash
 
 jobs:
-  ci:
+  # What this run covers (scripts/ci-plan.mjs, specs/ci-pipeline.spec.ts): the `unit` and `e2e`
+  # matrices, and whether macOS, Windows and the package jobs run.
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      platforms: ${{ steps.plan.outputs.platforms }}
+      unit: ${{ steps.plan.outputs.unit }}
+      e2e: ${{ steps.plan.outputs.e2e }}
+    steps:
+      # Depth 2: a pull request's merge commit and its parents, for the plan's changed files.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      # The plan script loads its spec with Node's type stripping. Nothing is installed.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      # A pull request is checked out as its merge commit, whose first parent is the base branch.
+      - name: Plan
+        id: plan
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD | node scripts/ci-plan.mjs plan
+          else
+            node scripts/ci-plan.mjs plan < /dev/null
+          fi
+
+  lint:
+    name: Lint
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+        id: setup
+
+      # Strict TypeScript over every workspace.
+      - name: "Gate: lint"
+        run: pnpm turbo run lint
+
+      # actionlint runs via uvx at the version pinned in package.json (same command as locally).
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        with:
+          version: 0.12.1
+
+      - name: "Gate: actionlint"
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm lint:workflows
+
+  security:
+    name: Security gates
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+        id: setup
+
+      - name: "Gate: electronegativity"
+        run: pnpm security:electronegativity
+
+      # Semgrep runs via uvx at the version pinned in package.json (same command as locally).
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        with:
+          version: 0.12.1
+
+      - name: "Gate: semgrep-rule-test"
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm security:semgrep:test
+
+      - name: "Gate: semgrep-repo-scan"
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm security:semgrep:scan
+
+  # One job per platform and shard (the plan's `unit` matrix): every workspace's vitest suites.
+  unit:
+    name: Unit · ${{ matrix.name }}
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.preflight.outputs.unit) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      # Check out with the repo's LF line endings (Windows' Git converts to CRLF by default): unit
+      # tests read workflow, spec and fixture files and match on `\n`.
+      - name: Keep LF line endings
+        if: ${{ runner.os == 'Windows' }}
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      # The MCP containment suite (mcp-manager.test.ts) needs a bubblewrap that can make a sandbox.
+      # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces it uses.
+      - name: Install bubblewrap and allow unprivileged user namespaces
+        if: ${{ runner.os == 'Linux' && matrix.scope != 'packages' }}
+        run: |
+          command -v bwrap >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap; }
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: "Gate: unit (every workspace)"
+        if: ${{ matrix.scope == 'all' }}
+        env:
+          FROST_REQUIRE_BUBBLEWRAP: ${{ runner.os == 'Linux' && '1' || '' }}
+        run: pnpm turbo run test
+
+      - name: "Gate: unit (packages)"
+        if: ${{ matrix.scope == 'packages' }}
+        run: pnpm turbo run test --filter='!@app/desktop'
+
+      - name: "Gate: unit (desktop shard)"
+        if: ${{ matrix.scope == 'desktop' }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          FROST_REQUIRE_BUBBLEWRAP: ${{ runner.os == 'Linux' && '1' || '' }}
+        run: pnpm --filter @app/desktop test --shard="$SHARD"
+
+  # One job per platform and shard (the plan's `e2e` matrix), against the unpackaged build.
+  e2e:
+    name: E2E · ${{ matrix.name }}
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.preflight.outputs.e2e) }}
+    runs-on: ${{ matrix.os }}
+    # A shard that does not gate (Windows) is shown as failed without failing the run.
+    continue-on-error: ${{ !matrix.gating }}
+    timeout-minutes: 30
+    steps:
+      # As in `unit`: the suite's fixtures are read with the repo's LF line endings.
+      - name: Keep LF line endings
+        if: ${{ runner.os == 'Windows' }}
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Build
+        run: pnpm --filter @app/desktop build
+
+      # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces Chromium's sandbox needs.
+      # Allow them instead of weakening the app: Electron runs with its sandbox on.
+      - name: Allow unprivileged user namespaces (Chromium sandbox)
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # macOS and Windows have a real desktop session. On Linux the screen is xvfb-run's own
+      # default, written out so a change of that default in the runner image cannot silently move
+      # the screenshot baselines (specs/visual-baseline.feature.md).
+      - name: "Gate: e2e"
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            command -v xvfb-run >/dev/null || { sudo apt-get update && sudo apt-get install -y xvfb; }
+            xvfb-run -a -s "-screen 0 1280x1024x24" pnpm --filter @app/desktop test:e2e --shard="$SHARD"
+          else
+            pnpm --filter @app/desktop test:e2e --shard="$SHARD"
+          fi
+
+      - name: Upload Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report-${{ matrix.id }}
+          path: |
+            apps/desktop/playwright-report/
+            apps/desktop/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # AppImage, deb and zip for x64 (specs/linux-package.feature.md). Unsigned: frost has no Linux
+  # repository key.
+  package-linux:
+    name: Package · Linux x64
+    needs: preflight
+    if: ${{ needs.preflight.outputs.platforms == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -27,68 +234,131 @@ jobs:
         with:
           persist-credentials: false
 
-      # Installs the pnpm version pinned by package.json#packageManager.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: ./.github/actions/setup
+
+      # mksquashfs for the AppImage maker, unzip for the zip check, Xvfb for the launch checks.
+      # dpkg-deb (the deb maker and the deb checks) is part of the runner image.
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends squashfs-tools unzip xvfb
+
+      - name: Make (AppImage + deb + zip, x64)
+        id: make
+        run: pnpm make:linux
+
+      # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces Chromium's sandbox needs.
+      # Allow them instead of weakening the app: the packaged app runs with its sandbox on. (So this
+      # run does not show the AppImage starts on a stock 24.04: specs/linux-package.feature.md.)
+      - name: Allow unprivileged user namespaces (Chromium sandbox)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Verify package
+        id: verify
+        run: xvfb-run -a pnpm verify:linux
+
+      # Only packages that passed verify are uploaded (7-day run artifacts; nothing is published).
+      - name: Upload AppImage + deb
+        if: ${{ steps.verify.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: frost-linux-x64
+          path: |
+            apps/desktop/out/make/AppImage/x64/*.AppImage
+            apps/desktop/out/make/deb/x64/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  # zip and dmg for Apple Silicon (specs/macos-package.feature.md). Ad-hoc signed: no signing
+  # secret is passed (specs/macos-package.spec.ts MAC_SIGNING_ENV).
+  package-macos:
+    name: Package · macOS arm64
+    needs: preflight
+    if: ${{ needs.preflight.outputs.platforms == 'true' }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Make (zip + dmg, arm64)
+        id: make
+        run: pnpm make:mac
+
+      - name: Verify package
+        id: verify
+        run: pnpm verify:mac
+
+      # Only a package whose bundle and artifacts passed verify is uploaded (14-day run artifacts).
+      - name: Upload zip + dmg
+        if: ${{ steps.verify.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: frost-macos-arm64
+          path: |
+            apps/desktop/out/make/zip/darwin/arm64/*.zip
+            apps/desktop/out/make/dmg/arm64/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  # Squirrel installer and zip for x64 (specs/windows-package.feature.md). Unsigned: frost has no
+  # Authenticode certificate.
+  package-windows:
+    name: Package · Windows x64
+    needs: preflight
+    if: ${{ needs.preflight.outputs.platforms == 'true' }}
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      # The packaged files keep the repo's LF line endings (Windows' Git converts to CRLF by default).
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Make (Squirrel + zip, x64)
+        id: make
+        run: pnpm make:win
+
+      - name: Verify package
+        id: verify
+        run: pnpm verify:win
+
+      # Only packages that passed verify are uploaded (7-day run artifacts; nothing is published).
+      - name: Upload Setup.exe + zip
+        if: ${{ steps.verify.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: frost-windows-x64
+          path: |
+            apps/desktop/out/make/squirrel.windows/x64/*-setup.exe
+            apps/desktop/out/make/zip/win32/x64/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  # The one check to require: the run did what the plan said (scripts/ci-plan.mjs verdict).
+  ci-passed:
+    name: CI passed
+    needs: [preflight, lint, security, unit, e2e, package-linux, package-macos, package-windows]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: pnpm
 
-      # @electron/get's download cache (checksum-verified on use), keyed on the lockfile's Electron.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/electron
-          key: electron-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-
-      # Also fetches Electron's binary (@app/desktop postinstall runs `install-electron`).
-      - name: Install
-        id: install
-        run: pnpm install --frozen-lockfile
-
-      - name: "Gate: lint-test-build"
-        id: build
-        run: pnpm turbo run lint test build
-
-      - name: "Gate: electronegativity"
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: pnpm security:electronegativity
-
-      # Semgrep runs via uvx at the version pinned in package.json (same command as locally).
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        with:
-          version: 0.12.1
-
-      - name: "Gate: semgrep-rule-test"
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: pnpm security:semgrep:test
-
-      - name: "Gate: semgrep-repo-scan"
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: pnpm security:semgrep:scan
-
-      # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces Chromium's sandbox needs.
-      # Allow them instead of weakening the app: Electron runs with its sandbox on (no --no-sandbox).
-      - name: Allow unprivileged user namespaces (Chromium sandbox)
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      # The screen is xvfb-run's own default, written out so a change of that default in the runner
-      # image cannot silently move the screenshot baselines (specs/visual-baseline.feature.md).
-      - name: "Gate: e2e"
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: |
-          command -v xvfb-run >/dev/null || { sudo apt-get update && sudo apt-get install -y xvfb; }
-          xvfb-run -a -s "-screen 0 1280x1024x24" pnpm --filter @app/desktop test:e2e
-
-      - name: Upload Playwright report
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: playwright-report
-          path: |
-            apps/desktop/playwright-report/
-            apps/desktop/test-results/
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Verdict
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          PLATFORMS: ${{ needs.preflight.outputs.platforms }}
+        run: node scripts/ci-plan.mjs verdict

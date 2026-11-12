@@ -2,9 +2,9 @@
 
 Spec: `specs/macos-package.spec.ts`. Design doc §1 (macOS-first). Phase 0 Task 6.
 Config tests: `apps/desktop/src/__tests__/forge-config.test.ts` (Linux and macOS, every CI run).
-Workflow tests: `apps/desktop/src/__tests__/ci-workflows.test.ts` (same runs).
-Bundle checks: `apps/desktop/scripts/verify-mac-package.mjs` (macOS only; run by
-`.github/workflows/macos.yml` after `make:mac`, and by hand on a Mac). Each scenario maps to one
+Workflow tests: `apps/desktop/src/__tests__/platform-workflows.test.ts` (same runs).
+Bundle checks: `apps/desktop/scripts/verify-mac-package.mjs` (macOS only; run by the
+`package-macos` job of `.github/workflows/ci.yml` after `make:mac`, and by hand on a Mac). Each scenario maps to one
 named test or check.
 
 Build: `pnpm make:mac` (= `electron-forge make --platform darwin --arch arm64` in `@app/desktop`),
@@ -83,18 +83,17 @@ Every check prints `PASS <name>` or `FAIL <name>: <reason>`; any failure exits n
   `hdiutil attach -readonly -nobrowse -mountpoint <tmp>`, holds `<MAC_PRODUCT_NAME>.app`, and
   `codesign --verify --deep --strict` passes on it; the image is always detached afterwards.
 
-## CI (`.github/workflows/macos.yml`)
-Checked by `ci-workflows.test.ts` (the named tests below), by actionlint
-(`uvx --from actionlint-py actionlint`, by hand) and by the workflow runs themselves.
-- **Scenario: macos-ci-job** — on `macos-15` (arm64), for pull requests touching the app (`apps/desktop`,
-  `packages`, `specs`, the lockfile, workspace and root `package.json`, `turbo.json`,
-  `tsconfig.base.json`, the workflow itself), pushes to `main`, `v*` tags and manual dispatch:
-  install (frozen lockfile), `turbo run lint test`, `build` + `test:e2e` (a real macOS window),
-  `make:mac`, `verify:mac`, then uploads the zip and dmg (14 days) only if both `test:e2e` and
-  `verify:mac` succeeded and, on failure, the Playwright report.
-- **Scenario: linux-ci-unaffected** — `.github/workflows/ci.yml` still runs on every pull request
-  and on pushes to `main`, on `ubuntu-24.04`, with one step per `ci-gates.feature.md` gate
-  (`Gate: <name>`, same names, same order) running its command.
+## CI (`.github/workflows/ci.yml`, job `package-macos`)
+Checked by `platform-workflows.test.ts` (the named test below), by actionlint (the pipeline's
+`Gate: actionlint`) and by the workflow runs themselves. When the job runs is the pipeline's plan
+(`ci-pipeline.feature.md`): always (pushes to `main`, `v*` tags, manual runs), except for a pull
+request that changes only Linux-only paths. The unit tests and the e2e (a real macOS window) run in
+the pipeline's `unit` and `e2e` jobs on the same image.
+- **Scenario: macos-ci-job** — job `package-macos` (`Package · macOS arm64`) on `macos-15`
+  (arm64): the shared setup (frozen-lockfile install), `make:mac` (which packages the app itself),
+  `verify:mac`, then uploads the zip and dmg as `frost-macos-arm64` (14 days) only if `verify:mac`
+  succeeded. No signing secret reaches the job. The upload no longer waits for the e2e, which runs
+  in other jobs: use a run's artifacts only when its `ci-passed` check succeeded.
 
 ## Follow-ups (not in this task)
 - App icon (Electron's default icon is used for now).

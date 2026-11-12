@@ -10,7 +10,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 ## What is captured
 - **Only the chrome page** (`app://app/`), via `toHaveScreenshot`. A tab's page is a native
   `WebContentsView` that no page screenshot includes: the page area shows the chrome behind it.
-- **Linux only.** The file skips itself elsewhere, so the macOS and Windows e2e workflows never
+- **Linux only.** The file skips itself elsewhere, so the macOS and Windows e2e jobs never
   compare. Baselines are CI's renderings: ubuntu-24.04, `xvfb-run -a -s "-screen 0 1280x1024x24"`
   (`.github/workflows/ci.yml`; xvfb-run's own default, written out so a change of that default
   cannot move the baselines silently). No platform suffix. A font or rendering change in the
@@ -149,14 +149,15 @@ images are committed (`git ls-files`; on disk they now all exist). Everywhere, i
 PNG in the baseline directory that no capture makes (a renamed or removed state) and on a
 `CAPTURES` entry that no `capture('<name>'` call in the file uses any more. A *different*
 image fails its own test, with `*-actual.png`, `*-expected.png` and `*-diff.png`. Captures are soft
-assertions and the tests independent (not serial), so one CI run yields every actual. The failed job
-uploads `apps/desktop/test-results/` in the `playwright-report` artifact.
+assertions and the tests independent (not serial), so one CI run yields every actual. The suite is
+one file, so it runs in one of the Linux e2e shards; the failed shard uploads
+`apps/desktop/test-results/` in its `playwright-report-linux-<n>` artifact.
 
 **First baselines, or after an intended visual change:**
 1. Push the branch. Without a pull request, run CI on it: `gh workflow run ci.yml --ref <branch>`.
    (For an intended change, either delete the affected baselines first or let CI fail on the
    difference.)
-2. When the run fails on the visual suite: `gh run download <run-id> -n playwright-report -D <dir>`.
+2. When the run fails on the visual suite: `gh run download <run-id> -p 'playwright-report-linux-*' -D <dir>`.
 3. Review: open each `*-diff.png` (or the HTML report in the artifact) and check that only the
    intended surfaces changed, in both themes.
 4. Copy each actual to its baseline, dropping `-actual`:
