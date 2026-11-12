@@ -205,9 +205,9 @@
   width: min(640px, 92%);
   margin-top: 26px;
   padding: 12px 14px;
-  border: 1px solid var(--jump-tile-edge, var(--border-field));
   border-radius: 12px;
   background: var(--jump-tile-bg, var(--bg-field));
+  box-shadow: var(--e-ring);
   text-align: start;
 }
 

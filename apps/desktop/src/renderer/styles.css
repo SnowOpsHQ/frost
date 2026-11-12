@@ -211,7 +211,7 @@ input {
 .tab-mark {
   width: 15px;
   height: 15px;
-  color: var(--start-mark);
+  color: var(--accent);
 }
 
 .tab .tab-icon-alert {
@@ -669,6 +669,8 @@ input {
   background: var(--bg-page);
 }
 
+/* Signal (specs/design-tokens.feature.md, The new-tab view): flat --bg-page, no gradient wash; the
+   FrostMark in --accent, the wordmark and hint on the --text-* type tokens (Geist). */
 .start {
   position: absolute;
   inset: 0;
@@ -676,9 +678,9 @@ input {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-2);
   padding-bottom: 8vh;
-  background: radial-gradient(ellipse 60% 48% at 50% 42%, var(--start-glow), transparent 70%), var(--bg-page);
+  background: var(--bg-page);
   text-align: center;
 }
 
@@ -689,24 +691,23 @@ input {
 .start-mark {
   width: 64px;
   height: 64px;
-  margin-bottom: 10px;
-  color: var(--start-mark);
-  animation: mark-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  margin-bottom: var(--space-3);
+  color: var(--accent);
+  animation: mark-in var(--dur-slow) var(--ease-out) both;
 }
 
+/* The type scale's largest step: the wordmark was 44px at weight 300, which Geist isn't bundled in. */
 .start-wordmark {
   margin: 0;
-  font-size: 44px;
-  font-weight: 300;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
   color: var(--text);
+  font: var(--text-display);
+  letter-spacing: -0.02em;
 }
 
 .start-hint {
-  margin: 4px 0 0;
-  font-size: 14px;
+  margin: var(--space-1) 0 0;
   color: var(--text-muted);
+  font: var(--text-body);
 }
 
 @keyframes mark-in {
@@ -7601,21 +7602,19 @@ input {
 .history-action:focus-visible,
 .history-close:focus-visible,
 .history-clear:focus-visible,
-.history-more:focus-visible,
-.jump-tile:focus-visible {
+.history-more:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-.history-monogram,
-.jump-monogram {
+.history-monogram {
   display: grid;
   place-items: center;
   flex: none;
   width: 22px;
   height: 22px;
   border-radius: 6px;
-  background: var(--jump-monogram-bg);
+  background: var(--accent-soft);
   color: var(--accent);
   font-size: 11px;
   font-weight: 700;
@@ -7725,17 +7724,18 @@ input {
 
 /* ---- New-tab page: Jump back in ---- */
 
+/* Signal (specs/design-tokens.feature.md, The new-tab view): --bg-surface cards at --r-md with
+   --e-ring and no border, an --accent-soft monogram, the text on the --text-* type tokens. */
 .jump {
   width: min(640px, 92%);
-  margin-top: 30px;
+  margin-top: var(--space-7);
 }
 
 .jump-title {
-  margin: 0 0 10px;
+  margin: 0 0 var(--space-3);
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
   text-align: start;
   text-transform: uppercase;
 }
@@ -7743,7 +7743,7 @@ input {
 .jump-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -7753,29 +7753,43 @@ input {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   grid-template-rows: auto auto;
-  column-gap: 10px;
+  column-gap: var(--space-4);
   align-items: center;
   width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--jump-tile-edge);
-  border-radius: 12px;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--r-md);
   background: var(--jump-tile-bg);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--e-ring);
+  color: var(--text);
+  font: var(--text-body);
   text-align: start;
-  transition: border-color 120ms ease, transform 120ms ease;
+  transition: box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 
+/* An --accent ring where the tile had an accent border. */
 .jump-tile:hover {
-  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
   transform: translateY(-1px);
 }
 
+.jump-tile:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus-ring);
+}
+
 .jump-monogram {
+  display: grid;
+  place-items: center;
+  flex: none;
   grid-row: 1 / 3;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  font-size: 13px;
+  width: var(--h-chip);
+  height: var(--h-chip);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: var(--text-body);
+  font-weight: 600;
 }
 
 .jump-label,
@@ -7792,7 +7806,7 @@ input {
 
 .jump-host {
   color: var(--text-faint);
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 /* End of Browser polish */
