@@ -35,8 +35,8 @@ export const CI_UNIT_DESKTOP_SHARDS = { linux: 2, macos: 0, windows: 3 } as cons
 export const CI_E2E_SHARDS = { linux: 4, macos: 3, windows: 4 } as const satisfies Record<CiPlatform, number>;
 
 /**
- * Whether a failed e2e shard fails the run. Windows does not, and never runs for a pull request:
- * a few of its tests still fail on Windows-only harness issues
+ * Whether a failed e2e shard fails its job, and so the run. Windows does not, and never runs for a
+ * pull request: a few of its tests still fail on Windows-only harness issues
  * (docs/plans/phase-7-sync-update-platforms.md, As built, Task 2).
  */
 export const CI_E2E_GATING = { linux: true, macos: true, windows: false } as const satisfies Record<CiPlatform, boolean>;
@@ -87,7 +87,7 @@ export interface CiE2eJob {
   readonly os: string;
   /** `<i>/<n>`. */
   readonly shard: string;
-  /** `false`: a failure is shown but does not fail the run. */
+  /** `false`: a failed suite is reported as a warning on the run and does not fail its job. */
   readonly gating: boolean;
 }
 

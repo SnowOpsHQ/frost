@@ -43,7 +43,8 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
 - **Scenario: matrices-come-from-the-plan** — `unit` and `e2e` take their whole matrix from
   `preflight`'s `unit` and `e2e` outputs, never stop the other shards when one fails
   (`fail-fast: false`) and run on `matrix.os`. Each package job runs only when `platforms` is
-  `'true'`. `e2e` does not fail the run for a shard whose `gating` is off.
+  `'true'`. No job has `continue-on-error`: a failed job, even one that did not fail the run, would
+  mark the commit as failed.
 - **Scenario: gates-map-to-steps** — every gate of `ci-gates.feature.md` is a step named
   `Gate: <name>` running the gate's command, in the job the gate names; the workflow has no other
   `Gate:` step.
@@ -59,7 +60,10 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   `pnpm --filter @app/desktop test:e2e` with `--shard` from `matrix.shard`: on Linux under
   `xvfb-run -a -s "-screen 0 1280x1024x24"` after allowing unprivileged user namespaces (the
   Chromium sandbox stays on), elsewhere in the runner's own desktop session. A failed shard uploads
-  its Playwright report and test results as `playwright-report-<matrix.id>` (7 days).
+  its Playwright report and test results as `playwright-report-<matrix.id>` (7 days). For a shard
+  whose `gating` is off (Windows), a failed suite does not fail the step or the job
+  (`continue-on-error` on that one step): a warning on the run says which shard failed, and the
+  report is uploaded all the same.
 - **Scenario: ci-passed-runs-the-verdict** — `ci-passed` runs `node scripts/ci-plan.mjs verdict`
   with `NEEDS` set to the JSON of the jobs it needs and `PLATFORMS` to `preflight`'s `platforms`.
 - **Scenario: sandbox-stays-on** — nothing in the workflow or the setup action passes

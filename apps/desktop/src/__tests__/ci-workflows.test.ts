@@ -72,12 +72,13 @@ describe('CI pipeline', () => {
       expect(keys['name'], id).toContain('${{ matrix.name }}');
       expect(keys['if'], id).toBeUndefined();
     }
-    expect(job('e2e').keys['continue-on-error']).toBe('${{ !matrix.gating }}');
-    expect(job('unit').keys['continue-on-error']).toBeUndefined();
-    for (const id of CI_PLATFORM_JOBS) {
-      expect(job(id).keys['if'], id).toBe("${{ needs.preflight.outputs.platforms == 'true' }}");
-      expect(job(id).keys['continue-on-error'], id).toBeUndefined();
+    // No job may fail quietly: a failed check on a job that "does not count" would still mark the
+    // commit as failed. (The e2e step of a shard that does not gate is the one exception: `e2e-job`.)
+    for (const { id, keys, steps } of jobs) {
+      expect(keys['continue-on-error'], id).toBeUndefined();
+      for (const step of steps) if (!(id === 'e2e' && step.name === 'Gate: e2e')) expect(step['continue-on-error'], `${id} › ${step.name}`).toBeUndefined();
     }
+    for (const id of CI_PLATFORM_JOBS) expect(job(id).keys['if'], id).toBe("${{ needs.preflight.outputs.platforms == 'true' }}");
     for (const id of ['lint', 'security']) expect(job(id).keys['if'], id).toBeUndefined();
   });
 
@@ -155,13 +156,18 @@ describe('CI pipeline', () => {
     expect(steps[0]).toEqual(KEEP_LF);
     expect(steps[1]?.uses).toMatch(/^actions\/checkout@/);
     expect(steps[2]?.uses).toBe(SETUP_USES);
-    const order = ['Build', 'Allow unprivileged user namespaces (Chromium sandbox)', 'Gate: e2e', 'Upload Playwright report'];
+    const order = ['Build', 'Allow unprivileged user namespaces (Chromium sandbox)', 'Gate: e2e', 'Report a failure that does not gate', 'Upload Playwright report'];
     expect(steps.map((step) => step.name).filter((name) => name !== undefined && order.includes(name))).toEqual(order);
     expect(stepNamed(steps, 'Build').run).toBe('pnpm --filter @app/desktop build');
     expect(stepNamed(steps, 'Allow unprivileged user namespaces (Chromium sandbox)')).toMatchObject({ if: "${{ runner.os == 'Linux' }}", run: USERNS });
 
     const gate = stepNamed(steps, 'Gate: e2e');
     expect(gate.env).toContain('SHARD: ${{ matrix.shard }}');
+    // A shard that does not gate (Windows) keeps its job green when the suite fails, and says so.
+    expect(gate).toMatchObject({ id: 'e2e', 'continue-on-error': '${{ !matrix.gating }}' });
+    const report = stepNamed(steps, 'Report a failure that does not gate');
+    expect(report.if).toBe("${{ !cancelled() && !matrix.gating && steps.e2e.outcome == 'failure' }}");
+    expect(report.run).toMatch(/^echo "::warning title=E2E failed \(not gating\)::/);
     expect(gate.run).toBe(
       [
         'if [ "$RUNNER_OS" = Linux ]; then',
@@ -176,7 +182,7 @@ describe('CI pipeline', () => {
 
     const upload = stepNamed(steps, 'Upload Playwright report');
     expect(upload.uses).toMatch(/^actions\/upload-artifact@[0-9a-f]{40}\b/);
-    expect(upload.if).toBe('${{ failure() }}');
+    expect(upload.if).toBe("${{ !cancelled() && (failure() || steps.e2e.outcome == 'failure') }}");
     expect(upload.with).toContain('name: playwright-report-${{ matrix.id }}');
     expect(upload.with).toContain('apps/desktop/playwright-report/');
     expect(upload.with).toContain('apps/desktop/test-results/');

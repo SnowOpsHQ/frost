@@ -172,8 +172,6 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.preflight.outputs.e2e) }}
     runs-on: ${{ matrix.os }}
-    # A shard that does not gate (Windows) is shown as failed without failing the run.
-    continue-on-error: ${{ !matrix.gating }}
     timeout-minutes: 30
     steps:
       # As in `unit`: the suite's fixtures are read with the repo's LF line endings.
@@ -199,7 +197,11 @@ jobs:
       # macOS and Windows have a real desktop session. On Linux the screen is xvfb-run's own
       # default, written out so a change of that default in the runner image cannot silently move
       # the screenshot baselines (specs/visual-baseline.feature.md).
+      # A shard that does not gate (Windows) passes its job even when the suite fails: a failed job
+      # would mark every commit on main as failed. The next step reports it instead.
       - name: "Gate: e2e"
+        id: e2e
+        continue-on-error: ${{ !matrix.gating }}
         env:
           SHARD: ${{ matrix.shard }}
         run: |
@@ -210,8 +212,15 @@ jobs:
             pnpm --filter @app/desktop test:e2e --shard="$SHARD"
           fi
 
+      - name: Report a failure that does not gate
+        if: ${{ !cancelled() && !matrix.gating && steps.e2e.outcome == 'failure' }}
+        env:
+          NAME: ${{ matrix.name }}
+        run: echo "::warning title=E2E failed (not gating)::The e2e suite failed on $NAME. This shard does not fail the run; its Playwright report is uploaded."
+
+      # Also for a shard that does not gate, whose failed suite does not fail the job.
       - name: Upload Playwright report
-        if: ${{ failure() }}
+        if: ${{ !cancelled() && (failure() || steps.e2e.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report-${{ matrix.id }}
