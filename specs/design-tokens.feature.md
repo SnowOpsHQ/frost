@@ -97,7 +97,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 1. Screenshot baseline (Playwright, light and dark).
 2. Foundation (done).
 3. Values (done): re-point the aliases and swap the shared names to their Signal values; Geist is
-   bundled (done, its own change) but not yet applied.
+   bundled (done, its own change), applied per surface through the `--text-*` tokens from step 4 on
+   (the command palette first); `--font-ui` stays the system stack.
 4. One PR per surface: rules move onto Signal tokens, retired names go (`removed`). The command
    palette is first, and the first to apply Geist (a rule reading `--text-*`); a font can now load
    whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not from the
@@ -147,16 +148,19 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: surface-rules-read-signal-tokens** — for each `SIGNAL_SURFACES` entry, every rule of the
   surface in its stylesheet (any selector in its list names one of the surface's classes on a class
   boundary, at any nesting: `@media`, `@container`; or it is in the surface's `@keyframes`) reads only
-  Signal tokens and legacy aliases in `var()` (whitespace allowed, no fallback); a colour-bearing value
-  holds only those, `transparent`, `currentColor`, `inherit`, `none`, lengths and `color-mix()` (so
-  hex, `rgb()`, any named colour fail); no `font-size`, `font-family` or `line-height`; `font` only
-  `var(--text-*)`; a rule whose `--text-*` token has a non-zero tracking sets exactly that
-  `letter-spacing`, and any `letter-spacing` equals the tracking of the token its own rule sets;
-  `font-weight` only a bundled Geist weight; at least one rule sets `font: var(--text-*)`. The guard
-  itself catches a mixed selector list, an ancestor-qualified selector, `var( --retired)`, a named
-  colour, a `var()` fallback, a colour in the surface's keyframes, a caps rule without its
-  letter-spacing and a body rule with caps letter-spacing; it ignores `.palettes`, `.x-palette`, and
-  `.table-*` for a `.tab` surface.
+  Signal tokens and legacy aliases in `var()` (whitespace allowed, no fallback in any property); a
+  colour-bearing value (`background-image` included) holds only those, `transparent`, `currentColor`,
+  `inherit`, `none`, lengths and `color-mix()` (so hex, `rgb()`, a gradient, `unset`, `initial`, any
+  named colour fail); no `font-size`, `font-family` or `line-height`; `font` only `var(--text-*)`; a
+  rule whose `--text-*` token has a non-zero tracking sets exactly that `letter-spacing`, and any
+  `letter-spacing` equals the tracking of the token its own rule sets; a `font-weight` is one
+  `BUNDLED_FONTS` has for the family of its rule's own `--text-*` token (or for Geist when the rule
+  inherits its font); at least one rule sets `font: var(--text-*)`. The guard itself catches a mixed
+  selector list, an ancestor-qualified selector, `var( --retired)`, a named colour, a `var()`
+  fallback (in a colour and in `padding`), a colour in the surface's keyframes, a caps rule without
+  its letter-spacing, a body rule with caps letter-spacing, a gradient `background-image`,
+  `color: unset` and Geist Mono at 500; it ignores `.palettes`, `.x-palette`, and `.table-*` for a
+  `.tab` surface.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
 
@@ -189,6 +193,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   there). One snapshot of the recorded requests, taken once they name a URL per bundled face, has
   exactly one URL per face, all under `app://app/assets/`, each answered 200 `font/woff2`. No CSP
   violation was reported: no event, and no CSP console message from an `app:` page since launch (a
-  tab's own console is not the chrome's). (The chrome page can't be reloaded to start clean: its
+  tab's own console is not the chrome's); a probe the chrome logs first is seen in that log with its
+  `app:` URL, so the log is known to record. (The chrome page can't be reloaded to start clean: its
   navigation guard aborts that. No `session.webRequest` listener is used: one per event per session
   would replace the app's own.)

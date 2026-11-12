@@ -12,7 +12,8 @@
  * 1. foundation (done): one token source and the full Signal vocabulary, no pixel changed;
  * 2. values (done, this step): the legacy aliases point at their Signal tokens and the names in
  *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values; Geist and Geist Mono are bundled
- *    (`BUNDLED_FONTS`, declared in `FONTS_STYLESHEET`) but not yet applied;
+ *    (`BUNDLED_FONTS`, declared in `FONTS_STYLESHEET`), applied per surface through the `--text-*`
+ *    tokens from step 3 on (`--font-ui` stays the system stack);
  * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used
  *    (the command palette first: its retired `--palette-*` names are `removed`, and it is the first
  *    surface to read the `--text-*` type tokens, so the first to draw Geist).
@@ -328,10 +329,11 @@ export const LEGACY_TOKEN_MIGRATION = [
  * on a class boundary (`.palette` covers `.palette`, `.palette-option` and `.chrome .palette-hit`,
  * never `.palettes` or `.x-palette`; `.tab` would never cover `.table-row`), or when it sits in a
  * `@keyframes` named the prefix's stem or stem-… (`palette-in`). Such a rule reads only Signal tokens
- * and legacy aliases in `var()` (no fallback); its colour-bearing values hold nothing else but
- * `transparent`, `currentColor`, `inherit`, `none`, lengths and `color-mix()` of those; its type comes
- * from a `--text-*` token (`font: var(--text-*)`, with that token's `tracking` as `letter-spacing` in
- * the same rule when it isn't `0`; a bundled Geist weight may override the token's).
+ * and legacy aliases in `var()`, never with a fallback (in any property); its colour-bearing values
+ * (`background-image` included) hold nothing else but `transparent`, `currentColor`, `inherit`, `none`,
+ * lengths and `color-mix()` of those; its type comes from a `--text-*` token (`font: var(--text-*)`,
+ * with that token's `tracking` as `letter-spacing` in the same rule when it isn't `0`); a
+ * `font-weight` beside it is one `BUNDLED_FONTS` has for that token's family (Geist Mono: 400 only).
  */
 export interface SignalSurface {
   readonly name: string;
@@ -588,13 +590,14 @@ export const TAB_STRIP = {
   readonly minDividerOnStrip: number;
 };
 
-// ---- Fonts (the values step: Geist bundled, not yet applied) ----
+// ---- Fonts (bundled in the values step; applied per surface through the --text-* tokens) ----
 
 /**
  * The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares the bundled
  * fonts: only `@font-face` rules, one per `BUNDLED_FONTS` entry. `main.tsx` imports it right after
- * `TOKENS_STYLESHEET`. It applies no font: `--font-ui` and every rule stay as they are until the
- * surface PRs move onto the `--text-*` type tokens.
+ * `TOKENS_STYLESHEET`. It applies no font itself: a surface draws Geist once its rules read the
+ * `--text-*` type tokens (the command palette first); `--font-ui`, the rest of the chrome's face,
+ * stays the system stack until its own surface PR.
  */
 export const FONTS_STYLESHEET = 'fonts.css';
 

@@ -3,8 +3,8 @@
  * file, nothing else. The files come from the pinned `geist` package through the `@geist-fonts`
  * alias (vite.renderer.config.ts), which Vite emits as hashed assets served from app:// (the CSP's
  * font-src is 'self'). `block`: the files are local, so text never flashes in a fallback face.
- * Available, not applied: no rule names these families until the surface PRs adopt the --text-*
- * type tokens.
+ * Applied per surface: a surface draws them once its rules read the --text-* type tokens (the
+ * command palette first); --font-ui stays the system stack.
  */
 
 @font-face {
