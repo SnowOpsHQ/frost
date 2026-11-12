@@ -79,6 +79,7 @@ export function AgentComposer({
   running,
   stopChatId,
   inputRef,
+  pickerRef,
   skills = [],
   attachments = [],
 }: {
@@ -88,6 +89,8 @@ export function AgentComposer({
   /** The running chat, for Stop. */
   readonly stopChatId: string | null;
   readonly inputRef: RefObject<HTMLTextAreaElement | null>;
+  /** The skill picker, which takes focus in the message field's place while a skill is picked. */
+  readonly pickerRef?: RefObject<HTMLSelectElement | null>;
   /** The skills main lists (`AgentState.skills`). */
   readonly skills?: readonly AgentSkillView[];
   /** The selected chat's attached tabs, or the new chat's (`AgentState.draftAttachments`). */
@@ -108,14 +111,15 @@ export function AgentComposer({
   const skill = pickedSkill(offered, skillId);
   const matching = pickerSkills(skills, query, skillId);
 
-  // Back from a turn: focus returns to the field if disabling it had dropped focus.
+  // Back from a turn: focus returns to the field (the picker while a skill is picked) if disabling it
+  // had dropped focus.
   useEffect(() => {
     if (wasRunning.current && !running) {
       setStopping(false);
-      if (document.activeElement === null || document.activeElement === document.body) inputRef.current?.focus();
+      if (document.activeElement === null || document.activeElement === document.body) (inputRef.current ?? pickerRef?.current)?.focus();
     }
     wasRunning.current = running;
-  }, [running, inputRef]);
+  }, [running, inputRef, pickerRef]);
 
   const send = () => {
     if (!canSend(text, running, sending)) return;
@@ -253,6 +257,7 @@ export function AgentComposer({
         <label className="agent-skill-bar">
           <span className="agent-skill-bar-label">Skill</span>
           <select
+            ref={pickerRef}
             className="agent-select agent-skill-select"
             data-testid="agent-skill-picker"
             aria-label="Run a skill"

@@ -66,6 +66,8 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
   const toggle = useRef<HTMLButtonElement>(null);
   const settingsToggle = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLTextAreaElement | null>(null);
+  // The composer's skill picker: the focus target while a picked skill replaces the message field.
+  const picker = useRef<HTMLSelectElement | null>(null);
   const focusAfter = useRef<'input' | 'toggle' | 'settings' | null>(null);
   // Bumped by each palette request, so focus moves even when the panel already shows that view.
   const [requestSeq, setRequestSeq] = useState(0);
@@ -136,8 +138,9 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
     if (target === 'toggle' && !open) toggle.current?.focus();
     else if (target === 'settings' && open && view === 'settings') settingsToggle.current?.focus();
     else if (target === 'input' && open && view === 'chat') {
-      if (input.current === null) return;
-      input.current.focus();
+      const field = input.current ?? picker.current;
+      if (field === null) return;
+      field.focus();
     }
     focusAfter.current = null;
   }, [open, view, loaded, requestSeq]);
@@ -230,7 +233,7 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
             <footer className="agent-foot">
               <AgentContextMeter active={active} />
               <ChatgptComposerBar setup={state.setup} />
-              <AgentComposer chatId={active?.id ?? null} running={state.running} stopChatId={runningChatId(state)} inputRef={input} skills={state.skills} attachments={active?.attachments ?? state.draftAttachments ?? []} />
+              <AgentComposer chatId={active?.id ?? null} running={state.running} stopChatId={runningChatId(state)} inputRef={input} pickerRef={picker} skills={state.skills} attachments={active?.attachments ?? state.draftAttachments ?? []} />
             </footer>
           </>
         )}

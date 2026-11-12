@@ -108,4 +108,23 @@ test('agent-panel-palette-requests-move-focus', () => {
   expect(byTestId('agent-panel')!.dataset['open']).toBe('false');
   ask({ kind: 'run-skill', skillId: 'audit-this-page' });
   expect(document.activeElement).toBe(byTestId('agent-input'));
+  // A skill picked in the composer swaps the message field out: its picker takes focus instead.
+  const picker = byTestId('agent-skill-picker') as HTMLSelectElement;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(picker, 'rewrite-title-meta');
+    picker.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  expect(byTestId('agent-input')).toBeNull();
+  ask({ kind: 'run-skill', skillId: 'audit-this-page' });
+  expect(document.activeElement).toBe(byTestId('agent-skill-picker'));
+  // The run disables the picker, which drops its focus (jsdom keeps it, so it is dropped here); back
+  // from the turn, the picker takes focus again.
+  (document.activeElement as HTMLElement | null)?.blur();
+  show(makeState({ skills: [...SKILLS], running: true }));
+  expect((byTestId('agent-skill-picker') as HTMLSelectElement).disabled).toBe(true);
+  expect(document.activeElement).toBe(document.body);
+  show(makeState({ skills: [...SKILLS] }));
+  expect(document.activeElement).toBe(byTestId('agent-skill-picker'));
+  ask({ kind: 'new-chat' });
+  expect(document.activeElement).toBe(byTestId('agent-skill-picker'));
 });
