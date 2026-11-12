@@ -5403,7 +5403,9 @@ input {
 }
 
 .palette-button:focus-visible {
-  outline: 0;
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
 }
 
