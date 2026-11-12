@@ -1,18 +1,26 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, HEX_COLOUR_RATCHET)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, HEX_COLOUR_RATCHET)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import {
+  CONTRAST_PAIRS,
   HEX_COLOUR_RATCHET,
+  KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
   SIGNAL_TOKENS,
+  TAB_STRIP,
+  TEXT_COLOUR_RULES,
   THEMED_SIGNAL_GROUPS,
   TOKENS_STYLESHEET,
+  type ContrastException,
+  type ContrastPair,
+  type TextColourRule,
   type SignalToken,
   type SignalTokenGroup,
 } from '@app/specs/design-tokens.spec';
+import { SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 
 const RENDERER = fileURLToPath(new URL('../renderer/', import.meta.url));
 const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8');
@@ -81,7 +89,59 @@ const LIGHT = inContext([':root']);
 const DARK_VALUES = inContext([DARK, ':root']);
 const GROUPS = Object.entries(SIGNAL_TOKENS) as [SignalTokenGroup, readonly SignalToken[]][];
 const SIGNAL_NAMES = new Set<string>(GROUPS.flatMap(([, tokens]) => tokens.map((token) => token.name)));
-const KEEPS_LEGACY_VALUE = new Set<string>(SIGNAL_NAMES_WITH_LEGACY_VALUES);
+
+/** An sRGB colour, channels 0–255, alpha 0–1. */
+type Rgba = readonly [r: number, g: number, b: number, a: number];
+
+/** `#rgb`, `#rrggbb` or `rgb(r g b / a)` (the notations `tokens.css` uses for colours). */
+function parseColour(value: string): Rgba {
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value)?.[1];
+  if (hex !== undefined) {
+    const full = hex.length === 3 ? [...hex].map((c) => c + c).join('') : hex;
+    return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)).concat(1) as unknown as Rgba;
+  }
+  const rgb = /^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*(?:\/\s*([\d.]+)\s*)?\)$/.exec(value);
+  if (rgb !== null) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3]), rgb[4] === undefined ? 1 : Number(rgb[4])];
+  throw new Error(`not a colour: ${value}`);
+}
+
+/** `top` laid over the opaque `bottom` (source-over). */
+const composite = (top: Rgba, bottom: Rgba): Rgba =>
+  [0, 1, 2].map((i) => (top[i] ?? 0) * top[3] + (bottom[i] ?? 0) * (1 - top[3])).concat(1) as unknown as Rgba;
+
+/** WCAG 2.x relative luminance of an opaque colour. */
+function luminance([r, g, b]: Rgba): number {
+  const lin = (channel: number) => {
+    const c = channel / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** WCAG 2.x contrast ratio of two opaque colours (1–21). */
+function contrastRatio(a: Rgba, b: Rgba): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** Each theme's declared values: dark is light with the dark block's overrides. */
+const THEMES = { light: LIGHT, dark: new Map([...LIGHT, ...DARK_VALUES]) };
+const THEME_NAMES = ['light', 'dark'] as const;
+
+/** A token's colour in a theme, following `var()` references in the same theme. */
+function colourIn(theme: keyof typeof THEMES, name: string): Rgba {
+  const values = THEMES[theme];
+  const seen = new Set<string>();
+  for (let current = name; ; ) {
+    if (seen.has(current)) throw new Error(`${name}: var() cycle through ${current} (${theme})`);
+    seen.add(current);
+    const raw = values.get(current);
+    if (raw === undefined) throw new Error(`${name}: ${current} is not declared (${theme})`);
+    const ref = /^var\((--[\w-]+)\)$/.exec(raw)?.[1];
+    if (ref === undefined) return parseColour(raw);
+    current = ref;
+  }
+}
 
 test('tokens-stylesheet-holds-only-root-tokens', () => {
   expect(STYLESHEETS).toContain(TOKENS_STYLESHEET);
@@ -116,11 +176,9 @@ test('signal-tokens-are-defined', () => {
         expect(token.dark, label).toBeUndefined();
         expect(DARK_VALUES.has(token.name), `${label} (dark)`).toBe(false);
       }
-      // A Signal-only token carries its Signal value already; a shared name keeps today's until the values PR.
-      if (!KEEPS_LEGACY_VALUE.has(token.name)) {
-        expect(LIGHT.get(token.name), label).toBe(token.light);
-        if (token.dark !== undefined) expect(DARK_VALUES.get(token.name), `${label} (dark)`).toBe(token.dark);
-      }
+      // Every Signal token carries exactly its Signal value, the shared names included.
+      expect(LIGHT.get(token.name), label).toBe(token.light);
+      if (token.dark !== undefined) expect(DARK_VALUES.get(token.name), `${label} (dark)`).toBe(token.dark);
     }
   }
   // The shared names are Signal tokens, and `--icon` stays a colour beside the `--icon-size` size.
@@ -145,11 +203,151 @@ test('legacy-tokens-are-defined', () => {
 });
 
 test('legacy-token-values-are-pinned', () => {
-  // The foundation changes no value: these are main's values before Signal. The values PR updates
-  // this snapshot on purpose, and its diff lists every value it re-points.
+  // Every change to a legacy value is on purpose: the foundation pinned main's values before Signal,
+  // and the values step re-pointed the aliases and swapped the shared names (its diff lists each).
   const pick = (values: Map<string, string>) =>
     Object.fromEntries(LEGACY_TOKEN_MIGRATION.filter((row) => values.has(row.legacy)).map((row) => [row.legacy, values.get(row.legacy)]));
   expect({ light: pick(LIGHT), dark: pick(DARK_VALUES) }).toMatchSnapshot();
+});
+
+test('legacy-aliases-point-at-signal-tokens', () => {
+  for (const row of LEGACY_TOKEN_MIGRATION) {
+    if (row.kind !== 'alias' || row.signal === null) continue;
+    if (row.signal === row.legacy) continue; // a self-alias: signal-tokens-are-defined checks its value
+    // One light declaration, exactly var(<signal>); dark follows the Signal token's own dark value.
+    expect(LIGHT.get(row.legacy), row.legacy).toBe(`var(${row.signal})`);
+    expect(DARK_VALUES.has(row.legacy), `${row.legacy} (dark)`).toBe(false);
+  }
+  // The self-aliases are exactly the shared names.
+  const selfAliases = LEGACY_TOKEN_MIGRATION.filter((row) => row.kind === 'alias' && row.signal === row.legacy).map((row) => row.legacy);
+  expect([...selfAliases].sort()).toEqual([...SIGNAL_NAMES_WITH_LEGACY_VALUES].sort());
+  // The sidebar's widths now come from Signal; they still match the layout constants in the sidebar spec.
+  expect(LIGHT.get('--w-panel')).toBe(`${SIDEBAR_PANEL_WIDTH}px`);
+  expect(LIGHT.get('--w-rail')).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
+});
+
+test('signal-contrast-meets-aa', () => {
+  // The ratio helper against known values.
+  expect(contrastRatio(parseColour('#000'), parseColour('#ffffff'))).toBeCloseTo(21, 5);
+  expect(contrastRatio(parseColour('#777'), parseColour('#fff'))).toBeCloseTo(4.48, 2);
+  expect(composite(parseColour('rgb(0 0 0 / 0.5)'), parseColour('#ffffff'))).toEqual([127.5, 127.5, 127.5, 1]);
+  // A tint (color-mix with transparent) composites like the token at that opacity.
+  expect(composite([0, 0, 0, 0.14], parseColour('#ffffff'))[0]).toBeCloseTo(219.3, 5);
+
+  const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
+  expect(pairs.length).toBeGreaterThan(0);
+  for (const theme of THEME_NAMES) {
+    const colour = (name: string) => colourIn(theme, name);
+    for (const pair of pairs) {
+      const label = `${pair.fg} on ${pair.bg}${pair.over ? ` over ${pair.over}` : ''} (${theme})`;
+      let bg = colour(pair.bg);
+      if (pair.alpha !== undefined) bg = [bg[0], bg[1], bg[2], bg[3] * pair.alpha];
+      if (bg[3] < 1) {
+        expect(pair.over, `${label}: a translucent background needs \`over\``).toBeDefined();
+        const surface = colour(pair.over ?? pair.bg);
+        expect(surface[3], `${label}: \`over\` must be opaque`).toBe(1);
+        bg = composite(bg, surface);
+      }
+      const fg = composite(colour(pair.fg), bg);
+      expect(contrastRatio(fg, bg), label).toBeGreaterThanOrEqual(pair.min);
+    }
+  }
+});
+
+test('known-contrast-exceptions-are-current', () => {
+  const pairs: readonly { fg: string; bg: string; min: number }[] = CONTRAST_PAIRS;
+  const exceptions: readonly ContrastException[] = KNOWN_CONTRAST_EXCEPTIONS;
+  for (const exception of exceptions) {
+    const label = `${exception.fg} on ${exception.bg}`;
+    const ratios = THEME_NAMES.map((theme) => contrastRatio(colourIn(theme, exception.fg), colourIn(theme, exception.bg)));
+    expect(Math.min(...ratios), `${label} still misses ${exception.min}:1 somewhere`).toBeLessThan(exception.min);
+    expect(
+      pairs.some((p) => p.fg === exception.fg && p.bg === exception.bg && p.min === exception.min),
+      `${label} is not also a CONTRAST_PAIRS pair`,
+    ).toBe(false);
+    const uses = STYLESHEETS.flatMap((name) => parse(read(name)).declarations.filter((d) => d.property === 'color' && d.value === `var(${exception.fg})`));
+    expect(uses.length, `${label}: rules drawing text in ${exception.fg}`).toBe(exception.rules);
+  }
+});
+
+test('tab-strip-orders-strip-hover-active', () => {
+  for (const theme of THEME_NAMES) {
+    const strip = colourIn(theme, TAB_STRIP.strip);
+    const active = colourIn(theme, TAB_STRIP.active);
+    const hover = composite(colourIn(theme, TAB_STRIP.hover), strip);
+    expect(strip[3], `${TAB_STRIP.strip} is opaque (${theme})`).toBe(1);
+    expect(contrastRatio(active, strip), `active tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minActiveOnStrip);
+    const [lo, hi] = [luminance(strip), luminance(active)].sort((a, b) => a - b) as [number, number];
+    const lit = luminance(hover);
+    expect(lit > lo && lit < hi, `hover luminance ${lit} between the strip and the active tab (${lo}–${hi}, ${theme})`).toBe(true);
+    expect(contrastRatio(colourIn(theme, TAB_STRIP.divider), strip), `divider between inactive tabs on the strip (${theme})`).toBeGreaterThanOrEqual(
+      TAB_STRIP.minDividerOnStrip,
+    );
+  }
+});
+
+/** A selector's specificity as one number (ids aside: the renderer's rules use none). */
+function specificity(selector: string): number {
+  const classes = selector.match(/\.[\w-]+|\[[^\]]+\]|(?<!:):(?!not\(|is\(|where\()[\w-]+/g)?.length ?? 0;
+  const types = selector.replace(/\[[^\]]+\]|\([^)]*\)/g, '').match(/(?:^|[\s>+~])[a-z][\w-]*/gi)?.length ?? 0;
+  return classes * 1000 + types;
+}
+
+/**
+ * The value `property` resolves to for an element matching exactly the selectors `element` in `css`:
+ * rules whose selector list holds one of them (top level, or in the dark media block for dark),
+ * ordered by specificity then source order; custom properties set by those rules followed through
+ * `var()`. Returns the final value (a `var(--token)` that the element itself does not set).
+ */
+function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark'): string {
+  const wanted = new Set(element.map((s) => s.replace(/\s+/g, ' ').trim()));
+  const matched: { order: number; spec: number; property: string; value: string }[] = [];
+  parse(css).declarations.forEach((d, order) => {
+    const outer = d.context.slice(0, -1);
+    if (!(outer.length === 0 || (theme === 'dark' && outer.length === 1 && outer[0] === DARK))) return;
+    const selectors = (d.context.at(-1) ?? '').split(',').map((s) => s.replace(/\s+/g, ' ').trim());
+    const hits = selectors.filter((s) => wanted.has(s));
+    if (hits.length === 0) return;
+    matched.push({ order, spec: Math.max(...hits.map(specificity)), property: d.property, value: d.value });
+  });
+  matched.sort((a, b) => a.spec - b.spec || a.order - b.order);
+  const own = new Map<string, string>();
+  for (const m of matched) own.set(m.property, m.value);
+  let value = own.get(property);
+  if (value === undefined) throw new Error(`${element.join(' + ')}: no ${property} (${theme})`);
+  const seen = new Set<string>();
+  for (let ref = /^var\((--[\w-]+)\)$/.exec(value)?.[1]; ref !== undefined && own.has(ref); ref = /^var\((--[\w-]+)\)$/.exec(value)?.[1]) {
+    if (seen.has(ref)) throw new Error(`${element.join(' + ')}: var() cycle through ${ref}`);
+    seen.add(ref);
+    value = own.get(ref)!;
+  }
+  return value;
+}
+
+test('text-colour-rules-resolve', () => {
+  // The resolver itself: specificity, then source order; a component property followed.
+  const sample = `.a { color: var(--x); --t: var(--one); } .a[data-k='v'] { --t: var(--two); } .a { color: var(--t); }
+    @media (prefers-color-scheme: dark) { .a { color: var(--three); } }`;
+  expect(resolveOnElement(sample, ['.a'], 'color', 'light')).toBe('var(--one)');
+  expect(resolveOnElement(sample, ['.a', ".a[data-k='v']"], 'color', 'light')).toBe('var(--two)');
+  expect(resolveOnElement(sample, ['.a'], 'color', 'dark')).toBe('var(--three)');
+  expect(specificity('.update-button.update-primary:hover:not(:disabled)')).toBe(4000);
+
+  const pairs: readonly { fg: string; bg: string }[] = CONTRAST_PAIRS;
+  const rules: readonly TextColourRule[] = TEXT_COLOUR_RULES;
+  for (const rule of rules) {
+    for (const theme of THEME_NAMES) {
+      const css = read(rule.stylesheet);
+      expect(resolveOnElement(css, rule.element, 'color', theme), `${rule.element.at(-1)} (${theme})`).toBe(`var(${rule.color})`);
+      if (rule.background !== undefined) {
+        expect(resolveOnElement(css, rule.element, 'background', theme), `${rule.element.at(-1)} background (${theme})`).toBe(`var(${rule.background})`);
+      }
+    }
+    expect(
+      pairs.some((pair) => pair.fg === rule.color && (rule.background === undefined || pair.bg === rule.background)),
+      `${rule.color}${rule.background ? ` on ${rule.background}` : ''} has a CONTRAST_PAIRS entry`,
+    ).toBe(true);
+  }
 });
 
 test('no-other-stylesheet-declares-root-tokens', () => {

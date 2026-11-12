@@ -5,12 +5,14 @@
  *
  * One stylesheet, `apps/desktop/src/renderer/tokens.css` (`TOKENS_STYLESHEET`), declares every
  * custom property that lives on `:root`, light and dark; `main.tsx` imports it before any other
- * stylesheet. It holds the legacy tokens (`LEGACY_TOKEN_MIGRATION`) at their current values and the
- * Signal tokens (`SIGNAL_TOKENS`). The rollout:
- * 1. foundation (this spec): one token source and the full Signal vocabulary, no pixel changed;
- * 2. values: the legacy aliases point at their Signal tokens, the names in
- *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values, and Geist is bundled;
- * 3. one PR per surface moves its rules onto Signal tokens and drops the retired names it used.
+ * stylesheet. It holds the legacy tokens (`LEGACY_TOKEN_MIGRATION`) and the Signal tokens
+ * (`SIGNAL_TOKENS`, every one at its Signal value). A legacy alias is `var()` of its Signal token; a
+ * retired name and a layout constant keep their pre-Signal values. The rollout:
+ * 1. foundation (done): one token source and the full Signal vocabulary, no pixel changed;
+ * 2. values (done, this step): the legacy aliases point at their Signal tokens and the names in
+ *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values; Geist and Geist Mono are bundled
+ *    (`BUNDLED_FONTS`, declared in `FONTS_STYLESHEET`) but not yet applied;
+ * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used.
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -46,9 +48,8 @@ const SANS = 'Geist, system-ui, sans-serif';
 const MONO = "'Geist Mono', ui-monospace, monospace";
 
 /**
- * Every Signal token. Values follow `tokens.css` notation (`0.55`, not `.55`). A token named in
- * `SIGNAL_NAMES_WITH_LEGACY_VALUES` already exists with today's meaning: until the values PR,
- * `tokens.css` keeps its current value and the `light` / `dark` here are the values it will take.
+ * Every Signal token. Values follow `tokens.css` notation (`0.55`, not `.55`). `tokens.css` declares
+ * each at exactly these values, the names in `SIGNAL_NAMES_WITH_LEGACY_VALUES` included.
  */
 export const SIGNAL_TOKENS = {
   colour: [
@@ -173,9 +174,10 @@ export const SIGNAL_TOKENS = {
 export const THEMED_SIGNAL_GROUPS = ['colour', 'state', 'elevation'] as const satisfies readonly SignalTokenGroup[];
 
 /**
- * Signal names that already exist in `tokens.css` with today's meaning. Until the values PR they
- * keep their current values (no visual change); then they take the `SIGNAL_TOKENS` values.
- * (`--icon` is not one: it is a colour today, and the Signal icon size is `--icon-size`.)
+ * Signal names that existed before Signal with the same meaning (the Migration table's self-aliases).
+ * The foundation kept their pre-Signal values; since the values step they carry their
+ * `SIGNAL_TOKENS` values, light and dark (they can't be `var()` of themselves). The name is kept for
+ * history. (`--icon` is not one: it is a colour, and the Signal icon size is `--icon-size`.)
  */
 export const SIGNAL_NAMES_WITH_LEGACY_VALUES = [
   '--text',
@@ -194,7 +196,8 @@ export const SIGNAL_NAMES_WITH_LEGACY_VALUES = [
 
 /**
  * A legacy custom property and its Signal replacement, from the token sheet's Migration table.
- * `alias`: same meaning; the old name stays and (from the values PR on) points at `signal`.
+ * `alias`: same meaning; the old name stays and points at `signal` (`var(<signal>)` in light, no dark
+ * override; a self-alias simply carries the Signal value).
  * `retire`: replaced by `signal`; the old name goes once no rule uses it. `signal` is null when
  * nothing replaces it (a layout constant that keeps its own name, or a style Signal drops), and
  * `--text-*` means the type scale. `was` is the sheet's description of the old light value.
@@ -316,3 +319,262 @@ export const LEGACY_TOKEN_MIGRATION = [
  * written as `rgb()`, `hsl()` or a keyword is for review to catch.
  */
 export const HEX_COLOUR_RATCHET = 53;
+
+/**
+ * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
+ * of `min` (4.5 for text, 3 for UI and graphics), in light and in dark. `over` is the opaque surface a
+ * translucent `bg` (`--accent-soft`, a dark `-soft` fill) sits on, so the pair is composited first; a
+ * translucent `fg` is composited over the (composited) `bg`. `alpha` makes `bg` a tint: the token at
+ * that opacity, as `color-mix(in srgb, <bg> <alpha × 100>%, transparent)` draws it (then `over` is
+ * needed). `why` cites the sheet.
+ */
+export interface ContrastPair {
+  readonly fg: TokenName;
+  readonly bg: TokenName;
+  readonly min: 4.5 | 3;
+  readonly over?: TokenName;
+  readonly alpha?: number;
+  readonly why: string;
+}
+
+const BODY = 'body text on every surface (4.5:1)';
+const FAINT = '"--text-faint passes 4.5:1 on window, subtle and white, but stays for secondary text 12px and up."';
+const RING = 'Score rings take their band colour: --ok, --warn, --danger (graphics, 3:1 on --bg-surface and --bg-sheet)';
+const WARN = '"--warn: dots and graphics (≥ 3:1 on white and sheet)"; ' + RING;
+const INK = '"Text on a soft status fill uses its -ink colour (≥ 4.5:1)"';
+
+/**
+ * The contrast pairs the Signal token sheet names, plus frost's own floor for body text, links and
+ * on-colour buttons on every surface; checked against `tokens.css` in both themes.
+ */
+export const CONTRAST_PAIRS = [
+  // Text
+  { fg: '--text', bg: '--bg-window', min: 4.5, why: BODY },
+  { fg: '--text', bg: '--bg-sheet', min: 4.5, why: BODY },
+  { fg: '--text', bg: '--bg-subtle', min: 4.5, why: BODY },
+  { fg: '--text', bg: '--bg-surface', min: 4.5, why: BODY },
+  { fg: '--text-muted', bg: '--bg-window', min: 4.5, why: BODY },
+  { fg: '--text-muted', bg: '--bg-sheet', min: 4.5, why: BODY },
+  { fg: '--text-muted', bg: '--bg-subtle', min: 4.5, why: BODY },
+  { fg: '--text-muted', bg: '--bg-surface', min: 4.5, why: BODY },
+  { fg: '--text-faint', bg: '--bg-window', min: 4.5, why: FAINT },
+  { fg: '--text-faint', bg: '--bg-subtle', min: 4.5, why: `${FAINT} "Disabled controls: --text-faint on --bg-subtle"` },
+  { fg: '--text-faint', bg: '--bg-surface', min: 4.5, why: FAINT },
+  { fg: '--accent', bg: '--bg-surface', min: 4.5, why: 'links: --accent as text on a card (4.5:1)' },
+  { fg: '--accent', bg: '--bg-sheet', min: 4.5, why: 'links: --accent as text on a sheet (4.5:1)' },
+  // On-colour
+  { fg: '--on-accent', bg: '--accent', min: 4.5, why: 'accent buttons: --on-accent on --accent (4.5:1)' },
+  { fg: '--on-accent', bg: '--accent-hover', min: 4.5, why: 'accent buttons, hovered: --on-accent on --accent-hover (4.5:1)' },
+  { fg: '--on-inverse', bg: '--inverse', min: 4.5, why: 'inverse buttons (Ask frost): --on-inverse on --inverse (4.5:1)' },
+  {
+    fg: '--on-inverse',
+    bg: '--bg-active-inverse',
+    over: '--inverse',
+    min: 4.5,
+    why: '"An inverse button (Ask frost) uses --bg-active-inverse when pressed or open" (4.5:1)',
+  },
+  // Text on the accent tint
+  { fg: '--text', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'the palette\'s active row (--palette-row-active → --accent-soft) (4.5:1)' },
+  { fg: '--text', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'your messages in the agent panel (--agent-user → --accent-soft) (4.5:1)' },
+  // Status text on a soft fill
+  { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
+  { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },
+  { fg: '--danger-ink', bg: '--danger-soft', over: '--bg-surface', min: 4.5, why: INK },
+  {
+    fg: '--danger-ink',
+    bg: '--danger-soft',
+    over: '--bg-chrome',
+    min: 4.5,
+    why: `${INK}: the status bar's failed-overrides chip (11.5px), --danger-soft over --bg-chrome`,
+  },
+  // UI and graphics
+  { fg: '--switch-off', bg: '--bg-surface', min: 3, why: '"--switch-off is a switch\'s off track (≥ 3:1 against its card)"' },
+  { fg: '--accent', bg: '--bg-window', min: 3, why: 'focus ring: "a 2px gap in the window colour, then 2px of accent"' },
+  { fg: '--ok', bg: '--bg-surface', min: 3, why: RING },
+  { fg: '--ok', bg: '--bg-sheet', min: 3, why: RING },
+  { fg: '--warn', bg: '--bg-surface', min: 3, why: WARN },
+  { fg: '--warn', bg: '--bg-sheet', min: 3, why: WARN },
+  { fg: '--danger', bg: '--bg-surface', min: 3, why: RING },
+  { fg: '--danger', bg: '--bg-sheet', min: 3, why: RING },
+  // Rules the values step pinned (TEXT_COLOUR_RULES)
+  { fg: '--warn-ink', bg: '--bg-chrome', min: 4.5, why: 'the status bar\'s notice (.status-notice) on --bg-chrome (4.5:1)' },
+  {
+    fg: '--accent-hover',
+    bg: '--bg-field-hover',
+    min: 4.5,
+    why: 'the update bar\'s primary button, hovered (.update-primary on --bg-field-hover) (4.5:1)',
+  },
+  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
+  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
+  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
+  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill, .agent-chip; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does) (4.5:1)' },
+] as const satisfies readonly ContrastPair[];
+
+/**
+ * Known contrast exceptions, left for the surface PRs: a token some rules still use in a way that
+ * misses the pair's minimum. Each is recorded, not fixed, in the values step; a surface PR that moves
+ * the rules off it removes its entry (the guard fails once the pair would pass, or once no rule uses
+ * the token that way). `rules` is how many `color: var(<fg>)` declarations the renderer's stylesheets
+ * hold today.
+ */
+export interface ContrastException {
+  readonly fg: TokenName;
+  readonly bg: TokenName;
+  readonly min: 4.5 | 3;
+  readonly rules: number;
+  readonly why: string;
+}
+
+export const KNOWN_CONTRAST_EXCEPTIONS = [
+  {
+    fg: '--ok',
+    bg: '--bg-surface',
+    min: 4.5,
+    rules: 21,
+    why: '--ok as body text ("Good length", passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink.',
+  },
+] as const satisfies readonly ContrastException[];
+
+/**
+ * A rule whose text colour the values step pins to a token, because the Signal value of the token it
+ * used left its text under 4.5:1 (found in review). `element` lists the selectors, in `stylesheet`
+ * (relative to the renderer), that such an element matches; resolving the cascade over them
+ * (specificity, then source order; light, or light then the dark media block; component custom
+ * properties followed through `var()`) gives `color: var(<color>)`. Its pair is in `CONTRAST_PAIRS`.
+ */
+export interface TextColourRule {
+  readonly stylesheet: string;
+  readonly element: readonly string[];
+  readonly color: TokenName;
+  /** The fill the text sits on, when the rule pins that too (resolved the same way). */
+  readonly background?: TokenName;
+  readonly why: string;
+}
+
+const OK_TINT = '--ok as text on its own 14% tint is 2.82:1 in light (11px chips)';
+const DANGER_TINT = '--danger as text on its own 14% tint is 3.88:1 in light (11px chips)';
+
+export const TEXT_COLOUR_RULES = [
+  {
+    stylesheet: 'styles.css',
+    element: ['.status-notice'],
+    color: '--warn-ink',
+    why: '--warn on --bg-chrome is 4.26:1 in light; the notice is 11.5px text',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.update-button', '.update-button:hover:not(:disabled)', '.update-button.update-primary', '.update-button.update-primary:hover:not(:disabled)'],
+    color: '--accent-hover',
+    why: '--accent on the hovered button (--bg-field-hover) is 4.23:1 in dark',
+  },
+  // 11px chips on their tone's tint: --ok text is 2.82:1 on its 14% tint and --danger 3.88:1 (light).
+  // The tint and .seo-signal's dot keep the tone; .seo-signal draws no tone text, so it has no entry.
+  { stylesheet: 'styles.css', element: ['.seo-pill', ".seo-pill[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
+  { stylesheet: 'styles.css', element: ['.seo-pill', ".seo-pill[data-tone='error']"], color: '--danger-ink', why: DANGER_TINT },
+  { stylesheet: 'styles.css', element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
+  { stylesheet: 'styles.css', element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='error']"], color: '--danger-ink', why: DANGER_TINT },
+  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
+  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='denied']"], color: '--danger-ink', why: DANGER_TINT },
+  { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='failed']"], color: '--danger-ink', why: DANGER_TINT },
+  // More danger text on its 14% tint (3.7–3.9:1 on a card, light). The status bar's chip was 3.33:1
+  // over --bg-chrome, and still 4.46:1 with the ink on the tint: it takes --danger-soft as its fill.
+  {
+    stylesheet: 'styles.css',
+    element: [".status-tab-overrides[data-status='failed']"],
+    color: '--danger-ink',
+    background: '--danger-soft',
+    why: 'the status bar\'s failed-overrides chip: --danger on its 14% tint over --bg-chrome is 3.33:1 (light); -ink on -soft is 5.30',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-badge', ".seo-badge[data-severity='error']"], color: '--danger-ink', why: DANGER_TINT },
+  { stylesheet: 'styles.css', element: ['.seo-block-status', ".seo-block-status[data-status='invalid']"], color: '--danger-ink', why: DANGER_TINT },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-hreflang-code', ".seo-hreflang-row[data-valid='false'] .seo-hreflang-code"],
+    color: '--danger-ink',
+    why: DANGER_TINT,
+  },
+  { stylesheet: 'styles.css', element: ['.changes-segment', ".changes-segment[data-op='del']"], color: '--danger-ink', why: DANGER_TINT },
+] as const satisfies readonly TextColourRule[];
+
+/**
+ * The tab row until the chrome's surface PR rebuilds it as one row on `--bg-window`: the strip
+ * (`--bg-strip`), a hovered inactive tab (`--bg-tab-hover`, laid over the strip) and the active tab
+ * (`--bg-chrome`). The values step moved the active tab onto Signal (`--bg-chrome` is
+ * `var(--bg-window)`), so the two retired names were retuned for the interim: in light and dark the
+ * active tab stands off the strip by at least `minActiveOnStrip` (a contrast ratio), and a hovered
+ * tab's luminance lies strictly between the strip's and the active tab's (hover previews the active
+ * tab: lighter in light, darker in dark). The divider between inactive tabs (`--border-field`, retired)
+ * stands at least `minDividerOnStrip` off the strip, so the strip's own value can't swallow it.
+ */
+export const TAB_STRIP = {
+  strip: '--bg-strip',
+  hover: '--bg-tab-hover',
+  active: '--bg-chrome',
+  minActiveOnStrip: 1.1,
+  /** The hairline between inactive tabs (`.tab + .tab::before`), against the strip. */
+  divider: '--border-field',
+  minDividerOnStrip: 1.1,
+} as const satisfies {
+  readonly strip: TokenName;
+  readonly hover: TokenName;
+  readonly active: TokenName;
+  readonly minActiveOnStrip: number;
+  readonly divider: TokenName;
+  readonly minDividerOnStrip: number;
+};
+
+// ---- Fonts (the values step: Geist bundled, not yet applied) ----
+
+/**
+ * The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares the bundled
+ * fonts: only `@font-face` rules, one per `BUNDLED_FONTS` entry. `main.tsx` imports it right after
+ * `TOKENS_STYLESHEET`. It applies no font: `--font-ui` and every rule stay as they are until the
+ * surface PRs move onto the `--text-*` type tokens.
+ */
+export const FONTS_STYLESHEET = 'fonts.css';
+
+/**
+ * Where Geist and Geist Mono come from: the official `geist` npm package, pinned exactly (in
+ * `apps/desktop/package.json`) to a release at least two weeks old when it was chosen. Its fonts are
+ * under the SIL Open Font License 1.1 (`LICENSE.txt` in the package; its package.json says
+ * "SIL OPEN FONT LICENSE"), which `THIRD_PARTY_NOTICES` reproduces. Only its font files are bundled,
+ * never its JavaScript (a `next/font` wrapper frost has no use for).
+ */
+export const GEIST_PACKAGE = { name: 'geist', version: '1.8.2', license: 'OFL-1.1' } as const;
+
+/**
+ * The module-path prefix `fonts.css` uses for the package's `dist/fonts/` directory, which its
+ * `exports` map does not expose: the renderer's Vite config aliases it to the installed package's
+ * `dist/fonts/`. Vite then emits each file into the renderer build as a hashed asset served from
+ * `app://`, never a remote URL or a `data:` URI (`APP_CSP_DIRECTIVES` in `security-policy.spec.ts`
+ * allows fonts from `'self'` only).
+ */
+export const GEIST_FONTS_ALIAS = '@geist-fonts';
+
+/**
+ * The weight `--text-body` takes for emphasis (its `use`, "500 for emphasis"): the one weight the
+ * type scale needs that no `font` shorthand names.
+ */
+export const TEXT_BODY_EMPHASIS_WEIGHT = 500;
+
+/** One bundled font face (always `font-style: normal`). */
+export interface BundledFont {
+  /** The `font-family` name the type tokens use. */
+  readonly family: 'Geist' | 'Geist Mono';
+  readonly weight: number;
+  /** The static woff2 file, relative to the package's `dist/fonts/`. */
+  readonly file: string;
+}
+
+/**
+ * The fonts frost bundles: exactly the weights the `SIGNAL_TOKENS.type` shorthands use per family,
+ * plus Geist at `TEXT_BODY_EMPHASIS_WEIGHT`. Static woff2 files only (every Chromium reads woff2,
+ * and it is the smallest): no italics, no variable files, no Geist Pixel, no other weight. Local
+ * only, from `app://` (see `GEIST_FONTS_ALIAS`).
+ */
+export const BUNDLED_FONTS = [
+  { family: 'Geist', weight: 400, file: 'geist-sans/Geist-Regular.woff2' },
+  { family: 'Geist', weight: 500, file: 'geist-sans/Geist-Medium.woff2' },
+  { family: 'Geist', weight: 600, file: 'geist-sans/Geist-SemiBold.woff2' },
+  { family: 'Geist Mono', weight: 400, file: 'geist-mono/GeistMono-Regular.woff2' },
+] as const satisfies readonly BundledFont[];

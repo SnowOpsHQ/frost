@@ -33,6 +33,7 @@
     "@app/specs": "workspace:*",
     "@app/telemetry": "workspace:*",
     "axe-core": "4.14.0",
+    "geist": "1.8.2",
     "jose": "^6.2.13",
     "onnxruntime-node": "1.31.1",
     "parse5": "^8.0.1",

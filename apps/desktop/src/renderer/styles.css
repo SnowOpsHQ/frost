@@ -239,7 +239,8 @@ input {
 .tab-spinner {
   width: 13px;
   height: 13px;
-  border: 2px solid var(--accent-soft);
+  /* The track keeps the old accent-soft strength (22%): Signal's --accent-soft (10%) left it ~1.15:1. */
+  border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: tab-spin 0.8s linear infinite;
@@ -958,7 +959,7 @@ input {
 
 /* A notice (e.g. the tab limit) replaces the status text while it shows. */
 .status-notice {
-  color: var(--warn);
+  color: var(--warn-ink);
   font-weight: 500;
 }
 
@@ -1330,7 +1331,7 @@ input {
 
 .seo-badge[data-severity='error'] {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .seo-badge[data-severity='warning'] {
@@ -2981,7 +2982,7 @@ input {
 
 .seo-block-status[data-status='invalid'] {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .seo-block-status[data-status='cut'] {
@@ -3398,12 +3399,15 @@ input {
 .seo-signal,
 .seo-flag-chip {
   --tone: var(--text-faint);
+  /* Text on the tone's tint: the tone itself, but ok and error take their -ink (≥ 4.5:1). */
+  --tone-ink: var(--tone);
 }
 
 .seo-pill[data-tone='ok'],
 .seo-signal[data-tone='ok'],
 .seo-flag-chip[data-tone='ok'] {
   --tone: var(--ok);
+  --tone-ink: var(--ok-ink);
 }
 
 .seo-pill[data-tone='warn'],
@@ -3416,6 +3420,7 @@ input {
 .seo-signal[data-tone='error'],
 .seo-flag-chip[data-tone='error'] {
   --tone: var(--danger);
+  --tone-ink: var(--danger-ink);
 }
 
 .seo-pill {
@@ -3428,7 +3433,7 @@ input {
   overflow: hidden;
   border-radius: 999px;
   background: color-mix(in srgb, var(--tone) 14%, transparent);
-  color: var(--tone);
+  color: var(--tone-ink);
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -3866,7 +3871,7 @@ input {
 
 .seo-hreflang-row[data-valid='false'] .seo-hreflang-code {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .seo-hreflang-body {
@@ -3886,7 +3891,7 @@ input {
   padding: 0 6px;
   border-radius: 5px;
   background: color-mix(in srgb, var(--tone) 13%, transparent);
-  color: var(--tone);
+  color: var(--tone-ink);
   font-size: 10.5px;
   font-weight: 600;
 }
@@ -5743,8 +5748,9 @@ input {
 
 /* The overrides' cookie or location part could not be applied (whole-branch review). */
 .status-tab-overrides[data-status='failed'] {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  /* -ink on -soft (the token sheet's pairing): the 14% tint over --bg-chrome left the ink at 4.46:1. */
+  background: var(--danger-soft);
+  color: var(--danger-ink);
 }
 
 .render-overrides-failed {
@@ -7959,6 +7965,11 @@ input {
   color: var(--accent);
 }
 
+/* Hovered, the fill lightens (dark): --accent-hover keeps the label at 4.5:1 on it. */
+.update-button.update-primary:hover:not(:disabled) {
+  color: var(--accent-hover);
+}
+
 .update-button.update-quiet {
   border-color: transparent;
   background: transparent;
@@ -8677,7 +8688,7 @@ input {
 .changes-segment[data-op='del'] {
   border-radius: 3px;
   background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  color: var(--danger-ink);
   text-decoration: line-through;
 }
 

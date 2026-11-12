@@ -165,6 +165,8 @@ settings:
 overrides:
   '@mapbox/node-pre-gyp>tar': ^7.5.21
 
+packageExtensionsChecksum: sha256-TvucK1usfDHllMAeR9IN6ppdODqQwx+R2mPy4M4T92U=
+
 importers:
 
   .:
@@ -291,6 +293,9 @@ importers:
       axe-core:
         specifier: 4.14.0
         version: 4.14.0
+      geist:
+        specifier: 1.8.2
+        version: 1.8.2
       jose:
         specifier: ^6.2.13
         version: 6.2.13
@@ -2576,6 +2581,14 @@ packages:
     resolution: {integrity: sha512-+5J6MS/5XksCuXq++uFRsnUd7Ovu1XenbeuIuNRJxYWjgQbPuFhT14lAvsWfqfAmnwluf1OwMjz39HjfLPci0Q==}
     engines: {node: '>=10'}
     deprecated: This package is no longer supported.
+
+  geist@1.8.2:
+    resolution: {integrity: sha512-fRF4sbJ9qcCxPb35cVtKBAwYlTt1IbU9nkbPi0a+xyZqPIjCJ2BY8ekGhx6/SGSZKrR7/UuL57r/eeDQ1Xy11g==}
+    peerDependencies:
+      next: '>=13.2.0'
+    peerDependenciesMeta:
+      next:
+        optional: true
 
   generate-function@2.3.1:
     resolution: {integrity: sha512-eeB5GfMNeevm/GRYq20ShmsaGcmI81kIX2K9XQx5miC8KdHaC6Jm0qQ8ZNeGOi7wYB8OsdxKs+Y2oVuTFuVwKQ==}
@@ -6351,6 +6364,8 @@ snapshots:
       string-width: 4.2.3
       strip-ansi: 6.0.1
       wide-align: 1.1.5
+
+  geist@1.8.2: {}
 
   generate-function@2.3.1:
     dependencies:
