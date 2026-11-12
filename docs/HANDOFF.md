@@ -32,3 +32,5 @@ Paste this to the agent in the other environment:
 > `app://` scheme; and scheme-allowlist `shell.openExternal`. Keep CI green (Electronegativity +
 > Semgrep sender-guard + the openExternal-deny e2e). Begin with Task 1 (monorepo + hardened Electron
 > shell); confirm the boot test passes and report before moving to Task 2.
+
+<!-- Throwaway line: proves the Linux-only CI plan. Never merged. -->
