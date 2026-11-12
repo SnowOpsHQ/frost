@@ -157,9 +157,9 @@
 
 .help-kbd {
   padding: 1px 6px;
-  border: 1px solid var(--palette-kbd-edge);
-  border-radius: 5px;
-  background: var(--palette-kbd-bg);
+  border-radius: var(--r-xs);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
   color: var(--text);
   font: inherit;
   font-size: 12px;

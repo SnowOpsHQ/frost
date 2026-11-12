@@ -59,7 +59,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   chip, at 4.46:1 with `--danger-ink` on its 14% tint over `--bg-chrome`, takes the sheet's
   -ink-on-soft pairing instead: `--danger-soft` fill (5.30:1 light, 8.68:1 dark).
 - **Hex ratchet.** Literal hex colours in renderer stylesheets other than `tokens.css` never exceed
-  `HEX_COLOUR_RATCHET`; each surface PR lowers it.
+  `HEX_COLOUR_RATCHET`; each surface PR lowers it to its new count (the command palette's rules held
+  no literal hex, their colours were all tokens, so it stayed at 53).
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
   official `geist` npm package (`GEIST_PACKAGE`: pinned exactly, SIL Open Font License 1.1, listed in
   `THIRD_PARTY_NOTICES` with the licence text). Only static woff2 files, only the weights the type

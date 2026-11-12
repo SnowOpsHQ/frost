@@ -36,7 +36,7 @@ const STYLESHEETS = RENDERER_FILES.filter((name) => name.endsWith('.css'));
 /** The renderer's sources: its stylesheets and its scripts (inline styles can read a token too). */
 const RENDERER_SOURCES = RENDERER_FILES.filter((name) => /\.(css|tsx?)$/.test(name));
 const MIGRATION: readonly LegacyTokenMigration[] = LEGACY_TOKEN_MIGRATION;
-const REMOVED = MIGRATION.filter((row) => row.removed === true).map((row) => row.legacy);
+const REMOVED: readonly string[] = MIGRATION.filter((row) => row.removed === true).map((row) => row.legacy);
 
 const DARK = '@media (prefers-color-scheme: dark)';
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');

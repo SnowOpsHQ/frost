@@ -5077,6 +5077,8 @@ input {
   min-height: 0;
 }
 
+/* Signal (specs/design-tokens.feature.md, The command palette): a flat --bg-window band holding a
+   --bg-surface card at --r-lg with --e-ring, its text on the --text-* type tokens (Geist). */
 .palette-sheet {
   flex: 0 0 auto;
   display: flex;
@@ -5087,9 +5089,9 @@ input {
   /* Never shorter than its minimum: the palette does not open in a column shorter than that. */
   height: max(min(var(--palette-sheet-height), calc(100% - var(--palette-page-min-visible))), var(--palette-sheet-min-height));
   min-height: 0;
-  padding: 12px 16px 14px;
-  border-bottom: 1px solid var(--bg-chrome-edge);
-  background: var(--palette-sheet);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--divider);
+  background: var(--bg-window);
 }
 
 .palette {
@@ -5098,13 +5100,14 @@ input {
   flex-direction: column;
   width: min(var(--palette-width), 100%);
   min-height: 0;
-  border: 1px solid var(--palette-edge);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   background: var(--palette-bg);
-  box-shadow: var(--palette-shadow);
+  box-shadow: var(--e-ring);
+  color: var(--text);
+  font: var(--text-body);
   overflow: hidden;
   container: palette / inline-size;
-  animation: palette-in 140ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation: palette-in var(--dur-base) var(--ease-out) both;
 }
 
 @keyframes palette-in {
@@ -5114,31 +5117,37 @@ input {
   }
 }
 
+/* The search field: --h-field inside the card's --space-2 inset, a --divider rule under it. */
 .palette-search {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-4);
   flex: none;
-  height: 50px;
-  padding: 0 12px 0 16px;
-  border-bottom: 1px solid var(--palette-edge);
+  height: var(--h-field);
+  margin: var(--space-2) var(--space-2) 0;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--divider);
 }
 
 .palette-search-icon {
-  width: 18px;
-  height: 18px;
-  color: var(--accent);
+  flex: none;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--text-muted);
 }
 
+/* The heading size at body weight: the query is the palette's one large line. */
 .palette-input {
   flex: 1;
   min-width: 0;
   height: 100%;
+  padding: 0;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--text);
-  font-size: 15px;
+  font: var(--text-heading);
+  font-weight: 400;
   user-select: text;
   cursor: text;
 }
@@ -5150,60 +5159,57 @@ input {
 .palette-list {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 6px;
+  padding: var(--space-1) var(--space-2) var(--space-2);
   overflow-y: auto;
   overscroll-behavior: contain;
-  scroll-padding: 6px;
+  scroll-padding: var(--space-2);
 }
 
 .palette-group + .palette-group {
-  margin-top: 4px;
+  margin-top: var(--space-1);
 }
 
 .palette-group-label {
-  padding: 8px 10px 4px;
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 650;
+  padding: var(--space-3) var(--space-4) var(--space-1);
+  color: var(--text-muted);
+  font: var(--text-caps);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
+/* A row: its --h-chip icon tile plus --space-1 above and below. */
 .palette-option {
   display: flex;
   align-items: center;
-  gap: 11px;
-  min-height: 38px;
-  padding: 5px 10px;
-  border-radius: 9px;
+  gap: var(--space-4);
+  min-height: calc(var(--h-chip) + 2 * var(--space-1));
+  padding: var(--space-1) var(--space-4) var(--space-1) var(--space-1);
+  border-radius: var(--r-sm);
   color: var(--text);
   cursor: pointer;
 }
 
 .palette-option[data-active='true'] {
-  background: var(--palette-row-active);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--accent-soft);
 }
 
 .palette-option-icon {
   display: grid;
   flex: none;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--palette-edge);
-  border-radius: 8px;
-  background: var(--bg-chrome);
-  color: var(--icon);
+  width: var(--h-chip);
+  height: var(--h-chip);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
 }
 
 .palette-option-icon .icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .palette-option[data-active='true'] .palette-option-icon {
-  border-color: transparent;
   background: var(--accent);
   color: var(--on-accent);
 }
@@ -5217,23 +5223,27 @@ input {
 
 .palette-option-label {
   overflow: hidden;
-  font-size: 13.5px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
+/* The matched letters: --text-body's emphasis weight on an --accent-soft highlight. */
 .palette-hit {
-  border-radius: 3px;
-  background: var(--palette-hit);
+  border-radius: var(--r-xs);
+  background: var(--accent-soft);
   color: inherit;
-  font-weight: 650;
+  font-weight: 500;
+}
+
+.palette-option[data-active='true'] .palette-hit {
+  background: var(--bg-surface);
 }
 
 .palette-option-detail {
   display: block;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -5241,73 +5251,70 @@ input {
 .palette-option-group {
   flex: none;
   color: var(--text-faint);
-  font-size: 11px;
+  font: var(--text-small);
 }
 
+.palette-option[data-active='true'] .palette-option-group {
+  color: var(--text-muted);
+}
+
+/* A key hint: --bg-surface with --e-ring at --h-badge, in the mono face. */
 .palette-kbd {
   display: inline-grid;
   flex: none;
   place-items: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border: 1px solid var(--palette-kbd-edge);
-  border-bottom-width: 2px;
-  border-radius: 5px;
-  background: var(--palette-kbd-bg);
+  min-width: var(--h-badge);
+  height: var(--h-badge);
+  padding: 0 var(--space-2);
+  border-radius: var(--r-xs);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
   color: var(--text-muted);
-  font: 500 11px/1 var(--font-ui);
+  font: var(--text-mono);
   white-space: nowrap;
-}
-
-.palette-esc {
-  color: var(--text-faint);
 }
 
 .palette-empty {
   position: absolute;
-  inset: 50px 0 34px;
+  inset: calc(var(--space-2) + var(--h-field)) 0 calc(var(--h-control) + var(--space-1));
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-3);
   color: var(--text-muted);
-  font-size: 13px;
   pointer-events: none;
 }
 
+/* An --icon-size glyph in a round --bg-subtle --h-field tile. */
 .palette-empty-mark {
-  width: 30px;
-  height: 30px;
-  color: var(--text-faint);
+  width: var(--h-field);
+  height: var(--h-field);
+  padding: calc((var(--h-field) - var(--icon-size)) / 2);
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
 }
 
 .palette-foot {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-5);
   flex: none;
-  height: 34px;
-  padding: 0 14px;
+  height: var(--h-control);
+  margin-top: var(--space-1);
+  padding: 0 var(--space-4);
   overflow: hidden;
   white-space: nowrap;
-  border-top: 1px solid var(--palette-edge);
-  background: var(--bg-chrome);
-  color: var(--text-faint);
-  font-size: 11px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font: var(--text-small);
 }
 
 .palette-foot-hint {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-}
-
-.palette-foot-hint .palette-kbd {
-  min-width: 18px;
-  height: 18px;
-  padding: 0 4px;
+  gap: var(--space-1);
 }
 
 .palette-foot-count {
@@ -5321,9 +5328,9 @@ input {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-height: 0;
-  padding: 16px 22px;
+  padding: var(--space-5) var(--space-6);
   overflow-y: auto;
   text-align: center;
 }
@@ -5331,10 +5338,10 @@ input {
 .palette-confirm-icon {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  margin-bottom: 2px;
-  border-radius: 10px;
+  width: var(--h-control);
+  height: var(--h-control);
+  margin-bottom: var(--space-1);
+  border-radius: var(--r-sm);
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -5342,38 +5349,40 @@ input {
 .palette-confirm-title {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .palette-confirm-message {
   max-width: 44ch;
   margin: 0;
   color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
+  font: var(--text-heading);
   overflow-wrap: anywhere;
 }
 
 .palette-confirm-note {
   max-width: 48ch;
   margin: 0;
-  color: var(--caution);
-  font-size: 12px;
+  color: var(--warn-ink);
+  font: var(--text-small);
 }
 
 .palette-confirm-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }
 
+/* A band button: --h-chip, --r-pill, --e-raised on the card. */
 .palette-button {
-  height: 30px;
-  padding: 0 14px;
-  border: 1px solid var(--palette-edge);
-  border-radius: 8px;
-  background: var(--bg-chrome);
+  height: var(--h-chip);
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
+  font: var(--text-body);
   font-weight: 500;
 }
 
@@ -5382,13 +5391,13 @@ input {
 }
 
 .palette-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline: 0;
+  box-shadow: var(--focus-ring);
 }
 
 .palette-button-primary {
-  border-color: transparent;
   background: var(--accent);
+  box-shadow: none;
   color: var(--on-accent);
 }
 
@@ -5408,28 +5417,28 @@ input {
   }
 
   .palette-foot {
-    gap: 8px;
+    gap: var(--space-3);
   }
 }
 
 /* A handler's status line: over the status bar's middle (chrome the tab's view never covers). */
 .palette-status {
   position: fixed;
-  bottom: 3px;
+  bottom: 2px;
   left: 50%;
   z-index: 5;
   max-width: min(60vw, 420px);
-  padding: 3px 12px;
+  padding: 3px var(--space-4);
   overflow: hidden;
-  border-radius: 999px;
-  background: var(--text);
-  color: var(--bg-chrome);
-  font-size: 11.5px;
+  border-radius: var(--r-pill);
+  background: var(--inverse);
+  color: var(--on-inverse);
+  font: var(--text-small);
   font-weight: 500;
   white-space: nowrap;
   text-overflow: ellipsis;
   transform: translateX(-50%);
-  transition: opacity 160ms ease;
+  transition: opacity var(--dur-base) var(--ease-out);
 }
 
 .palette-status[data-shown='false'] {
