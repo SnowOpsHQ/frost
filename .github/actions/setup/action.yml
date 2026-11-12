@@ -1,0 +1,39 @@
+# The install every job of .github/workflows/ci.yml shares, used right after checkout
+# (acceptance: specs/ci-pipeline.feature.md, setup-action).
+name: Set up frost
+description: pnpm, Node, Electron's download cache and the workspace install (frozen lockfile).
+
+runs:
+  using: composite
+  steps:
+    # Installs the pnpm version pinned by package.json#packageManager.
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+        cache: pnpm
+
+    # The lockfile's Electron version, so the cache below changes only when Electron does. No match
+    # fails the step (pipefail) instead of caching under an empty version.
+    - name: Read the Electron version
+      id: electron
+      shell: bash
+      run: echo "version=$(grep -oE '^  electron@[0-9][^:(]*' pnpm-lock.yaml | sed 's/^ *electron@//' | sort -u | paste -sd+ -)" >> "$GITHUB_OUTPUT"
+
+    # @electron/get's download cache (checksum-verified on use): the first path is Linux's, the
+    # second macOS's, the third Windows'.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cache/electron
+          ~/Library/Caches/electron
+          ~/AppData/Local/electron/Cache
+        key: electron-${{ runner.os }}-${{ runner.arch }}-${{ steps.electron.outputs.version }}
+
+    # Also fetches Electron's binary (@app/desktop postinstall runs `install-electron`). On macOS it
+    # builds the DMG maker's native addons, on Windows it selects the Squirrel maker's 7-Zip
+    # (pnpm-workspace.yaml allowBuilds).
+    - name: Install
+      shell: bash
+      run: pnpm install --frozen-lockfile

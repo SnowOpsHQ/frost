@@ -5,8 +5,8 @@ Design doc §4 Phase 7 (cross-platform). Phase 7 Task 1.
 Config tests: `apps/desktop/src/__tests__/linux-package-config.test.ts` (every CI run).
 Workflow tests: `apps/desktop/src/__tests__/platform-workflows.test.ts` (same runs).
 Package checks: `apps/desktop/scripts/verify-linux-package.mjs`, with the checks shared with Windows
-in `verify-package-common.mjs` (Linux only; run by `.github/workflows/linux-package.yml` after
-`make:linux`, and by hand). Each scenario maps to one named test or check.
+in `verify-package-common.mjs` (Linux only; run by the `package-linux` job of
+`.github/workflows/ci.yml` after `make:linux`, and by hand). Each scenario maps to one named test or check.
 
 Build: `pnpm make:linux` (= `electron-forge make --platform linux --arch x64` in `@app/desktop`),
 then `pnpm verify:linux` (needs a display and `dpkg-deb`).
@@ -79,16 +79,16 @@ fails its check.
   (always removed) it holds `<linuxArtifacts().packaged>/` only, and the `fuses-read-back` and
   `no-stray-files` checks pass on that tree. (CI does not upload the zip.)
 
-## CI (`.github/workflows/linux-package.yml`)
-Checked by `platform-workflows.test.ts` (the named test below), by actionlint
-(`uvx --from actionlint-py actionlint`, by hand) and by the workflow runs themselves.
-- **Scenario: linux-package-ci-job** — job `linux-package` on `ubuntu-24.04`, for pull requests
-  touching the app (`apps/desktop`, `packages`, `specs`, the lockfile, workspace and root
-  `package.json`, `turbo.json`, `tsconfig.base.json`, the workflow itself), pushes to `main` and
-  manual dispatch: install (frozen lockfile), the apt packages the makers and checks need, `build`,
-  `make:linux`, the user-namespace sysctl, `verify:linux` under `xvfb-run`, then uploads the
-  AppImage and deb (7 days) only if `verify:linux` succeeded. No lint, test or e2e: `ci.yml` runs
-  them on Linux already.
+## CI (`.github/workflows/ci.yml`, job `package-linux`)
+Checked by `platform-workflows.test.ts` (the named test below), by actionlint (the pipeline's
+`Gate: actionlint`) and by the workflow runs themselves. When the job runs is the pipeline's plan
+(`ci-pipeline.feature.md`): always, except for a pull request that changes only Linux-only paths.
+- **Scenario: linux-package-ci-job** — job `package-linux` (`Package · Linux x64`) on
+  `ubuntu-24.04`: the shared setup (frozen-lockfile install), the apt packages the makers and
+  checks need, `make:linux` (which packages the app itself: no separate `build`), the
+  user-namespace sysctl, `verify:linux` under `xvfb-run`, then uploads the AppImage and deb as
+  `frost-linux-x64` (7 days) only if `verify:linux` succeeded. No lint, test or e2e: the pipeline's
+  other jobs run them.
 
 ## Known limits
 - No signing (see above); x64 only; Electron's default icon.

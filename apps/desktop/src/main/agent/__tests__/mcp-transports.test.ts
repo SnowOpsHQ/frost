@@ -378,7 +378,10 @@ describe('HTTP transport', () => {
     const transport = createHttpTransport({ url: URL_, fetch: async () => new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }), resolveHost: async () => ['93.184.216.34'], token: async () => null });
     const started = performance.now();
     await expect(transport.send({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, new AbortController().signal)).rejects.toMatchObject({ code: 'too-large' });
-    expect(performance.now() - started).toBeLessThan(1500);
+    // About 0.25 s on a laptop and 1.1 s on a CI runner (1.55 s once, under load, which failed the
+    // old 1.5 s limit). The reader the probe caught took 4 s on a laptop: by the same ratio, about
+    // 20 s on a runner.
+    expect(performance.now() - started).toBeLessThan(5_000);
   });
 
   test('mcp-http-server-requests-not-answered', async () => {
