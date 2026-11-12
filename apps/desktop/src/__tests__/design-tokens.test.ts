@@ -401,7 +401,11 @@ test('tokens-load-before-every-other-stylesheet', () => {
 
 /** Keywords a colour-bearing value on a surface may hold besides `var()` of a Signal token or alias. */
 const SURFACE_COLOUR_WORDS = new Set(['transparent', 'currentcolor', 'inherit', 'none', 'solid', 'dashed', 'dotted', 'double', 'inset', 'color-mix', 'in', 'srgb', 'calc', 'min', 'max', 'clamp']);
-/** Properties whose value can carry a colour (only these get the colour allowlist). */
+/** `text-decoration`'s line and style keywords: not colours (a colour in it still needs the allowlist). */
+const TEXT_DECORATION_WORDS = new Set(['underline', 'overline', 'line-through', 'wavy']);
+/** A literal colour in any property: hex or a colour function. */
+const COLOUR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
+/** Properties whose value can carry a colour (these, and custom properties, get the colour allowlist). */
 const COLOUR_PROPERTY = /^(?:color|background(?:-color|-image)?|border(?:-[a-z-]+)?|outline(?:-color)?|box-shadow|text-shadow|fill|stroke|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?)$/;
 
 /**
@@ -424,7 +428,12 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
   const ownKeyframes = new RegExp(`^@keyframes\\s+${stem}(?:-[\\w-]+)?$`);
   const owns = (context: readonly string[]) =>
     context.some((level) => (level.startsWith('@') ? ownKeyframes.test(level) : level.split(',').some((selector) => ownClass.test(selector))));
-  const own = parse(css).declarations.filter((d) => owns(d.context));
+  const all = parse(css).declarations;
+  const own = all.filter((d) => owns(d.context));
+  // A component-scoped custom property (`--tone-ink`): declared in this stylesheet, neither a Signal nor a legacy name.
+  const legacy = new Set<string>(MIGRATION.map((row) => row.legacy));
+  const reserved = (name: string) => SIGNAL_NAMES.has(name) || legacy.has(name);
+  const components = new Set(all.filter((d) => d.property.startsWith('--') && !reserved(d.property)).map((d) => d.property));
   const problems: string[] = [];
   const byBlock = new Map<number, Declaration[]>();
   for (const d of own) {
@@ -432,13 +441,16 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
     const label = `${surface.name}: ${d.context.join(' > ')} { ${d.property}: ${d.value} }`;
     if (/var\(\s*--[\w-]+\s*,/.test(d.value)) problems.push(`${label}: a var() fallback`);
     for (const [, name] of d.value.matchAll(/var\(\s*(--[\w-]+)/g)) {
-      if (!SIGNAL_NAMES.has(name!) && !aliases.has(name!)) problems.push(`${label}: ${name} is neither a Signal token nor an alias`);
+      if (!SIGNAL_NAMES.has(name!) && !aliases.has(name!) && !components.has(name!)) problems.push(`${label}: ${name} is neither a Signal token, an alias nor a component property`);
     }
-    if (COLOUR_PROPERTY.test(d.property)) {
+    if (d.property.startsWith('--') && reserved(d.property)) problems.push(`${label}: ${d.property} is a token: only tokens.css declares it`);
+    if (COLOUR_LITERAL.test(d.value)) problems.push(`${label}: a literal colour (hex or a colour function)`);
+    if (COLOUR_PROPERTY.test(d.property) || d.property.startsWith('--')) {
       // Only var() of a token (no fallback), the keywords above, numbers and lengths.
       const rest = d.value.replace(/var\(\s*--[\w-]+\s*\)/g, ' ').toLowerCase();
       const words = rest.replace(/-?\d*\.?\d+[a-z%]*/g, ' ').match(/[a-z][\w-]*/g) ?? [];
-      const strays = words.filter((word) => !SURFACE_COLOUR_WORDS.has(word));
+      const decoration = d.property.startsWith('text-decoration');
+      const strays = words.filter((word) => !SURFACE_COLOUR_WORDS.has(word) && !(decoration && TEXT_DECORATION_WORDS.has(word)));
       if (rest.includes('#') || strays.length > 0) problems.push(`${label}: a literal colour (${rest.includes('#') ? '#' : strays.join(', ')})`);
     }
     if (['font-size', 'font-family', 'line-height'].includes(d.property)) problems.push(`${label}: type comes from a --text-* token`);
@@ -449,7 +461,16 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
     const spacing = declarations.filter((d) => d.property === 'letter-spacing').at(-1);
     const token = fonts.length === 0 ? undefined : /^var\((--text-[\w-]+)\)$/.exec(fonts.at(-1)!.value)?.[1];
     const label = `${surface.name}: ${declarations[0]!.context.join(' > ')}`;
-    // A weight must be one the rule's own type token's family is bundled in (inherited: Geist).
+    // A --focus-ring (a box-shadow, which forced colours drop) needs an outline they draw: a non-zero
+    // width that isn't `none`, e.g. `outline: 2px solid transparent`.
+    if (declarations.some((d) => d.property === 'box-shadow' && /var\(\s*--focus-ring\s*\)/.test(d.value))) {
+      const outline = declarations.filter((d) => d.property === 'outline').at(-1)?.value ?? '';
+      if (!/(?:^|\s)(?:\d*\.)?\d*[1-9]\d*(?:\.\d+)?(?:px|em|rem)?(?:\s|$)/.test(outline) || /(?:^|\s)none(?:\s|$)/.test(outline)) {
+        problems.push(`${label}: --focus-ring needs an outline forced colours draw (outline: 2px solid transparent), not \`${outline || 'none set'}\``);
+      }
+    }
+    // A weight must be one the rule's own type token's family is bundled in. A rule without its own
+    // `font` is checked against Geist (what every surface rule inherits today), not its real inherited family.
     const weight = declarations.filter((d) => d.property === 'font-weight').at(-1);
     const ownToken = /^var\((--text-[\w-]+)\)$/.exec(declarations.filter((d) => d.property === 'font').at(-1)?.value ?? '')?.[1];
     const family = (ownToken !== undefined && familyOf.get(ownToken)) || 'Geist';
@@ -484,11 +505,23 @@ test('surface-rules-read-signal-tokens', () => {
     'a var() fallback outside colour': '.palette { padding: var(--space-4, 7px); }',
     'color: unset': '.palette-option { color: unset; }',
     'Geist Mono at 500': '.palette-kbd { font: var(--text-mono); font-weight: 500; }',
+    'redeclaring a Signal token': '.palette { --bg-surface: tomato; }',
+    'redeclaring a legacy name': '.palette { --palette-bg: red; background: var(--palette-bg); }',
+    'a component property with a literal colour': '.palette { --x: rgb(1 2 3); }',
+    'a colour function in filter': '.palette { filter: drop-shadow(0 0 2px rgb(255 0 0)); }',
+    'hex in scrollbar-color': '.palette-list { scrollbar-color: #f00 #00f; }',
+    'focus ring with outline: 0': '.palette-x:focus-visible { outline: 0; box-shadow: var(--focus-ring); }',
+    'focus ring with no outline': '.palette-x:focus-visible { box-shadow: var(--focus-ring); }',
   };
   for (const [name, css] of Object.entries(caught)) expect(problemsIn(css), name).not.toEqual([]);
   // ... and these pass: a token rule, a class-boundary miss, a caps rule with its tracking.
   expect(problemsIn('.palette-group-label { font: var(--text-caps); letter-spacing: 0.06em; color: var(--text-muted); }')).toEqual([]);
   expect(problemsIn('.palette { box-shadow: var(--e-ring), inset 0 0 0 100vmax var(--bg-hover); border: 0; }')).toEqual([]);
+  // A component-scoped property (the values step's --tone-ink pattern), and text-decoration's keywords.
+  expect(problemsIn('.palette { --tone-ink: var(--ok-ink); color: var(--tone-ink); }')).toEqual([]);
+  expect(problemsIn('.palette-hit { text-decoration: underline; }')).toEqual([]);
+  // A focus ring forced colours still draw (they drop box-shadows): a transparent outline beside it.
+  expect(problemsIn('.palette-x:focus-visible { outline: 2px solid transparent; outline-offset: 2px; box-shadow: var(--focus-ring); }')).toEqual([]);
   expect(surfaceProblems('.table-row { color: red; }', { name: 'tab', stylesheet: 'n/a', selectorPrefix: '.tab' }).checked).toBe(0);
   expect(surfaceProblems('.palettes, .x-palette { color: red; }', palette).checked).toBe(0);
 
