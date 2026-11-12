@@ -328,10 +328,14 @@ export const LEGACY_TOKEN_MIGRATION = [
  * when any selector in its list, at any nesting, names a class `selectorPrefix` or `selectorPrefix-…`
  * on a class boundary (`.palette` covers `.palette`, `.palette-option` and `.chrome .palette-hit`,
  * never `.palettes` or `.x-palette`; `.tab` would never cover `.table-row`), or when it sits in a
- * `@keyframes` named the prefix's stem or stem-… (`palette-in`). Such a rule reads only Signal tokens
- * and legacy aliases in `var()`, never with a fallback (in any property); its colour-bearing values
- * (`background-image` included) hold nothing else but `transparent`, `currentColor`, `inherit`, `none`,
- * lengths and `color-mix()` of those; its type comes from a `--text-*` token (`font: var(--text-*)`,
+ * `@keyframes` named the prefix's stem or stem-… (`palette-in`). Such a rule reads only Signal tokens,
+ * legacy aliases and component-scoped custom properties (declared in the same stylesheet, e.g.
+ * `--tone-ink`) in `var()`, never with a fallback (in any property); it declares no Signal or legacy
+ * name; no value of it holds a hex colour or a colour function; its colour-bearing values
+ * (`background-image` and custom properties included) hold nothing else but `transparent`,
+ * `currentColor`, `inherit`, `none`, lengths and `color-mix()` of those (plus `text-decoration`'s line
+ * and style keywords); a rule whose `box-shadow` reads `--focus-ring` also sets an `outline` forced
+ * colours draw (they drop box-shadows): a non-zero width, not `none`, e.g. `2px solid transparent`; its type comes from a `--text-*` token (`font: var(--text-*)`,
  * with that token's `tracking` as `letter-spacing` in the same rule when it isn't `0`); a
  * `font-weight` beside it is one `BUNDLED_FONTS` has for that token's family (Geist Mono: 400 only).
  */

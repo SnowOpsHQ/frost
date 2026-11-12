@@ -148,10 +148,14 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: surface-rules-read-signal-tokens** — for each `SIGNAL_SURFACES` entry, every rule of the
   surface in its stylesheet (any selector in its list names one of the surface's classes on a class
   boundary, at any nesting: `@media`, `@container`; or it is in the surface's `@keyframes`) reads only
-  Signal tokens and legacy aliases in `var()` (whitespace allowed, no fallback in any property); a
-  colour-bearing value (`background-image` included) holds only those, `transparent`, `currentColor`,
-  `inherit`, `none`, lengths and `color-mix()` (so hex, `rgb()`, a gradient, `unset`, `initial`, any
-  named colour fail); no `font-size`, `font-family` or `line-height`; `font` only `var(--text-*)`; a
+  Signal tokens, legacy aliases and component-scoped custom properties (declared in the same
+  stylesheet) in `var()` (whitespace allowed, no fallback in any property); declares no Signal or
+  legacy name; holds no hex colour or colour function in any property; a colour-bearing value
+  (`background-image` and custom properties included) holds only those, `transparent`,
+  `currentColor`, `inherit`, `none`, lengths and `color-mix()` (so hex, `rgb()`, a gradient, `unset`,
+  `initial`, any named colour fail; `text-decoration` may also name its line and style keywords); a
+  rule whose `box-shadow` reads `--focus-ring` sets an `outline` forced colours draw (non-zero width,
+  not `none`: `outline: 2px solid transparent`); no `font-size`, `font-family` or `line-height`; `font` only `var(--text-*)`; a
   rule whose `--text-*` token has a non-zero tracking sets exactly that `letter-spacing`, and any
   `letter-spacing` equals the tracking of the token its own rule sets; a `font-weight` is one
   `BUNDLED_FONTS` has for the family of its rule's own `--text-*` token (or for Geist when the rule
@@ -159,8 +163,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   selector list, an ancestor-qualified selector, `var( --retired)`, a named colour, a `var()`
   fallback (in a colour and in `padding`), a colour in the surface's keyframes, a caps rule without
   its letter-spacing, a body rule with caps letter-spacing, a gradient `background-image`,
-  `color: unset` and Geist Mono at 500; it ignores `.palettes`, `.x-palette`, and `.table-*` for a
-  `.tab` surface.
+  `color: unset`, Geist Mono at 500, a redeclared Signal or legacy name, a component property holding
+  `rgb()`, `rgb()` in `filter`, hex in `scrollbar-color`, and a `--focus-ring` with `outline: 0` or
+  no outline; it accepts a component property (`--tone-ink: var(--ok-ink)`) read in the same rule,
+  `text-decoration: underline`, and `--focus-ring` beside `outline: 2px solid transparent`; it ignores
+  `.palettes`, `.x-palette`, and `.table-*` for a `.tab` surface.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
 
