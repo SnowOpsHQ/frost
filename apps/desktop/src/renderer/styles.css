@@ -7959,6 +7959,11 @@ input {
   color: var(--accent);
 }
 
+/* Hovered, the fill lightens (dark): --accent-hover keeps the label at 4.5:1 on it. */
+.update-button.update-primary:hover:not(:disabled) {
+  color: var(--accent-hover);
+}
+
 .update-button.update-quiet {
   border-color: transparent;
   background: transparent;

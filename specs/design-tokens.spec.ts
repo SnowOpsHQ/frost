@@ -388,6 +388,12 @@ export const CONTRAST_PAIRS = [
   { fg: '--danger', bg: '--bg-sheet', min: 3, why: RING },
   // Rules the values step pinned (TEXT_COLOUR_RULES)
   { fg: '--warn-ink', bg: '--bg-chrome', min: 4.5, why: 'the status bar\'s notice (.status-notice) on --bg-chrome (4.5:1)' },
+  {
+    fg: '--accent-hover',
+    bg: '--bg-field-hover',
+    min: 4.5,
+    why: 'the update bar\'s primary button, hovered (.update-primary on --bg-field-hover) (4.5:1)',
+  },
 ] as const satisfies readonly ContrastPair[];
 
 /**
@@ -410,6 +416,12 @@ export const TEXT_COLOUR_RULES = [
     element: ['.status-notice'],
     color: '--warn-ink',
     why: '--warn on --bg-chrome is 4.26:1 in light; the notice is 11.5px text',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.update-button', '.update-button:hover:not(:disabled)', '.update-button.update-primary', '.update-button.update-primary:hover:not(:disabled)'],
+    color: '--accent-hover',
+    why: '--accent on the hovered button (--bg-field-hover) is 4.23:1 in dark',
   },
 ] as const satisfies readonly TextColourRule[];
 
