@@ -460,7 +460,7 @@ export const CONTRAST_PAIRS = [
   { fg: '--text-muted', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s selected chat: its snippet (--text-muted), and a search match in any snippet (4.5:1)' },
   { fg: '--text', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s approval card and notice banner (--agent-approval-bg → --warn-soft) on the sheet (4.5:1)' },
   { fg: '--text-muted', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: 'the approval card\'s labels and page key (12px, --text-muted) (4.5:1)' },
-  { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: `${INK}: the approval card's note (12px, was --caution)` },
+  { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: `${INK}: the approval card's note and its "More code below" hint (12px, was --caution)` },
   { fg: '--text', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: 'the agent settings\' revoke-all confirmation (--warn-soft) inside a card (4.5:1)' },
   { fg: '--text-muted', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: 'the revoke-all confirmation\'s muted text inside a card (4.5:1)' },
   { fg: '--text', bg: '--danger-soft', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s error banner (was a 13% --danger tint) on the sheet (4.5:1)' },

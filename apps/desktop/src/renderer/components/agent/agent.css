@@ -1011,6 +1011,7 @@
 
 .agent-skill-instructions {
   min-height: 140px;
+  border-radius: var(--r-sm);
   font: var(--text-mono);
 }
 
