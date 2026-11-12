@@ -1,7 +1,10 @@
 // Acceptance: specs/browser-session-db.feature.md (Single instance)
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, test, vi } from 'vitest';
-import { claimSingleInstance, quitOnStartupFailure, reopenOnActivate, type ShowableWindow } from '../single-instance';
+import { claimSingleInstance, createStartup, quitOnStartupFailure, reopenOnActivate, type ShowableWindow } from '../single-instance';
 
 class FakeApp extends EventEmitter {
   ready = true;
@@ -120,6 +123,82 @@ describe('single instance', () => {
     }
   });
 
+  test('startup-completes', async () => {
+    const app = new FakeApp(true);
+    const startup = createStartup(app);
+    const report = vi.fn<(error: unknown) => void>();
+    const body = vi.fn(async () => undefined);
+    await startup.run(body, report);
+    expect(body).toHaveBeenCalledOnce();
+    expect(await state(startup.started)).toBe('resolved');
+    expect(report).not.toHaveBeenCalled();
+    expect(app.quit).not.toHaveBeenCalled();
+    // Main runs its one whenReady chain through it (index.ts is the Electron entry: a source check).
+    const main = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../index.ts'), 'utf8');
+    expect(main).toMatch(/createStartup\(app\)/);
+    expect(main).toMatch(/runStartup\(async \(\) => \{\s*await app\.whenReady\(\);/);
+    expect(main.match(/app\.whenReady\(\)/g)).toHaveLength(1);
+    expect(main).not.toMatch(/void app\.whenReady\(\)/);
+  });
+
+  test('startup-failure-quits: a failed run rejects started, reports and quits', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      for (const fail of [
+        (failure: Error) => () => Promise.reject(failure),
+        // A body that throws before it returns a promise.
+        (failure: Error) => () => {
+          throw failure;
+        },
+      ]) {
+        const app = new FakeApp(true);
+        const startup = createStartup(app);
+        const failure = new Error('session store failed to open');
+        const report = vi.fn<(error: unknown) => void>();
+        await startup.run(fail(failure), report);
+        // Nothing waits on `started` (telemetry unconfigured, no later launch): still not unhandled.
+        await settle();
+        expect(unhandled).not.toHaveBeenCalled();
+        expect(await state(startup.started)).toBe('rejected');
+        await expect(startup.started).rejects.toBe(failure);
+        expect(report).toHaveBeenCalledExactlyOnceWith(failure);
+        expect(app.quit).toHaveBeenCalledOnce();
+      }
+    } finally {
+      process.off('unhandledRejection', unhandled);
+      error.mockRestore();
+    }
+  });
+
+  test('startup-failure-quits: a later launch or the dock icon shows nothing', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const app = new FakeApp(true);
+      const startup = createStartup(app);
+      const win = fakeWindow();
+      const openWindow = vi.fn();
+      const options = { windows: () => [win], openWindow, started: startup.started };
+      claimSingleInstance(app, options);
+      reopenOnActivate(app, options);
+      // One waits from before the failure, one arrives after it.
+      app.emit('second-instance');
+      await startup.run(() => Promise.reject(new Error('boom')), () => undefined);
+      app.emit('second-instance');
+      app.emit('activate');
+      await settle();
+      expect(openWindow).not.toHaveBeenCalled();
+      expect(win.show).not.toHaveBeenCalled();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+      error.mockRestore();
+    }
+  });
+
   test('startup-failure-quits even when reporting throws', async () => {
     const app = new FakeApp(true);
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -141,6 +220,14 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   const promise = new Promise<void>((done) => (resolve = done));
   return { promise, resolve };
 }
+
+/**
+ * Whether `promise` has settled once pending promise callbacks have run: answers at once, instead of
+ * a test timeout for one that never settles. (`pending` waits a task: an already-resolved promise
+ * would win the race against a settled one's second callback.)
+ */
+const state = (promise: Promise<unknown>) =>
+  Promise.race([promise.then(() => 'resolved', () => 'rejected'), new Promise<string>((resolve) => setImmediate(() => resolve('pending')))]);
 
 /** Lets pending promise callbacks run. */
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));

@@ -18,7 +18,10 @@ export interface InstanceApp {
 export interface WindowOptions {
   readonly windows: () => readonly ShowableWindow[];
   readonly openWindow: () => void;
-  /** Resolves once startup is complete (session restored, first window opened). */
+  /**
+   * Resolves once startup is complete (session restored, first window opened); rejects when it
+   * failed (the app is quitting: nothing is shown or opened).
+   */
   readonly started: Promise<unknown>;
 }
 
@@ -52,7 +55,7 @@ export function claimSingleInstance(app: InstanceApp, options: WindowOptions): b
       if (win.isMinimized()) win.restore();
       win.show();
       win.focus();
-    });
+    }, quitting);
   });
   return true;
 }
@@ -76,11 +79,55 @@ export function quitOnStartupFailure(app: Pick<InstanceApp, 'quit'>, report: (er
   };
 }
 
+/** Startup after the lock is taken: `started` for whatever waits on it, `run` to run it. */
+export interface Startup {
+  /**
+   * Resolves once startup completes; rejects with its error when it fails (the app then quits).
+   * Never an unhandled rejection, even with nothing waiting on it.
+   */
+  readonly started: Promise<void>;
+  /**
+   * Runs startup's `body` (the `whenReady` chain up to the first window): it completes and `started`
+   * resolves, or it throws or rejects and `started` rejects, then `quitOnStartupFailure(app, report)`.
+   * Never rejects itself.
+   */
+  run(body: () => Promise<void>, report: (error: unknown) => void): Promise<void>;
+}
+
+/** Main's one startup (spec `startup-completes`, `startup-failure-quits`). */
+export function createStartup(app: Pick<InstanceApp, 'quit'>): Startup {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const started = new Promise<void>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  // Handled once here: telemetry may be unconfigured (and not wait on it) and no later launch may come.
+  started.catch(() => undefined);
+  return {
+    started,
+    run: (body, report) =>
+      Promise.resolve()
+        .then(body)
+        .then(resolve, async (error: unknown) => {
+          // Telemetry's `app.start` span ends as an error a few callbacks after this. With no window
+          // open, `quit()` runs `will-quit` (and telemetry's flush of what is queued) inside the call,
+          // so the quit waits a task: the ended span is then queued and sent in that flush.
+          reject(error);
+          await new Promise<void>((done) => setImmediate(done));
+          quitOnStartupFailure(app, report)(error);
+        }),
+  };
+}
+
 /** macOS: the dock icon (`activate`) opens a window when none is open, once startup is complete. */
 export function reopenOnActivate(app: InstanceApp, options: WindowOptions): void {
   app.on('activate', () => {
     void options.started.then(() => {
       if (!options.windows().some((w) => !w.isDestroyed())) options.openWindow();
-    });
+    }, quitting);
   });
 }
+
+/** A failed startup (`started` rejected) quits the app: a later launch or the dock icon shows nothing. */
+function quitting(): void {}

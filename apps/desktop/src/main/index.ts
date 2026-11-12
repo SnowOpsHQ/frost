@@ -52,7 +52,7 @@ import { runIntentSelfTestIfAsked } from './intent/selftest';
 import { setupSerp } from './serp/setup';
 import { registerAppWideGuards, registerSecurity, type SecurityOptions } from './security/register';
 import { flushBeforeQuit, loadSavedState, openBrowserSessionStore } from './session-store';
-import { claimSingleInstance, quitOnStartupFailure, reopenOnActivate } from './single-instance';
+import { claimSingleInstance, createStartup, reopenOnActivate } from './single-instance';
 import { handleSquirrelEvent } from './update/squirrel-events';
 import { startUpdateService } from './update/service';
 import { startSyncService } from './sync/service';
@@ -98,9 +98,9 @@ function start(): void {
   // One frost per profile (specs/browser-session-db.feature.md, Single instance): a second launch
   // on the same `userData` shows this instance's window and quits before it opens anything, so
   // two instances never save over each other's session.
-  // A second launch, and (macOS) the dock icon, act only once startup is complete (`started`).
-  let markStarted: () => void = () => undefined;
-  const started = new Promise<void>((resolve) => (markStarted = resolve));
+  // A second launch, and (macOS) the dock icon, act only once startup is complete (`started`); a
+  // failed startup rejects it and quits (`runStartup` below).
+  const { started, run: runStartup } = createStartup(app);
   const windowOptions = { windows: () => BrowserWindow.getAllWindows(), openWindow: () => openMainWindow(), started };
   if (!claimSingleInstance(app, windowOptions)) return;
 
@@ -403,7 +403,8 @@ function start(): void {
     });
   }
 
-  void app.whenReady().then(async () => {
+  void runStartup(async () => {
+    await app.whenReady();
     // Only the app's own windows (and their DevTools) may load app:// (APP_REQUEST_FILTER in
     // specs/app-protocol.spec.ts); this owns the session's single onBeforeRequest listener.
     restrictAppRequests(session.defaultSession, windows.isAppWebContents);
@@ -600,10 +601,9 @@ function start(): void {
     await searchEngine.load();
     browser.restoreSession(saved.session);
     openMainWindow();
-    markStarted();
-  }).catch(
-    // Caught here, a failed startup is no longer an unhandled rejection: reported to telemetry as one.
-    quitOnStartupFailure(app, (error) => telemetryMain.telemetry.captureException(error, { mechanism: 'onunhandledrejection', handled: false })),
+  },
+    // A failed startup, caught by `runStartup`, is no longer an unhandled rejection: reported to telemetry as one.
+    (error) => telemetryMain.telemetry.captureException(error, { mechanism: 'onunhandledrejection', handled: false }),
   );
 
   // macOS: re-create a window when the dock icon is clicked and none are open.

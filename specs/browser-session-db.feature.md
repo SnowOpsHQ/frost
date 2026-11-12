@@ -289,13 +289,20 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 - **Scenario: activate-waits-for-startup** — `reopenOnActivate`: an `activate` before startup is
   complete opens nothing, and once it is, sees the window startup opened (no second one); an
   `activate` after startup with no live window opens one.
-- **Scenario: startup-failure-quits** — a startup that fails after the lock is taken (the
-  `whenReady` chain throws or rejects before the first window opens) is logged (`console.error`),
-  reported to telemetry as the unhandled rejection it would otherwise be (`captureException`,
-  mechanism `onunhandledrejection`, `handled: false`; sent only with `errors` consent), and then the
-  app quits (`quitOnStartupFailure`), even if reporting throws: it never stays running windowless,
-  holding the lock, so a later launch starts normally instead of handing over to an instance that
-  shows nothing. The helper is unit-tested; its wiring in `main/index.ts` is not.
+- **Scenario: startup-completes** — main runs startup through `createStartup(app)`: its `run(body,
+  report)` (the `whenReady` chain up to the first window) resolves `started` once the body completes,
+  and neither reports nor quits. `main/index.ts` runs its one `app.whenReady()` inside `runStartup`
+  (a source-text check).
+- **Scenario: startup-failure-quits** — a startup that fails after the lock is taken (the body of
+  `run` throws or rejects before the first window opens) rejects `started` with that error (so
+  telemetry's `app.start` span ends as an error; the quit waits a task after that, so the span is
+  sent in the quit's flush), is logged (`console.error`), reported to telemetry
+  as the unhandled rejection it would otherwise be (`captureException`, mechanism
+  `onunhandledrejection`, `handled: false`; sent only with `errors` consent), and then the app quits
+  (`quitOnStartupFailure`), even if reporting throws: it never stays running windowless, holding the
+  lock, so a later launch starts normally instead of handing over to an instance that shows nothing.
+  A `second-instance` or `activate` waiting on the rejected `started` shows and opens nothing (the
+  app is quitting), and the rejection is never an unhandled one, even with nothing waiting on it.
 
 ## Main wiring (`apps/desktop/src/main/__tests__/session-store.test.ts`, real `node:sqlite`, temp dir)
 - **Scenario: session-persists-across-reopen** — tabs, visits and Blocks saved through one
