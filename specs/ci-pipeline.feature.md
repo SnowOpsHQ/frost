@@ -64,6 +64,11 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   whose `gating` is off (Windows), a failed suite does not fail the step or the job
   (`continue-on-error` on that one step): a warning on the run says which shard failed, and the
   report is uploaded all the same.
+- **Scenario: e2e-retries-only-in-ci** — `apps/desktop/playwright.config.ts` runs a failed e2e test
+  again, up to twice, when `CI` is set, and never otherwise. A test that then passes is flaky: its
+  shard stays green, and Playwright's `github` reporter (CI only) puts the failed attempt and a
+  summary naming the test on the run. A test that fails all three times fails its shard. The
+  screenshot baseline (`visual.e2e.ts`) sets its own retries to 0, and no other suite sets any.
 - **Scenario: ci-passed-runs-the-verdict** — `ci-passed` runs `node scripts/ci-plan.mjs verdict`
   with `NEEDS` set to the JSON of the jobs it needs and `PLATFORMS` to `preflight`'s `platforms`.
 - **Scenario: sandbox-stays-on** — nothing in the workflow or the setup action passes

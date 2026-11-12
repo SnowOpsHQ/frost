@@ -43,6 +43,10 @@ import { selfSignedCertificate } from './tls';
 
 test.skip(process.platform !== 'linux', 'The screenshot baseline is Linux-only (CI renders it under xvfb); macOS and Windows skip it.');
 
+// Never retried (CI retries the other suites' failed tests: playwright.config.ts). A differing or
+// missing image is a result, not a flake, and a baseline run renders each state once.
+test.describe.configure({ retries: 0 });
+
 /** The window's content size every capture is taken at (CSS px; `scale: 'css'`). */
 const WINDOW = { width: 1280, height: 800 } as const;
 const THEMES = ['light', 'dark'] as const;

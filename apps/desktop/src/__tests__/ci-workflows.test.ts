@@ -189,6 +189,20 @@ describe('CI pipeline', () => {
     expect(upload.with).toMatch(/retention-days: 7$/m);
   });
 
+  test('e2e-retries-only-in-ci', () => {
+    const config = read('apps/desktop/playwright.config.ts');
+    expect(config).toMatch(/^ {2}retries: process\.env\['CI'\] \? 2 : 0,$/m);
+    // The `github` reporter is what names a flaky test on the run.
+    expect(config).toMatch(/^ {2}reporter: process\.env\['CI'\] \? \[\['list'\], \['github'\], \['html', \{ open: 'never' \}\]\] : \[\['list'\]\],$/m);
+    // The screenshot baseline is never retried; no other suite changes its retries.
+    const folder = new URL('../../e2e/', import.meta.url);
+    const suites = readdirSync(folder).filter((file) => file.endsWith('.e2e.ts'));
+    expect(suites.length).toBeGreaterThan(10);
+    const setsRetries = suites.filter((file) => /\bretries\s*:/.test(read(`apps/desktop/e2e/${file}`)));
+    expect(setsRetries).toEqual(['visual.e2e.ts']);
+    expect(read('apps/desktop/e2e/visual.e2e.ts')).toMatch(/^test\.describe\.configure\(\{ retries: 0 \}\);$/m);
+  });
+
   test('ci-passed-runs-the-verdict', () => {
     const { steps, keys } = job(CI_VERDICT_JOB);
     expect(keys['runs-on']).toBe('ubuntu-24.04');

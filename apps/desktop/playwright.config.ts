@@ -31,6 +31,12 @@ export default defineConfig({
   // every capture's images are committed.
   updateSnapshots: 'missing',
   forbidOnly: !!process.env['CI'],
+  // In CI a failed test is run again, up to twice, each time in a fresh worker (so a fresh app). One
+  // that then passes is "flaky": its shard stays green, and the `github` reporter puts the failed
+  // attempt and a summary naming the test on the run, so it can still be fixed. One that fails all
+  // three times fails its shard. Locally a failure is a failure. The screenshot baseline opts out
+  // (visual.e2e.ts). specs/ci-pipeline.feature.md, e2e-retries-only-in-ci.
+  retries: process.env['CI'] ? 2 : 0,
   // In CI an HTML report is kept too (uploaded by .github/workflows/ci.yml when the job fails).
-  reporter: process.env['CI'] ? [['list'], ['html', { open: 'never' }]] : [['list']],
+  reporter: process.env['CI'] ? [['list'], ['github'], ['html', { open: 'never' }]] : [['list']],
 });

@@ -42,7 +42,8 @@ Each gate is a step named `Gate: <name>` in the job given (`gates-map-to-steps`,
   (which the job makes first with `electron-forge package`, so the Forge build is a gate too), in
   shards, on Linux under `xvfb-run` and on macOS (`ipc-e2e.feature.md` and the scenarios below),
   Chromium sandbox on. Windows shards run for pushes and manual runs and do not fail the run
-  (`e2e-job`, `ci-pipeline.feature.md`).
+  (`e2e-job`, `ci-pipeline.feature.md`). In CI a failed test is run again, up to twice, before it
+  fails its shard (`e2e-retries-only-in-ci`).
 
 ## Semgrep `ipc-sender-guard` rules (Review Focus `semgrep-flags-unguarded-handler`)
 Exercised by **semgrep-rule-test** (fixture `semgrep/__fixtures__/ipc-sender-guard.ts`) and

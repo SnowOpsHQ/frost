@@ -10,6 +10,9 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 ## What is captured
 - **Only the chrome page** (`app://app/`), via `toHaveScreenshot`. A tab's page is a native
   `WebContentsView` that no page screenshot includes: the page area shows the chrome behind it.
+- **Never retried.** CI runs a failed e2e test again (`ci-pipeline.feature.md`,
+  `e2e-retries-only-in-ci`); this file opts out, so a differing or missing image fails at once and
+  a baseline run renders each state once.
 - **Linux only.** The file skips itself elsewhere, so the macOS and Windows e2e jobs never
   compare. Baselines are CI's renderings: ubuntu-24.04, `xvfb-run -a -s "-screen 0 1280x1024x24"`
   (`.github/workflows/ci.yml`; xvfb-run's own default, written out so a change of that default
