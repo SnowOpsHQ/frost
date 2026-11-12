@@ -186,6 +186,52 @@ describe('audit', () => {
     expect(runAudit(everything, RULES.slice(0, 5)).passed).toBe(5);
   });
 
+  test('passed-counts-rules-that-ran (every rule is classified: needs input or always runs)', () => {
+    // The rules with an input in rules/ran.ts: each counts only once its input is known.
+    const needsInput: SeoRuleId[] = [
+      ...(['http-status-redirect', 'http-status-client-error', 'http-status-server-error', 'http-redirect-chain'] as const),
+      ...(['x-robots-noindex', 'x-robots-noindex-other-bot', 'x-robots-nofollow', 'canonical-header-conflict', 'canonical-elsewhere'] as const),
+      ...(['robots-txt-blocks-googlebot', 'robots-txt-blocks-all', 'robots-txt-no-sitemap', 'robots-txt-unreachable'] as const),
+      ...(['lcp-poor', 'lcp-needs-improvement', 'cls-poor', 'cls-needs-improvement', 'inp-poor', 'inp-needs-improvement', 'fcp-poor', 'fcp-needs-improvement', 'ttfb-poor', 'ttfb-needs-improvement'] as const),
+      ...(['page-weight-heavy', 'request-count-high', 'dom-size-large', 'uncompressed-text-resources', 'render-blocking-scripts'] as const),
+      ...(['mixed-content-active', 'mixed-content-passive', 'hsts-missing', 'hsts-short-max-age', 'csp-missing', 'csp-unsafe-inline', 'nosniff-missing', 'clickjacking-unprotected', 'referrer-policy-missing', 'referrer-policy-unsafe'] as const),
+      ...(['a11y-critical', 'a11y-serious'] as const),
+      ...(['js-canonical-changed', 'js-robots-changed', 'js-title-changed', 'js-content-added', 'js-links-added'] as const),
+      ...(['links-broken', 'links-internal-redirect', 'sitemap-page-not-listed', 'sitemap-unreachable', 'hreflang-no-return-link'] as const),
+    ];
+    // The rules that read only the page itself (its HTML and URL): they always run.
+    const alwaysRuns: SeoRuleId[] = [
+      ...(['title-missing', 'title-empty', 'title-multiple', 'title-too-short', 'title-too-wide'] as const),
+      ...(['meta-description-missing', 'meta-description-too-short', 'meta-description-too-wide', 'meta-description-multiple'] as const),
+      ...(['h1-missing', 'h1-multiple', 'h1-empty', 'heading-level-skipped'] as const),
+      ...(['canonical-missing', 'canonical-multiple', 'canonical-relative', 'canonical-off-host', 'canonical-og-url-mismatch', 'canonical-has-query'] as const),
+      ...(['robots-noindex', 'robots-noindex-other-bot', 'robots-nofollow'] as const),
+      ...(['hreflang-invalid-code', 'hreflang-missing-self', 'hreflang-no-x-default', 'hreflang-duplicate', 'hreflang-relative-url'] as const),
+      ...(['lang-missing', 'viewport-missing', 'content-thin'] as const),
+      ...(['images-missing-alt', 'image-alt-too-long', 'images-missing-dimensions', 'images-oversized', 'images-lazy-in-first-viewport'] as const),
+      ...(['links-empty-anchor', 'links-javascript-href', 'links-nofollow', 'url-too-long', 'url-uppercase', 'url-underscores'] as const),
+      ...(['og-title-missing', 'og-description-missing', 'og-image-missing', 'og-image-not-https', 'twitter-card-missing'] as const),
+      ...(['schema-none', 'schema-json-invalid', 'schema-over-limit', 'schema-context-missing', 'schema-context-not-schema-org', 'schema-type-missing', 'schema-type-unknown'] as const),
+      ...(['schema-required-missing', 'schema-recommended-missing', 'schema-url-not-absolute', 'schema-date-invalid', 'schema-breadcrumb-positions', 'schema-price-invalid', 'schema-entity-conflict'] as const),
+      'https-missing',
+    ];
+    // Every catalog rule is in exactly one of the two: a new rule must say whether it needs input.
+    expect([...needsInput, ...alwaysRuns].sort()).toEqual(SEO_RULE_SPECS.map((spec) => spec.id).sort());
+
+    // Nothing collected: over http (mixed content does not apply), no response (no status or
+    // headers), robots.txt still being fetched, no speed measurement, render-blocking count,
+    // accessibility check, served HTML or site checks, and no HTML canonical (`canonical-elsewhere`
+    // reads one without the headers). Only the rules that always run count as passed; the two that
+    // find something here ran too.
+    const http = 'http://example.com/guides/seo-basics';
+    const empty = page({ url: http, canonicals: [], canonicalTotal: 0, ogUrl: http, response: null, robots: okRobots(undefined, { outcome: 'pending' }) });
+    const found = runAudit(empty).findings.map((f) => f.ruleId);
+    expect([...found].sort()).toEqual(['canonical-missing', 'https-missing']);
+    const passed = RULES.filter((rule) => runAudit(empty, [rule]).passed === 1).map((rule) => rule.id);
+    expect(passed.sort()).toEqual(alwaysRuns.filter((id) => !found.includes(id)).sort());
+    expect(runAudit(empty).passed).toBe(alwaysRuns.length - found.length);
+  });
+
   test('panel-status', () => {
     expect(panelStatus([finding('title-missing'), finding('h1-multiple')], ['title', 'headings'])).toBe('error');
     expect(panelStatus([finding('title-missing'), finding('h1-multiple')], ['headings'])).toBe('warn');

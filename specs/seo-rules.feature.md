@@ -161,7 +161,10 @@ changes nothing); rules over images and links look at the snapshot's (capped) li
   rules until that check has run, and `sitemap-page-not-listed` while frost cannot tell (`listed`
   null). The hreflang rules count as ran on the HTML alone, even with unknown headers (an hreflang
   only in a `Link` header is then missed). The clean fixture (no measurement, served HTML, accessibility check or site checks)
-  counts every other rule; with all of them collected and passing, every rule.
+  counts every other rule; with all of them collected and passing, every rule. Every catalog rule is
+  either one that needs input (it has one in `rules/ran.ts`) or one that reads only the page's HTML
+  and URL, and on a page with nothing collected exactly the latter run, so a new rule must be
+  classified.
 - **Scenario: panel-status** — `panelStatus` is `error` with an error in the panel's categories,
   `warn` with a warning and no error, `pass` with only info findings or none.
 - **Scenario: page-facts-summarise-links-images-and-social** — the audit's facts count internal,
