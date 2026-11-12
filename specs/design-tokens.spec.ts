@@ -322,14 +322,21 @@ export const LEGACY_TOKEN_MIGRATION = [
 ] as const satisfies readonly LegacyTokenMigration[];
 
 /**
- * A surface whose rules a surface PR moved onto Signal: every rule in `stylesheet` (relative to the
- * renderer) whose selectors all start with `selectorPrefix` reads only Signal tokens and legacy
- * aliases, writes no literal colour, and takes its type from the `--text-*` tokens (a bundled weight
- * may override the token's). The rollout adds one entry per surface PR.
+ * A surface whose rules a surface PR moved onto Signal (`surface-rules-read-signal-tokens`). The rollout
+ * adds one entry per surface PR. A rule in `stylesheet` (relative to the renderer) is the surface's
+ * when any selector in its list, at any nesting, names a class `selectorPrefix` or `selectorPrefix-…`
+ * on a class boundary (`.palette` covers `.palette`, `.palette-option` and `.chrome .palette-hit`,
+ * never `.palettes` or `.x-palette`; `.tab` would never cover `.table-row`), or when it sits in a
+ * `@keyframes` named the prefix's stem or stem-… (`palette-in`). Such a rule reads only Signal tokens
+ * and legacy aliases in `var()` (no fallback); its colour-bearing values hold nothing else but
+ * `transparent`, `currentColor`, `inherit`, `none`, lengths and `color-mix()` of those; its type comes
+ * from a `--text-*` token (`font: var(--text-*)`, with that token's `tracking` as `letter-spacing` in
+ * the same rule when it isn't `0`; a bundled Geist weight may override the token's).
  */
 export interface SignalSurface {
   readonly name: string;
   readonly stylesheet: string;
+  /** A class name with its dot (`.palette`): the surface's classes are it and it followed by `-…`. */
   readonly selectorPrefix: string;
 }
 
@@ -420,6 +427,13 @@ export const CONTRAST_PAIRS = [
     why: 'the palette\'s selected row: its detail line and group name (12px, --text-muted) (4.5:1)',
   },
   { fg: '--warn-ink', bg: '--bg-surface', min: 4.5, why: 'the palette\'s confirm step: its caution note (12px, was --caution) on the card (4.5:1)' },
+  {
+    fg: '--text',
+    bg: '--bg-hover',
+    over: '--bg-subtle',
+    min: 4.5,
+    why: 'the palette\'s confirm step: its Back button (--bg-subtle fill, --e-ring edge), hovered (--bg-hover laid over the fill) (4.5:1)',
+  },
   {
     fg: '--accent',
     bg: '--accent-soft',
