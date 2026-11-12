@@ -294,7 +294,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     publish({ targets: current.targets.map((target) => (target.outcome === 'pending' || target.outcome === 'running' ? { ...target, outcome: 'cancelled' } : target)) });
   };
 
-  type Run = { readonly projectId: string; cancelled: boolean; wake: (() => void) | null; tabId: number | null; previous: number | null };
+  type Run = { readonly projectId: string; cancelled: boolean; wake: (() => void) | null; tabId: number | null; readonly previous: number | null };
   /** When the last search navigation was sent, in any run (`null`: none since frost started): the next search waits `querySpacingMs` from it. */
   let lastSearchAt: number | null = null;
   /** The run under way (reserved as soon as one starts): its cancel flag and the wake-up of its current wait. */
@@ -400,6 +400,27 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
       if (tab === null) return 'tab-closed';
       showActive(isActive);
       if (isActive) return null;
+      await pause(run, limits.captureRetryMs);
+    }
+  }
+
+  /**
+   * Before the run's first tab opens late (after a search's spacing): waits until the tab in front at
+   * Start (`run.previous`) is in front again (`null`), so the new tab never takes the front from a user
+   * who moved on (none remembered: at once); `cancelled` when the run was cancelled, or that tab is
+   * gone (the run gives way).
+   */
+  async function untilStartTabActive(run: Run): Promise<'cancelled' | null> {
+    for (;;) {
+      if (run.cancelled) return 'cancelled';
+      const { activeTabId, tabs } = browser.getState();
+      // None remembered at Start (the browser could not be asked): nothing to wait for.
+      if (run.previous === null || activeTabId === run.previous) return null;
+      if (!tabs.some((tab) => tab.id === run.previous)) {
+        log('the run gave way: the tab it started from is gone');
+        return 'cancelled';
+      }
+      showActive(false);
       await pause(run, limits.captureRetryMs);
     }
   }
@@ -634,11 +655,12 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
             }
             browser.closeTab(tabId);
           } else {
-            // The run's first tab opens only now: the tab in front now is the one to give back at the end.
-            try {
-              run.previous = browser.getState().activeTabId;
-            } catch {
-              run.previous = null;
+            // The run's first tab opens only now, and only with the tab it started from in front (the
+            // one given back at the end): a new tab never takes the front from the user.
+            const ready = await untilStartTabActive(run);
+            if (ready !== null) {
+              end = ready;
+              break;
             }
           }
           tabId = openTab(groups[g]!.profile);

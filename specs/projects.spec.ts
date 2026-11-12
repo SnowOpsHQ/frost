@@ -83,8 +83,9 @@ export type ProjectRunLimits = { readonly [K in keyof typeof PROJECT_RUN_LIMITS]
  * A run's state:
  * - `idle`: no run since the app started;
  * - `running`: visiting its targets, its tab the active one;
- * - `waiting-for-tab`: its tab is not the active one (the user switched away); it waits, and that
- *   time does not count against the target;
+ * - `waiting-for-tab`: its tab is not the active one (the user switched away), or, before a late
+ *   first tab opens, the tab it started from is not; it waits, and that time does not count against
+ *   the target;
  * - `done`: every target was visited;
  * - `cancelled`: Cancel ended it;
  * - `tab-closed`: its tab was closed, which ends it;
@@ -689,7 +690,7 @@ export const QUERY_FIELD_MAX_CHARS = { language: SERP_PARAM_LIMITS.maxLocaleChar
 export const RUN_STATE_LABELS: Readonly<Record<RunStateName, string>> = {
   idle: 'Not run yet',
   running: 'Capturing',
-  'waiting-for-tab': 'Waiting: bring the run’s tab to the front to go on',
+  'waiting-for-tab': 'Waiting: bring the run’s tab, or the tab you started from, to the front to go on',
   done: 'Done',
   cancelled: 'Cancelled',
   'tab-closed': 'Stopped: the run’s tab was closed',

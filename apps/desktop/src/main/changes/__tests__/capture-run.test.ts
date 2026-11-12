@@ -1127,35 +1127,84 @@ describe('searches in a run', () => {
     expect(fake.runs.state().state).toBe('done');
     expect(fake.tabs.map((tab) => tab.id)).toEqual([1]);
 
-    // The user moves to another tab during the wait: that tab, the one in front as the run's tab
-    // opened, comes back at the end (not the one in front at the click).
-    fake.tabs.push({ id: 2, loading: false, documentSeq: 1, error: null, crashed: false, url: 'https://example.com/other', own: null });
+    // The user moves to another tab during the wait: the run's tab does not take the front from
+    // them. The run waits until the tab it started from is in front again, then opens its tab; that
+    // tab comes back at the end.
+    const other = (id: number) => ({ id, loading: false, documentSeq: 1, error: null, crashed: false, url: 'https://example.com/other', own: null });
+    fake.tabs.push(other(2));
     await fake.runs.start(plan([query(DESKTOP)]));
     await run(RETRY * 2);
     fake.state.activeTabId = 2;
-    await run(SPACING + RETRY * 4);
+    fake.browser.newTab.mockClear();
+    await run(SPACING + TIMEOUT);
+    expect(fake.browser.newTab).not.toHaveBeenCalled();
+    expect(fake.state.activeTabId).toBe(2);
+    expect(at).toHaveLength(2);
+    expect(fake.runs.state()).toMatchObject({ state: 'waiting-for-tab', targets: [{ outcome: 'pending' }] });
+    fake.state.activeTabId = 1;
+    await run(RETRY * 6);
+    expect(fake.browser.newTab).toHaveBeenCalledOnce();
     expect(fake.runs.state().state).toBe('done');
     expect(at).toHaveLength(3);
-    expect(fake.state.activeTabId).toBe(2);
+    expect(fake.state.activeTabId).toBe(1);
     fake.browser.closeTab(2);
-    fake.state.activeTabId = 1;
 
-    // Cancel, or a stop (quit), during the wait: the run ends cancelled and opens no tab.
-    for (const end of ['cancel', 'stop'] as const) {
-      const ended = setup(readySerpFor([query(DESKTOP)]));
-      await ended.runs.start(plan([query(DESKTOP)]));
-      await run(RETRY * 4);
-      ended.browser.newTab.mockClear();
-      await ended.runs.start(plan([query(DESKTOP)]));
-      await run(RETRY * 2);
-      ended.runs[end]();
-      await run(SPACING);
-      expect(ended.runs.state(), end).toMatchObject({ state: 'cancelled', targets: [{ outcome: 'cancelled' }] });
-      expect(ended.browser.newTab, end).not.toHaveBeenCalled();
-      expect(ended.browser.navigate, end).toHaveBeenCalledOnce();
-      expect(ended.tabs.map((tab) => tab.id)).toEqual([1]);
-      expect(ended.state.activeTabId).toBe(1);
+    // Cancel, or a stop (quit), during the wait (the spacing, or the user away on another tab after
+    // it): the run ends cancelled and opens no tab.
+    for (const away of [false, true]) {
+      for (const end of ['cancel', 'stop'] as const) {
+        const ended = setup(readySerpFor([query(DESKTOP)]));
+        ended.tabs.push(other(2));
+        await ended.runs.start(plan([query(DESKTOP)]));
+        await run(RETRY * 4);
+        ended.browser.newTab.mockClear();
+        await ended.runs.start(plan([query(DESKTOP)]));
+        await run(RETRY * 2);
+        if (away) {
+          ended.state.activeTabId = 2;
+          await run(SPACING);
+          expect(ended.runs.state().state, end).toBe('waiting-for-tab');
+        }
+        ended.runs[end]();
+        await run(SPACING);
+        expect(ended.runs.state(), end).toMatchObject({ state: 'cancelled', targets: [{ outcome: 'cancelled' }] });
+        expect(ended.browser.newTab, end).not.toHaveBeenCalled();
+        expect(ended.browser.navigate, end).toHaveBeenCalledOnce();
+        expect(ended.tabs.map((tab) => tab.id)).toEqual([1, 2]);
+        expect(ended.state.activeTabId).toBe(away ? 2 : 1);
+      }
     }
+
+    // The tab the run started from closed while the user is away: nothing to come back to; the run
+    // gives way, cancelled, and opens no tab.
+    const gone = setup(readySerpFor([query(DESKTOP)]));
+    gone.tabs.push(other(2));
+    await gone.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 4);
+    gone.browser.newTab.mockClear();
+    await gone.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 2);
+    gone.state.activeTabId = 2;
+    gone.browser.closeTab(1);
+    await run(SPACING + RETRY * 4);
+    expect(gone.runs.state()).toMatchObject({ state: 'cancelled', targets: [{ outcome: 'cancelled' }] });
+    expect(gone.browser.newTab).not.toHaveBeenCalled();
+    expect(gone.tabs.map((tab) => tab.id)).toEqual([2]);
+    expect(gone.state.activeTabId).toBe(2);
+
+    // No tab remembered at Start (the browser could not be asked): nothing to wait for; the tab opens
+    // once the spacing is over, as before.
+    const unknown = setup(readySerpFor([query(DESKTOP)]));
+    await unknown.runs.start(plan([query(DESKTOP)]));
+    await run(RETRY * 4);
+    unknown.browser.newTab.mockClear();
+    unknown.browser.getState.mockImplementationOnce(() => {
+      throw new Error('no window');
+    });
+    await unknown.runs.start(plan([query(DESKTOP)]));
+    await run(SPACING + RETRY * 4);
+    expect(unknown.browser.newTab).toHaveBeenCalledOnce();
+    expect(unknown.runs.state().state).toBe('done');
 
     // A tab limit once the wait is over: the run fails (it was already under way), nothing navigated.
     await fake.runs.start(plan([query(DESKTOP)]));
