@@ -239,7 +239,8 @@ input {
 .tab-spinner {
   width: 13px;
   height: 13px;
-  border: 2px solid var(--accent-soft);
+  /* The track keeps the old accent-soft strength (22%): Signal's --accent-soft (10%) left it ~1.15:1. */
+  border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: tab-spin 0.8s linear infinite;
