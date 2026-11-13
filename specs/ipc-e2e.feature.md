@@ -16,8 +16,11 @@ in the dev-server URL). The packaged binary cannot be driven: its fuses disable 
 arguments Playwright needs, and they stay on. Entry points: `pnpm test:e2e` (Turbo, builds first) or
 `pnpm --filter @app/desktop test:e2e` after a build; both need a display. Every suite closes its
 app with the harness's `closeApp`: Playwright's `close()` (the app quits), and if that has not
-finished within `APP_CLOSE_TIMEOUT_MS` (10 s) the app's whole process tree is killed (`SIGKILL`), so
-a wedged app fails only its own test, never the worker's teardown. An app that already quit on its
+finished within `APP_CLOSE_TIMEOUT_MS` (10 s) the app's whole process tree is killed (`SIGKILL`; on
+Windows `taskkill /T /F`, because the process Playwright reports there is the shell it starts
+Electron through, and the app is that shell's child), so a wedged app fails only its own test,
+never the worker's teardown. A directory an app used is removed with retries (`removeDir`): on
+Windows its files stay locked for a moment after it exits. An app that already quit on its
 own (closing its last window quits it on Linux) is already closed: `closeApp` then does nothing.
 
 - **Scenario: close-app-kills-wedged-app** — an app whose main process refuses to quit

@@ -4,13 +4,15 @@ import { lstat, open, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { MAX_PREFS_BYTES, UPDATE_PREFS_FILE, UPDATE_PREFS_FORMAT, type UpdatePrefs } from '@app/specs/update-client.spec';
 import { UpdatePrefsSchema } from '@app/specs/update-client.schema';
+import { renameOver } from '../durable';
 import { readJson } from './manifest';
 
 // The update client's prefs (spec `update-client.spec.ts`, Prefs; `update-client.feature.md`,
 // `prefs-defaults`, `prefs-round-trip`, `prefs-update-in-order`, `prefs-not-a-file`,
 // `prefs-tamper-resets`): one small JSON file, `userData/frost-update.json`, mode 0600 on POSIX,
 // written atomically (a temporary file in the same directory, created 0600, renamed over the old
-// one). Anything but a regular file (a FIFO, a symbolic link, a directory), or anything that does
+// one; on Windows the rename is tried again while another program has a file open, `renameOver`).
+// Anything but a regular file (a FIFO, a symbolic link, a directory), or anything that does
 // not parse as `UpdatePrefsSchema` with no repeated key, is replaced by the defaults (a new install
 // ID included), rewritten, and logged in one line. A file that is there but can't be read (EACCES,
 // EMFILE, EIO…) is never replaced: this run uses in-memory defaults and writes nothing, so the file's
@@ -107,7 +109,8 @@ async function writeAtomically(file: string, prefs: UpdatePrefs): Promise<void> 
     } finally {
       await handle.close();
     }
-    await rename(temporary, file);
+    // Another program reading the prefs at this instant must not lose the change (Windows).
+    await renameOver({ rename }, temporary, file);
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
     throw error;

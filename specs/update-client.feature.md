@@ -37,7 +37,10 @@ the feed publishes the Windows `Setup.exe`, not a Squirrel `RELEASES` feed. So e
   gives the same install ID.
 - **Scenario: prefs-round-trip** — a written `checks: 'off'`, `skippedVersion` and `highWaterMark`
   read back equal; the write goes through a temporary file renamed over the old one (no temporary
-  file is left; a lax mode is fixed to 0600 on POSIX).
+  file is left; a lax mode is fixed to 0600 on POSIX). On Windows the rename waits for a file
+  another program has open at that instant, instead of losing the change (`renameOver` in
+  `durable.ts`: `agent-host.feature.md`, `rename-waits-for-a-busy-file`; end to end,
+  `no-silent-install` reads the file while frost writes it).
 - **Scenario: prefs-update-in-order** — `update(change)` runs `change` against the latest prefs
   inside the store's serial queue: two overlapping updates (a raised mark, `checks: 'off'`) both
   land, on disk and in the answers; a failed write leaves the prefs as they were; an update before

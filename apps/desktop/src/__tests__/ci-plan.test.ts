@@ -148,10 +148,10 @@ describe('planCi', () => {
       // One such file among Linux-only ones is enough.
       expect(planCi({ event: 'pull_request', changed: [...linuxOnly, file] }).platforms, file).toBe(true);
     }
-    // With platforms on, a pull request's plan is the full one without the e2e shards that do not gate.
+    // With platforms on, a pull request's plan is the full one: every platform's e2e shards gate.
     const plan = planCi({ event: 'pull_request', changed: ['package.json'] });
     expect(plan.unit).toEqual(full.unit);
-    expect(plan.e2e).toEqual(full.e2e.filter((job) => job.gating));
+    expect(plan.e2e).toEqual(full.e2e);
   });
 
   test('plan-unit-covers-every-suite-once', () => {
@@ -194,8 +194,25 @@ describe('planCi', () => {
     expect(new Set(full.e2e.map((job) => job.id)).size).toBe(full.e2e.length);
     expect(new Set(full.e2e.map((job) => job.name)).size).toBe(full.e2e.length);
     for (const job of full.e2e) expect(job.id, job.id).toMatch(/^[a-z0-9-]+$/);
-    // Linux gates every run; Windows is the platform that does not.
-    expect(CI_E2E_GATING).toEqual({ linux: true, macos: true, windows: false });
+    // Every platform gates: a pull request runs all of them, and a failed shard fails the run.
+    expect(CI_E2E_GATING).toEqual({ linux: true, macos: true, windows: true });
+    expect(pullRequest.e2e).toEqual(full.e2e);
+    expect(full.e2e.every((job) => job.gating)).toBe(true);
+
+    // A platform switched off (while its suite is repaired): out of a pull request's plan, in every
+    // other plan with `gating` off; the other platforms and the unit jobs are untouched.
+    for (const off of CI_PLATFORMS) {
+      const e2eGating = { ...CI_E2E_GATING, [off]: false };
+      const offJobs = full.e2e.filter((job) => job.os === CI_RUNNERS[off]).map((job) => ({ ...job, gating: false }));
+      const others = full.e2e.filter((job) => job.os !== CI_RUNNERS[off]);
+      const inPush = planCi({ event: 'push', changed: [], e2eGating });
+      expect(inPush.e2e.filter((job) => job.os === CI_RUNNERS[off]), off).toEqual(offJobs);
+      expect(inPush.e2e.filter((job) => job.os !== CI_RUNNERS[off]), off).toEqual(others);
+      const inPull = planCi({ event: 'pull_request', changed: ['package.json'], e2eGating });
+      expect(inPull.e2e, off).toEqual(others);
+      expect(inPull.unit, off).toEqual(full.unit);
+      expect(planCi({ event: 'workflow_dispatch', changed: [], e2eGating }).e2e, off).toEqual(inPush.e2e);
+    }
   });
 
   test('plan-fits-the-macos-limit', () => {

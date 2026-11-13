@@ -126,9 +126,9 @@ nupkgs are extracted with Windows' own `%SystemRoot%\System32\tar.exe` into temp
 Checked by `platform-workflows.test.ts` (the named test below), by actionlint (the pipeline's
 `Gate: actionlint`) and by the workflow runs themselves. When the job runs is the pipeline's plan
 (`ci-pipeline.feature.md`): always, except for a pull request that changes only Linux-only paths.
-The unit tests run in the pipeline's `unit` jobs on the same image. The e2e is not reliable on
-Windows yet: its shards run for pushes and manual runs only, never for a pull request, and do not
-fail the run (`CI_E2E_GATING`); a failed shard still uploads its Playwright report.
+The unit and e2e tests run in the pipeline's `unit` and `e2e` jobs on the same image. The e2e
+shards gate like every other platform's (`CI_E2E_GATING`, since 2026-11-13): they run for a pull
+request too, and a failed shard fails the run and uploads its Playwright report.
 - **Scenario: windows-ci-job** — job `package-windows` (`Package · Windows x64`) on
   `windows-2025`. Before checkout, `git config --global core.autocrlf false` (the packaged files
   keep the repository's LF line endings). Then: the shared setup (frozen-lockfile install),

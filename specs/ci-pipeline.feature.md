@@ -63,9 +63,9 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   `xvfb-run -a -s "-screen 0 1280x1024x24"` after allowing unprivileged user namespaces (the
   Chromium sandbox stays on), elsewhere in the runner's own desktop session. A failed shard uploads
   its Playwright report and test results as `playwright-report-<matrix.id>` (7 days). For a shard
-  whose `gating` is off (Windows), a failed suite does not fail the step or the job
-  (`continue-on-error` on that one step): a warning on the run says which shard failed, and the
-  report is uploaded all the same.
+  whose `gating` is off (no platform's is today; `CI_E2E_GATING`), a failed suite does not fail the
+  step or the job (`continue-on-error` on that one step): a warning on the run says which shard
+  failed, and the report is uploaded all the same.
 - **Scenario: e2e-retries-only-in-ci** — `apps/desktop/playwright.config.ts` runs a failed e2e test
   again, up to twice, when `CI` is set, and never otherwise. A test that then passes is flaky: its
   shard stays green, and Playwright's `github` reporter (CI only) puts the failed attempt and a
@@ -116,9 +116,10 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   `CI_UNIT_DESKTOP_SHARDS`, each exactly once; every job runs on `CI_RUNNERS`' image for its
   platform; ids and names are unique.
 - **Scenario: plan-e2e-shards** — on each platform the e2e jobs are the shards `1/n` … `n/n` for
-  `CI_E2E_SHARDS`, each exactly once, on that platform's image, `gating` as `CI_E2E_GATING` says.
-  A platform that is not gating (Windows) has no e2e job in a pull request's plan and all of them
-  otherwise.
+  `CI_E2E_SHARDS`, each exactly once, on that platform's image, `gating` as `CI_E2E_GATING` says:
+  on for every platform, so a pull request runs every platform's shards and a failed one fails
+  the run. A platform whose gating is off (given to `planCi` as `e2eGating`) has no e2e job in a
+  pull request's plan and all of them otherwise, each with `gating` off.
 - **Scenario: plan-fits-the-macos-limit** — a full plan holds at most four macOS unit and e2e jobs
   (with `package-macos`, five: what GitHub's Free plan, which the organisation is on, runs at once).
 
