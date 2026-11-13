@@ -1,22 +1,26 @@
-import type { TabState } from '@app/specs/browser.spec';
-import { BackIcon, ForwardIcon, ReloadIcon, SidebarIcon, StopIcon } from '../icons';
+import type { BrowserState, TabState } from '@app/specs/browser.spec';
+import { BackIcon, ForwardIcon, PlusIcon, ReloadIcon, SidebarIcon, StopIcon } from '../icons';
 import { actions } from '../ipc';
 import { AddressBar } from './AddressBar';
 import { RenderProfileToggle } from './RenderProfile';
+import { TabStrip } from './TabStrip';
 
-// The toolbar of the browser chrome (`App.tsx`; spec `browser-chrome.feature.md`, Layout). Styling is the
-// bundled styles.css only (strict CSP).
+// The browser chrome's one row (`App.tsx`; specs `tabs.feature.md`, The chrome row, and
+// `browser-chrome.feature.md`, Layout): in DOM order, which is the Tab order (`CHROME_ROW` in
+// `tabs.spec.ts`), the navigation tools, the tablist, the address bar as its next sibling, New tab and
+// the toolbar's toggles; the loading line along its foot. Styling is the bundled styles.css only
+// (strict CSP).
 
-export function Toolbar({
+export function ChromeRow({
+  state,
   tab,
-  focusSeq,
   sidebarOpen,
   onToggleSidebar,
   profileOpen,
   onToggleProfile,
 }: {
+  readonly state: BrowserState | null;
   readonly tab: TabState | undefined;
-  readonly focusSeq: number | undefined;
   readonly sidebarOpen: boolean;
   readonly onToggleSidebar: () => void;
   readonly profileOpen: boolean;
@@ -24,7 +28,7 @@ export function Toolbar({
 }) {
   const loading = tab?.loading === true;
   return (
-    <header className="toolbar">
+    <header className="chrome-row" data-testid="chrome-row" aria-label="Browser chrome">
       <nav className="nav-buttons" aria-label="Navigation">
         <button type="button" className="tool" data-testid="back" aria-label="Back" title="Back" disabled={!tab?.canGoBack} onClick={() => void actions.back()}>
           <BackIcon />
@@ -52,9 +56,11 @@ export function Toolbar({
           {loading ? <StopIcon /> : <ReloadIcon />}
         </button>
       </nav>
-      <AddressBar tab={tab} focusSeq={focusSeq} />
-      {/* Render profiles (`render-profile.feature.md`): the editor bar's toggle. */}
-      <RenderProfileToggle tab={tab} open={profileOpen} onToggle={onToggleProfile} />
+      <TabStrip state={state} />
+      <AddressBar tab={tab} focusSeq={state?.focusAddressBarSeq} />
+      <button type="button" className="new-tab" data-testid="new-tab" aria-label="New tab" title="New tab" onClick={() => void actions.newTab()}>
+        <PlusIcon />
+      </button>
       {/* The SEO sidebar's panel (spec `seo-sidebar.feature.md`): also View › SEO Sidebar, Mod+Shift+S. */}
       <button
         type="button"
@@ -67,6 +73,8 @@ export function Toolbar({
       >
         <SidebarIcon />
       </button>
+      {/* Render profiles (`render-profile.feature.md`): the editor bar's toggle. */}
+      <RenderProfileToggle tab={tab} open={profileOpen} onToggle={onToggleProfile} />
       <div className={loading ? 'progress progress-active' : 'progress'} aria-hidden="true" />
     </header>
   );

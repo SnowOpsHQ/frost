@@ -20,7 +20,7 @@ const PROMPT_ICONS: Record<PromptKind, typeof BellIcon> = {
 
 /**
  * The active tab's permission prompt (`permissions.feature.md`, Prompt bar): a non-modal dialog
- * under the toolbar. It never takes focus from the page; Tab reaches its buttons, Esc inside it
+ * under the chrome row. It never takes focus from the page; Tab reaches its buttons, Esc inside it
  * dismisses. The page area below shrinks to make room, so the tab's view moves down with it.
  * Allow and Block stay disabled until armed (`PROMPT_ARMING_DELAY_MS`); dismissing only denies,
  * so the × is always live.

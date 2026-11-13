@@ -48,13 +48,14 @@ input {
 
 /* ---- Layout ------------------------------------------------------------------------------- */
 
-/* Signal (specs/design-tokens.feature.md, The browser chrome's rows): both rows on --bg-window, sized
-   by what they hold (the tab row and the toolbar set their own heights; the merged --h-chrome row is
-   a PR of its own), the status bar --h-status; text on the --text-* tokens (Geist). */
+/* Signal (specs/design-tokens.feature.md, The browser chrome's rows and The merged chrome row): one
+   --h-chrome row on --bg-window for the tabs, the address bar and the tools, the status bar
+   --h-status; text on the --text-* tokens (Geist). */
 .chrome {
   display: grid;
-  /* Rows: tab strip, toolbar, permission prompt, render-profile editor bar, find bar, the workspace
-     stack (the workspace, then the devtools drawer), status bar. The prompt row is empty (0 high)
+  /* Rows: the chrome row (fixed, specs/tabs.feature.md, The chrome row), permission prompt,
+     render-profile editor bar, find bar, update notice, the workspace stack (the workspace, then the
+     devtools drawer), status bar. The prompt row is empty (0 high)
      unless the active tab shows a permission prompt; the editor bar's row is empty unless it is open
      (render-profile.feature.md); the find bar's unless the active tab's is open
      (browser-polish.feature.md); the update notice's unless it has something to show
@@ -62,7 +63,7 @@ input {
      (devtools.feature.md). The command palette's sheet and the History sheet are not rows: they sit
      at the top of the workspace's page column (command-palette.spec.ts). Each takes its height from
      the page area, so the tab's view is laid out clear of them all. */
-  grid-template-rows: auto auto auto auto auto auto minmax(0, 1fr) var(--h-status);
+  grid-template-rows: var(--h-chrome) auto auto auto auto minmax(0, 1fr) var(--h-status);
   height: 100%;
 }
 
@@ -78,21 +79,28 @@ input {
   grid-row: -2;
 }
 
-/* ---- Tab strip ---------------------------------------------------------------------------- */
+/* ---- Chrome row --------------------------------------------------------------------------- */
 
-/* One row on --bg-window (no separate strip): each tab a pill, inactive ones on --bg-tab-idle, the
-   active one raised on --bg-surface. The row scrolls sideways (no scrollbar) once the tabs reach
-   their minimum width. */
-.tabstrip {
+/* The tab row and the toolbar as one --h-chrome row on --bg-window (specs/tabs.feature.md, The chrome
+   row): the navigation tools, the tablist, the address bar, New tab and the toggles, --space-1 apart
+   and --space-4 in from the window's edges. It never wraps; the tablist gives way first (its tabs
+   shrink, then it scrolls) and the address bar keeps its minimum. The loading line runs along its
+   foot. */
+.chrome-row {
+  position: relative;
   display: flex;
   align-items: center;
+  gap: var(--space-1);
   min-width: 0;
-  height: calc(var(--h-control) + 2 * var(--space-1));
-  padding: 0 var(--space-3) 0 var(--space-1);
+  height: var(--h-chrome);
+  padding: 0 var(--space-4);
+  overflow: hidden;
   background: var(--bg-window);
   font: var(--text-body);
 }
 
+/* The tablist: as wide as its tabs, it shrinks first and then scrolls sideways (no scrollbar). Each
+   tab is a pill, an inactive one on --bg-tab-idle, the active one raised on --bg-surface. */
 .tabs {
   display: flex;
   align-items: center;
@@ -100,8 +108,10 @@ input {
   flex: 0 1 auto;
   min-width: 0;
   height: 100%;
-  /* Room for a focused tab's ring (--focus-ring reaches 4px out) inside the scrolling row. */
+  /* Room for a focused tab's ring (--focus-ring reaches 4px out) inside the scrolling tablist, and as
+     much again where a tab scrolled into view (focus, the active tab) stops at either end. */
   padding: var(--space-1);
+  scroll-padding-inline: var(--space-1);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -116,7 +126,9 @@ input {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  /* An explicit width too: the scrolling row sizes itself from its tabs' intrinsic widths. */
+  /* An explicit width too: the scrolling tablist sizes itself from its tabs' intrinsic widths. The
+     minimum is TAB_MIN_WIDTH_PX (specs/tabs.spec.ts): the glyph and a few letters of the label, since no
+     favicon tells one narrow tab from another. */
   flex: 0 1 224px;
   width: 224px;
   min-width: 84px;
@@ -301,19 +313,9 @@ input {
   box-shadow: var(--focus-ring);
 }
 
-/* ---- Toolbar ------------------------------------------------------------------------------ */
+/* ---- Toolbar tools ------------------------------------------------------------------------ */
 
-/* On --bg-window like the tab row; the rule under the chrome is the workspace's top edge. */
-.toolbar {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  height: calc(var(--h-field) + 2 * var(--space-2));
-  padding: 0 var(--space-4);
-  background: var(--bg-window);
-}
-
+/* The chrome row's tools; the rule under the chrome is the workspace's top edge. */
 .nav-buttons {
   display: flex;
   align-items: center;
@@ -385,14 +387,15 @@ input {
 
 /* ---- Address bar -------------------------------------------------------------------------- */
 
-/* An --h-field pill on --bg-surface with --e-raised; the transparent border is the edge forced
-   colours draw (1px less padding). Focus rings the whole field. */
+/* An --h-field pill on --bg-surface with --e-raised, the tablist's next sibling; the transparent border
+   is the edge forced colours draw (1px less padding). Focus rings the whole field. It takes the room
+   the tabs leave, and keeps ADDRESS_MIN_WIDTH_PX (specs/tabs.spec.ts) however many tabs are open. */
 .address {
-  flex: 1;
+  flex: 1 1 360px;
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-width: 0;
+  min-width: 240px;
   height: var(--h-field);
   padding: 0 calc(var(--space-4) - 1px);
   border: 1px solid transparent;
@@ -448,7 +451,7 @@ input {
   background: var(--accent-soft);
 }
 
-/* Loading indicator: a slim accent line sliding along the toolbar's foot. */
+/* Loading indicator: a slim accent line sliding along the chrome row's foot. */
 .progress {
   position: absolute;
   left: 0;
@@ -481,12 +484,12 @@ input {
 
 /* ---- Permission prompt -------------------------------------------------------------------- */
 
-/* The row between the toolbar and the page area; empty unless the active tab has a prompt. */
+/* The row between the chrome row and the page area; empty unless the active tab has a prompt. */
 .prompt-slot {
   min-width: 0;
 }
 
-/* A band (the canvas's band slot): --accent-soft at --r-md, inset under the toolbar, no edge or
+/* A band (the canvas's band slot): --accent-soft at --r-md, inset under the chrome row, no edge or
    shadow. The transparent border is the edge forced colours draw (1px less padding). */
 .prompt-bar {
   display: flex;
@@ -659,7 +662,7 @@ input {
 
 /* The workspace row, with the devtools drawer's band under it while open (its max-height is a
    share of this stack, so the page keeps some height). Its top edge is the rule between the chrome
-   (with any band under the toolbar) and the page. */
+   (with any band under the chrome row) and the page. */
 .workspace-stack {
   display: flex;
   flex-direction: column;
