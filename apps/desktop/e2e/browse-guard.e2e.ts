@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { CRASH_TITLE, LOAD_ERROR_TITLES } from '@app/specs/browse-guard.spec';
 import { BROWSE_PARTITION, NOTICE_MESSAGES } from '@app/specs/browser.spec';
-import { closeApp, launchApp, launchUndrivenApp } from './harness';
+import { closeApp, launchApp, launchUndrivenApp, removeDir } from './harness';
 import { chromeHelpers } from './helpers';
 import { selfSignedCertificate } from './tls';
 
@@ -624,10 +624,10 @@ test('page-dialogs-are-disabled-e2e', async () => {
       // alert() returns at once, confirm() is false, prompt() throws (Electron never supports it).
       expect(dialogReports[0]).toEqual(['undefined', false, 'Error: prompt() is not supported.']);
     } finally {
-      undriven.stop();
+      await undriven.stop();
     }
   } finally {
-    await rm(profile, { recursive: true, force: true });
+    await removeDir(profile);
   }
 });
 

@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -69,11 +69,11 @@ export async function launchApp(
   try {
     app = await _electron.launch({ args: [...preload, APP_DIR, `--user-data-dir=${userDataDir}`, ...extraArgs], env, cwd: APP_DIR });
   } catch (error) {
-    if (ownProfile !== null) await rm(ownProfile, { recursive: true, force: true });
+    if (ownProfile !== null) await removeDir(ownProfile);
     throw error;
   }
   // Synchronous: the worker may exit right after the app closes, before an async removal ran.
-  if (ownProfile !== null) app.once('close', () => rmSync(ownProfile, { recursive: true, force: true }));
+  if (ownProfile !== null) app.once('close', () => rmSync(ownProfile, { recursive: true, force: true, ...REMOVE_RETRIES }));
   // The chrome (`app://app`), not a tab: a restored tab's page can be the first page Playwright sees.
   await app.firstWindow();
   const page = await pageAt(app, 'app://app/');
@@ -81,18 +81,33 @@ export async function launchApp(
 }
 
 /**
+ * A just-exited app's files stay locked for a moment on Windows (`EBUSY`, `EPERM`): removals are
+ * tried again, each wait 100 ms longer than the last (about 5 s in all).
+ */
+const REMOVE_RETRIES = { maxRetries: 10, retryDelay: 100 } as const;
+
+/** Removes a directory an app used (a profile, a scratch folder), also right after that app exited. */
+export async function removeDir(dir: string): Promise<void> {
+  await rm(dir, { recursive: true, force: true, ...REMOVE_RETRIES });
+}
+
+/**
  * Starts the built app on `userDataDir` **without** Playwright: no inspector and no DevTools
  * attached to any page, so nothing answers a page's JavaScript dialogs for it (Playwright does,
- * over DevTools, for every page it drives). `stop()` kills its process tree.
+ * over DevTools, for every page it drives). `stop()` kills its process tree and resolves once its
+ * main process is gone (or after 5 s), so the caller can remove the profile next.
  */
-export function launchUndrivenApp(userDataDir: string): { stop(): void } {
+export function launchUndrivenApp(userDataDir: string): { stop(): Promise<void> } {
   const env = childEnv();
   const electron = createRequire(import.meta.url)('electron') as unknown as string;
   // Its own process group (like Playwright's launches), so `killProcessTree` takes all of it.
   const child = spawn(electron, [APP_DIR, `--user-data-dir=${userDataDir}`], { env, cwd: APP_DIR, detached: true, stdio: 'ignore' });
+  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
   return {
-    stop: () => {
-      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) killProcessTree(child.pid);
+    stop: async () => {
+      if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+      killProcessTree(child.pid);
+      await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref())]);
     },
   };
 }
@@ -129,10 +144,18 @@ export async function closeApp(app: ElectronApplication | undefined, options: { 
 }
 
 /**
- * SIGKILLs `pid`, its process group (Playwright starts Electron as a group leader) and every
- * descendant `ps` lists (renderers, GPU and zygote processes). POSIX only, like the suite.
+ * Kills `pid` and every descendant. On POSIX: SIGKILL to `pid`, its process group (Playwright
+ * starts Electron as a group leader) and every descendant `ps` lists (renderers, GPU and zygote
+ * processes). On Windows: `taskkill /T /F`, as Playwright itself does. There Playwright starts
+ * Electron through a shell, so `pid` is that shell's and the app is its child: killing `pid` alone
+ * would leave the whole app running.
  */
 function killProcessTree(pid: number): void {
+  if (process.platform === 'win32') {
+    // A pid that is already gone is not an error worth reporting: taskkill's exit code is ignored.
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    return;
+  }
   const children = new Map<number, number[]>();
   try {
     for (const line of execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' }).split('\n')) {

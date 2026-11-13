@@ -35,11 +35,12 @@ export const CI_UNIT_DESKTOP_SHARDS = { linux: 2, macos: 0, windows: 3 } as cons
 export const CI_E2E_SHARDS = { linux: 4, macos: 3, windows: 4 } as const satisfies Record<CiPlatform, number>;
 
 /**
- * Whether a failed e2e shard fails its job, and so the run. Windows does not, and never runs for a
- * pull request: a few of its tests still fail on Windows-only harness issues
- * (docs/plans/phase-7-sync-update-platforms.md, As built, Task 2).
+ * Whether a failed e2e shard fails its job, and so the run. Every platform does (Windows since
+ * 2026-11-13, once its harness issues were fixed). A platform set to `false` here, for the time its
+ * suite is being repaired, reports a failed shard as a warning instead and has no e2e job in a
+ * pull request's plan.
  */
-export const CI_E2E_GATING = { linux: true, macos: true, windows: false } as const satisfies Record<CiPlatform, boolean>;
+export const CI_E2E_GATING: Readonly<Record<CiPlatform, boolean>> = { linux: true, macos: true, windows: true };
 
 /**
  * What only the Linux jobs read. A pull request that changes nothing else runs lint, the security
@@ -126,9 +127,15 @@ export interface CiPlan {
  * The run's plan. `changed` is the pull request's changed files (repository-relative, as
  * `git diff --name-only` prints them); it is ignored for every other event. `scope` is what a run
  * on demand asked for (`CI_DEFAULT_SCOPE` when left out); it is ignored for every other event, so
- * a push to `main` and a pull request can never be narrowed by it.
+ * a push to `main` and a pull request can never be narrowed by it. `e2eGating` is `CI_E2E_GATING`
+ * unless given (the tests give one with a platform off, which the workflow never does).
  */
-export function planCi(input: { readonly event: string; readonly changed: readonly string[]; readonly scope?: CiScope }): CiPlan {
+export function planCi(input: {
+  readonly event: string;
+  readonly changed: readonly string[];
+  readonly scope?: CiScope;
+  readonly e2eGating?: Readonly<Record<CiPlatform, boolean>>;
+}): CiPlan {
   const pullRequest = input.event === CI_PULL_REQUEST_EVENT;
   const linuxOnDemand = input.event === CI_DISPATCH_EVENT && (input.scope ?? CI_DEFAULT_SCOPE) === 'linux';
   const platforms = pullRequest ? !input.changed.every(isLinuxOnlyPath) : !linuxOnDemand;
@@ -147,7 +154,7 @@ export function planCi(input: { readonly event: string; readonly changed: readon
         unit.push({ id: `${platform}-desktop-${i}`, name: `${label} · desktop ${i}/${desktopShards}`, os, scope: 'desktop', shard: `${i}/${desktopShards}` });
       }
     }
-    const gating = CI_E2E_GATING[platform];
+    const gating = (input.e2eGating ?? CI_E2E_GATING)[platform];
     if (!gating && pullRequest) continue;
     const e2eShards = CI_E2E_SHARDS[platform];
     for (let i = 1; i <= e2eShards; i += 1) {

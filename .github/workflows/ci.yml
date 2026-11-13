@@ -206,8 +206,9 @@ jobs:
       # macOS and Windows have a real desktop session. On Linux the screen is xvfb-run's own
       # default, written out so a change of that default in the runner image cannot silently move
       # the screenshot baselines (specs/visual-baseline.feature.md).
-      # A shard that does not gate (Windows) passes its job even when the suite fails: a failed job
-      # would mark every commit on main as failed. The next step reports it instead.
+      # A shard that does not gate (none today: specs/ci-pipeline.spec.ts, CI_E2E_GATING) passes its
+      # job even when the suite fails: a failed job would mark every commit on main as failed. The
+      # next step reports it instead.
       - name: "Gate: e2e"
         id: e2e
         continue-on-error: ${{ !matrix.gating }}

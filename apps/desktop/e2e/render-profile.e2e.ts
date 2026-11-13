@@ -16,7 +16,7 @@ import { DEVTOOLS_MENU_ID, MASKED_VALUE } from '@app/specs/devtools.spec';
 import { CSS_OFF_BADGE, DEVICE_PRESETS, GEOLOCATION_PRESETS, RELOAD_TO_APPLY_LABEL } from '@app/specs/render-profile.spec';
 import { SCREENSHOT_REFUSAL_MESSAGES } from '@app/specs/screenshot.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
-import { closeApp, launchApp, launchUndrivenApp } from './harness';
+import { closeApp, launchApp, launchUndrivenApp, removeDir } from './harness';
 import { chromeHelpers } from './helpers';
 
 /** What the loopback site received: each request's path and `User-Agent` (and query, `Cookie`, `Sec-Fetch-Dest`), in order. */
@@ -426,10 +426,10 @@ test('emulation-is-invisible-to-page', async () => {
       expect(clean['pausedMs']).toBeLessThan(200);
       expect(clean['devtoolsGlobals']).toEqual([]);
     } finally {
-      undriven.stop();
+      await undriven.stop();
     }
   } finally {
-    await rm(profile, { recursive: true, force: true });
+    await removeDir(profile);
   }
 });
 

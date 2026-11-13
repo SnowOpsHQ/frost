@@ -179,7 +179,7 @@ describe('CI pipeline', () => {
 
     const gate = stepNamed(steps, 'Gate: e2e');
     expect(gate.env).toContain('SHARD: ${{ matrix.shard }}');
-    // A shard that does not gate (Windows) keeps its job green when the suite fails, and says so.
+    // A shard that does not gate (a platform switched off in CI_E2E_GATING) keeps its job green when the suite fails, and says so.
     expect(gate).toMatchObject({ id: 'e2e', 'continue-on-error': '${{ !matrix.gating }}' });
     const report = stepNamed(steps, 'Report a failure that does not gate');
     expect(report.if).toBe("${{ !cancelled() && !matrix.gating && steps.e2e.outcome == 'failure' }}");

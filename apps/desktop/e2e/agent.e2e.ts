@@ -42,7 +42,7 @@ import {
   SKILL_USER_LABEL,
 } from '@app/specs/agent-data.spec';
 import { BUILTIN_SKILL_CATEGORY, BUILTIN_SKILL_IDS, SKILL_CATEGORIES, SKILL_CATEGORY_LABELS, SKILL_USER_MARK } from '@app/specs/skills.spec';
-import { AGENT_MCP_PARTITION, MCP_NO_SANDBOX_SENTENCE } from '@app/specs/agent-mcp.spec';
+import { AGENT_MCP_PARTITION, MCP_NO_SANDBOX_SENTENCE, mcpCommandLine } from '@app/specs/agent-mcp.spec';
 import { MCP_PRESET_WORDS, MCP_PRESETS } from '@app/specs/agent-mcp-presets.spec';
 import { AGENT_E2E_SCRIPT_SWITCH, APPROVAL_ENABLE_DELAY_MS, EXECUTE_JS_APPROVAL_NOTE } from '@app/specs/agent-session.spec';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
@@ -978,7 +978,9 @@ test('agent-mcp-tool-asks', async () => {
   const fixture = path.join(APP_DIR, 'src/main/agent/__tests__/fixtures/fake-mcp-server.mjs');
   const node = realpathSync(process.execPath);
   // Under a sandbox the server reads only what is listed: Node's install and the fixture's folder.
-  const readPaths = [path.dirname(path.dirname(node)), path.dirname(fixture)];
+  // Windows has no sandbox (`MCP_SANDBOX_MODES`: `none`) and a folder to read is a POSIX path
+  // (`isMcpReadPath`), so none is listed there: the form would refuse `C:\…`.
+  const readPaths = process.platform === 'win32' ? [] : [path.dirname(path.dirname(node)), path.dirname(fixture)];
   await launchWith([{ toolCalls: [{ toolName: 'mcp__faketools__echo', input: { text: 'from e2e' } }] }, { text: ['Echo done.'] }]);
   await app!.evaluate(({ dialog }) => {
     const holder = dialog as unknown as { showMessageBox: (...args: unknown[]) => Promise<{ response: number; checkboxChecked: boolean }> };
@@ -1017,7 +1019,8 @@ test('agent-mcp-tool-asks', async () => {
   const dialogs = (await app!.evaluate(() => structuredClone((globalThis as { __frostMcpDialogs?: unknown[] }).__frostMcpDialogs ?? []))) as { title: string; message: string; detail: string }[];
   expect(dialogs).toHaveLength(1);
   expect(dialogs[0]!.title).toBe('Start an untrusted MCP server?');
-  expect(dialogs[0]!.detail).toContain(`${node} ${fixture}`);
+  // As the spec writes a command line: a Windows path has `\`, so it is shown quoted there.
+  expect(dialogs[0]!.detail).toContain(mcpCommandLine(node, [fixture]));
   expect(dialogs[0]!.detail).toContain(sandbox!);
   // Sandboxed, it lists every folder it may read (real paths) and the network setting; always every variable's name.
   if (sandbox !== MCP_NO_SANDBOX_SENTENCE) {
