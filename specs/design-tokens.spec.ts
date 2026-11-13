@@ -377,14 +377,34 @@ export const FORCED_COLOURS_SYSTEM_COLOURS = [
 ] as const;
 
 /**
- * Busy controls that show it only by colour (`FOCUS_RING_RULES`: fading would dim their focus ring).
- * Forced colours replace those colours, so each `selector`, in `stylesheet`, has a rule inside
- * `@media (forced-colors: active)` that sets `color` and `border-color` to `GrayText`.
+ * Busy or disabled controls that show it only by colour (`FOCUS_RING_RULES`: fading would dim their
+ * focus ring). Forced colours replace those colours, so for each entry the cascade over its `element`
+ * selectors in `stylesheet`, with the rules inside `@media (forced-colors: active)` read too (as the
+ * dark block is in dark), resolves `color` and `border-color` to `GrayText` in light and dark: a later
+ * rule of the control's own (the primary button's `--accent` text) must not win over it.
  */
+export interface ForcedColoursBusy {
+  readonly stylesheet: string;
+  readonly element: readonly string[];
+  readonly why: string;
+}
+
 export const FORCED_COLOURS_BUSY = [
-  { stylesheet: 'settings.css', selector: ".settings-button[aria-disabled='true']" },
-  { stylesheet: 'help.css', selector: ".diagnostics-save[aria-disabled='true']" },
-] as const satisfies readonly { readonly stylesheet: string; readonly selector: string }[];
+  { stylesheet: 'settings.css', element: ['.settings-button', ".settings-button[aria-disabled='true']"], why: 'a Settings button while busy' },
+  { stylesheet: 'settings.css', element: ['.settings-button', '.settings-button:disabled'], why: 'a disabled Settings button' },
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-button', '.settings-button-primary', ".settings-button[aria-disabled='true']", ".settings-button-primary[aria-disabled='true']"],
+    why: 'a primary Settings button while busy (its --accent on --accent-soft must give way)',
+  },
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-button', '.settings-button-primary', '.settings-button:disabled', '.settings-button-primary:disabled'],
+    why: 'a disabled primary Settings button',
+  },
+  { stylesheet: 'help.css', element: ['.diagnostics-save', ".diagnostics-save[aria-disabled='true']"], why: 'Export Diagnostics\' Save… while it saves' },
+  { stylesheet: 'help.css', element: ['.diagnostics-save', '.diagnostics-save:disabled'], why: 'Export Diagnostics\' Save…, disabled' },
+] as const satisfies readonly ForcedColoursBusy[];
 
 export const SIGNAL_SURFACES = [
   // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).

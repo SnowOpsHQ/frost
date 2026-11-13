@@ -22,6 +22,7 @@ import {
   type ContrastException,
   type ContrastPair,
   type FocusRingRule,
+  type ForcedColoursBusy,
   type LegacyTokenMigration,
   type SignalSurface,
   type TextColourRule,
@@ -367,6 +368,9 @@ function splitSelectors(list: string): string[] {
   return [...parts, current];
 }
 
+/** `@media (forced-colors: active)`, as the parser writes the at-rule. */
+const FORCED_COLOURS_MEDIA = /^@media\s*\(\s*forced-colors\s*:\s*active\s*\)$/;
+
 /** A selector's specificity as one number (ids aside: the renderer's rules use none; `:where()` adds none). */
 function specificity(raw: string): number {
   const selector = withoutWhere(raw);
@@ -381,12 +385,14 @@ function specificity(raw: string): number {
  * ordered by specificity then source order; custom properties set by those rules followed through
  * `var()`. Returns the final value (a `var(--token)` that the element itself does not set).
  */
-function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark'): string {
+function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark', options: { readonly forced?: boolean } = {}): string {
   const wanted = new Set(element.map((s) => s.replace(/\s+/g, ' ').trim()));
   const matched: { order: number; spec: number; property: string; value: string }[] = [];
   parse(css).declarations.forEach((d, order) => {
     const outer = d.context.slice(0, -1);
-    if (!(outer.length === 0 || (theme === 'dark' && outer.length === 1 && outer[0] === DARK))) return;
+    // Top level; the dark block in dark; and with `forced`, the forced-colours block (forced colours on).
+    const applies = (level: string) => (theme === 'dark' && level === DARK) || (options.forced === true && FORCED_COLOURS_MEDIA.test(level));
+    if (!(outer.length === 0 || (outer.length === 1 && applies(outer[0]!)))) return;
     const selectors = splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim());
     const hits = selectors.filter((s) => wanted.has(s));
     if (hits.length === 0) return;
@@ -394,7 +400,11 @@ function resolveOnElement(css: string, element: readonly string[], property: str
   });
   matched.sort((a, b) => a.spec - b.spec || a.order - b.order);
   const own = new Map<string, string>();
-  for (const m of matched) own.set(m.property, m.value);
+  for (const m of matched) {
+    own.set(m.property, m.value);
+    // A `border` shorthand sets `border-color` too (its colour is its last word here: `1px solid transparent`).
+    if (m.property === 'border') own.set('border-color', m.value.split(' ').at(-1) ?? '');
+  }
   let value = own.get(property);
   if (value === undefined) throw new Error(`${element.join(' + ')}: no ${property} (${theme})`);
   const seen = new Set<string>();
@@ -463,13 +473,23 @@ test('focus-rings-outlast-hover-and-busy', () => {
 });
 
 test('busy-buttons-show-under-forced-colours', () => {
-  const FORCED = /^@media\s*\(\s*forced-colors\s*:\s*active\s*\)$/;
-  for (const entry of FORCED_COLOURS_BUSY) {
-    const inForced = parse(read(entry.stylesheet)).declarations.filter(
-      (d) => d.context.slice(0, -1).some((level) => FORCED.test(level)) && splitSelectors(d.context.at(-1) ?? '').some((s) => s.trim() === entry.selector),
-    );
-    for (const property of ['color', 'border-color']) {
-      expect(inForced.find((d) => d.property === property)?.value.toLowerCase(), `${entry.stylesheet}: ${entry.selector} { ${property} } under forced colours`).toBe('graytext');
+  // The resolver's forced mode: the forced-colours block joins the cascade, at its specificity and place;
+  // a `border` shorthand counts as its colour.
+  const sample = `.b { border: 1px solid transparent; color: var(--x); } @media (forced-colors: active) { .b[x] { color: GrayText; } } .b.p[x] { color: var(--y); }`;
+  expect(resolveOnElement(sample, ['.b', '.b[x]'], 'color', 'light', { forced: true })).toBe('GrayText');
+  expect(resolveOnElement(sample, ['.b', '.b[x]'], 'color', 'light')).toBe('var(--x)');
+  expect(resolveOnElement(sample, ['.b', '.b[x]', '.b.p[x]'], 'color', 'light', { forced: true })).toBe('var(--y)');
+  expect(resolveOnElement(sample, ['.b'], 'border-color', 'dark', { forced: true })).toBe('transparent');
+
+  const entries: readonly ForcedColoursBusy[] = FORCED_COLOURS_BUSY;
+  for (const entry of entries) {
+    const css = read(entry.stylesheet);
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
+    for (const theme of THEME_NAMES) {
+      for (const property of ['color', 'border-color']) {
+        expect(resolveOnElement(css, entry.element, property, theme, { forced: true }).toLowerCase(), `${entry.why}: ${property} under forced colours (${theme})`).toBe('graytext');
+      }
     }
   }
 });
@@ -545,7 +565,7 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
       const words = rest.replace(/-?\d*\.?\d+[a-z%]*/g, ' ').match(/[a-z][\w-]*/g) ?? [];
       const decoration = d.property.startsWith('text-decoration');
       // Inside `@media (forced-colors: active)` only, the CSS system colours (GrayText for a busy button).
-      const forced = d.context.some((level) => /^@media\s*\(\s*forced-colors\s*:\s*active\s*\)$/.test(level));
+      const forced = d.context.some((level) => FORCED_COLOURS_MEDIA.test(level));
       const strays = words.filter(
         (word) => !SURFACE_COLOUR_WORDS.has(word) && !(decoration && TEXT_DECORATION_WORDS.has(word)) && !(forced && SYSTEM_COLOURS.has(word)),
       );

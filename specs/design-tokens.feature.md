@@ -240,9 +240,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   button keeps its ring, at full strength, when hovered, when busy (`aria-disabled`) and when primary;
   so does a focused switch, and the chosen choice. The resolver itself scores
   `.a:hover:where(:not([x], :disabled))` as two classes.
-- **Scenario: busy-buttons-show-under-forced-colours** — for each `FORCED_COLOURS_BUSY` entry, a rule
-  inside `@media (forced-colors: active)` in its stylesheet names its selector and sets `color` and
-  `border-color` to `GrayText` (busy is shown by colour, which forced colours replace).
+- **Scenario: busy-buttons-show-under-forced-colours** — for each `FORCED_COLOURS_BUSY` entry (a
+  Settings button, a primary one and Export Diagnostics' Save, each busy and disabled), in light and
+  dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
+  too (a `border` shorthand counting as its colour) resolves `color` and `border-color` to `GrayText`:
+  busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
+  over it. Every selector named is one of the stylesheet's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).
