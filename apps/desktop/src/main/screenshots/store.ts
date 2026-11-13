@@ -4,6 +4,7 @@ import { lstat, mkdir, open, rename, unlink, type FileHandle } from 'node:fs/pro
 import path from 'node:path';
 import { CAPTURES_DIR_NAME, SHA256_HEX_PATTERN } from '@app/specs/capture-db.spec';
 import { SCREENSHOT_LIMITS, SCREENSHOTS_DIR_NAME } from '@app/specs/screenshot.spec';
+import { renameOver } from '../durable';
 
 // The screenshot file store (Phase 6 Task 5; spec `screenshot.spec.ts`, `capture-db.spec.ts`;
 // acceptance `screenshot.feature.md`, Files). Main only: PNG files live in
@@ -221,7 +222,7 @@ export function createScreenshotFiles(userData: string, options: ScreenshotFiles
           } finally {
             await out.close();
           }
-          await rename(temporary, path.join(base, name));
+          await renameOver({ rename }, temporary, path.join(base, name));
         } catch (error) {
           await unlink(temporary).catch(() => undefined);
           throw error;

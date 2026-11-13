@@ -1,5 +1,5 @@
 import { CREDENTIAL_LIMITS, isCredentialSlot, normalizeKey, type CredentialSlot, type KeyProtection } from '@app/specs/agent-proxy.spec';
-import { syncDirectoryOf, type DirectorySync } from '../durable';
+import { renameOver, syncDirectoryOf, type DirectorySync } from '../durable';
 
 // The agent's key store (Phase 5 Task 3, plan decision 1; acceptance `specs/agent-host.feature.md`,
 // Credentials): one key per slot (`anthropic`, `openai`, `gateway`), each encrypted with Electron's
@@ -195,7 +195,7 @@ export function createCredentialStore<S extends string = CredentialSlot>(deps: C
     const temp = `${deps.file}.${tempSuffix()}.tmp`;
     try {
       await deps.fs.writeFile(temp, `${JSON.stringify(next)}\n`, { mode: 0o600, flag: 'wx', flush: true });
-      await deps.fs.rename(temp, deps.file);
+      await renameOver(deps.fs, temp, deps.file);
       await syncDirectoryOf(deps.fs, deps.file);
       loaded = Promise.resolve(next);
       return true;

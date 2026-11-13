@@ -12,6 +12,7 @@ import {
   type PackUpdateOutcome,
 } from '@app/specs/serp-selector-pack.spec';
 import type { SelectorPack } from '@app/specs/serp-selector-pack.schema';
+import { renameOver } from '../durable';
 import { verifyPack } from './pack-verify';
 
 // The selector pack in use (spec `serp-selector-pack.spec.ts`, trust model; acceptance
@@ -237,7 +238,7 @@ async function writeAtomically(file: string, bytes: Uint8Array | string): Promis
   const temp = `${file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     await writeFile(temp, bytes, { mode: 0o600, flush: true });
-    await rename(temp, file);
+    await renameOver({ rename }, temp, file);
   } catch (error) {
     await rm(temp, { force: true });
     throw error;

@@ -5,7 +5,8 @@ import path from 'node:path';
 // old one, the directory is flushed too, so the rename itself survives a crash. Best effort: some
 // platforms refuse to open or flush a directory (Windows answers EISDIR or EPERM), and the file's
 // own data was flushed before the rename either way. The rename itself is tried again on Windows
-// when another program has a file open for a moment (`renameOver`).
+// when another program has a file open for a moment (`renameOver`): every file main replaces this
+// way goes through it (`durable.test.ts`, `main-renames-go-through-rename-over`).
 
 /** The part of `node:fs/promises` the directory flush uses. */
 export interface DirectorySync {

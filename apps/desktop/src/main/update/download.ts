@@ -3,6 +3,7 @@ import { lstat, mkdir, open, readdir, rename, rm, unlink, type FileHandle } from
 import path from 'node:path';
 import { UPDATE_DOWNLOADS_DIR, UPDATE_FETCH_LIMITS, UPDATE_PARTIAL_SUFFIX } from '@app/specs/update-client.spec';
 import { MAX_ARTIFACT_BYTES, SHA256_HEX_PATTERN, artifactFileName, type UpdateArtifact, type UpdatePlatform } from '@app/specs/update-manifest.spec';
+import { renameOver } from '../durable';
 import { updateGet, type UpdateGetDeps, type UpdateGetFailure, type UpdateGetLimits } from './fetch';
 import { isVersion } from './manifest';
 
@@ -184,7 +185,7 @@ export async function downloadArtifact(input: DownloadInput): Promise<DownloadRe
 
   if (result.ok) {
     try {
-      await rename(partial, file);
+      await renameOver({ rename }, partial, file);
     } catch {
       result = { ok: false, reason: 'disk' };
     }

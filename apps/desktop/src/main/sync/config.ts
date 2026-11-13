@@ -13,6 +13,7 @@ import {
   type SyncConfigProblem,
 } from '@app/specs/sync.spec';
 import { SyncConfigFileSchema } from '@app/specs/sync-config.schema';
+import { renameOver } from '../durable';
 import { readJson } from '../update/manifest';
 
 // The opt-in sync config (spec `sync.spec.ts`, Sync config; acceptance `sync-config.feature.md`):
@@ -159,7 +160,7 @@ async function writeAtomically(file: string, config: SyncConfigFile): Promise<vo
     } finally {
       await handle.close();
     }
-    await rename(temporary, file);
+    await renameOver({ rename }, temporary, file);
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
     throw error;
