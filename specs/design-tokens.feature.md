@@ -33,7 +33,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   step, an alias whose Signal token has another name is exactly `var(<signal>)` in light with no dark
   override, so it follows the Signal token in both themes (`--bg-chrome: var(--bg-window)`,
   `--seo-panel-width: var(--w-panel)`). Retired names keep their values until their surface PR (but
-  `--bg-strip` and `--bg-tab-hover`, see Tab row), which moves every rule off them and drops them from
+  `--bg-strip` and `--bg-tab-hover`, retuned in the values step, see Tab row), which moves every rule off them and drops them from
   `tokens.css`: the row stays in the map, marked `removed`;
   layout constants (aliases with `signal: null`) keep theirs. Rules outside `tokens.css` change only
   where a Signal value left text under its minimum (`TEXT_COLOUR_RULES`, below) or a review asked
@@ -45,11 +45,17 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   token sheet names, plus body text, links and on-colour buttons on every surface) reaches its
   WCAG 2.x minimum, 4.5:1 for text and 3:1 for UI, in light and dark, computed from the values in
   `tokens.css` (a translucent fill composited over its opaque surface).
-- **Tab row, interim.** The active tab follows `--bg-window`, so the retired `--bg-strip` and
-  `--bg-tab-hover` were retuned (they would otherwise leave the active tab about 1.05:1 off the strip
-  and a hovered tab past it): `TAB_STRIP` keeps the active tab at least 1.1:1 off the strip, a
-  hovered tab's luminance between the two and the divider between inactive tabs at least 1.1:1 off
-  the strip, in both themes, until the chrome's surface PR.
+- **Tab row.** In the values step the active tab followed `--bg-window`, so the retired `--bg-strip`
+  and `--bg-tab-hover` were retuned for the interim (the active tab 1.1:1 off the strip, a hovered tab
+  between the two, the hairline between inactive tabs 1.1:1 off the strip). The chrome's surface PR
+  moved the row onto Signal and dropped both names: the strip is `--bg-window`, an inactive tab
+  `--bg-tab-idle`, a hovered one `--bg-hover`, the active one `--bg-surface` with `--e-raised`, and the
+  tabs are pills `--space-1` apart with no hairline. `TAB_STRIP` now keeps, in both themes, the active
+  tab at least 1.1:1 off the strip, an inactive one 1.09:1 (1.097 in light, Signal's own value) and a
+  hovered one 1.1:1. A hovered tab no longer sits between the strip and the active tab (in light
+  `--bg-hover` darkens the strip while the tabs lighten it), and in dark `--bg-tab-idle` and `--bg-hover`
+  are one fill with the active tab's within 1.02:1 of it: there a hovered tab shows by its `--text`
+  label and close button, the active one by its `--e-raised` edge, its label and its close button.
 - **Known exceptions.** `KNOWN_CONTRAST_EXCEPTIONS` records what still misses its minimum, for the
   surface PRs: `--ok` as text (21 rules) is under 4.5:1 in light, and those rules move to `--ok-ink`
   (only the 11px chips moved in the values step; Settings and Help moved their 4, leaving 17).
@@ -61,7 +67,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Hex ratchet.** Literal hex colours in renderer stylesheets other than `tokens.css` never exceed
   `HEX_COLOUR_RATCHET`; each surface PR lowers it to its new count (the command palette's rules held
   no literal hex, their colours were all tokens, so it stayed at 53; the new-tab view's held none
-  either, so it stays there, as it does for the SEO sidebar's frame; Settings' switch knob was its one, so it is 52).
+  either, so it stays there, as it does for the SEO sidebar's frame; Settings' switch knob was its one, so it is 52;
+  the fullscreen notice's two went with the chrome's, so it is 50).
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
   official `geist` npm package (`GEIST_PACKAGE`: pinned exactly, SIL Open Font License 1.1, listed in
   `THIRD_PARTY_NOTICES` with the licence text). Only static woff2 files, only the weights the type
@@ -76,7 +83,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--text-*` tokens (the command palette first); `--font-ui`, the rest of the chrome's face, stays the
   system stack until its own surface PR.
 - **Surface PRs.** A surface's rules (`SIGNAL_SURFACES`: its stylesheet and its class prefix, or, where
-  other surfaces share the prefix, the exact classes and `-*` families it lists with its keyframes; a
+  other surfaces share the prefix or its classes share none, the exact classes and `-*` families it lists with its keyframes; a
   rule is the surface's when any selector names one of its classes, on a class boundary, or it sits in
   the surface's `@keyframes`) read only Signal tokens and legacy aliases, never a retired name or a
   literal colour; its text takes its face and size from a `--text-*` token (`font: var(--text-*)`,
@@ -225,6 +232,66 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   disc holds an icon, not the panel's art). Nothing in the frame drew `--ok` as text, and it held no
   literal hex, so `KNOWN_CONTRAST_EXCEPTIONS` and `HEX_COLOUR_RATCHET` stay.
 
+- **The browser chrome's rows** (`styles.css` from its top to the SEO sidebar: the grid, the tab row,
+  the toolbar with the address bar and its loading line, the permission prompt, the fullscreen notice,
+  the page area's frame and the status bar; and the toolbar's SEO sidebar toggle) follow the Migration
+  notes, the token `use` notes and the approved canvas's chrome row, band slot, status bar and
+  interaction states, where they agree. The two rows stay: the canvas's one 56px row (`--h-chrome`, the
+  tablist with the address input beside it) changes the markup and the keyboard contract, so it is a
+  PR of its own. The chrome's classes share no prefix, so its `SIGNAL_SURFACES` entry lists them with
+  its keyframes and no `selectorPrefix`; the shared `.icon` (now `--icon-size`) and `.visually-hidden`,
+  the new tab's view, the error panels and the bars later PRs move (the render-profile editor bar and
+  chips, the find bar, History, the update notice) stay out. Both rows sit on `--bg-window` (no separate
+  strip: `--bg-strip` is `removed`), each as high as what it holds needs: the tab row `--h-control` and
+  `--space-1` above and below it (the room a focused tab's ring needs inside the scrolling row), the
+  toolbar `--h-field` and `--space-2` above and below, the status bar `--h-status`, 28px where it was 26
+  (`--tabstrip-height`, `--toolbar-height` and `--status-height` are `removed`). Text is Geist from the
+  `--text-*` tokens: tabs, the address and the prompt `--text-body`, the status bar `--text-small` with
+  the zoom in `--text-mono`. Tabs are `--h-control` pills `--space-1` apart, as `TAB_STRIP` describes:
+  an inactive one on `--bg-tab-idle` in `--text-muted`, a hovered one on `--bg-hover` with its label
+  `--text` (`--bg-tab-hover` is `removed`), the active one on `--bg-surface` with `--e-raised`, its label
+  `--text` at `--text-body`'s emphasis weight; the hairlines between inactive tabs and the active tab's
+  flared corners (radial gradients into the toolbar) went. A tab's glyph is `--text-muted` at
+  `--icon-sm`, its close button an `--h-badge` circle (`--bg-hover` under the pointer, `--bg-active`
+  pressed), and a background tab asking for a permission shows the canvas's `--accent` ring (a 2px
+  border, which forced colours keep) where it had a filled dot with a halo. The toolbar's tools
+  (`.tool`, which the agent panel's and the SEO sidebar's headers share) and the new-tab button are
+  `--h-control` circles with `--text-muted` icons (`--icon` → `--text-muted`) at `--icon-size`,
+  `--bg-hover` hovered, `--bg-active` pressed, and a disabled tool `--text-faint` at half strength
+  (`color-mix()` with `transparent`; `--text-faint` alone sits too close to the enabled `--text-muted`)
+  where it faded to 0.32 (`GrayText` under forced colours, `FORCED_COLOURS_BUSY`); each tool has a
+  transparent 1px border forced colours draw. The address bar is an `--h-field` pill on `--bg-surface` with `--e-raised` and a
+  transparent border (`--border-field` and `--shadow-field` → `--e-raised`, `--radius-field` →
+  `--r-pill`), with no hover tint (its `--text-faint` placeholder and badge would be 4.26:1 on `--bg-hover`
+  over `--bg-surface` in dark; in light the old hover never changed it), its badges at `--icon-sm`; the
+  secure badge stays an `--ok` graphic (3:1), so the `--ok`-as-text count stays 17. The loading line is
+  a solid 2px `--accent` pill sliding along the toolbar's foot (it faded in and out by a gradient).
+  Focus is `--focus-ring` beside a transparent 2px outline on the tabs, the tools, the new-tab button,
+  the address (`:focus-within`) and the prompt's buttons, after the hovers, whose state checks sit in
+  `:where()` (`FOCUS_RING_RULES`); the active tab also keeps a transparent 1px outline, so forced colours
+  mark it. The permission prompt is the canvas's band slot: an `--accent-soft` band at `--r-md`
+  (`--bg-prompt`: "band slot fill") inset by `--space-3` under the toolbar, with no edge or shadow
+  (`--prompt-edge` and `--shadow-prompt`: none; a transparent border stays for forced colours), its icon
+  a bare `--accent` glyph where it sat on a tinted tile, its question `--text-muted` with the origin
+  `--text`; Allow and Block are `--h-chip` pills on `--bg-surface` with `--e-raised` (hover lays
+  `--bg-hover` over them), the same weight, `--text-faint` while not yet armed (they faded); the dismiss
+  button an `--h-chip` circle. The fullscreen notice is `--inverse` with `--on-inverse` text (its two
+  literal hex colours and its inset edge went), still `FULLSCREEN_BANNER_HEIGHT` high. The status bar
+  is `--text-muted` on `--bg-window`, the connection `--text-faint`, the zoom plain `--text-mono` (the
+  canvas's; its outlined chip went). The page area's frame keeps `--bg-page`; the rule between the
+  chrome and the page moved from the toolbar's foot to the top of the workspace (`--bg-chrome-edge` →
+  `--divider`), so a band under the toolbar belongs to the chrome, and the status bar keeps a `--divider`
+  rule above it while the page is flush (the page card, its corners and the floating sheets are the
+  workspace's PR). The toolbar's SEO sidebar toggle had the classes `tool seo-toggle`, so it also drew
+  the panels' `.seo-toggle` pill (a bordered 28px pill, its own font and focus outline); it is now
+  `tool sidebar-toggle` (its `data-testid` unchanged), a plain tool, pressed `--accent` on
+  `--accent-soft` as the SEO frame's PR decided (the canvas draws it `--text` on `--bg-active`). The
+  names the chrome no longer reads but other surfaces still do stay declared: `--bg-chrome`,
+  `--bg-chrome-edge`, `--icon`, `--border-field`, `--bg-field`, `--bg-field-hover`, `--shadow-field`,
+  `--radius-control`, `--radius-field`, `--bg-prompt`, `--prompt-edge`, `--shadow-prompt`, `--find-height`,
+  `--page-min-width` and `--font-ui` (the body's face, the system stack until its own PR). The connection
+  dot keeps `--ok` beside its label, which says the state.
+
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
 2. Foundation (done).
@@ -237,7 +304,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    `--agent-card`), Settings and Help (`--settings-switch-off`; `--settings-width` and
    `--settings-nav-width` stay layout constants), then the SEO sidebar's frame and shared parts
    (`--seo-skeleton` and `--seo-skeleton-shine`; the panels still read `--seo-card-edge`, `--caution`,
-   `--info-tone` and `--bg-chrome-edge`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
+   `--info-tone` and `--bg-chrome-edge`), then the browser chrome's rows (`--tabstrip-height`,
+   `--toolbar-height`, `--status-height`, `--bg-strip` and `--bg-tab-hover`; the merged 56px row is its
+   own PR). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
    from the moment the test starts watching.
 
@@ -268,16 +337,16 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: known-contrast-exceptions-are-current** — each `KNOWN_CONTRAST_EXCEPTIONS` pair still
   misses its minimum in at least one theme, is not in `CONTRAST_PAIRS`, and exactly `rules`
   declarations in the renderer's stylesheets draw text in its `fg` (so fixing them removes the entry).
-- **Scenario: tab-strip-orders-strip-hover-active** — in light and dark, the active tab
-  (`TAB_STRIP.active`) against the strip reaches `TAB_STRIP.minActiveOnStrip`, and the hover fill
-  composited over the strip has a luminance strictly between the strip's and the active tab's; the
-  divider between inactive tabs (`TAB_STRIP.divider`) reaches `TAB_STRIP.minDividerOnStrip` against
-  the strip.
+- **Scenario: tab-strip-sets-tabs-off-the-strip** — in light and dark, against the (opaque) strip
+  (`TAB_STRIP.strip`), the active tab's fill reaches `TAB_STRIP.minActiveOnStrip`, an inactive tab's
+  (`TAB_STRIP.idle`, composited over the strip) `minIdleOnStrip` and a hovered tab's (`TAB_STRIP.hover`,
+  composited over the strip) `minHoverOnStrip`.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
   the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)` (and
   `background` to `var(<background>)` where the entry names one), and that pair is in
   `CONTRAST_PAIRS`.
-- **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry, in light and
+- **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry (Settings' and
+  Help's controls, and the chrome's tools, tabs, new-tab button, address bar and prompt buttons), in light and
   dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
   none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
   `var(--focus-ring)` and `outline` to `2px solid transparent`, and sets no `opacity` under 1: a focused
@@ -285,7 +354,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   so does a focused switch, and the chosen choice. The resolver itself scores
   `.a:hover:where(:not([x], :disabled))` as two classes.
 - **Scenario: busy-buttons-show-under-forced-colours** — for each `FORCED_COLOURS_BUSY` entry (a
-  Settings button, a primary one and Export Diagnostics' Save, each busy and disabled), in light and
+  Settings button, a primary one and Export Diagnostics' Save, each busy and disabled; a disabled
+  toolbar tool; the permission prompt's buttons before they arm), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too (a `border` shorthand counting as its colour) resolves `color` and `border-color` to `GrayText`:
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
@@ -298,7 +368,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: surface-rules-read-signal-tokens** — for each `SIGNAL_SURFACES` entry, every rule of the
   surface in its stylesheet (any selector in its list names one of the surface's classes on a class
   boundary, at any nesting: `@media`, `@container`; or it is in the surface's `@keyframes`; an entry's
-  listed `classes` each start with its prefix, and its `keyframes` come only with them) reads only
+  listed `classes` each start with its prefix, an entry with no prefix lists its classes, and its
+  `keyframes` come only with them) reads only
   Signal tokens, legacy aliases and component-scoped custom properties (declared in the same
   stylesheet) in `var()` (whitespace allowed, no fallback in any property); declares no Signal or
   legacy name; holds no hex colour or colour function in any property; a colour-bearing value
@@ -326,7 +397,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`.seo`, `.seo-panel`, `.seo-chip`, `.seo-rail-*`, keyframes `seo-panel-in`) it checks those, the
   `-*` family's members and the listed keyframes, and ignores the panels' classes under the same prefix
   (`.seo-links`, `.seo-panel-tools`, `.seo-chip-button`, `.seo-chips`, `.seo-toggle`), `.seo-railway`,
-  `.x-seo-rail`, `.seos` and any other keyframes (`seo-ring-fill`, `seo-panel-in-more`).
+  `.x-seo-rail`, `.seos` and any other keyframes (`seo-ring-fill`, `seo-panel-in-more`). For a surface
+  with no prefix (the browser chrome: `.tabstrip`, `.tab`, `.address-*`, keyframes `tab-spin`) it checks
+  exactly those (`.tab[data-active='true']`, `.tab:has(.tab-main:focus-visible)`, `.address-input`) and
+  ignores `.tabs`, `.tab-profile`, `.tabstrip-x`, `.addressbook`, `.x-tab` and `tab-spin-more`.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
 

@@ -20,7 +20,8 @@
  *    whose retired `--start-*` and `--jump-*` names are `removed`, the agent panel, whose retired
  *    `--agent-*` names are `removed`, Settings and Help, which retired `--settings-switch-off`, and
  *    the SEO sidebar's frame and shared parts, whose retired `--seo-skeleton` and
- *    `--seo-skeleton-shine` are `removed`).
+ *    `--seo-skeleton-shine` are `removed`, and the browser chrome's rows, which retired the rows'
+ *    heights, `--bg-strip` and `--bg-tab-hover`).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -226,10 +227,11 @@ export interface LegacyTokenMigration {
  * not `removed` are declared in `tokens.css`.
  */
 export const LEGACY_TOKEN_MIGRATION = [
-  // Chrome sizes
-  { legacy: '--tabstrip-height', kind: 'retire', signal: '--h-chrome', was: '40px', note: 'with --toolbar-height: one 56px row' },
-  { legacy: '--toolbar-height', kind: 'retire', signal: '--h-chrome', was: '50px', note: 'buttons join the tab row' },
-  { legacy: '--status-height', kind: 'retire', signal: '--h-status', was: '26px', note: '28px' },
+  // Chrome sizes: the chrome's surface PR sized its rows from --h-control, --h-field and --h-status (the
+  // merged --h-chrome row is a markup change of its own) and dropped the three heights.
+  { legacy: '--tabstrip-height', kind: 'retire', signal: '--h-chrome', was: '40px', note: 'with --toolbar-height: one 56px row', removed: true },
+  { legacy: '--toolbar-height', kind: 'retire', signal: '--h-chrome', was: '50px', note: 'buttons join the tab row', removed: true },
+  { legacy: '--status-height', kind: 'retire', signal: '--h-status', was: '26px', note: '28px', removed: true },
   { legacy: '--find-height', kind: 'retire', signal: null, was: '40px', note: 'band slot: find is a band (≥ 44px)' },
   { legacy: '--radius-control', kind: 'retire', signal: '--r-pill', was: '9px', note: '' },
   { legacy: '--radius-field', kind: 'retire', signal: '--r-pill', was: '11px', note: '--r-sm inside cards' },
@@ -254,7 +256,7 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--panel-art', kind: 'retire', signal: '--text-faint', was: '#6b7a90', note: '' },
   // Surfaces and edges
   { legacy: '--bg-chrome', kind: 'alias', signal: '--bg-window', was: '#f3f5f8', note: '' },
-  { legacy: '--bg-strip', kind: 'retire', signal: '--bg-window', was: '#e4e8ee', note: 'no separate strip' },
+  { legacy: '--bg-strip', kind: 'retire', signal: '--bg-window', was: '#e4e8ee', note: 'no separate strip', removed: true },
   { legacy: '--bg-chrome-edge', kind: 'retire', signal: '--divider', was: '#e2e6ec', note: '' },
   { legacy: '--bg-page', kind: 'alias', signal: '--bg-surface', was: '#fbfcfd', note: 'the page card' },
   { legacy: '--bg-field', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
@@ -264,7 +266,7 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--shadow-card', kind: 'retire', signal: '--e-ring', was: 'shadow', note: '' },
   { legacy: '--bg-hover', kind: 'alias', signal: '--bg-hover', was: 'overlay', note: 'Signal value' },
   { legacy: '--bg-active', kind: 'alias', signal: '--bg-active', was: 'overlay', note: 'Signal value' },
-  { legacy: '--bg-tab-hover', kind: 'retire', signal: '--bg-hover', was: 'overlay', note: '' },
+  { legacy: '--bg-tab-hover', kind: 'retire', signal: '--bg-hover', was: 'overlay', note: '', removed: true },
   { legacy: '--bg-prompt', kind: 'retire', signal: '--accent-soft', was: '#ffffff', note: 'band slot fill' },
   { legacy: '--prompt-edge', kind: 'retire', signal: null, was: '#dfe4eb', note: 'none: bands have no edge' },
   { legacy: '--shadow-prompt', kind: 'retire', signal: null, was: 'shadow', note: 'none' },
@@ -347,11 +349,16 @@ export const LEGACY_TOKEN_MIGRATION = [
 export interface SignalSurface {
   readonly name: string;
   readonly stylesheet: string;
-  /** A class name with its dot (`.palette`): the surface's classes are it and it followed by `-…`. */
-  readonly selectorPrefix: string;
+  /**
+   * A class name with its dot (`.palette`): the surface's classes are it and it followed by `-…`.
+   * Omitted for a surface whose classes share no prefix (the browser chrome: `.tabstrip`, `.toolbar`,
+   * `.address`, …): it then lists every one in `classes`, and its `keyframes`.
+   */
+  readonly selectorPrefix?: string;
   /**
    * For a prefix other surfaces share (`.seo` names every SEO panel's classes): the surface's classes
-   * are only these, in place of the prefix's whole family. Each starts with `selectorPrefix` and is
+   * are only these, in place of the prefix's whole family; for a surface with no prefix, all of them.
+   * Each starts with `selectorPrefix` when there is one, and is
    * exact (`.seo-chip` is never `.seo-chip-button`), or ends in `-*` for a family (`.seo-rail-*`:
    * `.seo-rail`, `.seo-rail-item`, …), matched on a class boundary like the prefix. Each names at
    * least one rule of `stylesheet` (a stale name fails the guard).
@@ -416,6 +423,9 @@ export const FORCED_COLOURS_BUSY = [
   },
   { stylesheet: 'help.css', element: ['.diagnostics-save', ".diagnostics-save[aria-disabled='true']"], why: 'Export Diagnostics\' Save… while it saves' },
   { stylesheet: 'help.css', element: ['.diagnostics-save', '.diagnostics-save:disabled'], why: 'Export Diagnostics\' Save…, disabled' },
+  // The browser chrome: a disabled tool (Back, Forward, Reload with no page) is --text-faint at half strength, where it faded.
+  { stylesheet: 'styles.css', element: ['.tool', '.tool:disabled'], why: 'a disabled toolbar tool (Back or Forward with nowhere to go)' },
+  { stylesheet: 'styles.css', element: ['.prompt-button', '.prompt-button:disabled'], why: 'the permission prompt\'s Allow and Block before they arm, and once answered' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 export const SIGNAL_SURFACES = [
@@ -483,6 +493,55 @@ export const SIGNAL_SURFACES = [
     ],
     keyframes: ['seo-panel-in', 'seo-skeleton-sweep'],
   },
+  // The browser chrome's rows (specs/browser-chrome.feature.md, Layout; permissions.feature.md;
+  // page-commands.feature.md): the grid, the tab row, the toolbar with the address bar and its loading
+  // line, the permission prompt, the fullscreen notice, the page area's frame and the status bar. Its
+  // classes share no prefix, so it lists them. Not the shared `.icon` and `.visually-hidden`, the
+  // new tab's view and the error panels (their own rules), nor the bars and badges later surface PRs
+  // move: the render-profile editor bar and chips (`.tab-profile`, `.status-render-profile`,
+  // `.status-tab-overrides`), the find bar, History and the update notice.
+  {
+    name: 'browser chrome',
+    stylesheet: 'styles.css',
+    classes: [
+      // Layout and the page area's frame
+      '.chrome',
+      '.workspace-stack',
+      '.workspace',
+      '.page-area',
+      // The tab row
+      '.tabstrip',
+      '.tabs',
+      '.tab',
+      '.tab-main',
+      '.tab-glyph',
+      '.tab-icon',
+      '.tab-icon-alert',
+      '.tab-mark',
+      '.tab-attention-*',
+      '.tab-spinner',
+      '.tab-label',
+      '.tab-close',
+      '.new-tab',
+      // The toolbar
+      '.toolbar',
+      '.nav-buttons',
+      '.tool',
+      '.sidebar-toggle',
+      '.address-*',
+      '.progress-*',
+      // The permission prompt and the fullscreen notice
+      '.prompt-*',
+      '.fullscreen-notice-*',
+      // The status bar
+      '.status-bar',
+      '.status-text',
+      '.status-zoom',
+      '.status-notice',
+      '.connection-*',
+    ],
+    keyframes: ['tab-spin', 'progress-slide', 'prompt-in'],
+  },
 ] as const satisfies readonly SignalSurface[];
 
 /**
@@ -491,7 +550,7 @@ export const SIGNAL_SURFACES = [
  * raise it. Counted when every `:root` token moved into `tokens.css`. It counts hex only: a colour
  * written as `rgb()`, `hsl()` or a keyword is for review to catch.
  */
-export const HEX_COLOUR_RATCHET = 52;
+export const HEX_COLOUR_RATCHET = 50;
 
 /**
  * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
@@ -644,6 +703,36 @@ export const CONTRAST_PAIRS = [
   { fg: '--text-muted', bg: '--bg-active', over: '--bg-sheet', min: 4.5, why: 'a pressed SEO rail item: its icon on --bg-active over the sheet (4.5:1)' },
   { fg: '--text-muted', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'a hovered "More panels" item: its icon (--text-muted) on --bg-hover over the menu\'s --bg-surface (4.5:1)' },
   { fg: '--accent', bg: '--accent-soft', over: '--bg-window', min: 3, why: 'the toolbar\'s SEO sidebar toggle, pressed: its --accent icon on --accent-soft over the toolbar (--bg-chrome → --bg-window) (graphics, 3:1)' },
+  // The browser chrome's rows (its surface PR). Already covered above: the active tab's label and the
+  // address on --bg-surface (--text; the placeholder, the address badge and the active tab's glyph
+  // --text-faint and --text-muted), the toolbar's tools, the new-tab button and the status bar on
+  // --bg-window (--text-muted; a disabled tool, the connection and its label --text-faint), the pressed
+  // SEO sidebar toggle (--accent on --accent-soft over --bg-window), the permission prompt's buttons
+  // (--text on --bg-surface, hovered over --bg-hover, disabled --text-faint), its icon (--accent on
+  // --accent-soft over --bg-window), the address's secure and insecure badges (--ok, --warn on
+  // --bg-surface), the loading line and the focus ring (--accent on --bg-window), the status notice
+  // (--warn-ink on --bg-chrome) and the fullscreen notice (--on-inverse on --inverse). New with it:
+  { fg: '--text-muted', bg: '--bg-tab-idle', over: '--bg-window', min: 4.5, why: 'an inactive tab: its label and glyph (--text-muted) on --bg-tab-idle over the tab row (4.5:1)' },
+  { fg: '--text', bg: '--bg-hover', over: '--bg-window', min: 4.5, why: 'a hovered inactive tab: its label (--text) on --bg-hover over the tab row (4.5:1)' },
+  { fg: '--text-muted', bg: '--bg-hover', over: '--bg-window', min: 4.5, why: 'a hovered toolbar tool or new-tab button, and a hovered tab\'s glyph and close button: --text-muted on --bg-hover over --bg-window (4.5:1)' },
+  { fg: '--text-muted', bg: '--bg-active', over: '--bg-window', min: 4.5, why: 'a pressed toolbar tool or new-tab button: its --text-muted icon on --bg-active over --bg-window (4.5:1)' },
+  { fg: '--warn', bg: '--bg-tab-idle', over: '--bg-window', min: 3, why: `${WARN}: an inactive tab's alert glyph (a crashed or failed page) on --bg-tab-idle` },
+  { fg: '--accent', bg: '--bg-tab-idle', over: '--bg-window', min: 3, why: 'an inactive tab\'s FrostMark, spinner and permission ring (--accent) on --bg-tab-idle (graphics, 3:1)' },
+  {
+    fg: '--text',
+    bg: '--bg-active',
+    over: '--bg-surface',
+    min: 3,
+    why: 'a tab\'s close button, pressed: its --text icon on --bg-active over the active tab (graphics, 3:1; on a hovered inactive tab it lies over --bg-hover too, where --text keeps more than 10:1)',
+  },
+  {
+    fg: '--text',
+    bg: '--accent-soft',
+    over: '--bg-window',
+    min: 4.5,
+    why: 'the permission prompt, a band (--bg-prompt → --accent-soft, "band slot fill") under the toolbar: the asking origin and the dismiss button hovered (--text; the hover\'s --bg-hover on the band keeps more than 10:1) (4.5:1)',
+  },
+  { fg: '--text-muted', bg: '--accent-soft', over: '--bg-window', min: 4.5, why: 'the permission prompt\'s question and its dismiss icon (--text-muted) on the band (4.5:1)' },
   // Status text on a soft fill
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },
@@ -784,6 +873,13 @@ export interface FocusRingRule {
 const SETTINGS_BUTTON_HOVER = ".settings-button:hover:where(:not([aria-disabled='true'], :disabled))";
 const SETTINGS_PRIMARY_HOVER = ".settings-button-primary:hover:where(:not([aria-disabled='true'], :disabled))";
 const DIAGNOSTICS_SAVE_HOVER = ".diagnostics-save:hover:where(:not(:disabled, [aria-disabled='true']))";
+const TOOL_HOVER = '.tool:hover:where(:not(:disabled))';
+const TOOL_PRESSED = '.tool:active:where(:not(:disabled))';
+const TAB_HOVER = ".tab:hover:where(:not([data-active='true']))";
+/** The tab's focusable part is its inner `role="tab"`; the ring goes around the whole tab. */
+const TAB_FOCUS = '.tab:has(.tab-main:focus-visible)';
+const PROMPT_BUTTON_HOVER = '.prompt-button:hover:where(:not(:disabled))';
+const PROMPT_DISMISS_HOVER = '.prompt-dismiss:hover:where(:not(:disabled))';
 
 export const FOCUS_RING_RULES = [
   {
@@ -841,33 +937,55 @@ export const FOCUS_RING_RULES = [
     element: ['.setup-action', '.setup-action:hover', '.setup-action:focus-visible'],
     why: 'a setup checklist action, focused and hovered',
   },
+  // The browser chrome (its surface PR): the shared `.tool` (the toolbar's, and the agent panel's and
+  // SEO sidebar's header tools), the tabs, the new-tab button, the address bar and the permission prompt.
+  { stylesheet: 'styles.css', element: ['.tool', TOOL_HOVER, '.tool:focus-visible'], why: 'a toolbar tool, focused and hovered' },
+  { stylesheet: 'styles.css', element: ['.tool', TOOL_HOVER, TOOL_PRESSED, '.tool:focus-visible'], why: 'a toolbar tool, focused and pressed' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.tool', TOOL_HOVER, ".sidebar-toggle[aria-pressed='true']", '.tool:focus-visible'],
+    why: 'the SEO sidebar toggle, pressed (the sidebar open), focused and hovered: its --accent-soft fill keeps the ring',
+  },
+  { stylesheet: 'styles.css', element: ['.tab', TAB_HOVER, TAB_FOCUS], why: 'an inactive tab, focused (the tablist\'s roving focus) and hovered' },
+  { stylesheet: 'styles.css', element: ['.tab', ".tab[data-active='true']", TAB_FOCUS], why: 'the active tab, focused: its --e-raised edge gives way to --focus-ring' },
+  { stylesheet: 'styles.css', element: ['.new-tab', '.new-tab:hover', '.new-tab:active', '.new-tab:focus-visible'], why: 'the new-tab button, focused, hovered and pressed' },
+  { stylesheet: 'styles.css', element: ['.address', '.address:focus-within'], why: 'the address bar, focused (:focus-within): its --e-raised edge gives way to --focus-ring' },
+  { stylesheet: 'styles.css', element: ['.prompt-button', PROMPT_BUTTON_HOVER, '.prompt-button:focus-visible'], why: 'the permission prompt\'s Allow or Block, focused and hovered' },
+  { stylesheet: 'styles.css', element: ['.prompt-dismiss', PROMPT_DISMISS_HOVER, '.prompt-dismiss:focus-visible'], why: 'the permission prompt\'s dismiss button, focused and hovered' },
 ] as const satisfies readonly FocusRingRule[];
 
 /**
- * The tab row until the chrome's surface PR rebuilds it as one row on `--bg-window`: the strip
- * (`--bg-strip`), a hovered inactive tab (`--bg-tab-hover`, laid over the strip) and the active tab
- * (`--bg-chrome`). The values step moved the active tab onto Signal (`--bg-chrome` is
- * `var(--bg-window)`), so the two retired names were retuned for the interim: in light and dark the
- * active tab stands off the strip by at least `minActiveOnStrip` (a contrast ratio), and a hovered
- * tab's luminance lies strictly between the strip's and the active tab's (hover previews the active
- * tab: lighter in light, darker in dark). The divider between inactive tabs (`--border-field`, retired)
- * stands at least `minDividerOnStrip` off the strip, so the strip's own value can't swallow it.
+ * The tab row, on Signal since the chrome's surface PR (the canvas's chrome row and its tab states):
+ * no separate strip (`--bg-strip` → `--bg-window`, `removed`), each tab a pill, an inactive one on
+ * `--bg-tab-idle`, a hovered one on `--bg-hover` in its place (`--bg-tab-hover` → `--bg-hover`,
+ * `removed`), the active one on `--bg-surface` with `--e-raised`; the pills stand `--space-1` apart, so
+ * the hairline between inactive tabs (`--border-field`) went. In light and dark (translucent fills
+ * composited over the strip) the active tab stands off the strip by at least `minActiveOnStrip`, an
+ * inactive one by `minIdleOnStrip` and a hovered one by `minHoverOnStrip` (contrast ratios). The
+ * values-step pins changed on purpose: the hairline is gone, and a hovered tab no longer lies between
+ * the strip and the active tab (in light `--bg-hover` darkens the strip while the tabs lighten it).
+ * Signal's own values set the floors: an inactive tab is 1.097:1 off the strip in light (1.143 in
+ * dark), the active one 1.180 (1.126 in dark), a hovered one 1.103 (1.143). In dark `--bg-tab-idle`
+ * and `--bg-hover` are the same fill, and the active tab's is within 1.02:1 of it: there a hovered tab
+ * shows by its label turning `--text` and its close button, the active one by its `--e-raised` edge,
+ * its `--text` label at `--text-body`'s emphasis weight and its close button.
  */
 export const TAB_STRIP = {
-  strip: '--bg-strip',
-  hover: '--bg-tab-hover',
-  active: '--bg-chrome',
+  strip: '--bg-window',
+  idle: '--bg-tab-idle',
+  hover: '--bg-hover',
+  active: '--bg-surface',
   minActiveOnStrip: 1.1,
-  /** The hairline between inactive tabs (`.tab + .tab::before`), against the strip. */
-  divider: '--border-field',
-  minDividerOnStrip: 1.1,
+  minIdleOnStrip: 1.09,
+  minHoverOnStrip: 1.1,
 } as const satisfies {
   readonly strip: TokenName;
+  readonly idle: TokenName;
   readonly hover: TokenName;
   readonly active: TokenName;
   readonly minActiveOnStrip: number;
-  readonly divider: TokenName;
-  readonly minDividerOnStrip: number;
+  readonly minIdleOnStrip: number;
+  readonly minHoverOnStrip: number;
 };
 
 // ---- Fonts (bundled in the values step; applied per surface through the --text-* tokens) ----

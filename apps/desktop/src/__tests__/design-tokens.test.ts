@@ -315,19 +315,17 @@ test('known-contrast-exceptions-are-current', () => {
   }
 });
 
-test('tab-strip-orders-strip-hover-active', () => {
+test('tab-strip-sets-tabs-off-the-strip', () => {
   for (const theme of THEME_NAMES) {
     const strip = colourIn(theme, TAB_STRIP.strip);
-    const active = colourIn(theme, TAB_STRIP.active);
-    const hover = composite(colourIn(theme, TAB_STRIP.hover), strip);
     expect(strip[3], `${TAB_STRIP.strip} is opaque (${theme})`).toBe(1);
+    // Each tab's fill, composited over the strip (an inactive and a hovered tab's are translucent).
+    const active = composite(colourIn(theme, TAB_STRIP.active), strip);
+    const idle = composite(colourIn(theme, TAB_STRIP.idle), strip);
+    const hover = composite(colourIn(theme, TAB_STRIP.hover), strip);
     expect(contrastRatio(active, strip), `active tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minActiveOnStrip);
-    const [lo, hi] = [luminance(strip), luminance(active)].sort((a, b) => a - b) as [number, number];
-    const lit = luminance(hover);
-    expect(lit > lo && lit < hi, `hover luminance ${lit} between the strip and the active tab (${lo}–${hi}, ${theme})`).toBe(true);
-    expect(contrastRatio(colourIn(theme, TAB_STRIP.divider), strip), `divider between inactive tabs on the strip (${theme})`).toBeGreaterThanOrEqual(
-      TAB_STRIP.minDividerOnStrip,
-    );
+    expect(contrastRatio(idle, strip), `inactive tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minIdleOnStrip);
+    expect(contrastRatio(hover, strip), `hovered tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minHoverOnStrip);
   }
 });
 
@@ -541,7 +539,8 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
     SIGNAL_TOKENS.type.map((token) => [token.name, (/^\S+\s+\S+\s+(.*)$/.exec(token.light)?.[1] ?? '').split(',')[0]!.trim().replace(/^(['"])(.*)\1$/, '$2')]),
   );
   const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const stem = escape(surface.selectorPrefix.replace(/^\./, ''));
+  // A surface with no prefix lists its classes, so the stem is used only with a prefix.
+  const stem = escape((surface.selectorPrefix ?? '').replace(/^\./, ''));
   // Listed classes: `.x` exactly, or `.x-*` as `.x` and its `-…` family; otherwise the prefix's family.
   const pattern =
     surface.classes === undefined
@@ -696,12 +695,24 @@ test('surface-rules-read-signal-tokens', () => {
   expect(surfaceProblems(sheet, { ...listed, classes: ['.seo', '.seo-rail'] }).problems.join()).toContain('.seo-rail names no rule');
   expect(surfaceProblems(sheet, { ...listed, classes: ['.seo', '.seo-rail-*', '.seo-absent-*'] }).problems.join()).toContain('.seo-absent-* names no rule');
   expect(surfaceProblems(sheet, { ...listed, keyframes: ['seo-panel-in', 'seo-gone-in'] }).problems.join()).toContain('seo-gone-in names no rule');
+  // A surface whose classes share no prefix (the browser chrome) owns exactly its listed classes and keyframes.
+  const chrome: SignalSurface = { name: 'fixture chrome', stylesheet: 'n/a', classes: ['.tabstrip', '.tab', '.address-*'], keyframes: ['tab-spin'] };
+  const chromeChecks = (css: string) => surfaceProblems(css, chrome).checked;
+  for (const own of ['.tabstrip', '.tab', ".tab[data-active='true']", '.tab:has(.tab-main:focus-visible)', '.address', '.address-input']) {
+    expect(chromeChecks(`${own} { color: red; }`), own).toBe(1);
+  }
+  for (const other of ['.tabs', '.tab-profile', '.tabstrip-x', '.addressbook', '.x-tab']) expect(chromeChecks(`${other} { color: red; }`), other).toBe(0);
+  expect(chromeChecks('@keyframes tab-spin { from { color: red; } }')).toBe(1);
+  expect(chromeChecks('@keyframes tab-spin-more { from { color: red; } }')).toBe(0);
 
   const surfaces: readonly SignalSurface[] = SIGNAL_SURFACES;
   expect(surfaces.length).toBeGreaterThan(0);
   for (const surface of surfaces) {
-    // Listed classes sit under the prefix, and keyframes come only with them.
-    for (const name of surface.classes ?? []) expect(name === surface.selectorPrefix || name.startsWith(`${surface.selectorPrefix}-`), `${surface.name}: ${name}`).toBe(true);
+    // Listed classes sit under the prefix (when there is one), keyframes come only with them, and a
+    // surface with no prefix lists its classes.
+    const prefix = surface.selectorPrefix;
+    if (prefix === undefined) expect(surface.classes, `${surface.name}: no prefix, so its classes are listed`).toBeDefined();
+    else for (const name of surface.classes ?? []) expect(name === prefix || name.startsWith(`${prefix}-`), `${surface.name}: ${name}`).toBe(true);
     if (surface.keyframes !== undefined) expect(surface.classes, `${surface.name}: keyframes need classes`).toBeDefined();
     const result = surfaceProblems(read(surface.stylesheet), surface);
     expect(result.checked, surface.name).toBeGreaterThan(0);
