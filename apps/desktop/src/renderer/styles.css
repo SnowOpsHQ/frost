@@ -1204,8 +1204,9 @@ input {
   pointer-events: none;
 }
 
-/* Status by shape and colour: an error a filled --danger dot, a warning a --warn ring, a pass a
-   filled --ok dot. */
+/* Status by shape, not hue alone: an error a filled --danger square, a warning a --warn ring (a
+   border, which forced colours keep), a pass a filled --ok disc. The dots keep their colours in forced
+   colours, where the halo and the ring's fill turn transparent. */
 .seo-rail-dot {
   position: absolute;
   top: var(--space-2);
@@ -1215,17 +1216,23 @@ input {
   border-radius: var(--r-pill);
   background: var(--ok);
   box-shadow: 0 0 0 2px var(--seo-dot-back);
+  forced-color-adjust: none;
 }
 
 .seo-rail-dot[data-status='warn'] {
+  border: 2px solid var(--warn);
   background: var(--seo-dot-back);
-  box-shadow:
-    inset 0 0 0 2px var(--warn),
-    0 0 0 2px var(--seo-dot-back);
 }
 
 .seo-rail-dot[data-status='error'] {
+  border-radius: calc(var(--r-xs) / 2);
   background: var(--danger);
+}
+
+@media (forced-colors: active) {
+  .seo-rail-dot {
+    --seo-dot-back: transparent;
+  }
 }
 
 /* "More panels" (Phase 11 Task 10): the unpinned panels, as a menu drawn over the open panel. */
@@ -1278,13 +1285,13 @@ input {
   background: var(--bg-hover);
 }
 
-/* The menu moves focus between its items (arrow keys): the focused one takes the palette's selected
-   row, --accent-soft, and a transparent outline forced colours draw (the menu's scroll box would clip
-   a --focus-ring). */
+/* The menu moves focus between its items (arrow keys): the focused one takes --focus-ring (the menu's
+   4px padding holds it) over --accent-soft, beside a transparent outline forced colours draw. */
 .seo-more-item:focus-visible {
   outline: 2px solid transparent;
-  outline-offset: -2px;
+  outline-offset: 2px;
   background: var(--accent-soft);
+  box-shadow: var(--focus-ring);
 }
 
 .seo-more-label {
@@ -1318,7 +1325,7 @@ input {
 .seo-section,
 .seo-score-card,
 .seo-issues {
-  padding: var(--space-4);
+  padding: var(--space-4) calc(var(--space-2) + var(--space-3));
   border: 1px solid transparent;
   border-radius: var(--r-md);
   background: var(--bg-surface);
@@ -5087,7 +5094,6 @@ input {
 
 .seo-a11y-selector {
   color: var(--text);
-  font-weight: 600;
 }
 
 .seo-a11y-summary {
@@ -8658,6 +8664,12 @@ input {
   color: var(--text);
   font-size: 12.5px;
   font-weight: 600;
+}
+
+/* A badge in the title's line keeps the line's height (the shared badge is an --h-badge pill). */
+.changes-region-title .seo-badge {
+  height: auto;
+  padding-block: 1px;
 }
 
 .changes-list {
