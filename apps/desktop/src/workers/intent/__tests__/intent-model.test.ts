@@ -1,12 +1,14 @@
 // Spec: specs/intent-classifier.spec.ts (INTENT_MODEL; How a query is classified) · Acceptance:
 // specs/intent-classifier.feature.md (Real model). Skipped unless the pinned files are cached:
 // `FROST_INTENT_MODEL_DIR` (default `~/.cache/frost-models/all-MiniLM-L6-v2`) holding
-// `model_qint8_arm64.onnx` and `vocab.txt` with their pinned sha256. The model is never committed.
+// `model_qint8_arm64.onnx` and `vocab.txt` with their pinned sha256. The model is never committed;
+// `node scripts/fetch-intent-model.mjs` puts the files there (CI's Linux unit jobs run it).
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
+import { CI_REQUIRE_INTENT_MODEL_ENV } from '@app/specs/ci-pipeline.spec';
 import { INTENT_LABELS, INTENT_MODEL, type IntentLabel } from '@app/specs/intent-classifier.spec';
 import { IntentResultSchema } from '@app/specs/intent-classifier.schema';
 import { createEmbedder, createSession, type OrtLike } from '../embed';
@@ -88,6 +90,12 @@ const EVALUATION: readonly (readonly [string, IntentLabel])[] = [
   ['order checks online', 'transactional'],
   ['coffee shop near me', 'transactional'],
 ];
+
+// CI's Linux unit jobs fetch the pinned files and set this: there the block below must run, so
+// a machine that would skip it fails here instead.
+test.runIf(process.env[CI_REQUIRE_INTENT_MODEL_ENV] === '1')('intent-real-model-required-where-asked', () => {
+  expect(cached, `the pinned model files in ${DIR}`).toBe(true);
+});
 
 describe.skipIf(!cached)('intent real model', () => {
   test('intent-real-model-classifies', { timeout: 120_000 }, async () => {

@@ -13,7 +13,7 @@
     "test": {
       "dependsOn": ["transit"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/specs/*.ts", "$TURBO_ROOT$/specs/*.md", "$TURBO_ROOT$/.github/workflows/*.yml", "$TURBO_ROOT$/.github/actions/**/*.yml", "$TURBO_ROOT$/scripts/*.mjs", "$TURBO_ROOT$/package.json"],
-      "passThroughEnv": ["FROST_REQUIRE_BUBBLEWRAP"],
+      "passThroughEnv": ["FROST_REQUIRE_BUBBLEWRAP", "FROST_REQUIRE_INTENT_MODEL", "FROST_INTENT_MODEL_DIR"],
       "outputs": []
     },
     "lint": {

@@ -7,6 +7,7 @@ import {
   CI_LINUX_VERDICT_NAME,
   CI_PLATFORM_JOBS,
   CI_REQUIRE_BUBBLEWRAP_ENV,
+  CI_REQUIRE_INTENT_MODEL_ENV,
   CI_SCOPE_ENV,
   CI_SCOPES,
   CI_VERDICT_JOB,
@@ -165,6 +166,26 @@ describe('CI pipeline', () => {
     const required = `${CI_REQUIRE_BUBBLEWRAP_ENV}: \${{ runner.os == 'Linux' && '1' || '' }}`;
     expect(desktop.env).toContain(required);
     expect(stepNamed(steps, 'Gate: unit (every workspace)').env).toContain(required);
+
+    // On Linux the real-model intent suite must run when its files could be fetched: the kept
+    // copy first, then the fetch (pinned, sha256-checked), then the switch from the fetch's answer.
+    const onLinuxDesktop = "${{ runner.os == 'Linux' && matrix.scope != 'packages' }}";
+    const restore = stepNamed(steps, 'Restore the intent model');
+    expect(restore.if).toBe(onLinuxDesktop);
+    expect(restore.uses).toMatch(/^actions\/cache@[0-9a-f]{40} # v\d/);
+    expect(restore.with).toBe("path: ~/.cache/frost-models\nkey: intent-model-${{ hashFiles('specs/intent-classifier.spec.ts') }}");
+    const fetch = stepNamed(steps, 'Fetch the intent model');
+    expect(fetch).toMatchObject({ id: 'intent', if: onLinuxDesktop, run: 'node scripts/fetch-intent-model.mjs' });
+    expect(steps.indexOf(restore)).toBeLessThan(steps.indexOf(fetch));
+    expect(steps.indexOf(fetch)).toBeLessThan(steps.indexOf(stepNamed(steps, 'Gate: unit (every workspace)')));
+    const requiredModel = `${CI_REQUIRE_INTENT_MODEL_ENV}: \${{ steps.intent.outputs.available == 'true' && '1' || '' }}`;
+    expect(desktop.env).toContain(requiredModel);
+    expect(stepNamed(steps, 'Gate: unit (every workspace)').env).toContain(requiredModel);
+    // Under Turbo the switches and the folder reach the tests only if the task passes them through.
+    const turbo = JSON.parse(read('turbo.json')) as { tasks: Record<string, { passThroughEnv?: string[] }> };
+    for (const name of [CI_REQUIRE_BUBBLEWRAP_ENV, CI_REQUIRE_INTENT_MODEL_ENV, 'FROST_INTENT_MODEL_DIR']) {
+      expect(turbo.tasks['test']?.passThroughEnv, name).toContain(name);
+    }
   });
 
   test('e2e-job', () => {
