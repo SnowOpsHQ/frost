@@ -355,6 +355,15 @@
   color: var(--accent);
 }
 
+/* Forced colours replace the colours that show busy: GrayText marks it there (FORCED_COLOURS_BUSY). */
+@media (forced-colors: active) {
+  .settings-button[aria-disabled='true'],
+  .settings-button:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
+}
+
 .settings-switch[aria-disabled='true'] {
   cursor: default;
 }

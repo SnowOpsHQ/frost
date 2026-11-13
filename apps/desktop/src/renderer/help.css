@@ -372,6 +372,15 @@
   cursor: default;
 }
 
+/* Forced colours replace the colours that show it: GrayText marks it there (FORCED_COLOURS_BUSY). */
+@media (forced-colors: active) {
+  .diagnostics-save:disabled,
+  .diagnostics-save[aria-disabled='true'] {
+    border-color: GrayText;
+    color: GrayText;
+  }
+}
+
 /* After the hover: focused, it keeps its ring hovered and while it saves (aria-disabled stays focusable). */
 .diagnostics-save:focus-visible {
   /* Transparent, so only forced colours (which drop box-shadows) draw it. */
