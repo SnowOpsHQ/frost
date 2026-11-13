@@ -18,7 +18,8 @@
  *    (the command palette first: its retired `--palette-*` names are `removed`, and it is the first
  *    surface to read the `--text-*` type tokens, so the first to draw Geist; then the new-tab view,
  *    whose retired `--start-*` and `--jump-*` names are `removed`, and the agent panel, whose retired
- *    `--agent-*` names are `removed`).
+ *    `--agent-*` names are `removed`; then the SEO sidebar's frame and shared parts, whose retired
+ *    `--seo-skeleton` and `--seo-skeleton-shine` are `removed`).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -281,13 +282,13 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--info-tone', kind: 'retire', signal: '--accent', was: '#4b72b8', note: 'info = accent ring' },
   { legacy: '--start-mark', kind: 'retire', signal: '--accent', was: '#5b8def', note: 'FrostMark', removed: true },
   { legacy: '--start-glow', kind: 'retire', signal: null, was: 'glow', note: 'none: no gradient washes', removed: true },
-  // SEO sidebar (--seo-*)
+  // SEO sidebar (--seo-*): the frame's surface PR dropped the skeleton's names; the panels still read the others.
   { legacy: '--seo-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '' },
   { legacy: '--seo-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
   { legacy: '--seo-card-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: 'card outlines; --divider for separator borders and guide lines' },
   { legacy: '--seo-track', kind: 'alias', signal: '--track', was: '#e7ebf1', note: '' },
-  { legacy: '--seo-skeleton', kind: 'retire', signal: '--bg-subtle', was: '#e9edf3', note: '' },
-  { legacy: '--seo-skeleton-shine', kind: 'retire', signal: '--bg-sheet', was: '#f4f6f9', note: 'sweep over --bg-subtle' },
+  { legacy: '--seo-skeleton', kind: 'retire', signal: '--bg-subtle', was: '#e9edf3', note: '', removed: true },
+  { legacy: '--seo-skeleton-shine', kind: 'retire', signal: '--bg-sheet', was: '#f4f6f9', note: 'sweep over --bg-subtle', removed: true },
   // Command palette (--palette-*): its surface PR moved every rule onto Signal and dropped the retired names.
   { legacy: '--palette-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
   { legacy: '--palette-edge', kind: 'retire', signal: '--e-ring', was: '#dfe4eb', note: 'outlines; --divider for separator borders', removed: true },
@@ -346,6 +347,15 @@ export interface SignalSurface {
   readonly stylesheet: string;
   /** A class name with its dot (`.palette`): the surface's classes are it and it followed by `-…`. */
   readonly selectorPrefix: string;
+  /**
+   * For a prefix other surfaces share (`.seo` names every SEO panel's classes): the surface's classes
+   * are only these, in place of the prefix's whole family. Each starts with `selectorPrefix` and is
+   * exact (`.seo-chip` is never `.seo-chip-button`), or ends in `-*` for a family (`.seo-rail-*`:
+   * `.seo-rail`, `.seo-rail-item`, …), matched on a class boundary like the prefix.
+   */
+  readonly classes?: readonly string[];
+  /** With `classes`: the surface's `@keyframes`, by exact name (in place of the prefix's stem). */
+  readonly keyframes?: readonly string[];
 }
 
 export const SIGNAL_SURFACES = [
@@ -357,6 +367,50 @@ export const SIGNAL_SURFACES = [
   { name: 'new tab: Jump back in', stylesheet: 'styles.css', selectorPrefix: '.jump' },
   // Every rule in the panel's own stylesheet (specs/agent-panel.feature.md, agent-styles-are-delimited).
   { name: 'agent panel', stylesheet: 'components/agent/agent.css', selectorPrefix: '.agent' },
+  // The SEO sidebar's frame (specs/seo-sidebar.feature.md: the sidebar, its rail, "More panels", the
+  // header, body and footer, the pin and collapse tools), the parts every panel shares (cards, section
+  // heads, badges, page text, severity icons, the link button) and its states (the pending skeleton,
+  // the unavailable and empty hints). Not the panels' interiors (`.seo-toggle`, `.seo-chip-button`,
+  // `.seo-panel-tools`, …: their own surface PRs), nor `.pane-separator`, which the agent panel shares,
+  // nor `.seo-page-text`: it holds no colour or type of its own (isolation and wrapping), and the
+  // panels qualify it with theirs (`.seo-flag.seo-page-text`, Links).
+  {
+    name: 'SEO sidebar: frame and shared parts',
+    stylesheet: 'styles.css',
+    selectorPrefix: '.seo',
+    classes: [
+      // Frame
+      '.seo',
+      '.seo-separator',
+      '.seo-panel',
+      '.seo-head-*',
+      '.seo-collapse-icon',
+      '.seo-body',
+      '.seo-foot',
+      '.seo-rail-*',
+      '.seo-more-*',
+      '.seo-pin',
+      // Shared parts
+      '.seo-section-*',
+      '.seo-score-card',
+      '.seo-issues',
+      '.seo-badge',
+      '.seo-chip',
+      '.seo-ellipsis',
+      '.seo-clamp-2',
+      '.seo-clamp-3',
+      '.seo-mono',
+      '.seo-missing',
+      '.seo-note',
+      '.seo-empty-line',
+      '.seo-severity',
+      '.seo-link-button',
+      // States
+      '.seo-skeleton-*',
+      '.seo-hint-*',
+    ],
+    keyframes: ['seo-panel-in', 'seo-skeleton-sweep'],
+  },
 ] as const satisfies readonly SignalSurface[];
 
 /**
@@ -487,6 +541,19 @@ export const CONTRAST_PAIRS = [
   { fg: '--text', bg: '--bg-hover', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s chat rows, hovered (--bg-hover over the sheet) (4.5:1)' },
   { fg: '--text', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'the agent panel\'s attach menu: an option hovered or focused (--agent-user → --accent-soft) on the menu\'s card (4.5:1)' },
   { fg: '--warn-ink', bg: '--bg-subtle', min: 4.5, why: 'the agent panel\'s risk chip: --warn-ink (was the approval edge) on the chip\'s --bg-subtle fill (11px) (4.5:1)' },
+  // The SEO sidebar's frame and shared parts (its surface PR). Already covered above: the header's
+  // title and host and the footer on the sheet (--text, --text-faint), cards' text and section titles
+  // on --bg-surface, a selected rail item's --accent icon on --bg-surface, the pressed pin (--accent on
+  // --accent-soft over the sheet), a count badge (--text-muted on --bg-subtle), severity badges and the
+  // chip (-ink on -soft over a card, info --accent on --accent-soft), the rail tip and "More panels"
+  // (--text on --bg-surface; a focused item --text on --accent-soft over it, a hovered one on
+  // --bg-hover), the hints (--text and --text-muted on the sheet, art --accent on --accent-soft and
+  // --warn-ink on --warn-soft over the sheet) and the dots and severity icons (--ok, --warn, --danger,
+  // --accent on --bg-sheet and --bg-surface). New with it:
+  { fg: '--text-muted', bg: '--bg-hover', over: '--bg-sheet', min: 4.5, why: 'a hovered SEO rail item: its icon (--text-muted, was --icon) on --bg-hover over the sheet (4.5:1)' },
+  { fg: '--text-muted', bg: '--bg-active', over: '--bg-sheet', min: 4.5, why: 'a pressed SEO rail item: its icon on --bg-active over the sheet (4.5:1)' },
+  { fg: '--text-muted', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'a hovered "More panels" item: its icon (--text-muted) on --bg-hover over the menu\'s --bg-surface (4.5:1)' },
+  { fg: '--accent', bg: '--accent-soft', over: '--bg-window', min: 3, why: 'the toolbar\'s SEO sidebar toggle, pressed: its --accent icon on --accent-soft over the toolbar (--bg-chrome → --bg-window) (graphics, 3:1)' },
   // Status text on a soft fill
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },
