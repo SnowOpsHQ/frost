@@ -5,8 +5,8 @@
 
 .settings-data-sources-group {
   display: block;
-  margin: 16px 0 8px;
-  font-size: 13px;
+  margin: var(--space-5) 0 var(--space-3);
+  font: var(--text-body);
   font-weight: 600;
 }
 
@@ -15,39 +15,42 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .settings-data-source-head .settings-status {
   margin: 0;
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .settings-data-source-fields {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .settings-data-source-field {
   display: flex;
   flex: 1 1 180px;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
+/* Fields and selects: --bg-surface with --e-raised (no visible border; a transparent one forced
+   colours draw), --r-sm inside a card, --h-control tall. */
 .settings-data-source-input,
 .settings-data-source-select {
-  height: 32px;
+  height: var(--h-control);
   min-width: 0;
-  padding: 0 8px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-control);
-  background: var(--bg-field);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
-  font: inherit;
+  font: var(--text-body);
 }
 
 .settings-data-source-input {
@@ -61,8 +64,10 @@
 
 .settings-data-source-input:focus-visible,
 .settings-data-source-select:focus-visible {
-  outline: 2px solid var(--accent-soft);
-  border-color: var(--accent);
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .settings-data-source-fields .settings-actions {
