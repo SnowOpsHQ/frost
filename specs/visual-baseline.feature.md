@@ -64,6 +64,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `command-palette` | command-palette | the palette with "zoom" typed | `command-palette`, `update` |
 | `settings` | settings | the Settings sheet, every section answered | `settings` |
 | `settings-lower` | settings | the same, `.settings-content` at its end: AI checks' end, Telemetry | |
+| `help-shortcuts` | help-shortcuts | Help › Keyboard Shortcuts over the guide page | `browser-polish` help-shortcuts-sheet |
 | `projects` | projects | the Projects sheet: a project with two pages | `projects` projects-create-and-add-pages |
 | `projects-lower` | projects | the same, `.projects-main` at its end: search queries, Retention and disk usage, Purge log | |
 | `render-profile` | render-profile | phone + mobile UA applied and reloaded, the editor bar open | `render-profile` mobile-preset-viewport-and-ua |
@@ -72,7 +73,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `agent-empty` | agent-empty | the agent panel open, no chat yet | `agent` `launchWith` |
 | `agent-conversation` | agent-conversation | one scripted turn: a `page_text` tool card, then the answer | `agent` agent-chat-export-and-restore (scripted model seam) |
 
-25 captures, 50 images. No state is skipped. The ChatGPT route's conversation is not captured: the
+26 captures, 52 images. No state is skipped. The ChatGPT route's conversation is not captured: the
 scripted-model turn already shows the same chat surface without a sign-in.
 
 ## What is compared

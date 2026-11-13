@@ -220,6 +220,7 @@ const CAPTURES = [
   'command-palette',
   'settings',
   'settings-lower',
+  'help-shortcuts',
   'projects',
   'projects-lower',
   'render-profile',
@@ -402,6 +403,7 @@ test.describe('page surfaces', () => {
   test.beforeEach(async () => {
     if ((await page.getByTestId('command-palette').count()) > 0) await page.getByTestId('command-palette-input').press('Escape');
     for (const sheet of ['settings', 'history', 'projects']) if ((await page.getByTestId(`${sheet}-view`).count()) > 0) await page.getByTestId(`${sheet}-close`).click();
+    if ((await page.getByTestId('shortcuts-view').count()) > 0) await page.getByTestId('shortcuts-view-close').click();
     if ((await page.getByTestId('devtools').count()) > 0) await menu(DEVTOOLS_MENU_ID);
     if (await page.getByTestId('render-profile-bar').isVisible()) await page.getByTestId('render-profile-close').click();
     await closeAllTabs();
@@ -547,6 +549,16 @@ test.describe('page surfaces', () => {
     await capture('settings-lower', { scroll: { selector: '.settings-content', to: 'end' } });
     await page.getByTestId('settings-close').click();
     await expect(page.getByTestId('settings-view')).toHaveCount(0);
+  });
+
+  test('help-shortcuts', async () => {
+    // browser-polish.e2e.ts (help-shortcuts-sheet): Help › Keyboard Shortcuts, over an audited page.
+    await audit('/guide');
+    await menu('help-shortcuts');
+    await expect(page.getByTestId('shortcuts-view')).toBeVisible();
+    await capture('help-shortcuts');
+    await page.getByTestId('shortcuts-view-close').click();
+    await expect(page.getByTestId('shortcuts-view')).toHaveCount(0);
   });
 
   test('projects', async () => {

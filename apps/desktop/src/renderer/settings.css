@@ -21,7 +21,9 @@
   min-height: 0;
   overflow: hidden;
   contain: inline-size;
-  background: var(--bg-page);
+  /* Signal: a sheet (the approved Settings screen), its cards --bg-surface on it. It stays flush with
+     the page column: the floating sheet (gaps, --r-lg corners) is the workspace's surface PR. */
+  background: var(--bg-sheet);
 }
 
 .settings {
@@ -30,34 +32,34 @@
   width: min(var(--settings-width), 100%);
   min-height: 0;
   container: settings / inline-size;
+  font: var(--text-body);
 }
 
 .settings-header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-4);
   flex: none;
-  padding: 18px 20px 12px;
+  padding: var(--space-6) var(--space-6) var(--space-5);
 }
 
 .settings-title {
   flex: 1;
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font: var(--text-title);
   letter-spacing: -0.01em;
 }
 
 .settings-close {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: var(--h-control);
+  height: var(--h-control);
   padding: 0;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--r-pill);
   background: transparent;
-  color: var(--icon);
+  color: var(--text-muted);
 }
 
 .settings-close:hover {
@@ -73,18 +75,19 @@
 .settings-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   flex: 0 0 var(--settings-nav-width);
-  padding: 4px 12px 24px 20px;
+  padding: 0 var(--space-4) var(--space-6) var(--space-6);
 }
 
 .settings-nav-item {
-  height: 32px;
-  padding: 0 10px;
+  height: var(--h-control);
+  padding: 0 var(--space-4);
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--text-muted);
+  font-weight: 500;
   text-align: start;
 }
 
@@ -93,10 +96,14 @@
   color: var(--text);
 }
 
+/* The section in view: a raised --bg-surface item. Forced colours drop its fill and shadow, so a
+   transparent outline (which they draw) marks it there. */
 .settings-nav-item[aria-current='true'] {
-  background: var(--bg-active);
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
-  font-weight: 600;
 }
 
 /* The sheet's scroll box is positioned, so text kept for screen readers only (`.visually-hidden`,
@@ -107,25 +114,20 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  padding: 0 20px 32px 8px;
+  padding: 0 var(--space-6) var(--space-7) var(--space-4);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
+/* Sections are spaced, not ruled (the approved screen). */
 .settings-section {
-  padding: 4px 0 20px;
-}
-
-.settings-section + .settings-section {
-  border-top: 1px solid var(--bg-chrome-edge);
-  padding-top: 18px;
+  padding: 0 0 var(--space-6);
 }
 
 .settings-section-title {
-  margin: 0 0 10px;
-  font-size: 15px;
-  font-weight: 600;
-  scroll-margin-top: 8px;
+  margin: 0 0 var(--space-3);
+  font: var(--text-heading);
+  scroll-margin-top: var(--space-3);
 }
 
 .settings-section-title:focus {
@@ -133,9 +135,11 @@
 }
 
 .settings-section-title:focus-visible {
-  outline: 2px solid var(--accent);
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
+  box-shadow: var(--focus-ring);
 }
 
 .settings-text,
@@ -146,13 +150,13 @@
 .settings-status,
 .settings-question,
 .settings-headline {
-  margin: 0 0 10px;
-  line-height: 1.45;
+  margin: 0 0 var(--space-3);
+  font: var(--text-body);
 }
 
 .settings-muted {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .settings-note {
@@ -160,67 +164,70 @@
 }
 
 .settings-error {
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
+/* A notice: --warn-ink on --warn-soft (text on a soft status fill uses its -ink). */
 .settings-notice {
   display: block;
-  padding: 8px 10px;
-  border-radius: var(--radius-control);
-  background: rgb(194 65 12 / 0.08);
-  color: var(--warn);
-  font-size: 12px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font: var(--text-small);
 }
 
+/* Cards: --bg-surface at --r-md with --e-ring; the transparent border is the edge forced colours draw. */
 .settings-card {
-  margin: 0 0 12px;
-  padding: 14px 16px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: var(--radius-field);
-  background: var(--seo-card);
-  box-shadow: var(--shadow-card);
+  margin: 0 0 var(--space-4);
+  padding: 11px 15px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
 }
 
 .settings-confirm {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-soft);
 }
 
 .settings-question,
 .settings-headline {
-  font-size: 15px;
-  font-weight: 600;
+  font: var(--text-heading);
 }
 
 .settings-headline[data-connected='true'] {
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 
+/* The sign-in code: the type scale's largest, its figures tabular (Geist Mono is bundled at --text-mono's 12px only). */
 .settings-fingerprint {
-  margin: 4px 0 8px;
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 26px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
+  margin: var(--space-1) 0 var(--space-3);
+  font: var(--text-display);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
   user-select: text;
 }
 
 .settings-identity {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
 }
 
 .settings-avatar {
   display: grid;
   place-items: center;
   flex: none;
-  width: 36px;
-  height: 36px;
+  width: var(--h-field);
+  height: var(--h-field);
   border-radius: 50%;
   background: var(--accent-soft);
   color: var(--accent);
+  font: var(--text-body);
   font-weight: 600;
 }
 
@@ -232,7 +239,7 @@
 }
 
 .settings-name {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .settings-email {
@@ -242,31 +249,36 @@
   white-space: nowrap;
 }
 
+/* The plan: a neutral chip. */
 .settings-plan {
+  display: inline-flex;
+  align-items: center;
   flex: none;
-  padding: 2px 10px;
-  border: 1px solid var(--border-field);
-  border-radius: 999px;
+  height: var(--h-badge);
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 .settings-status[data-tone='ok'] {
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 
 .settings-status[data-tone='warn'] {
-  color: var(--warn);
+  color: var(--warn-ink);
 }
 
 .settings-status[data-tone='error'] {
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .settings-features {
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -274,7 +286,7 @@
 
 .settings-feature {
   display: flex;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .settings-feature[data-included='false'] {
@@ -283,7 +295,7 @@
 
 .settings-feature-mark {
   width: 14px;
-  color: var(--ok);
+  color: var(--ok-ink);
   text-align: center;
 }
 
@@ -294,43 +306,76 @@
 .settings-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 0 10px;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
 }
 
+/* Buttons: --h-control pills on --bg-surface with --e-raised; hover lays --bg-hover over them. */
 .settings-button {
-  height: 32px;
-  padding: 0 14px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-control);
-  background: var(--bg-field);
+  height: var(--h-control);
+  padding: 0 15px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
+  font-weight: 500;
   white-space: nowrap;
 }
 
-.settings-button:hover:not([aria-disabled='true']) {
-  background: var(--bg-hover);
+/* The state checks sit in :where(), so a hover adds no weight over the focus rule below. */
+.settings-button:hover:where(:not([aria-disabled='true'], :disabled)) {
+  box-shadow:
+    inset 0 0 0 var(--h-control) var(--bg-hover),
+    var(--e-raised);
 }
 
 .settings-button-primary {
-  border-color: transparent;
   background: var(--accent);
+  box-shadow: none;
   color: var(--on-accent);
 }
 
-.settings-button-primary:hover:not([aria-disabled='true']) {
+.settings-button-primary:hover:where(:not([aria-disabled='true'], :disabled)) {
   background: var(--accent-hover);
+  box-shadow: none;
 }
 
+/* Busy (aria-disabled, still focusable) or disabled: shown by colour, not by fading, which would dim
+   the focus ring too (FOCUS_RING_RULES). */
 .settings-button[aria-disabled='true'],
-.settings-switch[aria-disabled='true'] {
-  opacity: 0.55;
+.settings-button:disabled {
+  color: var(--text-faint);
   cursor: default;
+}
+
+.settings-button-primary[aria-disabled='true'],
+.settings-button-primary:disabled {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Forced colours replace the colours that show busy: GrayText marks it there (FORCED_COLOURS_BUSY). */
+@media (forced-colors: active) {
+  .settings-button[aria-disabled='true'],
+  .settings-button:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
+}
+
+.settings-switch[aria-disabled='true'] {
+  cursor: default;
+}
+
+/* A busy switch fades only while it is not focused, so its focus ring keeps full strength. */
+.settings-switch[aria-disabled='true']:where(:not(:focus-visible)) {
+  opacity: 0.55;
 }
 
 /* The confirmation's own row, inside its card (never where Sign in was). */
 .settings-confirm-actions {
-  margin: 12px 0 0;
+  margin: var(--space-4) 0 0;
 }
 
 .settings-question:focus {
@@ -338,41 +383,49 @@
 }
 
 .settings-question:focus-visible {
-  outline: 2px solid var(--accent);
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
+  box-shadow: var(--focus-ring);
 }
 
+/* After the hovers, at their specificity or above: a focused control keeps its ring hovered, busy
+   (aria-disabled stays focusable) and primary (FOCUS_RING_RULES). */
 .settings-button:focus-visible,
 .settings-nav-item:focus-visible,
 .settings-close:focus-visible,
 .settings-switch:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .settings-toggles {
   display: grid;
-  gap: 8px;
-  margin: 0 0 10px;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
   padding: 0;
   list-style: none;
 }
 
+/* A row card: --bg-surface at --r-md with --e-ring, and a transparent border forced colours draw. */
 .settings-toggle {
   display: flex;
   align-items: flex-start;
-  gap: 16px;
-  padding: 12px 14px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: var(--radius-field);
-  background: var(--seo-card);
+  gap: var(--space-5);
+  padding: 11px 15px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
 }
 
 .settings-toggle-text {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   flex: 1;
   min-width: 0;
 }
@@ -383,20 +436,22 @@
 }
 
 .settings-toggle-label {
-  font-weight: 600;
+  font-weight: 500;
 }
 
+/* The switch: a --h-badge track (--switch-off, --accent when on) and an 18px --knob. Its transparent
+   border is the edge forced colours draw (they drop the fill). */
 .settings-switch {
   position: relative;
   flex: none;
-  width: 38px;
-  height: 22px;
-  margin-top: 2px;
+  width: 36px;
+  height: var(--h-badge);
+  margin-top: 1px;
   padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: var(--settings-switch-off);
-  transition: background-color 120ms ease;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--switch-off);
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 
 .settings-switch[aria-checked='true'] {
@@ -405,18 +460,19 @@
 
 .settings-switch-knob {
   position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
+  top: 1px;
+  left: 1px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
-  transition: transform 120ms ease;
+  background: var(--knob);
+  /* An edge in the card's colour: --knob on the --accent track is 2.65:1 in dark, the edge 3:1 or more. */
+  box-shadow: 0 0 0 1px var(--bg-surface);
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .settings-switch[aria-checked='true'] .settings-switch-knob {
-  transform: translateX(16px);
+  transform: translateX(14px);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -435,11 +491,11 @@
     flex: none;
     flex-direction: row;
     flex-wrap: wrap;
-    padding: 0 20px 8px;
+    padding: 0 var(--space-6) var(--space-3);
   }
 
   .settings-content {
-    padding: 0 20px 24px;
+    padding: 0 var(--space-6) var(--space-6);
   }
 }
 
