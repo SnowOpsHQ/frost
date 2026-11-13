@@ -90,7 +90,11 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   the version `package.json#packageManager` pins, Node 24 with pnpm's store cached, Electron's
   download cache for the platform keyed by the Electron version in `pnpm-lock.yaml` (so a lockfile
   change that leaves Electron alone downloads nothing), then `pnpm install --frozen-lockfile`.
-  Every job that installs the workspace uses it right after checkout.
+  Every job that installs the workspace uses it right after checkout. That Node is also the floor
+  the repository states (`package.json#engines`: `>=24`, and the desktop README's prerequisites):
+  no older Node is tested, so none is promised. Under Node 22.18, the earlier floor, the telemetry
+  unit tests fail: there a promise made inside an `AsyncLocalStorage` run carries own properties,
+  which `packages/telemetry` takes for a promise it must not follow.
 - **Scenario: workflows-lint-clean** — the root script `lint:workflows` runs actionlint at a pinned
   version with its shellcheck and pyflakes passes off, so the result depends only on the pinned
   package and the workflow files.

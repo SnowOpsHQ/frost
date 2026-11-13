@@ -302,6 +302,12 @@ describe('CI pipeline', () => {
     expect(steps[0]?.with).toBeUndefined();
     expect(JSON.parse(read('package.json'))).toHaveProperty('packageManager', expect.stringMatching(/^pnpm@\d+\.\d+\.\d+$/));
     expect(steps[1]?.with).toBe('node-version: 24\ncache: pnpm');
+    // The stated floor is the version CI runs: nothing older is tested (under Node 22 the
+    // telemetry suite fails), so nothing older is promised.
+    expect((JSON.parse(read('package.json')) as { engines?: { node?: string } }).engines?.node).toBe('>=24');
+    const readme = read('apps/desktop/README.md');
+    expect(readme).toContain('Node ≥ 24');
+    expect(readme).not.toMatch(/Node ≥ (?!24\b)\d/);
 
     const electron = stepNamed(steps, 'Read the Electron version');
     expect(electron).toMatchObject({ id: 'electron', shell: 'bash' });
