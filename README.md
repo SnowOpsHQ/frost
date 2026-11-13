@@ -185,7 +185,7 @@ only as dependencies under their own licenses (see `apps/desktop/THIRD_PARTY_NOT
   `scripts/sign-update-manifest.mjs` (`pnpm sign:update-manifest`, for signing an update manifest).
 
 ## Getting started
-1. Node ≥ 22.18 and pnpm 12.15.0 (`package.json#packageManager`); `pnpm install`.
+1. Node ≥ 24 and pnpm 12.15.0 (`package.json#packageManager`); `pnpm install`.
 2. `pnpm lint`, `pnpm test`; `pnpm --filter @app/desktop build && pnpm --filter @app/desktop test:e2e`
    (needs a display); `pnpm --filter @app/desktop start` for a dev run. More, including macOS
    packaging, in [`apps/desktop/README.md`](apps/desktop/README.md).

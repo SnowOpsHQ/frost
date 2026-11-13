@@ -160,6 +160,10 @@ one named test.
   envelope) is no key; setting the key again works.
 - **Scenario: directory-sync-best-effort** (`durable.test.ts`) — the directory is flushed after a
   rename; a platform that refuses (EISDIR, EPERM) is ignored and the handle closed.
+- **Scenario: rename-waits-for-a-busy-file** (`durable.test.ts`) — on Windows a rename refused
+  because another program has a file open (EPERM, EACCES, EBUSY) is tried again after each of
+  `RENAME_RETRY_WAITS_MS` (under 2 s in all), then fails with the last refusal; any other error is
+  final at once, and so is every error on other platforms.
 - **Scenario: credentials-read-error-not-cached** — a file that can't be read makes `setKey` and
   `clearKey` fail without writing (other slots survive); once readable it is read afresh.
 - **Scenario: credentials-re-encrypted-when-asked** — when decryption answers `shouldReEncrypt`, the

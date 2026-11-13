@@ -463,6 +463,25 @@ async function stubMessageBoxes(answers: { response: number; checkboxChecked: bo
   return () => app!.evaluate(() => (globalThis as unknown as { __contentDialogs: { calls: { message: string; checkboxLabel?: string }[] } }).__contentDialogs.calls);
 }
 
+/**
+ * Runs the menu's Clear Browsing Data… and waits until it has asked (`calls`: the dialogs since the
+ * last `stubMessageBoxes`). The item is clicked again until it asks: while an earlier clear is
+ * still running, the item answers that same run and shows no dialog (`createClearBrowsingData`),
+ * and a clear takes a few hundred milliseconds on Windows.
+ */
+async function clearBrowsingDataAsks(calls: () => Promise<unknown[]>): Promise<void> {
+  const { menu } = chromeHelpers(
+    () => app!,
+    () => page,
+  );
+  await expect
+    .poll(async () => {
+      if ((await calls()).length === 0) await menu('clear-browsing-data');
+      return (await calls()).length;
+    })
+    .toBe(1);
+}
+
 /** Stores a query and a draft for the article (through the panel), and waits until main has them. */
 async function writeNotes(): Promise<void> {
   await openContent(articleUrl());
@@ -484,21 +503,15 @@ async function storedNotes(): Promise<{ query: string; drafts: number }> {
 }
 
 test('delete-all-notes-and-clear-browsing-data', async () => {
-  const { menu } = chromeHelpers(
-    () => app!,
-    () => page,
-  );
   await writeNotes();
   // Clear Browsing Data with its box unticked (the default) keeps the notes …
   let calls = await stubMessageBoxes([{ response: 0, checkboxChecked: false }]);
-  await menu('clear-browsing-data');
-  await expect.poll(async () => (await calls()).length).toBe(1);
+  await clearBrowsingDataAsks(calls);
   expect((await calls())[0]).toMatchObject({ checkboxLabel: 'Also remove target queries and snippet drafts', checkboxChecked: false });
   expect(await storedNotes()).toEqual({ query: 'loose leaf', drafts: 1 });
-  // … ticked, it removes them.
+  // … ticked, it removes them (asked again once the first clear has ended).
   calls = await stubMessageBoxes([{ response: 0, checkboxChecked: true }]);
-  await menu('clear-browsing-data');
-  await expect.poll(async () => (await calls()).length).toBe(1);
+  await clearBrowsingDataAsks(calls);
   await expect.poll(storedNotes).toEqual({ query: '', drafts: 0 });
 
   // The panel's "Delete all notes": cancelled, nothing goes; confirmed, every note goes.
@@ -518,17 +531,12 @@ test('delete-all-notes-and-clear-browsing-data', async () => {
 
 // Codex review (PR #6): Clear Browsing Data deleting the notes resets an open Content panel.
 test('clear-browsing-data-resets-open-content-panel', async () => {
-  const { menu } = chromeHelpers(
-    () => app!,
-    () => page,
-  );
   const drafts = () => page.locator('[data-testid="seo-snippet-source"][data-source="draft"]');
   await writeNotes();
   // An edit not saved yet (saves wait for typing to pause) when the notes are deleted.
   await page.getByTestId('seo-query-input').fill('loose leaf tin');
   const calls = await stubMessageBoxes([{ response: 0, checkboxChecked: true }]);
-  await menu('clear-browsing-data');
-  await expect.poll(async () => (await calls()).length).toBe(1);
+  await clearBrowsingDataAsks(calls);
   // The open panel (not opened again) drops the deleted query and draft at once.
   await expect(page.getByTestId('seo-query-input')).toHaveValue('');
   await expect(drafts()).toHaveCount(0);

@@ -86,7 +86,8 @@ function openChecked(file: string): DatabaseSync {
   }
 }
 
-function openMemory(): OpenedDatabase {
+/** A migrated in-memory database: what a session runs on when its file cannot be used. */
+export function openMemoryDatabase(): OpenedDatabase {
   const db = new DatabaseSync(':memory:');
   runMigrations(db);
   return { db, file: ':memory:' };
@@ -120,7 +121,7 @@ export function openSessionDatabase({ dir, log = () => {}, now = Date.now }: Ope
     mkdirSync(dir, { recursive: true });
   } catch (error) {
     log(`browser-session directory ${dir} could not be created (${describe(error)}); ${unsaved}`);
-    return openMemory();
+    return openMemoryDatabase();
   }
 
   let why: string;
@@ -132,7 +133,7 @@ export function openSessionDatabase({ dir, log = () => {}, now = Date.now }: Ope
     } catch (error) {
       if (!shouldMoveAside(error)) {
         log(`browser-session database ${file} could not be used (${describe(error)}); left in place, ${unsaved}`);
-        return openMemory();
+        return openMemoryDatabase();
       }
       why = describe(error);
     }
@@ -143,7 +144,7 @@ export function openSessionDatabase({ dir, log = () => {}, now = Date.now }: Ope
     moved = moveAside(file, now());
   } catch (moveError) {
     log(`browser-session database ${file} is unusable (${why}) and could not be moved aside (${describe(moveError)}); ${unsaved}`);
-    return openMemory();
+    return openMemoryDatabase();
   }
   const outcome = moved === null ? 'it was gone before it could be moved aside' : `moved aside to ${moved}`;
   try {
@@ -152,6 +153,6 @@ export function openSessionDatabase({ dir, log = () => {}, now = Date.now }: Ope
     return { db, file };
   } catch (freshError) {
     log(`browser-session database ${file} was unusable (${why}); ${outcome}, but a fresh one could not be created (${describe(freshError)}); ${unsaved}`);
-    return openMemory();
+    return openMemoryDatabase();
   }
 }

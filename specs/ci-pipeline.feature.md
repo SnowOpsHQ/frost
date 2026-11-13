@@ -28,7 +28,8 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
 ## The workflow (`ci-workflows.test.ts`)
 - **Scenario: pipeline-triggers** — the workflow runs for every pull request (no path or branch
   filter), for pushes to `main` and to `v*` tags, and on demand (`workflow_dispatch`, e.g.
-  `gh workflow run ci.yml --ref <branch>` for a branch without a pull request). A superseded
+  `gh workflow run ci.yml --ref <branch>` for a branch without a pull request). On demand it takes
+  one input, `scope`: a choice of `CI_SCOPES` (`all`, `linux`) that defaults to `all`. A superseded
   pull-request run is cancelled; no other run is. The token is read-only (`contents: read`), and
   every `run` step uses bash (Git Bash on Windows). It is the only workflow in the repository.
 - **Scenario: pipeline-jobs** — the jobs are exactly `preflight`, `lint`, `security`, `unit`, `e2e`,
@@ -39,7 +40,8 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
 - **Scenario: preflight-plans-the-run** — `preflight` checks out with depth 2 and runs
   `node scripts/ci-plan.mjs plan` in the step `plan`, fed `git diff --name-only HEAD^1 HEAD` for a
   pull request (checked out as its merge commit, whose first parent is the base branch) and nothing
-  otherwise. The job's outputs `platforms`, `unit` and `e2e` are that step's.
+  otherwise, with the `scope` input in `CI_SCOPE_ENV` (empty for every event but a run on demand).
+  The job's outputs `platforms`, `unit` and `e2e` are that step's.
 - **Scenario: matrices-come-from-the-plan** — `unit` and `e2e` take their whole matrix from
   `preflight`'s `unit` and `e2e` outputs, never stop the other shards when one fails
   (`fail-fast: false`) and run on `matrix.os`. Each package job runs only when `platforms` is
@@ -53,7 +55,12 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   `--shard` from `matrix.shard`. On Linux, before the desktop suite, it installs bubblewrap if it is
   missing and allows unprivileged user namespaces, and runs the suite with
   `CI_REQUIRE_BUBBLEWRAP_ENV` set to `1`, so the MCP containment suite cannot be skipped there
-  (`agent-mcp.feature.md`, `mcp-bubblewrap-required-where-asked`). On Windows, LF line endings are kept
+  (`agent-mcp.feature.md`, `mcp-bubblewrap-required-where-asked`). Also on Linux, before the desktop
+  suite, it restores `~/.cache/frost-models` (a cache keyed by the intent spec's hash) and runs
+  `node scripts/fetch-intent-model.mjs` (step id `intent`), and sets `CI_REQUIRE_INTENT_MODEL_ENV`
+  to `1` when that step's `available` output is `true`, so the real-model intent suite cannot be
+  skipped there (`intent-classifier.feature.md`, `intent-real-model-required-where-asked`); when
+  the model's host could not be reached, the variable stays empty and the suite skips itself. On Windows, LF line endings are kept
   before checkout (`git config --global core.autocrlf false`): the tests read repository files and
   match on `\n`.
 - **Scenario: e2e-job** — `e2e` builds the app (`pnpm --filter @app/desktop build`) and runs
@@ -61,9 +68,9 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   `xvfb-run -a -s "-screen 0 1280x1024x24"` after allowing unprivileged user namespaces (the
   Chromium sandbox stays on), elsewhere in the runner's own desktop session. A failed shard uploads
   its Playwright report and test results as `playwright-report-<matrix.id>` (7 days). For a shard
-  whose `gating` is off (Windows), a failed suite does not fail the step or the job
-  (`continue-on-error` on that one step): a warning on the run says which shard failed, and the
-  report is uploaded all the same.
+  whose `gating` is off (no platform's is today; `CI_E2E_GATING`), a failed suite does not fail the
+  step or the job (`continue-on-error` on that one step): a warning on the run says which shard
+  failed, and the report is uploaded all the same.
 - **Scenario: e2e-retries-only-in-ci** — `apps/desktop/playwright.config.ts` runs a failed e2e test
   again, up to twice, when `CI` is set, and never otherwise. A test that then passes is flaky: its
   shard stays green, and Playwright's `github` reporter (CI only) puts the failed attempt and a
@@ -71,6 +78,10 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   screenshot baseline (`visual.e2e.ts`) sets its own retries to 0, and no other suite sets any.
 - **Scenario: ci-passed-runs-the-verdict** — `ci-passed` runs `node scripts/ci-plan.mjs verdict`
   with `NEEDS` set to the JSON of the jobs it needs and `PLATFORMS` to `preflight`'s `platforms`.
+  The job is named `CI passed` (`CI_VERDICT_NAME`, the check to require), except in a run on demand
+  with the `linux` scope, where it is `CI passed (Linux only)` (`CI_LINUX_VERDICT_NAME`): what only
+  the Linux jobs earned can never stand in for the required check on that commit. Nothing else in
+  the workflow reads the input.
 - **Scenario: sandbox-stays-on** — nothing in the workflow or the setup action passes
   `--no-sandbox`, and `verify:win` never runs with `--static`.
 - **Scenario: actions-are-pinned** — every `uses:` in the workflow and the setup action is either
@@ -79,7 +90,11 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   the version `package.json#packageManager` pins, Node 24 with pnpm's store cached, Electron's
   download cache for the platform keyed by the Electron version in `pnpm-lock.yaml` (so a lockfile
   change that leaves Electron alone downloads nothing), then `pnpm install --frozen-lockfile`.
-  Every job that installs the workspace uses it right after checkout.
+  Every job that installs the workspace uses it right after checkout. That Node is also the floor
+  the repository states (`package.json#engines`: `>=24`, and the desktop README's prerequisites):
+  no older Node is tested, so none is promised. Under Node 22.18, the earlier floor, the telemetry
+  unit tests fail: there a promise made inside an `AsyncLocalStorage` run carries own properties,
+  which `packages/telemetry` takes for a promise it must not follow.
 - **Scenario: workflows-lint-clean** — the root script `lint:workflows` runs actionlint at a pinned
   version with its shellcheck and pyflakes passes off, so the result depends only on the pinned
   package and the workflow files.
@@ -87,10 +102,36 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   task's inputs include the workflow, the setup action and `scripts/*.mjs`, so a change to any of
   them is never answered from Turbo's cache.
 
+## The intent model (`fetch-intent-model.test.ts`, `scripts/fetch-intent-model.mjs`)
+The on-device intent model is never committed (`intent-classifier.spec.ts`, `INTENT_MODEL`: two
+files pinned by URL at a fixed revision, size and sha256). The script puts them where the
+real-model suite reads them: `FROST_INTENT_MODEL_DIR`, else `~/.cache/frost-models/<model id>`.
+- **Scenario: intent-model-fetched** — each file that is missing, or on disk with another size or
+  sha256, is downloaded from its pinned URL (redirects followed, with a time limit) and written
+  under its pinned name; a file already there and matching is kept and its host is not asked.
+- **Scenario: intent-model-mismatch-is-refused** — a download with another sha256, fewer bytes or
+  more bytes than pinned (reading stops at the pinned size) is never written, no temporary file is
+  left, and the command exits 1 without an `available` output.
+- **Scenario: intent-model-unreachable-skips-the-suite** — a host that cannot be reached, or
+  answers anything but 200, is not a failure: every file is still tried, a file that did arrive is
+  kept, and the command exits 0 with `available=false` and a warning on the run naming the host.
+  It asks only for the pinned URLs.
+- **Scenario: intent-model-fetch-cli** — `node scripts/fetch-intent-model.mjs` appends
+  `available=true` to the file named by `GITHUB_OUTPUT` once every file is in place (nothing is
+  appended without `GITHUB_OUTPUT`), uses the named folder or the default one, and answers any
+  argument with its usage and exit code 2, asking no host.
+
 ## The plan (`ci-plan.test.ts`, `planCi`)
 - **Scenario: plan-runs-everything-outside-pull-requests** — for `push`, `workflow_dispatch` and
   any other event that is not `pull_request`, `platforms` is on whatever the changed files, and
-  every platform has unit and e2e jobs.
+  every platform has unit and e2e jobs (for a run on demand: with the default scope).
+- **Scenario: plan-on-demand-scope** — a run on demand (`CI_DISPATCH_EVENT`) with the scope `linux`
+  has the plan of a pull request that changes Linux-only paths, whatever the changed files:
+  `platforms` off, Linux unit and e2e jobs only. With `all`, or no scope, it is the full plan. The
+  scope narrows no other event: a push and a tag run everything, and a pull request's plan follows
+  its files alone. One full run uses all five macOS runners the Free plan runs at once, so a run
+  that needs only Linux (fetching screenshot baselines, `visual-baseline.feature.md`) should not
+  take them.
 - **Scenario: plan-follows-a-pull-requests-files** — for a pull request, `platforms` is off only
   when every changed file is Linux-only (`CI_LINUX_ONLY_PATHS`: `docs/`, `semgrep/`, `security/`,
   `LICENSE`; or a Markdown file at the repository root). Then the plan holds Linux jobs only. One
@@ -103,9 +144,10 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   `CI_UNIT_DESKTOP_SHARDS`, each exactly once; every job runs on `CI_RUNNERS`' image for its
   platform; ids and names are unique.
 - **Scenario: plan-e2e-shards** — on each platform the e2e jobs are the shards `1/n` … `n/n` for
-  `CI_E2E_SHARDS`, each exactly once, on that platform's image, `gating` as `CI_E2E_GATING` says.
-  A platform that is not gating (Windows) has no e2e job in a pull request's plan and all of them
-  otherwise.
+  `CI_E2E_SHARDS`, each exactly once, on that platform's image, `gating` as `CI_E2E_GATING` says:
+  on for every platform, so a pull request runs every platform's shards and a failed one fails
+  the run. A platform whose gating is off (given to `planCi` as `e2eGating`) has no e2e job in a
+  pull request's plan and all of them otherwise, each with `gating` off.
 - **Scenario: plan-fits-the-macos-limit** — a full plan holds at most four macOS unit and e2e jobs
   (with `package-macos`, five: what GitHub's Free plan, which the organisation is on, runs at once).
 
@@ -126,9 +168,10 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   matrices being `planCi`'s for `GITHUB_EVENT_NAME` and the changed files on stdin (one per line,
   LF or CRLF, blank lines ignored). It appends a Markdown table of the planned jobs to
   `GITHUB_STEP_SUMMARY`. Without those two variables it only prints. Stdin is read only for a pull
-  request.
+  request. The scope is `CI_SCOPE_ENV`'s value; empty or unset is `CI_DEFAULT_SCOPE`.
 - **Scenario: plan-cli-refuses-bad-input** — a missing or malformed `GITHUB_EVENT_NAME` exits 1 and
-  writes nothing; an unknown command, no command or an extra argument exits 2 with the usage.
+  writes nothing, and so does a `CI_SCOPE_ENV` that is not one of `CI_SCOPES`, whatever the event;
+  an unknown command, no command or an extra argument exits 2 with the usage.
 - **Scenario: verdict-cli-exit-codes** — `verdict` prints `<job>: <result>` for every job in
   `NEEDS`, then exits 0 with `CI passed.` when `ciVerdict` passes, or 1 with one line per problem.
   `NEEDS` that is missing, not JSON or not an object exits 1.

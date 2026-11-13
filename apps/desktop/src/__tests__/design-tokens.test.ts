@@ -6,6 +6,9 @@ import { expect, test } from 'vitest';
 import {
   BUNDLED_FONTS,
   CONTRAST_PAIRS,
+  FOCUS_RING_RULES,
+  FORCED_COLOURS_BUSY,
+  FORCED_COLOURS_SYSTEM_COLOURS,
   HEX_COLOUR_RATCHET,
   KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
@@ -18,6 +21,8 @@ import {
   TOKENS_STYLESHEET,
   type ContrastException,
   type ContrastPair,
+  type FocusRingRule,
+  type ForcedColoursBusy,
   type LegacyTokenMigration,
   type SignalSurface,
   type TextColourRule,
@@ -229,6 +234,8 @@ test('removed-legacy-tokens-are-gone', () => {
   expect(REMOVED).toEqual(expect.arrayContaining(['--start-mark', '--start-glow', '--jump-tile-edge', '--jump-monogram-bg']));
   // So did the agent panel's.
   expect(REMOVED).toEqual(expect.arrayContaining(['--agent-edge', '--agent-user', '--agent-code-bg', '--agent-approval-edge', '--agent-approval-bg']));
+  // And Settings and Help's.
+  expect(REMOVED).toEqual(expect.arrayContaining(['--settings-switch-off']));
   // And the SEO sidebar's frame (its skeleton's names; the panels still read the other --seo-* names).
   expect(REMOVED).toEqual(expect.arrayContaining(['--seo-skeleton', '--seo-skeleton-shine']));
   for (const name of REMOVED) {
@@ -324,8 +331,51 @@ test('tab-strip-orders-strip-hover-active', () => {
   }
 });
 
-/** A selector's specificity as one number (ids aside: the renderer's rules use none). */
-function specificity(selector: string): number {
+/** `text` without each `:where(…)` (parentheses balanced): it adds no specificity. */
+function withoutWhere(text: string): string {
+  let out = '';
+  for (let i = 0; i < text.length; ) {
+    if (text.startsWith(':where(', i)) {
+      let depth = 0;
+      let j = i + ':where'.length;
+      do {
+        if (text[j] === '(') depth += 1;
+        else if (text[j] === ')') depth -= 1;
+        j += 1;
+      } while (depth > 0 && j < text.length);
+      i = j;
+    } else {
+      out += text[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/** A selector list split at its top-level commas (never inside `:not(a, b)` or `:where(…)`). */
+function splitSelectors(list: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of list) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) {
+      parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  return [...parts, current];
+}
+
+/** `@media (forced-colors: active)`, as the parser writes the at-rule. */
+const FORCED_COLOURS_MEDIA = /^@media\s*\(\s*forced-colors\s*:\s*active\s*\)$/;
+
+/** A selector's specificity as one number (ids aside: the renderer's rules use none; `:where()` adds none). */
+function specificity(raw: string): number {
+  const selector = withoutWhere(raw);
   const classes = selector.match(/\.[\w-]+|\[[^\]]+\]|(?<!:):(?!not\(|is\(|where\()[\w-]+/g)?.length ?? 0;
   const types = selector.replace(/\[[^\]]+\]|\([^)]*\)/g, '').match(/(?:^|[\s>+~])[a-z][\w-]*/gi)?.length ?? 0;
   return classes * 1000 + types;
@@ -337,20 +387,26 @@ function specificity(selector: string): number {
  * ordered by specificity then source order; custom properties set by those rules followed through
  * `var()`. Returns the final value (a `var(--token)` that the element itself does not set).
  */
-function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark'): string {
+function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark', options: { readonly forced?: boolean } = {}): string {
   const wanted = new Set(element.map((s) => s.replace(/\s+/g, ' ').trim()));
   const matched: { order: number; spec: number; property: string; value: string }[] = [];
   parse(css).declarations.forEach((d, order) => {
     const outer = d.context.slice(0, -1);
-    if (!(outer.length === 0 || (theme === 'dark' && outer.length === 1 && outer[0] === DARK))) return;
-    const selectors = (d.context.at(-1) ?? '').split(',').map((s) => s.replace(/\s+/g, ' ').trim());
+    // Top level; the dark block in dark; and with `forced`, the forced-colours block (forced colours on).
+    const applies = (level: string) => (theme === 'dark' && level === DARK) || (options.forced === true && FORCED_COLOURS_MEDIA.test(level));
+    if (!(outer.length === 0 || (outer.length === 1 && applies(outer[0]!)))) return;
+    const selectors = splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim());
     const hits = selectors.filter((s) => wanted.has(s));
     if (hits.length === 0) return;
     matched.push({ order, spec: Math.max(...hits.map(specificity)), property: d.property, value: d.value });
   });
   matched.sort((a, b) => a.spec - b.spec || a.order - b.order);
   const own = new Map<string, string>();
-  for (const m of matched) own.set(m.property, m.value);
+  for (const m of matched) {
+    own.set(m.property, m.value);
+    // A `border` shorthand sets `border-color` too (its colour is its last word here: `1px solid transparent`).
+    if (m.property === 'border') own.set('border-color', m.value.split(' ').at(-1) ?? '');
+  }
   let value = own.get(property);
   if (value === undefined) throw new Error(`${element.join(' + ')}: no ${property} (${theme})`);
   const seen = new Set<string>();
@@ -388,6 +444,58 @@ test('text-colour-rules-resolve', () => {
   }
 });
 
+test('focus-rings-outlast-hover-and-busy', () => {
+  // The resolver: `:where()` adds nothing, and a comma inside it does not split the list.
+  expect(specificity(".a:hover:where(:not([x], :disabled))")).toBe(2000);
+  const sample = `.a:hover:where(:not([x], :disabled)), .b { box-shadow: none; } .a:focus-visible { box-shadow: var(--ring); }`;
+  expect(resolveOnElement(sample, ['.a:hover:where(:not([x], :disabled))', '.a:focus-visible'], 'box-shadow', 'light')).toBe('var(--ring)');
+
+  const rules: readonly FocusRingRule[] = FOCUS_RING_RULES;
+  expect(rules.length).toBeGreaterThan(0);
+  for (const rule of rules) {
+    const css = read(rule.stylesheet);
+    // Every selector named is one of the stylesheet's (a typo would quietly drop out of the cascade).
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of rule.element) expect(selectors.has(selector), `${rule.stylesheet} has ${selector}`).toBe(true);
+    for (const theme of THEME_NAMES) {
+      expect(resolveOnElement(css, rule.element, 'box-shadow', theme), `${rule.why} (${theme})`).toBe('var(--focus-ring)');
+      expect(resolveOnElement(css, rule.element, 'outline', theme), `${rule.why}: outline (${theme})`).toBe('2px solid transparent');
+      // Nothing fades the ring: an opacity, if the element's rules set one, is 1 (only "no opacity" is swallowed).
+      const faded = (() => {
+        try {
+          return resolveOnElement(css, rule.element, 'opacity', theme);
+        } catch (error) {
+          if (error instanceof Error && error.message.endsWith(`: no opacity (${theme})`)) return '1';
+          throw error;
+        }
+      })();
+      expect(faded, `${rule.why}: opacity (${theme})`).toBe('1');
+    }
+  }
+});
+
+test('busy-buttons-show-under-forced-colours', () => {
+  // The resolver's forced mode: the forced-colours block joins the cascade, at its specificity and place;
+  // a `border` shorthand counts as its colour.
+  const sample = `.b { border: 1px solid transparent; color: var(--x); } @media (forced-colors: active) { .b[x] { color: GrayText; } } .b.p[x] { color: var(--y); }`;
+  expect(resolveOnElement(sample, ['.b', '.b[x]'], 'color', 'light', { forced: true })).toBe('GrayText');
+  expect(resolveOnElement(sample, ['.b', '.b[x]'], 'color', 'light')).toBe('var(--x)');
+  expect(resolveOnElement(sample, ['.b', '.b[x]', '.b.p[x]'], 'color', 'light', { forced: true })).toBe('var(--y)');
+  expect(resolveOnElement(sample, ['.b'], 'border-color', 'dark', { forced: true })).toBe('transparent');
+
+  const entries: readonly ForcedColoursBusy[] = FORCED_COLOURS_BUSY;
+  for (const entry of entries) {
+    const css = read(entry.stylesheet);
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
+    for (const theme of THEME_NAMES) {
+      for (const property of ['color', 'border-color']) {
+        expect(resolveOnElement(css, entry.element, property, theme, { forced: true }).toLowerCase(), `${entry.why}: ${property} under forced colours (${theme})`).toBe('graytext');
+      }
+    }
+  }
+});
+
 test('no-other-stylesheet-declares-root-tokens', () => {
   for (const name of STYLESHEETS) {
     if (name === TOKENS_STYLESHEET) continue;
@@ -409,6 +517,8 @@ test('tokens-load-before-every-other-stylesheet', () => {
 const SURFACE_COLOUR_WORDS = new Set(['transparent', 'currentcolor', 'inherit', 'none', 'solid', 'dashed', 'dotted', 'double', 'inset', 'color-mix', 'in', 'srgb', 'calc', 'min', 'max', 'clamp']);
 /** `text-decoration`'s line and style keywords: not colours (a colour in it still needs the allowlist). */
 const TEXT_DECORATION_WORDS = new Set(['underline', 'overline', 'line-through', 'wavy']);
+/** The CSS system colours, allowed in a surface rule only under `@media (forced-colors: active)`. */
+const SYSTEM_COLOURS = new Set<string>(FORCED_COLOURS_SYSTEM_COLOURS);
 /** A literal colour in any property: hex or a colour function. */
 const COLOUR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
 /** Properties whose value can carry a colour (these, and custom properties, get the colour allowlist). */
@@ -475,7 +585,11 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
       const rest = d.value.replace(/var\(\s*--[\w-]+\s*\)/g, ' ').toLowerCase();
       const words = rest.replace(/-?\d*\.?\d+[a-z%]*/g, ' ').match(/[a-z][\w-]*/g) ?? [];
       const decoration = d.property.startsWith('text-decoration');
-      const strays = words.filter((word) => !SURFACE_COLOUR_WORDS.has(word) && !(decoration && TEXT_DECORATION_WORDS.has(word)));
+      // Inside `@media (forced-colors: active)` only, the CSS system colours (GrayText for a busy button).
+      const forced = d.context.some((level) => FORCED_COLOURS_MEDIA.test(level));
+      const strays = words.filter(
+        (word) => !SURFACE_COLOUR_WORDS.has(word) && !(decoration && TEXT_DECORATION_WORDS.has(word)) && !(forced && SYSTEM_COLOURS.has(word)),
+      );
       if (rest.includes('#') || strays.length > 0) problems.push(`${label}: a literal colour (${rest.includes('#') ? '#' : strays.join(', ')})`);
     }
     if (['font-size', 'font-family', 'line-height'].includes(d.property)) problems.push(`${label}: type comes from a --text-* token`);
@@ -537,6 +651,9 @@ test('surface-rules-read-signal-tokens', () => {
     'hex in scrollbar-color': '.palette-list { scrollbar-color: #f00 #00f; }',
     'focus ring with outline: 0': '.palette-x:focus-visible { outline: 0; box-shadow: var(--focus-ring); }',
     'focus ring with no outline': '.palette-x:focus-visible { box-shadow: var(--focus-ring); }',
+    'a system colour outside forced colours': ".palette-x[aria-disabled='true'] { color: GrayText; }",
+    'a named colour inside forced colours': "@media (forced-colors: active) { .palette-x[aria-disabled='true'] { color: red; } }",
+    'a system colour under another media query': "@media (prefers-contrast: more) { .palette-x { border-color: GrayText; } }",
   };
   for (const [name, css] of Object.entries(caught)) expect(problemsIn(css), name).not.toEqual([]);
   // ... and these pass: a token rule, a class-boundary miss, a caps rule with its tracking.
@@ -547,6 +664,8 @@ test('surface-rules-read-signal-tokens', () => {
   expect(problemsIn('.palette-hit { text-decoration: underline; }')).toEqual([]);
   // A focus ring forced colours still draw (they drop box-shadows): a transparent outline beside it.
   expect(problemsIn('.palette-x:focus-visible { outline: 2px solid transparent; outline-offset: 2px; box-shadow: var(--focus-ring); }')).toEqual([]);
+  // A busy state shown only by colour stays visible under forced colours: a system colour, in that block only.
+  expect(problemsIn("@media (forced-colors: active) { .palette-x[aria-disabled='true'] { color: GrayText; border-color: GrayText; } }")).toEqual([]);
   expect(surfaceProblems('.table-row { color: red; }', { name: 'tab', stylesheet: 'n/a', selectorPrefix: '.tab' }).checked).toBe(0);
   expect(surfaceProblems('.palettes, .x-palette { color: red; }', palette).checked).toBe(0);
   // A surface that lists its classes (the SEO sidebar's frame, under the `.seo` prefix every panel

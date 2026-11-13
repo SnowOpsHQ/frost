@@ -64,6 +64,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `command-palette` | command-palette | the palette with "zoom" typed | `command-palette`, `update` |
 | `settings` | settings | the Settings sheet, every section answered | `settings` |
 | `settings-lower` | settings | the same, `.settings-content` at its end: AI checks' end, Telemetry | |
+| `help-shortcuts` | help-shortcuts | Help › Keyboard Shortcuts over the guide page | `browser-polish` help-shortcuts-sheet |
 | `projects` | projects | the Projects sheet: a project with two pages | `projects` projects-create-and-add-pages |
 | `projects-lower` | projects | the same, `.projects-main` at its end: search queries, Retention and disk usage, Purge log | |
 | `render-profile` | render-profile | phone + mobile UA applied and reloaded, the editor bar open | `render-profile` mobile-preset-viewport-and-ua |
@@ -72,7 +73,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `agent-empty` | agent-empty | the agent panel open, no chat yet | `agent` `launchWith` |
 | `agent-conversation` | agent-conversation | one scripted turn: a `page_text` tool card, then the answer | `agent` agent-chat-export-and-restore (scripted model seam) |
 
-25 captures, 50 images. No state is skipped. The ChatGPT route's conversation is not captured: the
+26 captures, 52 images. No state is skipped. The ChatGPT route's conversation is not captured: the
 scripted-model turn already shows the same chat surface without a sign-in.
 
 ## What is compared
@@ -157,9 +158,11 @@ one file, so it runs in one of the Linux e2e shards; the failed shard uploads
 `apps/desktop/test-results/` in its `playwright-report-linux-<n>` artifact.
 
 **First baselines, or after an intended visual change:**
-1. Push the branch. Without a pull request, run CI on it: `gh workflow run ci.yml --ref <branch>`.
-   (For an intended change, either delete the affected baselines first or let CI fail on the
-   difference.)
+1. Push the branch. Without a pull request, run CI on it:
+   `gh workflow run ci.yml --ref <branch> -f scope=linux`. The `linux` scope runs the Linux jobs
+   only: the baselines come from a Linux e2e shard, and a full run would hold all five macOS
+   runners while other runs wait for them. (For an intended change, either delete the affected
+   baselines first or let CI fail on the difference.)
 2. When the run fails on the visual suite: `gh run download <run-id> -p 'playwright-report-linux-*' -D <dir>`.
 3. Review: open each `*-diff.png` (or the HTML report in the artifact) and check that only the
    intended surfaces changed, in both themes.
@@ -167,7 +170,9 @@ one file, so it runs in one of the Linux e2e shards; the failed shard uploads
    `mkdir -p apps/desktop/e2e/__screenshots__/visual.e2e.ts && find <dir> -name '*-actual.png' -exec sh -c 'cp "$1" "apps/desktop/e2e/__screenshots__/visual.e2e.ts/$(basename "$1" -actual.png).png"' _ {} \;`
    (a green run's artifact is not uploaded; after an intended change, only the changed states have
    an actual). Delete the baselines of a removed state.
-5. Commit the PNGs, push, and run CI again: the visual suite passes.
+5. Commit the PNGs, push, and run CI again: the visual suite passes. A `linux` run's verdict is
+   `CI passed (Linux only)`, which is not the check `main` requires: the pull request's own run,
+   on every platform, is.
 
 **A change that must not move anything** (a token-only foundation PR): a green run is necessary but
 not sufficient, as up to 0.2 % of each image may differ and a passing comparison prints nothing.

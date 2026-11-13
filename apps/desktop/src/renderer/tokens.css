@@ -98,7 +98,6 @@
   /* ---- Settings (was in settings.css) */
   --settings-width: 820px;
   --settings-nav-width: 168px;
-  --settings-switch-off: #c9cfd9;
 
   /* ---- Search Console panel (was in gsc-panel.css) */
   --gsc-line: var(--accent);
@@ -147,9 +146,6 @@
     --serp-path: #9aa3b2;
     --serp-glyph: #2c3139;
     --serp-glyph-mark: #a3acba;
-
-    /* ---- Settings (was in settings.css) */
-    --settings-switch-off: #454b56;
 
     /* ---- Search Console panel (was in gsc-panel.css) */
     --gsc-grid: #30353e;

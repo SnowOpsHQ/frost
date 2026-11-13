@@ -159,3 +159,4 @@ Spec: `specs/intent-classifier.spec.ts` (`INTENT_LABELS`, `INTENT_LABEL_NAMES`,
 
 ## Real model (`apps/desktop/src/workers/intent/__tests__/intent-model.test.ts`, skipped unless cached)
 - `intent-real-model-classifies` — with the pinned files in `FROST_INTENT_MODEL_DIR` (default `~/.cache/frost-models/all-MiniLM-L6-v2`) and matching their sha256, the real tokenizer agrees with the vocabulary, and "how does photosynthesis work" is informational, "facebook login" navigational, "best running shoes for flat feet" commercial and "buy iphone 16 pro max 256gb" transactional; frost's own evaluation queries (which overlap the tuning set) are reported, at least 75 % right.
+- `intent-real-model-required-where-asked` — where `CI_REQUIRE_INTENT_MODEL_ENV` (`ci-pipeline.spec.ts`) is `1`, as in CI's Linux unit jobs after `scripts/fetch-intent-model.mjs` put the pinned files in place, a machine without them fails instead of skipping the suite.

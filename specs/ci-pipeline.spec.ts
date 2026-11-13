@@ -35,11 +35,12 @@ export const CI_UNIT_DESKTOP_SHARDS = { linux: 2, macos: 0, windows: 3 } as cons
 export const CI_E2E_SHARDS = { linux: 4, macos: 3, windows: 4 } as const satisfies Record<CiPlatform, number>;
 
 /**
- * Whether a failed e2e shard fails its job, and so the run. Windows does not, and never runs for a
- * pull request: a few of its tests still fail on Windows-only harness issues
- * (docs/plans/phase-7-sync-update-platforms.md, As built, Task 2).
+ * Whether a failed e2e shard fails its job, and so the run. Every platform does (Windows since
+ * 2026-11-13, once its harness issues were fixed). A platform set to `false` here, for the time its
+ * suite is being repaired, reports a failed shard as a warning instead and has no e2e job in a
+ * pull request's plan.
  */
-export const CI_E2E_GATING = { linux: true, macos: true, windows: false } as const satisfies Record<CiPlatform, boolean>;
+export const CI_E2E_GATING: Readonly<Record<CiPlatform, boolean>> = { linux: true, macos: true, windows: true };
 
 /**
  * What only the Linux jobs read. A pull request that changes nothing else runs lint, the security
@@ -54,8 +55,32 @@ export const CI_LINUX_ONLY_PATHS = ['docs/', 'semgrep/', 'security/', 'LICENSE']
 /** A Markdown file at the repository root (`README.md`, `CONTRIBUTING.md`) is Linux-only too. */
 export const CI_LINUX_ONLY_ROOT_PATTERN = /^[^/]+\.md$/;
 
-/** The event whose plan follows its changed files. Every other event runs every platform. */
+/** The event whose plan follows its changed files. */
 export const CI_PULL_REQUEST_EVENT = 'pull_request';
+
+/** The event of a run on demand (`gh workflow run ci.yml --ref <branch>`): the only one with a scope. */
+export const CI_DISPATCH_EVENT = 'workflow_dispatch';
+
+/**
+ * What a run on demand covers, its `scope` input (`-f scope=linux`): `all`, every platform, as a
+ * push to `main`; `linux`, the Linux jobs only, as a pull request that changes Linux-only paths.
+ *
+ * `linux` is enough to fetch screenshot baselines (specs/visual-baseline.feature.md), which only
+ * the Linux e2e jobs make, and it leaves the macOS runners to the runs that need them: one full
+ * run uses all five the Free plan runs at once, so a second run waits for them.
+ */
+export const CI_SCOPES = ['all', 'linux'] as const;
+export type CiScope = (typeof CI_SCOPES)[number];
+
+/** The scope of a run on demand that names none, and of every other event. */
+export const CI_DEFAULT_SCOPE: CiScope = 'all';
+
+/** The variable `preflight` passes the `scope` input in (empty for every other event). */
+export const CI_SCOPE_ENV = 'CI_SCOPE';
+
+export function isCiScope(value: string): value is CiScope {
+  return (CI_SCOPES as readonly string[]).includes(value);
+}
 
 export function isLinuxOnlyPath(file: string): boolean {
   if (CI_LINUX_ONLY_ROOT_PATTERN.test(file)) return true;
@@ -100,11 +125,20 @@ export interface CiPlan {
 
 /**
  * The run's plan. `changed` is the pull request's changed files (repository-relative, as
- * `git diff --name-only` prints them); it is ignored for every other event.
+ * `git diff --name-only` prints them); it is ignored for every other event. `scope` is what a run
+ * on demand asked for (`CI_DEFAULT_SCOPE` when left out); it is ignored for every other event, so
+ * a push to `main` and a pull request can never be narrowed by it. `e2eGating` is `CI_E2E_GATING`
+ * unless given (the tests give one with a platform off, which the workflow never does).
  */
-export function planCi(input: { readonly event: string; readonly changed: readonly string[] }): CiPlan {
+export function planCi(input: {
+  readonly event: string;
+  readonly changed: readonly string[];
+  readonly scope?: CiScope;
+  readonly e2eGating?: Readonly<Record<CiPlatform, boolean>>;
+}): CiPlan {
   const pullRequest = input.event === CI_PULL_REQUEST_EVENT;
-  const platforms = !pullRequest || !input.changed.every(isLinuxOnlyPath);
+  const linuxOnDemand = input.event === CI_DISPATCH_EVENT && (input.scope ?? CI_DEFAULT_SCOPE) === 'linux';
+  const platforms = pullRequest ? !input.changed.every(isLinuxOnlyPath) : !linuxOnDemand;
   const unit: CiUnitJob[] = [];
   const e2e: CiE2eJob[] = [];
   for (const platform of CI_PLATFORMS) {
@@ -120,7 +154,7 @@ export function planCi(input: { readonly event: string; readonly changed: readon
         unit.push({ id: `${platform}-desktop-${i}`, name: `${label} · desktop ${i}/${desktopShards}`, os, scope: 'desktop', shard: `${i}/${desktopShards}` });
       }
     }
-    const gating = CI_E2E_GATING[platform];
+    const gating = (input.e2eGating ?? CI_E2E_GATING)[platform];
     if (!gating && pullRequest) continue;
     const e2eShards = CI_E2E_SHARDS[platform];
     for (let i = 1; i <= e2eShards; i += 1) {
@@ -137,6 +171,14 @@ export function planCi(input: { readonly event: string; readonly changed: readon
  */
 export const CI_REQUIRE_BUBBLEWRAP_ENV = 'FROST_REQUIRE_BUBBLEWRAP';
 
+/**
+ * Set to `1` for the desktop unit tests on Linux when `scripts/fetch-intent-model.mjs` put the
+ * pinned model files in place first: the real-model intent suite (`intent-model.test.ts`), which
+ * skips itself where the files are not cached, then fails instead. Left empty when the model's
+ * host could not be reached, so that host's bad day fails no run.
+ */
+export const CI_REQUIRE_INTENT_MODEL_ENV = 'FROST_REQUIRE_INTENT_MODEL';
+
 /** The jobs `ci-passed` waits for that run in every plan. */
 export const CI_ALWAYS_JOBS = ['preflight', 'lint', 'security', 'unit', 'e2e'] as const;
 
@@ -145,6 +187,16 @@ export const CI_PLATFORM_JOBS = ['package-linux', 'package-macos', 'package-wind
 
 /** The job every other job's result is folded into: the one check to require on `main`. */
 export const CI_VERDICT_JOB = 'ci-passed';
+
+/** The verdict job's name: the check to require on `main`. */
+export const CI_VERDICT_NAME = 'CI passed';
+
+/**
+ * The verdict job's name in a run on demand with the `linux` scope. It is another name on purpose:
+ * a check called `CI_VERDICT_NAME` that only the Linux jobs earned would satisfy the required
+ * check for that commit.
+ */
+export const CI_LINUX_VERDICT_NAME = 'CI passed (Linux only)';
 
 /**
  * Whether the run passed: every `CI_ALWAYS_JOBS` job succeeded, and every `CI_PLATFORM_JOBS` job
