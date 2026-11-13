@@ -150,12 +150,13 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   screen. Status dots say it by shape, not hue alone: an error a filled `--danger` square (corners
   half of `--r-xs`), a warning a `--warn` ring (`--caution`; a 2px border, not a shadow, so forced
   colours keep it), a pass a filled `--ok` disc (the screen's check glyph needs markup: a later PR), each
-  cut out by a halo in the sheet or card under it. The dots keep their own colours in forced colours
+  cut out by a halo in the sheet or card under it (none on a hovered or focused "More panels" row, whose
+  tint the halo would ring). The dots keep their own colours in forced colours
   (`forced-color-adjust: none`), where the halo and the ring's fill turn transparent. The rail tip and
   "More panels" are `--bg-surface` menus with `--e-overlay` (`--r-sm`, `--r-md`) in place of a border and
   a black drop shadow, a transparent 1px border kept for forced colours; a focused menu item takes
-  `--focus-ring` (the menu's 4px padding holds it) beside a transparent outline, over `--accent-soft`,
-  and a hovered one `--bg-hover`. The header follows the agent panel's: no fill of its own, the panel's name at
+  `--focus-ring` (the menu's 4px padding holds it, and it is drawn above its neighbours) beside a
+  transparent outline, over `--accent-soft`, and a hovered one `--bg-hover`. The header follows the agent panel's: no fill of its own, the panel's name at
   `--text-title` over its host in `--text-small`, a `--divider` rule; its tools keep the chrome's `.tool`
   style. The pressed pin and the toolbar's pressed toggle take `--accent` on `--accent-soft`. Cards
   (`.seo-section`, `.seo-score-card`, `.seo-issues`, the skeleton's score card) are `--bg-surface` at
@@ -255,7 +256,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   no outline; it accepts a component property (`--tone-ink: var(--ok-ink)`) read in the same rule,
   `text-decoration: underline`, and `--focus-ring` beside `outline: 2px solid transparent`; it ignores
   `.palettes`, `.x-palette`, and `.table-*` for a `.tab` surface. Each class and keyframes name an entry
-  lists matches at least one rule of its stylesheet (a stale name fails). For a surface that lists its classes
+  lists matches at least one rule of its stylesheet (a stale name fails, and so does a `-*` family with
+  no member). For a surface that lists its classes
   (`.seo`, `.seo-panel`, `.seo-chip`, `.seo-rail-*`, keyframes `seo-panel-in`) it checks those, the
   `-*` family's members and the listed keyframes, and ignores the panels' classes under the same prefix
   (`.seo-links`, `.seo-panel-tools`, `.seo-chip-button`, `.seo-chips`, `.seo-toggle`), `.seo-railway`,
