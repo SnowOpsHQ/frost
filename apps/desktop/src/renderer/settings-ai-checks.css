@@ -28,8 +28,12 @@
 }
 
 .settings-choice[aria-disabled='true'] {
-  opacity: 0.6;
   cursor: default;
+}
+
+/* An unavailable choice fades only while it is not focused, so its focus ring keeps full strength. */
+.settings-choice[aria-disabled='true']:where(:not(:focus-visible)) {
+  opacity: 0.6;
 }
 
 .settings-choice:focus-visible {

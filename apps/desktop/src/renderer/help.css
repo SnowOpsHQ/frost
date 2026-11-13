@@ -358,18 +358,22 @@
   white-space: nowrap;
 }
 
-.diagnostics-save:hover:not(:disabled, [aria-disabled='true']) {
+/* The state checks sit in :where(), so the hover adds no weight over the focus rule below. */
+.diagnostics-save:hover:where(:not(:disabled, [aria-disabled='true'])) {
   box-shadow:
     inset 0 0 0 var(--h-control) var(--bg-hover),
     var(--e-raised);
 }
 
+/* Saving (aria-disabled, still focusable): shown by colour, not by fading, which would dim the ring. */
 .diagnostics-save:disabled,
 .diagnostics-save[aria-disabled='true'] {
-  opacity: 0.6;
+  color: var(--text-faint);
+  cursor: default;
 }
 
-.diagnostics-save:focus-visible:not(:disabled, [aria-disabled='true']) {
+/* After the hover: focused, it keeps its ring hovered and while it saves (aria-disabled stays focusable). */
+.diagnostics-save:focus-visible {
   /* Transparent, so only forced colours (which drop box-shadows) draw it. */
   outline: 2px solid transparent;
   outline-offset: 2px;
