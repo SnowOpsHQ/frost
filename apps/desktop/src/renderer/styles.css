@@ -48,6 +48,9 @@ input {
 
 /* ---- Layout ------------------------------------------------------------------------------- */
 
+/* Signal (specs/design-tokens.feature.md, The browser chrome's rows): both rows on --bg-window, sized
+   by what they hold (the tab row and the toolbar set their own heights; the merged --h-chrome row is
+   a PR of its own), the status bar --h-status; text on the --text-* tokens (Geist). */
 .chrome {
   display: grid;
   /* Rows: tab strip, toolbar, permission prompt, render-profile editor bar, find bar, the workspace
@@ -59,7 +62,7 @@ input {
      (devtools.feature.md). The command palette's sheet and the History sheet are not rows: they sit
      at the top of the workspace's page column (command-palette.spec.ts). Each takes its height from
      the page area, so the tab's view is laid out clear of them all. */
-  grid-template-rows: var(--tabstrip-height) var(--toolbar-height) auto auto auto auto minmax(0, 1fr) var(--status-height);
+  grid-template-rows: auto auto auto auto auto auto minmax(0, 1fr) var(--h-status);
   height: 100%;
 }
 
@@ -77,24 +80,28 @@ input {
 
 /* ---- Tab strip ---------------------------------------------------------------------------- */
 
-/* The active tab is cut from the toolbar's colour and flows into it; the others sit on the darker
-   strip. The row scrolls sideways (no scrollbar) once the tabs reach their minimum width. */
+/* One row on --bg-window (no separate strip): each tab a pill, inactive ones on --bg-tab-idle, the
+   active one raised on --bg-surface. The row scrolls sideways (no scrollbar) once the tabs reach
+   their minimum width. */
 .tabstrip {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   min-width: 0;
-  padding: 0 8px 0 4px;
-  background: var(--bg-strip);
+  height: calc(var(--h-control) + 2 * var(--space-1));
+  padding: 0 var(--space-3) 0 var(--space-1);
+  background: var(--bg-window);
+  font: var(--text-body);
 }
 
 .tabs {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  gap: var(--space-1);
   flex: 0 1 auto;
   min-width: 0;
   height: 100%;
-  /* Room for the active tab's flared corners at both ends. */
-  padding: 0 10px;
+  /* Room for a focused tab's ring (--focus-ring reaches 4px out) inside the scrolling row. */
+  padding: var(--space-1);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -105,80 +112,49 @@ input {
 }
 
 .tab {
-  --tab-bg: transparent;
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   /* An explicit width too: the scrolling row sizes itself from its tabs' intrinsic widths. */
   flex: 0 1 224px;
   width: 224px;
   min-width: 84px;
-  height: 32px;
-  padding: 0 6px 0 11px;
-  border-radius: 10px 10px 0 0;
-  background: var(--tab-bg);
+  height: var(--h-control);
+  padding: 0 var(--space-2) 0 calc(var(--space-1) + var(--space-2));
+  border-radius: var(--r-pill);
+  background: var(--bg-tab-idle);
   color: var(--text-muted);
-  font-size: 12.5px;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
-/* Hairline dividers between inactive tabs (hidden next to the active or a hovered one). */
-.tab + .tab::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 9px;
-  bottom: 9px;
-  width: 1px;
-  background: var(--border-field);
-  transition: opacity 120ms ease;
-}
-
-.tab[data-active='true']::before,
-.tab[data-active='true'] + .tab::before,
-.tab:hover::before,
-.tab:hover + .tab::before {
-  opacity: 0;
-}
-
-.tab:hover:not([data-active='true']) {
-  --tab-bg: var(--bg-tab-hover);
+/* The state check sits in :where(), so the hover adds no weight over the focus rule below. */
+.tab:hover:where(:not([data-active='true'])) {
+  background: var(--bg-hover);
   color: var(--text);
 }
 
+/* Forced colours drop the fill and the shadow: the transparent outline marks the active tab there. */
 .tab[data-active='true'] {
-  --tab-bg: var(--bg-chrome);
   z-index: 1;
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
+  outline: 1px solid transparent;
+  outline-offset: -1px;
 }
 
-/* The flared corners where the active tab meets the toolbar. */
-.tab[data-active='true']::after,
-.tab[data-active='true'] .tab-glyph::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  width: 10px;
-  height: 10px;
-  pointer-events: none;
-}
-
-.tab[data-active='true']::after {
-  right: -10px;
-  background: radial-gradient(circle at 100% 0, transparent 9.5px, var(--bg-chrome) 10px);
-}
-
-.tab[data-active='true'] .tab-glyph::after {
-  left: -10px;
-  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--bg-chrome) 10px);
+.tab[data-active='true'] .tab-label {
+  font-weight: 500;
 }
 
 /* The focusable part is the inner role="tab"; the ring goes around the whole tab. */
 .tab-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -186,31 +162,29 @@ input {
 }
 
 .tab:has(.tab-main:focus-visible) {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  z-index: 2;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .tab-glyph {
   display: grid;
   place-items: center;
   flex: none;
-  width: 16px;
-  height: 16px;
-  color: var(--text-faint);
-}
-
-.tab[data-active='true'] .tab-glyph {
-  color: var(--icon);
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--text-muted);
 }
 
 .tab-icon {
-  width: 15px;
-  height: 15px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .tab-mark {
-  width: 15px;
-  height: 15px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   color: var(--accent);
 }
 
@@ -218,21 +192,20 @@ input {
   color: var(--warn);
 }
 
-/* A background tab whose page asks for a permission: a small accent dot after its label. */
+/* A background tab whose page asks for a permission: a small accent ring after its label. */
 .tab-attention {
   display: grid;
   place-items: center;
   flex: none;
   width: 10px;
-  height: 16px;
+  height: var(--icon-sm);
 }
 
 .tab-attention-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--accent);
+  border-radius: var(--r-pill);
 }
 
 /* Loading indicator: a small ring with a sweeping accent arc. */
@@ -242,7 +215,7 @@ input {
   /* The track keeps the old accent-soft strength (22%): Signal's --accent-soft (10%) left it ~1.15:1. */
   border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-top-color: var(--accent);
-  border-radius: 50%;
+  border-radius: var(--r-pill);
   animation: tab-spin 0.8s linear infinite;
 }
 
@@ -264,14 +237,16 @@ input {
   display: grid;
   place-items: center;
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: var(--h-badge);
+  height: var(--h-badge);
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--r-pill);
   background: transparent;
-  color: var(--text-faint);
-  transition: background-color 120ms ease, color 120ms ease;
+  color: var(--text-muted);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
 /* Inactive tabs show × only on hover, so narrow tabs keep room for their label. */
@@ -280,32 +255,36 @@ input {
 }
 
 .tab-close:hover {
-  background: var(--bg-active);
+  background: var(--bg-hover);
   color: var(--text);
 }
 
-.tab-close .icon {
-  width: 14px;
-  height: 14px;
+.tab-close:active {
+  background: var(--bg-active);
 }
 
+.tab-close .icon {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+/* The transparent border is the edge forced colours draw. */
 .new-tab {
   display: grid;
   place-items: center;
   flex: none;
-  width: 28px;
-  height: 28px;
-  margin: 0 0 3px 2px;
+  width: var(--h-control);
+  height: var(--h-control);
   padding: 0;
-  border: 0;
-  border-radius: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   background: transparent;
-  color: var(--icon);
-  transition: background-color 120ms ease;
+  color: var(--text-muted);
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 
 .new-tab:hover {
-  background: var(--bg-tab-hover);
+  background: var(--bg-hover);
 }
 
 .new-tab:active {
@@ -313,93 +292,116 @@ input {
 }
 
 .new-tab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.new-tab .icon {
-  width: 17px;
-  height: 17px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 /* ---- Toolbar ------------------------------------------------------------------------------ */
 
+/* On --bg-window like the tab row; the rule under the chrome is the workspace's top edge. */
 .toolbar {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 14px 0 10px;
-  background: var(--bg-chrome);
-  border-bottom: 1px solid var(--bg-chrome-edge);
+  gap: var(--space-3);
+  height: calc(var(--h-field) + 2 * var(--space-2));
+  padding: 0 var(--space-4);
+  background: var(--bg-window);
 }
 
 .nav-buttons {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
+/* The chrome's icon button, also in the agent panel's and the SEO sidebar's headers: an --h-control
+   circle, --bg-hover hovered, --bg-active pressed. The transparent border is the edge forced colours
+   draw. */
 .tool {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: var(--h-control);
+  height: var(--h-control);
   padding: 0;
-  border: 0;
-  border-radius: var(--radius-control);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   background: transparent;
-  color: var(--icon);
-  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+  color: var(--text-muted);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
-.tool:hover:not(:disabled) {
+/* The state checks sit in :where(), so they add no weight over the focus rule below. */
+.tool:hover:where(:not(:disabled)) {
   background: var(--bg-hover);
 }
 
-.tool:active:not(:disabled) {
+.tool:active:where(:not(:disabled)) {
   background: var(--bg-active);
 }
 
+/* Disabled: shown by colour (it faded), --text-faint at half strength: --text-faint alone sits too
+   close to the enabled --text-muted to tell a disabled Back from an enabled one. */
 .tool:disabled {
-  opacity: 0.32;
+  color: color-mix(in srgb, var(--text-faint) 50%, transparent);
+}
+
+/* The toolbar's SEO sidebar toggle: pressed while the sidebar is open. */
+.sidebar-toggle[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .tool:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* Forced colours replace the colours that say disabled and pressed. */
+@media (forced-colors: active) {
+  .tool:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
+
+  .sidebar-toggle[aria-pressed='true'] {
+    border-color: Highlight;
+  }
 }
 
 .icon {
-  width: 18px;
-  height: 18px;
+  width: var(--icon-size);
+  height: var(--icon-size);
   flex: none;
 }
 
 /* ---- Address bar -------------------------------------------------------------------------- */
 
+/* An --h-field pill on --bg-surface with --e-raised; the transparent border is the edge forced
+   colours draw (1px less padding). Focus rings the whole field. */
 .address {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   min-width: 0;
-  height: 34px;
-  padding: 0 12px 0 11px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-field);
-  background: var(--bg-field);
-  box-shadow: var(--shadow-field);
-  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
-}
-
-.address:hover {
-  background: var(--bg-field-hover);
+  height: var(--h-field);
+  padding: 0 calc(var(--space-4) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
+  transition: box-shadow var(--dur-fast) var(--ease-out);
 }
 
 .address:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .address-badge {
@@ -409,8 +411,8 @@ input {
 }
 
 .address-badge .icon {
-  width: 15px;
-  height: 15px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .address[data-security='secure'] .address-badge {
@@ -429,8 +431,7 @@ input {
   border: 0;
   outline: none;
   background: transparent;
-  font-size: 13.5px;
-  letter-spacing: 0.005em;
+  font: var(--text-body);
   user-select: text;
   cursor: text;
 }
@@ -443,12 +444,12 @@ input {
   background: var(--accent-soft);
 }
 
-/* Loading indicator: a slim bar sliding along the toolbar's bottom edge. */
+/* Loading indicator: a slim accent line sliding along the toolbar's foot. */
 .progress {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: -1px;
+  bottom: 0;
   height: 2px;
   overflow: hidden;
   pointer-events: none;
@@ -460,8 +461,8 @@ input {
   top: 0;
   bottom: 0;
   width: 32%;
-  border-radius: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  border-radius: var(--r-pill);
+  background: var(--accent);
   animation: progress-slide 1.15s ease-in-out infinite;
 }
 
@@ -481,32 +482,28 @@ input {
   min-width: 0;
 }
 
+/* A band (the canvas's band slot): --accent-soft at --r-md, inset under the toolbar, no edge or
+   shadow. The transparent border is the edge forced colours draw (1px less padding). */
 .prompt-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 48px;
-  padding: 7px 10px 7px 14px;
-  border-bottom: 1px solid var(--prompt-edge);
-  background: var(--bg-prompt);
-  box-shadow: var(--shadow-prompt);
-  animation: prompt-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  gap: var(--space-4);
+  min-height: 44px;
+  margin: 0 var(--space-3) var(--space-3);
+  padding: calc(var(--space-3) - 1px) calc(var(--space-3) - 1px) calc(var(--space-3) - 1px) calc(var(--space-4) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  color: var(--text);
+  font: var(--text-body);
+  animation: prompt-in var(--dur-base) var(--ease-out) both;
 }
 
 .prompt-icon {
   display: grid;
   place-items: center;
   flex: none;
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--accent) 13%, var(--bg-prompt));
   color: var(--accent);
-}
-
-.prompt-icon .icon {
-  width: 17px;
-  height: 17px;
 }
 
 .prompt-text {
@@ -515,7 +512,6 @@ input {
   margin: 0;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -533,66 +529,84 @@ input {
 .prompt-actions {
   display: flex;
   flex: none;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
-/* Allow and Block weigh the same: frost does not nudge either answer. */
+/* Allow and Block weigh the same: frost does not nudge either answer. --h-chip pills on --bg-surface
+   with --e-raised; hover lays --bg-hover over them. */
 .prompt-button {
   min-width: 72px;
-  height: 30px;
-  padding: 0 14px;
-  border: 1px solid var(--border-field);
-  border-radius: 8px;
-  background: var(--bg-field);
-  box-shadow: var(--shadow-field);
+  height: var(--h-chip);
+  padding: 0 calc(var(--space-5) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
-  font-size: 12.5px;
   font-weight: 500;
-  transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease;
+  transition:
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 
-.prompt-button:hover:not(:disabled) {
-  background: var(--bg-field-hover);
-  border-color: color-mix(in srgb, var(--border-field) 70%, var(--text-faint));
+/* The state checks sit in :where(), so a hover adds no weight over the focus rule below. */
+.prompt-button:hover:where(:not(:disabled)) {
+  box-shadow:
+    inset 0 0 0 var(--h-chip) var(--bg-hover),
+    var(--e-raised);
 }
 
-.prompt-button:active:not(:disabled) {
+.prompt-button:active:where(:not(:disabled)) {
   transform: translateY(1px);
-}
-
-.prompt-button:disabled,
-.prompt-dismiss:disabled {
-  opacity: 0.55;
-}
-
-.prompt-button:focus-visible,
-.prompt-dismiss:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .prompt-dismiss {
   display: grid;
   place-items: center;
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: var(--h-chip);
+  height: var(--h-chip);
   padding: 0;
-  border: 0;
-  border-radius: 7px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   background: transparent;
-  color: var(--text-faint);
-  transition: background-color 120ms ease, color 120ms ease;
+  color: var(--text-muted);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
-.prompt-dismiss:hover:not(:disabled) {
+.prompt-dismiss:hover:where(:not(:disabled)) {
   background: var(--bg-hover);
   color: var(--text);
 }
 
 .prompt-dismiss .icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+/* Not yet armed, or answered: shown by colour (they faded). */
+.prompt-button:disabled,
+.prompt-dismiss:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.prompt-button:focus-visible,
+.prompt-dismiss:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* Forced colours replace the colour that says disabled (FORCED_COLOURS_BUSY). */
+@media (forced-colors: active) {
+  .prompt-button:disabled,
+  .prompt-dismiss:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
 }
 
 @keyframes prompt-in {
@@ -609,7 +623,8 @@ input {
 /* ---- Fullscreen notice -------------------------------------------------------------------- */
 
 /* Across the top of the window while a page has just entered HTML fullscreen; main keeps the page's
-   view below it (FULLSCREEN_BANNER_HEIGHT in specs/permissions.spec.ts: keep the height equal). */
+   view below it (FULLSCREEN_BANNER_HEIGHT in specs/permissions.spec.ts: keep the height equal).
+   An inverse band: --on-inverse on --inverse. */
 .fullscreen-notice {
   position: fixed;
   top: 0;
@@ -620,11 +635,10 @@ input {
   align-items: center;
   justify-content: center;
   height: 40px;
-  padding: 0 16px;
-  background: #15181d;
-  color: #e7eaf0;
-  font-size: 13px;
-  box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.08);
+  padding: 0 var(--space-5);
+  background: var(--inverse);
+  color: var(--on-inverse);
+  font: var(--text-body);
 }
 
 .fullscreen-notice-text {
@@ -640,13 +654,15 @@ input {
 /* ---- Workspace: the page area and the SEO sidebar ------------------------------------------ */
 
 /* The workspace row, with the devtools drawer's band under it while open (its max-height is a
-   share of this stack, so the page keeps some height). */
+   share of this stack, so the page keeps some height). Its top edge is the rule between the chrome
+   (with any band under the toolbar) and the page. */
 .workspace-stack {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  border-top: 1px solid var(--divider);
 }
 
 .workspace {
@@ -904,16 +920,17 @@ input {
 
 /* ---- Status bar --------------------------------------------------------------------------- */
 
+/* --text-small on --bg-window; a --divider rule over it while the page is flush. */
 .status-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 0 12px;
-  border-top: 1px solid var(--bg-chrome-edge);
-  background: var(--bg-chrome);
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  border-top: 1px solid var(--divider);
+  background: var(--bg-window);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .status-text {
@@ -927,25 +944,24 @@ input {
 .status-zoom {
   flex: none;
   margin-left: auto;
-  padding: 1px 6px;
-  border: 1px solid var(--bg-chrome-edge);
-  border-radius: 4px;
-  font-variant-numeric: tabular-nums;
   color: var(--text-muted);
+  font: var(--text-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .connection {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   flex: none;
   color: var(--text-faint);
 }
 
+/* Beside its label, which says the state. */
 .connection-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--r-pill);
   background: var(--text-faint);
 }
 
@@ -1315,12 +1331,6 @@ input {
 
 /* The open panel's pin toggle: pressed while the panel is on the rail. */
 .seo-pin[aria-pressed='true'] {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-/* The toolbar's toggle shows whether the panel is open. */
-.tool.seo-toggle[aria-pressed='true'] {
   background: var(--accent-soft);
   color: var(--accent);
 }
