@@ -451,6 +451,15 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
   const reserved = (name: string) => SIGNAL_NAMES.has(name) || legacy.has(name);
   const components = new Set(all.filter((d) => d.property.startsWith('--') && !reserved(d.property)).map((d) => d.property));
   const problems: string[] = [];
+  // A listed class or keyframes must still name a rule: a stale entry guards nothing.
+  const { blocks } = parse(css);
+  for (const name of surface.classes ?? []) {
+    const one = new RegExp(`\\.${name.endsWith('-*') ? `${escape(name.slice(1, -2))}(?:-[\\w-]+)?` : escape(name.slice(1))}(?![\\w-])`);
+    if (!blocks.some((context) => context.some((level) => !level.startsWith('@') && one.test(level)))) problems.push(`${surface.name}: listed class ${name} names no rule`);
+  }
+  for (const name of surface.keyframes ?? []) {
+    if (!blocks.some((context) => context.some((level) => new RegExp(`^@keyframes\\s+${escape(name)}$`).test(level)))) problems.push(`${surface.name}: listed keyframes ${name} names no rule`);
+  }
   const byBlock = new Map<number, Declaration[]>();
   for (const d of own) {
     byBlock.set(d.block, [...(byBlock.get(d.block) ?? []), d]);
@@ -560,6 +569,13 @@ test('surface-rules-read-signal-tokens', () => {
   }
   expect(checkedIn('@keyframes seo-ring-fill { from { color: red; } }')).toBe(0);
   expect(checkedIn('@keyframes seo-panel-in-more { from { color: red; } }')).toBe(0);
+  // Every listed class and keyframes names a rule: a stale one fails, a family needs only one member.
+  const listed: SignalSurface = { ...frame, classes: ['.seo', '.seo-rail-*'], keyframes: ['seo-panel-in'] };
+  const sheet = '.seo { color: var(--text); } .seo-rail-item { color: var(--text-muted); } @keyframes seo-panel-in { from { opacity: 0; } }';
+  expect(surfaceProblems(sheet, listed).problems).toEqual([]);
+  expect(surfaceProblems(sheet, { ...listed, classes: ['.seo', '.seo-rail-*', '.seo-gone'] }).problems.join()).toContain('.seo-gone names no rule');
+  expect(surfaceProblems(sheet, { ...listed, classes: ['.seo', '.seo-rail'] }).problems.join()).toContain('.seo-rail names no rule');
+  expect(surfaceProblems(sheet, { ...listed, keyframes: ['seo-panel-in', 'seo-gone-in'] }).problems.join()).toContain('seo-gone-in names no rule');
 
   const surfaces: readonly SignalSurface[] = SIGNAL_SURFACES;
   expect(surfaces.length).toBeGreaterThan(0);
