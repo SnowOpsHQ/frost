@@ -575,6 +575,7 @@ test('surface-rules-read-signal-tokens', () => {
   expect(surfaceProblems(sheet, listed).problems).toEqual([]);
   expect(surfaceProblems(sheet, { ...listed, classes: ['.seo', '.seo-rail-*', '.seo-gone'] }).problems.join()).toContain('.seo-gone names no rule');
   expect(surfaceProblems(sheet, { ...listed, classes: ['.seo', '.seo-rail'] }).problems.join()).toContain('.seo-rail names no rule');
+  expect(surfaceProblems(sheet, { ...listed, classes: ['.seo', '.seo-rail-*', '.seo-absent-*'] }).problems.join()).toContain('.seo-absent-* names no rule');
   expect(surfaceProblems(sheet, { ...listed, keyframes: ['seo-panel-in', 'seo-gone-in'] }).problems.join()).toContain('seo-gone-in names no rule');
 
   const surfaces: readonly SignalSurface[] = SIGNAL_SURFACES;
