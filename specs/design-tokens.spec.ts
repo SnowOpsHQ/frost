@@ -499,7 +499,9 @@ export const SIGNAL_SURFACES = [
   // classes share no prefix, so it lists them. Not the shared `.icon` and `.visually-hidden`, the
   // new tab's view and the error panels (their own rules), nor the bars and badges later surface PRs
   // move: the render-profile editor bar and chips (`.tab-profile`, `.status-render-profile`,
-  // `.status-tab-overrides`), the find bar, History and the update notice.
+  // `.status-tab-overrides`), the find bar, History and the update notice. Some of those later surfaces'
+  // rules name a chrome class, so this entry checks them today: `.status-render-profile + .status-zoom`
+  // and the `.page-column … > .page-area` rules of History, Projects and the shot editor (layout only).
   {
     name: 'browser chrome',
     stylesheet: 'styles.css',
@@ -718,6 +720,8 @@ export const CONTRAST_PAIRS = [
   { fg: '--text-muted', bg: '--bg-active', over: '--bg-window', min: 4.5, why: 'a pressed toolbar tool or new-tab button: its --text-muted icon on --bg-active over --bg-window (4.5:1)' },
   { fg: '--warn', bg: '--bg-tab-idle', over: '--bg-window', min: 3, why: `${WARN}: an inactive tab's alert glyph (a crashed or failed page) on --bg-tab-idle` },
   { fg: '--accent', bg: '--bg-tab-idle', over: '--bg-window', min: 3, why: 'an inactive tab\'s FrostMark, spinner and permission ring (--accent) on --bg-tab-idle (graphics, 3:1)' },
+  { fg: '--accent', bg: '--bg-hover', over: '--bg-window', min: 3, why: 'a hovered inactive tab\'s FrostMark, spinner and permission ring (--accent) on --bg-hover (graphics, 3:1)' },
+  { fg: '--warn', bg: '--bg-hover', over: '--bg-window', min: 3, why: `${WARN}: a hovered inactive tab's alert glyph on --bg-hover` },
   {
     fg: '--text',
     bg: '--bg-active',
@@ -943,6 +947,11 @@ export const FOCUS_RING_RULES = [
   { stylesheet: 'styles.css', element: ['.tool', TOOL_HOVER, TOOL_PRESSED, '.tool:focus-visible'], why: 'a toolbar tool, focused and pressed' },
   {
     stylesheet: 'styles.css',
+    element: ['.tool', TOOL_HOVER, ".render-toggle[aria-pressed='true']", '.tool:focus-visible'],
+    why: 'the render-profile toggle, pressed (its editor bar open), focused and hovered: its pressed edge is the tool\'s border colour, not a box-shadow that would replace the ring',
+  },
+  {
+    stylesheet: 'styles.css',
     element: ['.tool', TOOL_HOVER, ".sidebar-toggle[aria-pressed='true']", '.tool:focus-visible'],
     why: 'the SEO sidebar toggle, pressed (the sidebar open), focused and hovered: its --accent-soft fill keeps the ring',
   },
@@ -966,9 +975,14 @@ export const FOCUS_RING_RULES = [
  * the strip and the active tab (in light `--bg-hover` darkens the strip while the tabs lighten it).
  * Signal's own values set the floors: an inactive tab is 1.097:1 off the strip in light (1.143 in
  * dark), the active one 1.180 (1.126 in dark), a hovered one 1.103 (1.143). In dark `--bg-tab-idle`
- * and `--bg-hover` are the same fill, and the active tab's is within 1.02:1 of it: there a hovered tab
- * shows by its label turning `--text` and its close button, the active one by its `--e-raised` edge,
- * its `--text` label at `--text-body`'s emphasis weight and its close button.
+ * and `--bg-hover` are the same fill, and the active tab's is within 1.02:1 of it (`--e-raised` is about
+ * 1.28:1 on the window), so fills cannot say which tab is active. The active tab carries a cue that
+ * does not depend on fill: a 2px `activeIndicator` line along its foot (an inset box-shadow, beside
+ * `--e-raised`), which stands at least `minIndicator` (3:1, WCAG 1.4.11) off the active tab's fill and
+ * off an inactive and a hovered tab's, in both themes. `activeTab` lists the selectors the active tab
+ * matches in `styles.css`: their cascade gives a `box-shadow` that reads `var(<activeIndicator>)`. A
+ * focused active tab shows `--focus-ring` in its place (`FOCUS_RING_RULES`), and under forced colours,
+ * which drop box-shadows, its 1px transparent outline marks it.
  */
 export const TAB_STRIP = {
   strip: '--bg-window',
@@ -978,6 +992,9 @@ export const TAB_STRIP = {
   minActiveOnStrip: 1.1,
   minIdleOnStrip: 1.09,
   minHoverOnStrip: 1.1,
+  activeIndicator: '--accent',
+  minIndicator: 3,
+  activeTab: ['.tab', ".tab[data-active='true']"],
 } as const satisfies {
   readonly strip: TokenName;
   readonly idle: TokenName;
@@ -986,6 +1003,9 @@ export const TAB_STRIP = {
   readonly minActiveOnStrip: number;
   readonly minIdleOnStrip: number;
   readonly minHoverOnStrip: number;
+  readonly activeIndicator: TokenName;
+  readonly minIndicator: number;
+  readonly activeTab: readonly string[];
 };
 
 // ---- Fonts (bundled in the values step; applied per surface through the --text-* tokens) ----

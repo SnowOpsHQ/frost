@@ -54,8 +54,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   tab at least 1.1:1 off the strip, an inactive one 1.09:1 (1.097 in light, Signal's own value) and a
   hovered one 1.1:1. A hovered tab no longer sits between the strip and the active tab (in light
   `--bg-hover` darkens the strip while the tabs lighten it), and in dark `--bg-tab-idle` and `--bg-hover`
-  are one fill with the active tab's within 1.02:1 of it: there a hovered tab shows by its `--text`
-  label and close button, the active one by its `--e-raised` edge, its label and its close button.
+  are one fill with the active tab's within 1.02:1 of it (`--e-raised` about 1.28:1 on the window), so
+  no fill says which tab is active (council round 1: on main the active tab joined the toolbar). The
+  active tab carries a 2px `--accent` line along its foot (`TAB_STRIP.activeIndicator`, an inset
+  box-shadow beside `--e-raised`), at least 3:1 off the active, inactive and hovered fills in both
+  themes; a hovered active tab keeps it, a focused one shows `--focus-ring` in its place, and forced
+  colours, which drop it, draw the active tab's 1px outline.
 - **Known exceptions.** `KNOWN_CONTRAST_EXCEPTIONS` records what still misses its minimum, for the
   surface PRs: `--ok` as text (21 rules) is under 4.5:1 in light, and those rules move to `--ok-ink`
   (only the 11px chips moved in the values step; Settings and Help moved their 4, leaving 17).
@@ -250,7 +254,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the zoom in `--text-mono`. Tabs are `--h-control` pills `--space-1` apart, as `TAB_STRIP` describes:
   an inactive one on `--bg-tab-idle` in `--text-muted`, a hovered one on `--bg-hover` with its label
   `--text` (`--bg-tab-hover` is `removed`), the active one on `--bg-surface` with `--e-raised`, its label
-  `--text` at `--text-body`'s emphasis weight; the hairlines between inactive tabs and the active tab's
+  `--text` at `--text-body`'s emphasis weight with a 2px `--accent` line along its foot (an inset
+  box-shadow: the one cue that is not fill, `TAB_STRIP`); the hairlines between inactive tabs and the active tab's
   flared corners (radial gradients into the toolbar) went. A tab's glyph is `--text-muted` at
   `--icon-sm`, its close button an `--h-badge` circle (`--bg-hover` under the pointer, `--bg-active`
   pressed), and a background tab asking for a permission shows the canvas's `--accent` ring (a 2px
@@ -289,7 +294,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   names the chrome no longer reads but other surfaces still do stay declared: `--bg-chrome`,
   `--bg-chrome-edge`, `--icon`, `--border-field`, `--bg-field`, `--bg-field-hover`, `--shadow-field`,
   `--radius-control`, `--radius-field`, `--bg-prompt`, `--prompt-edge`, `--shadow-prompt`, `--find-height`,
-  `--page-min-width` and `--font-ui` (the body's face, the system stack until its own PR). The connection
+  `--page-min-width` and `--font-ui` (the body's face, the system stack until its own PR). The
+  render-profile toggle, a `.tool` too, showed it was pressed by an inset box-shadow that, later in the
+  file at the same weight, replaced `.tool`'s `--focus-ring` (on main an opaque outline survived it): its
+  pressed edge is now the tool's own border colour (`--render-edge`), so focus keeps its ring; the rest
+  of the render-profile bar waits for its PR. The connection
   dot keeps `--ok` beside its label, which says the state.
 
 ## Rollout
@@ -340,7 +349,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: tab-strip-sets-tabs-off-the-strip** — in light and dark, against the (opaque) strip
   (`TAB_STRIP.strip`), the active tab's fill reaches `TAB_STRIP.minActiveOnStrip`, an inactive tab's
   (`TAB_STRIP.idle`, composited over the strip) `minIdleOnStrip` and a hovered tab's (`TAB_STRIP.hover`,
-  composited over the strip) `minHoverOnStrip`.
+  composited over the strip) `minHoverOnStrip`; `TAB_STRIP.activeIndicator` reaches `minIndicator`
+  against the active, inactive and hovered fills (each composited over the strip); and the cascade over
+  `TAB_STRIP.activeTab` in `styles.css` gives the active tab a `box-shadow` that reads
+  `var(<activeIndicator>)`, so the cue is really drawn.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
   the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)` (and
   `background` to `var(<background>)` where the entry names one), and that pair is in

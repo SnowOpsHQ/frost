@@ -326,6 +326,14 @@ test('tab-strip-sets-tabs-off-the-strip', () => {
     expect(contrastRatio(active, strip), `active tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minActiveOnStrip);
     expect(contrastRatio(idle, strip), `inactive tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minIdleOnStrip);
     expect(contrastRatio(hover, strip), `hovered tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minHoverOnStrip);
+    // The active tab's cue that is not fill (WCAG 1.4.11): off its own fill and an inactive or hovered tab's.
+    const indicator = composite(colourIn(theme, TAB_STRIP.activeIndicator), strip);
+    for (const [fill, colour] of [['active', active], ['inactive', idle], ['hovered', hover]] as const) {
+      expect(contrastRatio(indicator, colour), `${TAB_STRIP.activeIndicator} on the ${fill} tab's fill (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minIndicator);
+    }
+    // ... and the active tab really draws it.
+    const shadow = resolveOnElement(read('styles.css'), TAB_STRIP.activeTab, 'box-shadow', theme);
+    expect(shadow, `the active tab's box-shadow reads ${TAB_STRIP.activeIndicator} (${theme})`).toContain(`var(${TAB_STRIP.activeIndicator})`);
   }
 });
 
