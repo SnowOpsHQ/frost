@@ -1292,6 +1292,13 @@ input {
   outline-offset: 2px;
   background: var(--accent-soft);
   box-shadow: var(--focus-ring);
+  /* Above its neighbours: the 2px gap is narrower than the ring. */
+  z-index: 1;
+}
+
+/* A dot on a tinted row: no halo (it would ring the tint). */
+.seo-more-item:is(:hover, :focus-visible) {
+  --seo-dot-back: transparent;
 }
 
 .seo-more-label {
