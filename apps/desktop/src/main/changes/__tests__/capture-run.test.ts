@@ -497,6 +497,63 @@ describe('capture run', () => {
     expect(tablet.seen.map((s) => s.profile)).toEqual([TABLET_QUERY_PROFILE]);
   });
 
+  test('capture-run-fails-when-the-browser-throws-between-tabs', async () => {
+    // Two groups: the page in one tab, the mobile search in the next.
+    const targets = [...pages(A), query(PARAMS, SEARCH, 'mobile')];
+    const limits = { querySpacingMs: 0, serpSettleWaitMs: 0 };
+    const ended = (state: RunState) => ({ state: state.state, outcomes: outcomes(state) });
+
+    // The browser cannot be asked once the first tab's target is done: the run failed, never Done.
+    const asked = setup({ ...readySerpFor(targets), limits });
+    let broken = false;
+    const getState = asked.browser.getState.getMockImplementation()!;
+    asked.browser.getState.mockImplementation(() => {
+      if (broken) throw new Error('window gone');
+      return getState();
+    });
+    asked.capture.mockImplementation(async () => {
+      broken = true;
+      return CAPTURED;
+    });
+    await asked.runs.start(plan(targets));
+    await run(RETRY * 12);
+    expect(ended(asked.runs.state())).toEqual({ state: 'failed', outcomes: ['captured', 'cancelled'] });
+    expect(asked.runs.running()).toBeNull();
+    expect(asked.browser.newTab).toHaveBeenCalledOnce();
+
+    // The first tab cannot be closed to give way: the same, and the tab still goes at the end.
+    const afterRun = vi.fn((_projectId: string) => undefined);
+    const closing = setup({ ...readySerpFor(targets), limits, afterRun });
+    closing.browser.closeTab.mockImplementationOnce(() => {
+      throw new Error('no such tab');
+    });
+    await closing.runs.start(plan(targets));
+    await run(RETRY * 12);
+    expect(ended(closing.runs.state())).toEqual({ state: 'failed', outcomes: ['captured', 'cancelled'] });
+    expect(closing.browser.newTab).toHaveBeenCalledOnce();
+    expect(closing.tabs.map((t) => t.id)).toEqual([1]);
+    expect(closing.state.activeTabId).toBe(1);
+    expect(afterRun).toHaveBeenCalledExactlyOnceWith(PROJECT);
+    // The next run starts normally.
+    expect(await closing.runs.start(plan(pages(B)))).toEqual({ status: 'started', runId: ID });
+    await run();
+    expect(closing.runs.state().state).toBe('done');
+
+    // The next tab's profile throws when set: as when it answers false, the run goes on in that tab
+    // (logged), and the tab is not left behind.
+    const log = vi.fn((_message: string) => undefined);
+    const profiled = setup({ ...readySerpFor(targets), limits, log });
+    profiled.browser.setRenderProfile.mockImplementationOnce(() => {
+      throw new Error('no such tab');
+    });
+    await profiled.runs.start(plan(targets));
+    await run(RETRY * 12);
+    expect(ended(profiled.runs.state())).toEqual({ state: 'done', outcomes: ['captured', 'captured'] });
+    expect(profiled.seen.map((s) => s.tabId)).toEqual([10, 11]);
+    expect(log).toHaveBeenCalledWith('projects: a run tab’s render profile could not be set');
+    expect(profiled.tabs.map((t) => t.id)).toEqual([1]);
+  });
+
   test('capture-run-never-removes-a-pin', async () => {
     // The user pinned profiles to the search engine and to a page's site.
     const desktop = { ...PARAMS, device: 'desktop' as const };
