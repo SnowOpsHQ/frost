@@ -61,7 +61,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Hex ratchet.** Literal hex colours in renderer stylesheets other than `tokens.css` never exceed
   `HEX_COLOUR_RATCHET`; each surface PR lowers it to its new count (the command palette's rules held
   no literal hex, their colours were all tokens, so it stayed at 53; the new-tab view's held none
-  either, so it stays there; Settings' switch knob was its one, so it is 52).
+  either, so it stays there, as it does for the SEO sidebar's frame; Settings' switch knob was its one, so it is 52).
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
   official `geist` npm package (`GEIST_PACKAGE`: pinned exactly, SIL Open Font License 1.1, listed in
   `THIRD_PARTY_NOTICES` with the licence text). Only static woff2 files, only the weights the type
@@ -75,9 +75,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `tokens.css`. The fonts are applied surface by surface, as each surface PR moves its text onto the
   `--text-*` tokens (the command palette first); `--font-ui`, the rest of the chrome's face, stays the
   system stack until its own surface PR.
-- **Surface PRs.** A surface's rules (`SIGNAL_SURFACES`: its stylesheet and its class prefix; a rule
-  is the surface's when any selector names one of its classes, on a class boundary, or it sits in the
-  surface's `@keyframes`) read only Signal tokens and legacy aliases, never a retired name or a
+- **Surface PRs.** A surface's rules (`SIGNAL_SURFACES`: its stylesheet and its class prefix, or, where
+  other surfaces share the prefix, the exact classes and `-*` families it lists with its keyframes; a
+  rule is the surface's when any selector names one of its classes, on a class boundary, or it sits in
+  the surface's `@keyframes`) read only Signal tokens and legacy aliases, never a retired name or a
   literal colour; its text takes its face and size from a `--text-*` token (`font: var(--text-*)`,
   with that token's letter-spacing beside it in the same rule when it isn't `0`), at most changing the
   weight to a bundled one.
@@ -182,6 +183,47 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   beside every `--focus-ring`. Settings' and Help's widths (`--settings-width`, `--settings-nav-width`,
   760px) stay layout constants. The floating sheet (gaps, `--r-lg` corners) is the workspace's surface
   PR. The visual baseline gains `help-shortcuts`.
+- **The SEO sidebar's frame and shared parts** (the sidebar, its rail and "More panels", the header,
+  body and footer; the cards, section heads, badges, page text and severity icons every panel shares;
+  the pending, unavailable and empty states) follow the Migration notes, the token `use` notes and the
+  approved main screen, where they agree. The `.seo` prefix names every panel's classes too, so its
+  `SIGNAL_SURFACES` entry lists the frame's classes (`.seo-chip` is never `.seo-chip-button`, and
+  `.seo-panel-tools`, `.seo-toggle` and the panels' interiors wait for their own PRs); `.seo-page-text`
+  (no colour or type of its own) and `.pane-separator` (the agent panel shares it) stay out. Rail and
+  panel are one `--bg-sheet` ("rail, sidebar, agent panel"; `--seo-bg`, and `--bg-chrome` under the
+  rail), flush with the page and ruled by `--divider` (`--bg-chrome-edge`); the screen's floating
+  sheets, with gaps and `--r-lg` corners, are the workspace's surface PR. Rail items are `--h-field`
+  squares at `--r-md` with `--text-muted` icons at `--icon-size` (`--icon`), `--bg-hover` and
+  `--bg-active` under the pointer; the open panel's item is raised (`--bg-surface`, `--e-raised`, its
+  icon `--accent`, a transparent outline for forced colours) and loses the 3px side marker, as on the
+  screen. Status dots say it by shape, not hue alone: an error a filled `--danger` square (corners
+  half of `--r-xs`), a warning a `--warn` ring (`--caution`; a 2px border, not a shadow, so forced
+  colours keep it), a pass a filled `--ok` disc (the screen's check glyph needs markup: a later PR), each
+  cut out by a halo in the sheet or card under it (none on a hovered or focused "More panels" row, whose
+  tint the halo would ring). The dots keep their own colours in forced colours
+  (`forced-color-adjust: none`), where the halo and the ring's fill turn transparent. The rail tip and
+  "More panels" are `--bg-surface` menus with `--e-overlay` (`--r-sm`, `--r-md`) in place of a border and
+  a black drop shadow, a transparent 1px border kept for forced colours; a focused menu item takes
+  `--focus-ring` (the menu's 4px padding holds it, and it is drawn above its neighbours) beside a
+  transparent outline, over `--accent-soft`, and a hovered one `--bg-hover`. The header follows the agent panel's: no fill of its own, the panel's name at
+  `--text-title` over its host in `--text-small`, a `--divider` rule; its tools keep the chrome's `.tool`
+  style. The pressed pin and the toolbar's pressed toggle take `--accent` on `--accent-soft`. Cards
+  (`.seo-section`, `.seo-score-card`, `.seo-issues`, the skeleton's score card) are `--bg-surface` at
+  `--r-md` with `--e-ring` in place of their border (`--seo-card-edge`, `--shadow-card`; a transparent
+  1px border stays) with their 12px by 14px padding (`--space-4` by `--space-2` + `--space-3`), so the
+  panels' interiors keep their width, section titles `--text-caps`, count badges `--h-badge` pills on `--bg-subtle` in
+  `--text-micro`, and a severity's badge (and the chip) its `-soft` fill with `-ink` text (`--caution` →
+  `--warn`, `--info-tone` → `--accent`; inside a Changes region's title, a line of text, a badge keeps
+  the line's height); notes `--text-small` in `--text-faint`, mono values
+  `--text-mono`, the link button `--text-body` at its emphasis weight over a `--divider` rule. The body
+  keeps its 12px (`--space-4`) padding where the screen draws 16px, so the panels' interiors keep their
+  width until their own PRs. The skeleton is `--bg-subtle` (`--seo-skeleton`) with a soft `--bg-sheet`
+  band sweeping over it (`--seo-skeleton-shine`), drawn as a blurred box rather than a gradient; both
+  retired names are `removed`. The empty and unavailable hints keep the panel's 64px art on an
+  `--accent-soft` tile at `--r-lg` (`--warn-soft` with `--warn-ink` art when unavailable), its inset edge
+  gone, with a `--text-heading` title and a `--text-body` message in `--text-muted` (the screen's 40px
+  disc holds an icon, not the panel's art). Nothing in the frame drew `--ok` as text, and it held no
+  literal hex, so `KNOWN_CONTRAST_EXCEPTIONS` and `HEX_COLOUR_RATCHET` stay.
 
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
@@ -192,8 +234,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 4. One PR per surface: rules move onto Signal tokens, retired names go (`removed`). The command
    palette is first (its `--palette-*` names `removed`), then the new-tab view (its `--start-*` and
    `--jump-*` names), the agent panel (its `--agent-*` names, but the aliases `--agent-bg` and
-   `--agent-card`) and Settings and Help (`--settings-switch-off`; `--settings-width` and
-   `--settings-nav-width` stay layout constants). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
+   `--agent-card`), Settings and Help (`--settings-switch-off`; `--settings-width` and
+   `--settings-nav-width` stay layout constants), then the SEO sidebar's frame and shared parts
+   (`--seo-skeleton` and `--seo-skeleton-shine`; the panels still read `--seo-card-edge`, `--caution`,
+   `--info-tone` and `--bg-chrome-edge`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
    from the moment the test starts watching.
 
@@ -253,7 +297,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   among stylesheets and before `App`.
 - **Scenario: surface-rules-read-signal-tokens** — for each `SIGNAL_SURFACES` entry, every rule of the
   surface in its stylesheet (any selector in its list names one of the surface's classes on a class
-  boundary, at any nesting: `@media`, `@container`; or it is in the surface's `@keyframes`) reads only
+  boundary, at any nesting: `@media`, `@container`; or it is in the surface's `@keyframes`; an entry's
+  listed `classes` each start with its prefix, and its `keyframes` come only with them) reads only
   Signal tokens, legacy aliases and component-scoped custom properties (declared in the same
   stylesheet) in `var()` (whitespace allowed, no fallback in any property); declares no Signal or
   legacy name; holds no hex colour or colour function in any property; a colour-bearing value
@@ -275,7 +320,13 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   no outline, `GrayText` outside a forced-colours block and a named colour inside one; it accepts a component property (`--tone-ink: var(--ok-ink)`) read in the same rule,
   `text-decoration: underline`, `--focus-ring` beside `outline: 2px solid transparent`, and `GrayText`
   inside `@media (forced-colors: active)`; it ignores
-  `.palettes`, `.x-palette`, and `.table-*` for a `.tab` surface.
+  `.palettes`, `.x-palette`, and `.table-*` for a `.tab` surface. Each class and keyframes name an entry
+  lists matches at least one rule of its stylesheet (a stale name fails, and so does a `-*` family with
+  no member). For a surface that lists its classes
+  (`.seo`, `.seo-panel`, `.seo-chip`, `.seo-rail-*`, keyframes `seo-panel-in`) it checks those, the
+  `-*` family's members and the listed keyframes, and ignores the panels' classes under the same prefix
+  (`.seo-links`, `.seo-panel-tools`, `.seo-chip-button`, `.seo-chips`, `.seo-toggle`), `.seo-railway`,
+  `.x-seo-rail`, `.seos` and any other keyframes (`seo-ring-fill`, `seo-panel-in-more`).
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
 

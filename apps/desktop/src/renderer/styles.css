@@ -967,15 +967,17 @@ input {
 /* ---- SEO sidebar -------------------------------------------------------------------------- */
 
 /* Docked left of the page area: the rail at the window's edge, then the panel. The page area
-   shrinks to make room (the tab's view follows it through setPageBounds). */
+   shrinks to make room (the tab's view follows it through setPageBounds).
+   Signal (specs/design-tokens.feature.md, The SEO sidebar's frame): rail and panel are one --bg-sheet
+   flush with the page, ruled by --divider; the frame's text reads the --text-* tokens (Geist). */
 .seo {
   position: relative;
   display: flex;
   flex: 0 1 auto;
   min-width: 0;
   min-height: 0;
-  border-right: 1px solid var(--bg-chrome-edge);
-  background: var(--bg-chrome);
+  border-right: 1px solid var(--divider);
+  background: var(--bg-sheet);
 }
 
 /* Phase 11 Task 10: a resizable pane's separator (sidebar-layout.ts), a thin strip inside the pane on
@@ -1021,9 +1023,9 @@ input {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-left: 1px solid var(--bg-chrome-edge);
-  background: var(--seo-bg);
-  animation: seo-panel-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  border-left: 1px solid var(--divider);
+  background: var(--bg-sheet);
+  animation: seo-panel-in var(--dur-base) var(--ease-out) both;
 }
 
 @keyframes seo-panel-in {
@@ -1037,15 +1039,15 @@ input {
   }
 }
 
+/* The header, like the agent panel's: the panel's name at --text-title over the page's host, its
+   tools, a --divider rule under it. */
 .seo-head {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   flex: none;
-  height: 48px;
-  padding: 0 8px 0 16px;
-  border-bottom: 1px solid var(--bg-chrome-edge);
-  background: var(--bg-chrome);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--divider);
 }
 
 .seo-head-text {
@@ -1056,29 +1058,31 @@ input {
 }
 
 .seo-head-title {
+  min-width: 0;
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.005em;
-  line-height: 1.2;
+  overflow: hidden;
+  font: var(--text-title);
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .seo-head-sub {
   overflow: hidden;
   color: var(--text-faint);
-  font-size: 11.5px;
+  font: var(--text-small);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Its tools keep the chrome's shared `.tool` style until the chrome's surface PR. */
 .seo-head-tool {
-  width: 30px;
-  height: 30px;
+  flex: none;
 }
 
 .seo-head-tool .icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
 /* Collapse: the chevron points to the window's edge. */
@@ -1089,80 +1093,86 @@ input {
 .seo-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
   flex: 1;
   min-height: 0;
-  padding: 12px;
+  padding: var(--space-4);
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--border-field) transparent;
+  scrollbar-color: var(--track) transparent;
   user-select: text;
   cursor: auto;
 }
 
 .seo-foot {
   flex: none;
-  padding: 7px 16px;
-  border-top: 1px solid var(--bg-chrome-edge);
+  padding: var(--space-2) var(--space-5);
+  border-top: 1px solid var(--divider);
   color: var(--text-faint);
-  font-size: 11px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
-/* Rail: one icon button per panel, with the panel's status dot. */
+/* Rail: one icon button per panel, with the panel's status dot. A dot is cut out of what is under it
+   by a halo in that fill (--seo-dot-back): the sheet, a selected item's --bg-surface, the menu's. */
 .seo-rail {
+  --seo-dot-back: var(--bg-sheet);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   flex: none;
   width: var(--seo-rail-width);
-  padding: 8px 0;
+  padding: var(--space-3) 0;
 }
 
 .seo-rail-item {
   position: relative;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  flex: none;
+  width: var(--h-field);
+  height: var(--h-field);
   padding: 0;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: transparent;
-  color: var(--icon);
-  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+  color: var(--text-muted);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
 }
 
 .seo-rail-item .icon {
-  width: 19px;
-  height: 19px;
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
-.seo-rail-item:hover:not(:disabled) {
+.seo-rail-item:hover:not(:disabled):not([data-selected='true']) {
   background: var(--bg-hover);
 }
 
-.seo-rail-item:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.seo-rail-item:active:not(:disabled):not([data-selected='true']) {
+  background: var(--bg-active);
 }
 
+/* The open panel's item: raised on --bg-surface with its icon in --accent. A transparent outline is
+   the edge forced colours draw (they drop the shadow and the fill). */
 .seo-rail-item[data-selected='true'] {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  --seo-dot-back: var(--bg-surface);
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--accent);
 }
 
-/* The selected panel's marker, on the rail's inner edge. */
-.seo-rail-item[data-selected='true']::before {
-  content: '';
-  position: absolute;
-  right: -6px;
-  top: 9px;
-  bottom: 9px;
-  width: 3px;
-  border-radius: 3px 0 0 3px;
-  background: var(--accent);
+.seo-rail-item:focus-visible {
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .seo-rail-item:disabled {
@@ -1183,43 +1193,55 @@ input {
   position: fixed;
   z-index: 50;
   transform: translateY(-50%);
-  padding: 4px 8px;
-  border: 1px solid var(--bg-chrome-edge);
-  border-radius: 6px;
-  background: var(--bg-chrome);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-overlay);
   color: var(--text);
-  font-size: 12px;
-  line-height: 16px;
+  font: var(--text-small);
   white-space: nowrap;
   pointer-events: none;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.3);
 }
 
+/* Status by shape, not hue alone: an error a filled --danger square, a warning a --warn ring (a
+   border, which forced colours keep), a pass a filled --ok disc. The dots keep their colours in forced
+   colours, where the halo and the ring's fill turn transparent. */
 .seo-rail-dot {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: var(--space-2);
+  right: var(--space-2);
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--r-pill);
   background: var(--ok);
-  box-shadow: 0 0 0 2px var(--bg-chrome);
+  box-shadow: 0 0 0 2px var(--seo-dot-back);
+  forced-color-adjust: none;
 }
 
 .seo-rail-dot[data-status='warn'] {
-  background: var(--caution);
+  border: 2px solid var(--warn);
+  background: var(--seo-dot-back);
 }
 
 .seo-rail-dot[data-status='error'] {
+  border-radius: calc(var(--r-xs) / 2);
   background: var(--danger);
+}
+
+@media (forced-colors: active) {
+  .seo-rail-dot {
+    --seo-dot-back: transparent;
+  }
 }
 
 /* "More panels" (Phase 11 Task 10): the unpinned panels, as a menu drawn over the open panel. */
 .seo-rail-more {
-  margin-top: 4px;
+  margin-top: var(--space-1);
 }
 
 .seo-more-menu {
+  --seo-dot-back: var(--bg-surface);
   position: fixed;
   z-index: 50;
   display: flex;
@@ -1229,42 +1251,54 @@ input {
   max-width: 260px;
   max-height: calc(100vh - 16px);
   overflow-y: auto;
-  padding: 4px;
-  border: 1px solid var(--bg-chrome-edge);
-  border-radius: 8px;
-  background: var(--bg-chrome);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.3);
+  padding: var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-overlay);
 }
 
 .seo-more-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-4);
   flex: none;
-  height: 32px;
-  padding: 0 28px 0 10px;
+  height: var(--h-control);
+  padding: 0 28px 0 var(--space-3);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text);
+  font: var(--text-body);
   text-align: start;
 }
 
 .seo-more-item .icon {
   flex: none;
-  width: 16px;
-  height: 16px;
-  color: var(--icon);
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--text-muted);
 }
 
 .seo-more-item:hover {
   background: var(--bg-hover);
 }
 
+/* The menu moves focus between its items (arrow keys): the focused one takes --focus-ring (the menu's
+   4px padding holds it) over --accent-soft, beside a transparent outline forced colours draw. */
 .seo-more-item:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  background: var(--accent-soft);
+  box-shadow: var(--focus-ring);
+  /* Above its neighbours: the 2px gap is narrower than the ring. */
+  z-index: 1;
+}
+
+/* A dot on a tinted row: no halo (it would ring the tint). */
+.seo-more-item:is(:hover, :focus-visible) {
+  --seo-dot-back: transparent;
 }
 
 .seo-more-label {
@@ -1275,83 +1309,91 @@ input {
 
 .seo-more-item .seo-more-dot {
   top: 50%;
-  right: 10px;
+  right: var(--space-3);
   transform: translateY(-50%);
 }
 
 /* The open panel's pin toggle: pressed while the panel is on the rail. */
 .seo-pin[aria-pressed='true'] {
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
 /* The toolbar's toggle shows whether the panel is open. */
 .tool.seo-toggle[aria-pressed='true'] {
+  background: var(--accent-soft);
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 /* ---- SEO panels: shared parts --------------------------------------------------------------- */
 
+/* Cards: --bg-surface at --r-md with --e-ring for their edge; the transparent 1px border is the edge
+   forced colours draw. */
 .seo-section,
 .seo-score-card,
 .seo-issues {
-  padding: 12px 14px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 12px;
-  background: var(--seo-card);
-  box-shadow: var(--shadow-card);
+  padding: var(--space-4) calc(var(--space-2) + var(--space-3));
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
 }
 
 .seo-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .seo-section-title {
   margin: 0;
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font: var(--text-caps);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
+/* A count: an --h-badge pill on --bg-subtle; a severity's on its -soft fill with -ink text. */
 .seo-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--bg-hover);
+  min-width: var(--h-badge);
+  height: var(--h-badge);
+  padding: 0 var(--space-3);
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
 }
 
 .seo-badge[data-severity='error'] {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  background: var(--danger-soft);
   color: var(--danger-ink);
 }
 
 .seo-badge[data-severity='warning'] {
-  background: color-mix(in srgb, var(--caution) 16%, transparent);
-  color: var(--caution);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
 }
 
 .seo-badge[data-severity='info'] {
-  background: color-mix(in srgb, var(--info-tone) 14%, transparent);
-  color: var(--info-tone);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .seo-chip {
-  padding: 0 6px;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--caution) 16%, transparent);
-  color: var(--caution);
-  font-size: 10.5px;
-  font-weight: 600;
+  padding: 0 var(--space-2);
+  border-radius: var(--r-pill);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 /* Page text: inert, isolated, cut with CSS (the full value is its title). */
@@ -1384,7 +1426,7 @@ input {
 }
 
 .seo-mono {
-  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font: var(--text-mono);
 }
 
 .seo-missing {
@@ -1394,21 +1436,22 @@ input {
 
 .seo-note,
 .seo-empty-line {
-  margin: 8px 0 0;
+  margin: var(--space-3) 0 0;
   color: var(--text-faint);
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
+/* A severity's icon, a graphic in its tone: info --accent, warning --warn, error --danger. */
 .seo-severity {
   display: grid;
   place-items: center;
   flex: none;
-  color: var(--info-tone);
+  color: var(--accent);
 }
 
 .seo-severity .icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .seo-severity[data-severity='error'] {
@@ -1416,19 +1459,19 @@ input {
 }
 
 .seo-severity[data-severity='warning'] {
-  color: var(--caution);
+  color: var(--warn);
 }
 
 .seo-link-button {
   display: block;
   width: 100%;
-  margin-top: 8px;
-  padding: 6px 0 0;
+  margin-top: var(--space-3);
+  padding: var(--space-2) 0 0;
   border: 0;
-  border-top: 1px solid var(--seo-card-edge);
+  border-top: 1px solid var(--divider);
   background: transparent;
   color: var(--accent);
-  font-size: 12.5px;
+  font: var(--text-body);
   font-weight: 500;
   text-align: center;
 }
@@ -1438,9 +1481,10 @@ input {
 }
 
 .seo-link-button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid transparent;
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
+  box-shadow: var(--focus-ring);
 }
 
 /* ---- Overview ------------------------------------------------------------------------------ */
@@ -2097,48 +2141,66 @@ input {
 
 /* ---- States: pending, unavailable, empty ------------------------------------------------------ */
 
+/* Pending: a skeleton of --bg-subtle shapes on a card, a soft --bg-sheet band sweeping over them (a
+   blurred box, not a gradient). */
 .seo-skeleton {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
 .seo-skeleton-score {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 16px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 12px;
-  background: var(--seo-card);
+  gap: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
 }
 
 .seo-skeleton-ring,
 .seo-skeleton-line,
 .seo-skeleton-block {
+  position: relative;
   display: block;
-  background: linear-gradient(90deg, var(--seo-skeleton) 0%, var(--seo-skeleton-shine) 50%, var(--seo-skeleton) 100%);
-  background-size: 200% 100%;
-  animation: seo-shimmer 1.3s ease-in-out infinite;
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+
+.seo-skeleton-ring::after,
+.seo-skeleton-line::after,
+.seo-skeleton-block::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 30%;
+  background: var(--bg-sheet);
+  box-shadow: 0 0 var(--space-5) var(--space-3) var(--bg-sheet);
+  transform: translateX(-200%);
+  animation: seo-skeleton-sweep 1.3s var(--ease-out) infinite;
 }
 
 .seo-skeleton-ring {
   flex: none;
   width: 84px;
   height: 84px;
-  border-radius: 50%;
+  border-radius: var(--r-pill);
 }
 
 .seo-skeleton-lines {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
   flex: 1;
 }
 
 .seo-skeleton-line {
   height: 11px;
-  border-radius: 6px;
+  border-radius: var(--r-pill);
 }
 
 .seo-skeleton-w40 {
@@ -2155,30 +2217,32 @@ input {
 
 .seo-skeleton-block {
   height: 64px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
 }
 
 .seo-skeleton-block:nth-child(odd) {
   height: 92px;
 }
 
-@keyframes seo-shimmer {
+@keyframes seo-skeleton-sweep {
   from {
-    background-position: 100% 0;
+    transform: translateX(-200%);
   }
   to {
-    background-position: -100% 0;
+    transform: translateX(450%);
   }
 }
 
+/* Unavailable and empty: the panel's art on an --accent-soft tile (unavailable: --warn-soft, its art
+   in --warn-ink), a --text-heading title and a --text-muted message. */
 .seo-hint {
   display: flex;
   flex-direction: column;
   align-items: center;
   margin: auto 0;
-  padding: 24px 12px 12vh;
+  padding: var(--space-6) var(--space-4) 12vh;
   text-align: center;
-  animation: panel-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation: panel-in var(--dur-base) var(--ease-out) both;
 }
 
 .seo-hint-art {
@@ -2186,10 +2250,9 @@ input {
   place-items: center;
   width: 64px;
   height: 64px;
-  margin-bottom: 14px;
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--seo-bg));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, var(--seo-bg));
+  margin-bottom: var(--space-4);
+  border-radius: var(--r-lg);
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
@@ -2199,28 +2262,25 @@ input {
 }
 
 .seo-hint[data-reason] .seo-hint-art {
-  background: color-mix(in srgb, var(--caution) 12%, var(--seo-bg));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--caution) 22%, var(--seo-bg));
-  color: var(--caution);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
 }
 
 .seo-hint-title {
   margin: 0;
-  font-size: 15px;
-  font-weight: 600;
+  font: var(--text-heading);
 }
 
 .seo-hint-message {
   max-width: 260px;
-  margin: 6px 0 0;
+  margin: var(--space-2) 0 0;
   color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font: var(--text-body);
   text-wrap: pretty;
 }
 
 .seo-hint-button {
-  margin-top: 18px;
+  margin-top: var(--space-5);
 }
 
 /* ---- Links, Images, Social ------------------------------------------------------------------ */
@@ -2525,10 +2585,6 @@ input {
 
 .seo-table-sub {
   color: var(--text-muted);
-  font-size: 11px;
-}
-
-.seo-table-sub.seo-mono {
   font-size: 11px;
 }
 
@@ -3197,8 +3253,9 @@ input {
   font-size: 12.5px;
 }
 
+/* Mono values take --text-mono over .seo-value's size. */
 .seo-value.seo-mono {
-  font-size: 11.5px;
+  font: var(--text-mono);
 }
 
 .seo-value-literal {
@@ -3912,9 +3969,9 @@ input {
   .seo-panel,
   .seo-issue-body,
   .seo-hint,
-  .seo-skeleton-ring,
-  .seo-skeleton-line,
-  .seo-skeleton-block,
+  .seo-skeleton-ring::after,
+  .seo-skeleton-line::after,
+  .seo-skeleton-block::after,
   .seo-robots-pending-dot {
     animation: none;
   }
@@ -5044,7 +5101,6 @@ input {
 
 .seo-a11y-selector {
   color: var(--text);
-  font-weight: 600;
 }
 
 .seo-a11y-summary {
@@ -8615,6 +8671,12 @@ input {
   color: var(--text);
   font-size: 12.5px;
   font-weight: 600;
+}
+
+/* A badge in the title's line keeps the line's height (the shared badge is an --h-badge pill). */
+.changes-region-title .seo-badge {
+  height: auto;
+  padding-block: 1px;
 }
 
 .changes-list {

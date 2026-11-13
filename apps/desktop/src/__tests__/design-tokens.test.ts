@@ -236,6 +236,8 @@ test('removed-legacy-tokens-are-gone', () => {
   expect(REMOVED).toEqual(expect.arrayContaining(['--agent-edge', '--agent-user', '--agent-code-bg', '--agent-approval-edge', '--agent-approval-bg']));
   // And Settings and Help's.
   expect(REMOVED).toEqual(expect.arrayContaining(['--settings-switch-off']));
+  // And the SEO sidebar's frame (its skeleton's names; the panels still read the other --seo-* names).
+  expect(REMOVED).toEqual(expect.arrayContaining(['--seo-skeleton', '--seo-skeleton-shine']));
   for (const name of REMOVED) {
     expect(LIGHT.has(name), `${name} (light)`).toBe(false);
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
@@ -527,7 +529,8 @@ const COLOUR_PROPERTY = /^(?:color|background(?:-color|-image)?|border(?:-[a-z-]
  * A rule is the surface's when any selector in any level of its context names one of the surface's
  * classes (`selectorPrefix` itself, or it followed by `-…`, on a class boundary: `.palette`,
  * `.chrome .palette-option`; never `.palettes` or `.x-palette`), or when it sits in a `@keyframes`
- * whose name is the prefix's stem or starts with it and `-` (`palette-in`).
+ * whose name is the prefix's stem or starts with it and `-` (`palette-in`). A surface that lists its
+ * `classes` owns only those (each exact, or a `-*` family) and only its listed `keyframes`.
  */
 function surfaceProblems(css: string, surface: SignalSurface): { problems: string[]; checked: number; typeRules: number } {
   const aliases = new Set<string>(MIGRATION.filter((row) => row.kind === 'alias').map((row) => row.legacy));
@@ -537,9 +540,18 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
   const familyOf = new Map<string, string>(
     SIGNAL_TOKENS.type.map((token) => [token.name, (/^\S+\s+\S+\s+(.*)$/.exec(token.light)?.[1] ?? '').split(',')[0]!.trim().replace(/^(['"])(.*)\1$/, '$2')]),
   );
-  const stem = surface.selectorPrefix.replace(/^\./, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const ownClass = new RegExp(`\\.${stem}(?:-[\\w-]+)?(?![\\w-])`);
-  const ownKeyframes = new RegExp(`^@keyframes\\s+${stem}(?:-[\\w-]+)?$`);
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const stem = escape(surface.selectorPrefix.replace(/^\./, ''));
+  // Listed classes: `.x` exactly, or `.x-*` as `.x` and its `-…` family; otherwise the prefix's family.
+  const pattern =
+    surface.classes === undefined
+      ? `\\.${stem}(?:-[\\w-]+)?`
+      : `\\.(?:${surface.classes.map((name) => (name.endsWith('-*') ? `${escape(name.slice(1, -2))}(?:-[\\w-]+)?` : escape(name.slice(1)))).join('|')})`;
+  const ownClass = new RegExp(`${pattern}(?![\\w-])`);
+  const ownKeyframes =
+    surface.classes === undefined
+      ? new RegExp(`^@keyframes\\s+${stem}(?:-[\\w-]+)?$`)
+      : new RegExp(`^@keyframes\\s+(?:${(surface.keyframes ?? []).map(escape).join('|') || '(?!)'})$`);
   const owns = (context: readonly string[]) =>
     context.some((level) => (level.startsWith('@') ? ownKeyframes.test(level) : level.split(',').some((selector) => ownClass.test(selector))));
   const all = parse(css).declarations;
@@ -549,6 +561,15 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
   const reserved = (name: string) => SIGNAL_NAMES.has(name) || legacy.has(name);
   const components = new Set(all.filter((d) => d.property.startsWith('--') && !reserved(d.property)).map((d) => d.property));
   const problems: string[] = [];
+  // A listed class or keyframes must still name a rule: a stale entry guards nothing.
+  const { blocks } = parse(css);
+  for (const name of surface.classes ?? []) {
+    const one = new RegExp(`\\.${name.endsWith('-*') ? `${escape(name.slice(1, -2))}(?:-[\\w-]+)?` : escape(name.slice(1))}(?![\\w-])`);
+    if (!blocks.some((context) => context.some((level) => !level.startsWith('@') && one.test(level)))) problems.push(`${surface.name}: listed class ${name} names no rule`);
+  }
+  for (const name of surface.keyframes ?? []) {
+    if (!blocks.some((context) => context.some((level) => new RegExp(`^@keyframes\\s+${escape(name)}$`).test(level)))) problems.push(`${surface.name}: listed keyframes ${name} names no rule`);
+  }
   const byBlock = new Map<number, Declaration[]>();
   for (const d of own) {
     byBlock.set(d.block, [...(byBlock.get(d.block) ?? []), d]);
@@ -647,10 +668,41 @@ test('surface-rules-read-signal-tokens', () => {
   expect(problemsIn("@media (forced-colors: active) { .palette-x[aria-disabled='true'] { color: GrayText; border-color: GrayText; } }")).toEqual([]);
   expect(surfaceProblems('.table-row { color: red; }', { name: 'tab', stylesheet: 'n/a', selectorPrefix: '.tab' }).checked).toBe(0);
   expect(surfaceProblems('.palettes, .x-palette { color: red; }', palette).checked).toBe(0);
+  // A surface that lists its classes (the SEO sidebar's frame, under the `.seo` prefix every panel
+  // shares) owns exactly those, a `-*` entry its family, and only its listed keyframes.
+  const frame: SignalSurface = {
+    name: 'fixture frame',
+    stylesheet: 'n/a',
+    selectorPrefix: '.seo',
+    classes: ['.seo', '.seo-panel', '.seo-chip', '.seo-rail-*'],
+    keyframes: ['seo-panel-in'],
+  };
+  const checkedIn = (css: string) => surfaceProblems(css, frame).checked;
+  for (const own of ['.seo', '.seo-panel', '.seo-chip', '.seo-rail', '.seo-rail-item', '.seo-rail-dot[data-status=x]', '.x .seo-rail-tip']) {
+    expect(checkedIn(`${own} { color: red; }`), own).toBe(1);
+  }
+  expect(checkedIn('@keyframes seo-panel-in { from { color: red; } }')).toBe(1);
+  // Panel interiors share the prefix but are not the frame's: an exact class never takes its family.
+  for (const panel of ['.seo-links', '.seo-panel-tools', '.seo-chip-button', '.seo-chips', '.seo-toggle', '.seo-railway', '.x-seo-rail', '.seos']) {
+    expect(checkedIn(`${panel} { color: red; }`), panel).toBe(0);
+  }
+  expect(checkedIn('@keyframes seo-ring-fill { from { color: red; } }')).toBe(0);
+  expect(checkedIn('@keyframes seo-panel-in-more { from { color: red; } }')).toBe(0);
+  // Every listed class and keyframes names a rule: a stale one fails, a family needs only one member.
+  const listed: SignalSurface = { ...frame, classes: ['.seo', '.seo-rail-*'], keyframes: ['seo-panel-in'] };
+  const sheet = '.seo { color: var(--text); } .seo-rail-item { color: var(--text-muted); } @keyframes seo-panel-in { from { opacity: 0; } }';
+  expect(surfaceProblems(sheet, listed).problems).toEqual([]);
+  expect(surfaceProblems(sheet, { ...listed, classes: ['.seo', '.seo-rail-*', '.seo-gone'] }).problems.join()).toContain('.seo-gone names no rule');
+  expect(surfaceProblems(sheet, { ...listed, classes: ['.seo', '.seo-rail'] }).problems.join()).toContain('.seo-rail names no rule');
+  expect(surfaceProblems(sheet, { ...listed, classes: ['.seo', '.seo-rail-*', '.seo-absent-*'] }).problems.join()).toContain('.seo-absent-* names no rule');
+  expect(surfaceProblems(sheet, { ...listed, keyframes: ['seo-panel-in', 'seo-gone-in'] }).problems.join()).toContain('seo-gone-in names no rule');
 
   const surfaces: readonly SignalSurface[] = SIGNAL_SURFACES;
   expect(surfaces.length).toBeGreaterThan(0);
   for (const surface of surfaces) {
+    // Listed classes sit under the prefix, and keyframes come only with them.
+    for (const name of surface.classes ?? []) expect(name === surface.selectorPrefix || name.startsWith(`${surface.selectorPrefix}-`), `${surface.name}: ${name}`).toBe(true);
+    if (surface.keyframes !== undefined) expect(surface.classes, `${surface.name}: keyframes need classes`).toBeDefined();
     const result = surfaceProblems(read(surface.stylesheet), surface);
     expect(result.checked, surface.name).toBeGreaterThan(0);
     expect(result.problems, surface.name).toEqual([]);
