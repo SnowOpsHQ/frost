@@ -57,9 +57,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   are one fill with the active tab's within 1.02:1 of it (`--e-raised` about 1.28:1 on the window), so
   no fill says which tab is active (council round 1: on main the active tab joined the toolbar). The
   active tab carries a 2px `--accent` line along its foot (`TAB_STRIP.activeIndicator`, an inset
-  box-shadow beside `--e-raised`), at least 3:1 off the active, inactive and hovered fills in both
-  themes; a hovered active tab keeps it, a focused one shows `--focus-ring` in its place, and forced
-  colours, which drop it, draw the active tab's 1px outline.
+  box-shadow beside `--e-raised`), at least 3:1 off the active, inactive and hovered fills and off the
+  strip under it, in both themes; a hovered active tab keeps it, a focused one shows `--focus-ring` in
+  its place, and forced colours, which drop it, draw the active tab's 1px outline.
 - **Known exceptions.** `KNOWN_CONTRAST_EXCEPTIONS` records what still misses its minimum, for the
   surface PRs: `--ok` as text (21 rules) is under 4.5:1 in light, and those rules move to `--ok-ink`
   (only the 11px chips moved in the values step; Settings and Help moved their 4, leaving 17).
@@ -297,8 +297,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--page-min-width` and `--font-ui` (the body's face, the system stack until its own PR). The
   render-profile toggle, a `.tool` too, showed it was pressed by an inset box-shadow that, later in the
   file at the same weight, replaced `.tool`'s `--focus-ring` (on main an opaque outline survived it): its
-  pressed edge is now the tool's own border colour (`--render-edge`), so focus keeps its ring; the rest
-  of the render-profile bar waits for its PR. The connection
+  pressed edge is now the tool's own border colour (`--render-edge`), so focus keeps its ring, and under
+  forced colours it is `Highlight`, as the SEO sidebar toggle's is (`FORCED_COLOURS_PRESSED`; that rule
+  sits after the toggle's own, which would otherwise win at the same weight); the rest of the
+  render-profile bar waits for its PR. The connection
   dot keeps `--ok` beside its label, which says the state.
 
 ## Rollout
@@ -350,9 +352,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`TAB_STRIP.strip`), the active tab's fill reaches `TAB_STRIP.minActiveOnStrip`, an inactive tab's
   (`TAB_STRIP.idle`, composited over the strip) `minIdleOnStrip` and a hovered tab's (`TAB_STRIP.hover`,
   composited over the strip) `minHoverOnStrip`; `TAB_STRIP.activeIndicator` reaches `minIndicator`
-  against the active, inactive and hovered fills (each composited over the strip); and the cascade over
-  `TAB_STRIP.activeTab` in `styles.css` gives the active tab a `box-shadow` that reads
-  `var(<activeIndicator>)`, so the cue is really drawn.
+  against the active, inactive and hovered fills (each composited over the strip) and the strip itself;
+  and the cascades over `TAB_STRIP.activeTab` and `TAB_STRIP.activeTabHovered` in `styles.css` each give
+  the active tab a `box-shadow` holding `TAB_STRIP.activeIndicatorShadow` (`inset 0 -2px 0
+  var(--accent)`, the whole term), so the cue is really drawn, under the pointer too.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
   the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)` (and
   `background` to `var(<background>)` where the entry names one), and that pair is in
@@ -372,6 +375,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   too (a `border` shorthand counting as its colour) resolves `color` and `border-color` to `GrayText`:
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
   over it. Every selector named is one of the stylesheet's.
+- **Scenario: pressed-toggles-show-under-forced-colours** — for each `FORCED_COLOURS_PRESSED` entry (the
+  SEO sidebar toggle and the render-profile toggle, pressed), in light and dark, the cascade over its
+  `element` selectors with the `@media (forced-colors: active)` rules read too resolves `border-color` to
+  `Highlight`. Every selector named is one of the stylesheet's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).

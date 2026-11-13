@@ -8,6 +8,7 @@ import {
   CONTRAST_PAIRS,
   FOCUS_RING_RULES,
   FORCED_COLOURS_BUSY,
+  FORCED_COLOURS_PRESSED,
   FORCED_COLOURS_SYSTEM_COLOURS,
   HEX_COLOUR_RATCHET,
   KNOWN_CONTRAST_EXCEPTIONS,
@@ -326,14 +327,19 @@ test('tab-strip-sets-tabs-off-the-strip', () => {
     expect(contrastRatio(active, strip), `active tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minActiveOnStrip);
     expect(contrastRatio(idle, strip), `inactive tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minIdleOnStrip);
     expect(contrastRatio(hover, strip), `hovered tab on the strip (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minHoverOnStrip);
-    // The active tab's cue that is not fill (WCAG 1.4.11): off its own fill and an inactive or hovered tab's.
+    // The active tab's cue that is not fill (WCAG 1.4.11): off its own fill, an inactive or hovered tab's,
+    // and the strip under it.
     const indicator = composite(colourIn(theme, TAB_STRIP.activeIndicator), strip);
-    for (const [fill, colour] of [['active', active], ['inactive', idle], ['hovered', hover]] as const) {
-      expect(contrastRatio(indicator, colour), `${TAB_STRIP.activeIndicator} on the ${fill} tab's fill (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minIndicator);
+    for (const [fill, colour] of [['the active tab', active], ['an inactive tab', idle], ['a hovered tab', hover], ['the strip', strip]] as const) {
+      // Soft: every pair that misses is reported, not only the first.
+      expect.soft(contrastRatio(indicator, colour), `${TAB_STRIP.activeIndicator} on ${fill} (${theme})`).toBeGreaterThanOrEqual(TAB_STRIP.minIndicator);
     }
-    // ... and the active tab really draws it.
-    const shadow = resolveOnElement(read('styles.css'), TAB_STRIP.activeTab, 'box-shadow', theme);
-    expect(shadow, `the active tab's box-shadow reads ${TAB_STRIP.activeIndicator} (${theme})`).toContain(`var(${TAB_STRIP.activeIndicator})`);
+    // ... and the active tab really draws it, its whole term, also under the pointer.
+    const css = read('styles.css');
+    expect(TAB_STRIP.activeIndicatorShadow).toContain(`var(${TAB_STRIP.activeIndicator})`);
+    for (const [state, element] of [['active', TAB_STRIP.activeTab], ['active and hovered', TAB_STRIP.activeTabHovered]] as const) {
+      expect(resolveOnElement(css, element, 'box-shadow', theme), `the ${state} tab's box-shadow (${theme})`).toContain(TAB_STRIP.activeIndicatorShadow);
+    }
   }
 });
 
@@ -498,6 +504,18 @@ test('busy-buttons-show-under-forced-colours', () => {
       for (const property of ['color', 'border-color']) {
         expect(resolveOnElement(css, entry.element, property, theme, { forced: true }).toLowerCase(), `${entry.why}: ${property} under forced colours (${theme})`).toBe('graytext');
       }
+    }
+  }
+});
+
+test('pressed-toggles-show-under-forced-colours', () => {
+  const entries: readonly ForcedColoursBusy[] = FORCED_COLOURS_PRESSED;
+  for (const entry of entries) {
+    const css = read(entry.stylesheet);
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
+    for (const theme of THEME_NAMES) {
+      expect(resolveOnElement(css, entry.element, 'border-color', theme, { forced: true }).toLowerCase(), `${entry.why}: border-color under forced colours (${theme})`).toBe('highlight');
     }
   }
 });

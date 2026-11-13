@@ -428,6 +428,18 @@ export const FORCED_COLOURS_BUSY = [
   { stylesheet: 'styles.css', element: ['.prompt-button', '.prompt-button:disabled'], why: 'the permission prompt\'s Allow and Block before they arm, and once answered' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
+/**
+ * Toggle tools that show they are pressed by a fill and an edge colour (`aria-pressed`). Forced colours
+ * replace both, so for each entry the cascade over its `element` selectors in `stylesheet`, with the
+ * rules inside `@media (forced-colors: active)` read too, resolves `border-color` to `Highlight` in
+ * light and dark: a later rule of the toggle's own (the render toggle's `--render-edge`) must not win
+ * over it.
+ */
+export const FORCED_COLOURS_PRESSED = [
+  { stylesheet: 'styles.css', element: ['.tool', ".sidebar-toggle[aria-pressed='true']"], why: 'the SEO sidebar toggle, pressed (the sidebar open)' },
+  { stylesheet: 'styles.css', element: ['.tool', ".render-toggle[aria-pressed='true']"], why: 'the render-profile toggle, pressed (its editor bar open)' },
+] as const satisfies readonly ForcedColoursBusy[];
+
 export const SIGNAL_SURFACES = [
   // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).
   { name: 'command palette', stylesheet: 'styles.css', selectorPrefix: '.palette' },
@@ -977,10 +989,11 @@ export const FOCUS_RING_RULES = [
  * dark), the active one 1.180 (1.126 in dark), a hovered one 1.103 (1.143). In dark `--bg-tab-idle`
  * and `--bg-hover` are the same fill, and the active tab's is within 1.02:1 of it (`--e-raised` is about
  * 1.28:1 on the window), so fills cannot say which tab is active. The active tab carries a cue that
- * does not depend on fill: a 2px `activeIndicator` line along its foot (an inset box-shadow, beside
- * `--e-raised`), which stands at least `minIndicator` (3:1, WCAG 1.4.11) off the active tab's fill and
- * off an inactive and a hovered tab's, in both themes. `activeTab` lists the selectors the active tab
- * matches in `styles.css`: their cascade gives a `box-shadow` that reads `var(<activeIndicator>)`. A
+ * does not depend on fill: a 2px `activeIndicator` line along its foot (`activeIndicatorShadow`, an
+ * inset box-shadow beside `--e-raised`), which stands at least `minIndicator` (3:1, WCAG 1.4.11) off the
+ * active tab's fill, off an inactive and a hovered tab's and off the strip under it, in both themes.
+ * `activeTab` lists the selectors the active tab matches in `styles.css`, and `activeTabHovered` those
+ * it matches under the pointer: each cascade gives a `box-shadow` holding `activeIndicatorShadow`. A
  * focused active tab shows `--focus-ring` in its place (`FOCUS_RING_RULES`), and under forced colours,
  * which drop box-shadows, its 1px transparent outline marks it.
  */
@@ -993,8 +1006,11 @@ export const TAB_STRIP = {
   minIdleOnStrip: 1.09,
   minHoverOnStrip: 1.1,
   activeIndicator: '--accent',
+  activeIndicatorShadow: 'inset 0 -2px 0 var(--accent)',
   minIndicator: 3,
   activeTab: ['.tab', ".tab[data-active='true']"],
+  /** The hover rule (`.tab:hover:where(:not([data-active='true']))`) never matches the active tab; these would. */
+  activeTabHovered: ['.tab', ".tab[data-active='true']", '.tab:hover', ".tab[data-active='true']:hover"],
 } as const satisfies {
   readonly strip: TokenName;
   readonly idle: TokenName;
@@ -1004,8 +1020,10 @@ export const TAB_STRIP = {
   readonly minIdleOnStrip: number;
   readonly minHoverOnStrip: number;
   readonly activeIndicator: TokenName;
+  readonly activeIndicatorShadow: string;
   readonly minIndicator: number;
   readonly activeTab: readonly string[];
+  readonly activeTabHovered: readonly string[];
 };
 
 // ---- Fonts (bundled in the values step; applied per surface through the --text-* tokens) ----
