@@ -1,7 +1,17 @@
 // Spec: specs/ci-pipeline.spec.ts · Acceptance: specs/ci-pipeline.feature.md (The workflow), specs/ci-gates.feature.md (Gates)
 import { readdirSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
-import { CI_ALWAYS_JOBS, CI_PLATFORM_JOBS, CI_REQUIRE_BUBBLEWRAP_ENV, CI_VERDICT_JOB } from '@app/specs/ci-pipeline.spec';
+import {
+  CI_ALWAYS_JOBS,
+  CI_DEFAULT_SCOPE,
+  CI_LINUX_VERDICT_NAME,
+  CI_PLATFORM_JOBS,
+  CI_REQUIRE_BUBBLEWRAP_ENV,
+  CI_SCOPE_ENV,
+  CI_SCOPES,
+  CI_VERDICT_JOB,
+  CI_VERDICT_NAME,
+} from '@app/specs/ci-pipeline.spec';
 import { CI_WORKFLOW, PINNED_USES, SETUP_ACTION, SETUP_USES, jobNamed, jobsOf, read, stepNamed, stepsOf, triggers } from './workflow-text';
 
 const workflow = read(CI_WORKFLOW);
@@ -16,9 +26,13 @@ describe('CI pipeline', () => {
   test('pipeline-triggers', () => {
     expect(workflow).toMatch(/^name: CI$/m);
     const on = triggers(workflow);
-    expect(on).toBe("  push:\n    branches: [main]\n    tags: ['v*']\n  pull_request:\n  workflow_dispatch:\n\n");
+    expect(on.startsWith("  push:\n    branches: [main]\n    tags: ['v*']\n  pull_request:\n  workflow_dispatch:\n    inputs:\n      scope:\n")).toBe(true);
     // Every pull request: no path or branch filter.
     expect(on).not.toMatch(/paths|branches-ignore|types:/);
+    // On demand, one input: the scope, a choice of `CI_SCOPES` that defaults to every platform.
+    expect(on.match(/^ {6}\w+:$/gm)).toEqual(['      scope:']);
+    expect(on).toMatch(new RegExp(`^ {8}type: choice\\n {8}options: \\[${CI_SCOPES.join(', ')}\\]\\n {8}default: ${CI_DEFAULT_SCOPE}\\n`, 'm'));
+    expect(on).toContain(`'${CI_LINUX_VERDICT_NAME}'`);
 
     expect(workflow).toMatch(/^permissions:\n {2}contents: read\n\n/m);
     expect(workflow.match(/^\s*permissions:/gm)).toHaveLength(1);
@@ -55,6 +69,8 @@ describe('CI pipeline', () => {
     expect(preflight.steps[0]?.with).toContain('fetch-depth: 2');
     const plan = stepNamed(preflight.steps, 'Plan');
     expect(plan.id).toBe('plan');
+    // The scope a run on demand asked for (empty for every other event).
+    expect(plan.env).toBe(`${CI_SCOPE_ENV}: \${{ inputs.scope }}`);
     expect(plan.run).toBe(
       ['if [ "$GITHUB_EVENT_NAME" = pull_request ]; then', 'git diff --name-only HEAD^1 HEAD | node scripts/ci-plan.mjs plan', 'else', 'node scripts/ci-plan.mjs plan < /dev/null', 'fi'].join('\n'),
     );
@@ -206,6 +222,13 @@ describe('CI pipeline', () => {
   test('ci-passed-runs-the-verdict', () => {
     const { steps, keys } = job(CI_VERDICT_JOB);
     expect(keys['runs-on']).toBe('ubuntu-24.04');
+    // The required check's name, except in a run on demand with the `linux` scope: what only the
+    // Linux jobs earned must not stand in for the required check on that commit.
+    expect(CI_VERDICT_NAME).toBe('CI passed');
+    expect(CI_LINUX_VERDICT_NAME).not.toBe(CI_VERDICT_NAME);
+    expect(keys['name']).toBe(`\${{ inputs.scope == 'linux' && '${CI_LINUX_VERDICT_NAME}' || '${CI_VERDICT_NAME}' }}`);
+    // Nothing else in the workflow reads the input but the plan.
+    expect(workflow.match(/inputs\.scope/g)).toHaveLength(2);
     expect(steps[0]?.uses).toMatch(/^actions\/checkout@/);
     expect(steps.some((step) => /^actions\/setup-node@/.test(step.uses ?? '') && /node-version: 24$/m.test(step.with ?? ''))).toBe(true);
     const verdict = stepNamed(steps, 'Verdict');

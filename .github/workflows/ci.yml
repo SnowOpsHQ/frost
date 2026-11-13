@@ -5,14 +5,21 @@
 name: CI
 
 # Branch pushes are covered by their pull request; `main` and `v*` tags run on push. A branch
-# without a pull request runs on demand (`gh workflow run ci.yml --ref <branch>`), e.g. to fetch its
-# screenshot baselines (specs/visual-baseline.feature.md).
+# without a pull request runs on demand (`gh workflow run ci.yml --ref <branch>`): every platform,
+# or with `-f scope=linux` the Linux jobs only, which is enough to fetch its screenshot baselines
+# (specs/visual-baseline.feature.md) and keeps the macOS runners free for the other runs.
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: "all: every platform, as a push to main. linux: the Linux jobs only (enough for screenshot baselines); its verdict is 'CI passed (Linux only)', not the required check."
+        type: choice
+        options: [all, linux]
+        default: all
 
 permissions:
   contents: read
@@ -53,6 +60,8 @@ jobs:
       # A pull request is checked out as its merge commit, whose first parent is the base branch.
       - name: Plan
         id: plan
+        env:
+          CI_SCOPE: ${{ inputs.scope }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             git diff --name-only HEAD^1 HEAD | node scripts/ci-plan.mjs plan
@@ -358,9 +367,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The one check to require: the run did what the plan said (scripts/ci-plan.mjs verdict).
+  # The one check to require: the run did what the plan said (scripts/ci-plan.mjs verdict). A run
+  # on demand with the `linux` scope reports under another name, so that what only the Linux jobs
+  # earned can never stand in for the required check on that commit.
   ci-passed:
-    name: CI passed
+    name: ${{ inputs.scope == 'linux' && 'CI passed (Linux only)' || 'CI passed' }}
     needs: [preflight, lint, security, unit, e2e, package-linux, package-macos, package-windows]
     if: ${{ always() }}
     runs-on: ubuntu-24.04

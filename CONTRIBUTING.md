@@ -36,7 +36,9 @@ task, a fresh reviewer before the next starts, and a whole-branch review at the 
   plans the run, then lint, the security gates, the unit and e2e shards on Linux, macOS and Windows
   and the three package jobs run side by side, and `CI passed` is green only if every one of them
   did what the plan said. A pull request that changes only `docs/`, `semgrep/`, `security/`,
-  `LICENSE` or a root Markdown file runs the Linux jobs only. Shard counts and runner images live in
+  `LICENSE` or a root Markdown file runs the Linux jobs only. A branch without a pull request runs
+  on demand: `gh workflow run ci.yml --ref <branch>`, with `-f scope=linux` when the Linux jobs are
+  enough (fetching screenshot baselines), which keeps the macOS runners free. Shard counts and runner images live in
   `specs/ci-pipeline.spec.ts`; check a workflow change with `pnpm lint:workflows` (needs `uv`).
 
 ## Commits & branches

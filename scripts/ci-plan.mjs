@@ -5,8 +5,9 @@
 //   git diff --name-only HEAD^1 HEAD | node scripts/ci-plan.mjs plan     (job `preflight`)
 //   node scripts/ci-plan.mjs verdict                                     (job `ci-passed`)
 //
-// `plan` reads the event from GITHUB_EVENT_NAME and, for a pull request, its changed files from
-// stdin (one per line). It appends `platforms`, `unit` and `e2e` to the file named by GITHUB_OUTPUT
+// `plan` reads the event from GITHUB_EVENT_NAME, for a pull request its changed files from stdin
+// (one per line), and the scope a run on demand asked for from CI_SCOPE (empty: the default). It
+// appends `platforms`, `unit` and `e2e` to the file named by GITHUB_OUTPUT
 // (the two matrices as `{"include":[…]}`), a table of the planned jobs to the file named by
 // GITHUB_STEP_SUMMARY, and prints the plan.
 //
@@ -19,7 +20,7 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const { CI_PULL_REQUEST_EVENT, ciVerdict, planCi } = await import('../specs/ci-pipeline.spec.ts');
+const { CI_DEFAULT_SCOPE, CI_DISPATCH_EVENT, CI_PULL_REQUEST_EVENT, CI_SCOPE_ENV, CI_SCOPES, ciVerdict, isCiScope, planCi } = await import('../specs/ci-pipeline.spec.ts');
 
 const USAGE = 'usage: node scripts/ci-plan.mjs plan|verdict';
 
@@ -54,8 +55,14 @@ export function main(argv, options) {
       stderr(`ci-plan: GITHUB_EVENT_NAME is not an event name (${JSON.stringify(event)})`);
       return 1;
     }
+    // Empty for every event but a run on demand, and for one started before the input existed.
+    const scope = env[CI_SCOPE_ENV] || CI_DEFAULT_SCOPE;
+    if (!isCiScope(scope)) {
+      stderr(`ci-plan: ${CI_SCOPE_ENV} is not one of ${CI_SCOPES.join(', ')} (${JSON.stringify(scope)})`);
+      return 1;
+    }
     const changed = event === CI_PULL_REQUEST_EVENT ? lines((options.stdin ?? (() => readFileSync(0, 'utf8')))()) : [];
-    const plan = planCi({ event, changed });
+    const plan = planCi({ event, changed, scope });
     const outputs = [`platforms=${plan.platforms}`, `unit=${JSON.stringify({ include: plan.unit })}`, `e2e=${JSON.stringify({ include: plan.e2e })}`];
     for (const line of outputs) stdout(line);
     if (env['GITHUB_OUTPUT']) append(env['GITHUB_OUTPUT'], `${outputs.join('\n')}\n`);
@@ -97,7 +104,9 @@ function lines(text) {
 function summary(event, changed, plan) {
   const why =
     event !== CI_PULL_REQUEST_EVENT
-      ? `a \`${event}\` run covers every platform`
+      ? plan.platforms
+        ? `a \`${event}\` run covers every platform`
+        : `this \`${CI_DISPATCH_EVENT}\` run asked for the Linux jobs only`
       : plan.platforms
         ? `${changed.length} changed file(s), at least one outside the Linux-only paths`
         : `${changed.length} changed file(s), all in the Linux-only paths`;
