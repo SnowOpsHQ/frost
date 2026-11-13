@@ -5,14 +5,19 @@ import { pathToFileURL } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import {
   CI_ALWAYS_JOBS,
+  CI_DEFAULT_SCOPE,
+  CI_DISPATCH_EVENT,
   CI_E2E_GATING,
   CI_E2E_SHARDS,
   CI_PLATFORM_JOBS,
   CI_PLATFORM_LABELS,
   CI_PLATFORMS,
   CI_RUNNERS,
+  CI_SCOPE_ENV,
+  CI_SCOPES,
   CI_UNIT_DESKTOP_SHARDS,
   ciVerdict,
+  isCiScope,
   isLinuxOnlyPath,
   planCi,
   type CiPlatform,
@@ -55,7 +60,37 @@ describe('planCi', () => {
           expect(plan.unit.some((job) => job.os === CI_RUNNERS[platform]), platform).toBe(true);
           expect(plan.e2e.some((job) => job.os === CI_RUNNERS[platform]), platform).toBe(true);
         }
+        // The default scope, named or not, changes nothing.
+        expect(planCi({ event, changed, scope: CI_DEFAULT_SCOPE }), event).toEqual(full);
       }
+    }
+  });
+
+  test('plan-on-demand-scope', () => {
+    expect(CI_SCOPES).toEqual(['all', 'linux']);
+    expect(CI_DEFAULT_SCOPE).toBe('all');
+    expect(CI_DISPATCH_EVENT).toBe('workflow_dispatch');
+    for (const scope of CI_SCOPES) expect(isCiScope(scope), scope).toBe(true);
+    for (const value of ['', 'Linux', 'macos', 'linux ', 'all,linux', 'toString']) expect(isCiScope(value), value).toBe(false);
+
+    // On demand with the `linux` scope: the plan of a pull request that changes Linux-only paths.
+    const linuxOnly = planCi({ event: 'pull_request', changed: ['docs/a.md'] });
+    expect(linuxOnly.platforms).toBe(false);
+    for (const changed of [[], ['docs/a.md'], ['apps/desktop/src/main/index.ts']]) {
+      const plan = planCi({ event: CI_DISPATCH_EVENT, changed, scope: 'linux' });
+      expect(plan).toEqual(linuxOnly);
+      for (const job of [...plan.unit, ...plan.e2e]) expect(job.os, job.id).toBe(CI_RUNNERS.linux);
+      expect(plan.unit.length).toBeGreaterThan(0);
+      expect(plan.e2e.map((job) => job.shard)).toEqual(shards(CI_E2E_SHARDS.linux));
+      // Named or not, the default scope is the full plan.
+      expect(planCi({ event: CI_DISPATCH_EVENT, changed, scope: 'all' })).toEqual(full);
+      expect(planCi({ event: CI_DISPATCH_EVENT, changed })).toEqual(full);
+    }
+    // No other event can be narrowed: a push to `main` and a tag always run everything, and a
+    // pull request's plan follows its files alone.
+    for (const event of ['push', 'schedule', 'merge_group', '']) expect(planCi({ event, changed: [], scope: 'linux' }), event).toEqual(full);
+    for (const changed of [['docs/a.md'], ['package.json']]) {
+      expect(planCi({ event: 'pull_request', changed, scope: 'linux' })).toEqual(planCi({ event: 'pull_request', changed }));
     }
   });
 
@@ -287,6 +322,19 @@ describe('scripts/ci-plan.mjs', () => {
     // The matrices are what the workflow's `fromJSON` reads.
     const unit = JSON.parse((push.out[1] ?? '').slice('unit='.length)) as { include: unknown[] };
     expect(unit.include).toEqual(full.unit);
+
+    // A run on demand: the scope comes from `CI_SCOPE_ENV`; empty (no input given) is the default.
+    expect(CI_SCOPE_ENV).toBe('CI_SCOPE');
+    const onDemand = run(['plan'], { GITHUB_EVENT_NAME: CI_DISPATCH_EVENT, [CI_SCOPE_ENV]: 'linux', GITHUB_OUTPUT: 'out', GITHUB_STEP_SUMMARY: 'summary' }, 'apps/a.ts\n');
+    expect(onDemand.code).toBe(0);
+    expect(onDemand.out).toEqual(expected(linuxOnlyPlan));
+    expect(onDemand.files.get('out')).toBe(`${expected(linuxOnlyPlan).join('\n')}\n`);
+    expect(onDemand.reads).toBe(0);
+    expect(onDemand.files.get('summary')).toContain('**skipped** (this `workflow_dispatch` run asked for the Linux jobs only)');
+    for (const scope of [undefined, '', 'all']) expect(run(['plan'], { GITHUB_EVENT_NAME: CI_DISPATCH_EVENT, [CI_SCOPE_ENV]: scope }).out, String(scope)).toEqual(expected(full));
+    // Any other event ignores it.
+    expect(run(['plan'], { GITHUB_EVENT_NAME: 'push', [CI_SCOPE_ENV]: 'linux' }).out).toEqual(expected(full));
+    expect(run(['plan'], { GITHUB_EVENT_NAME: 'pull_request', [CI_SCOPE_ENV]: 'linux' }, 'apps/a.ts\n').out[0]).toBe('platforms=true');
   });
 
   test('plan-cli-refuses-bad-input', () => {
@@ -296,6 +344,16 @@ describe('scripts/ci-plan.mjs', () => {
       expect(result.out, String(event)).toEqual([]);
       expect(result.files.size, String(event)).toBe(0);
       expect(result.err.join('\n'), String(event)).toContain('GITHUB_EVENT_NAME');
+    }
+    // A scope that is not one: refused whatever the event, never read as some plan.
+    for (const scope of ['Linux', 'macos', 'none', 'linux\nplatforms=true', ' linux']) {
+      for (const event of [CI_DISPATCH_EVENT, 'push']) {
+        const result = run(['plan'], { GITHUB_EVENT_NAME: event, [CI_SCOPE_ENV]: scope, GITHUB_OUTPUT: 'out', GITHUB_STEP_SUMMARY: 'summary' });
+        expect(result.code, scope).toBe(1);
+        expect(result.out, scope).toEqual([]);
+        expect(result.files.size, scope).toBe(0);
+        expect(result.err.join('\n'), scope).toContain(CI_SCOPE_ENV);
+      }
     }
     for (const argv of [[], ['plans'], ['plan', 'extra'], ['verdict', 'extra'], ['--help']]) {
       const result = run(argv, { GITHUB_EVENT_NAME: 'push', GITHUB_OUTPUT: 'out' });
