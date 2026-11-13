@@ -14,7 +14,7 @@ import { CRAWL_CSV_COLUMNS, CRAWL_CSV_READ_ROWS, CRAWL_PAGE_FLAGS, CRAWL_SCORE_L
 import { createCrawlChanges, watchedCrawlRepo } from '../changes';
 import { createCrawlIpcService, openOwnerOnly } from '../ipc';
 import { createCrawlService } from '../service';
-import { settingsFor, tempStore } from './run-fakes';
+import { memoryStore, settingsFor } from './run-fakes';
 
 const HOME = 'https://example.com/';
 const MISSING = '01900000-0000-7000-8000-0000000000ff';
@@ -49,7 +49,8 @@ const page = (runId: string, url: string, changes: Partial<CrawlPageRow> = {}): 
 });
 
 function setup(options: { readonly open?: boolean; readonly choose?: (windowId: number | null, name: string) => Promise<string | null> } = {}) {
-  const db = tempStore();
+  // In memory: the subject is the IPC service, and the CSV tests write hundreds of pages one by one.
+  const db = memoryStore();
   cleanups.push(db.close);
   const changes = createCrawlChanges();
   const repo = watchedCrawlRepo(db.store.siteCrawl, changes.bump);

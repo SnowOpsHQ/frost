@@ -161,6 +161,9 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 - **Scenario: memory-fallback-when-nothing-opens** — when the directory cannot be created (it is
   a file), an in-memory database is used; the app still gets a working store, and the log line
   claims no move.
+- **Scenario: memory-store-touches-no-disk** — `openMemorySessionStore()` takes no directory and
+  answers the same store on an in-memory database (`file` is `':memory:'`), migrated; it reads back
+  what it wrote and closes. For tests whose subject is not the file.
 
 ## Repository (`packages/db/src/__tests__/repository.test.ts`, in-memory `DatabaseSync`)
 - **Scenario: session-round-trip** — saved tabs load back with the same URLs, titles, order and

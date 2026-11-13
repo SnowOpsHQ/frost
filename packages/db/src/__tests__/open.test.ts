@@ -17,6 +17,7 @@ import {
 } from '@app/specs/browser-session-db.spec';
 import { MIGRATIONS } from '../migrations';
 import { CorruptDatabaseError, openSessionDatabase, shouldMoveAside } from '../open';
+import { openMemorySessionStore } from '../store';
 
 let dir: string;
 const NOW = 1_700_000_000_000;
@@ -224,5 +225,18 @@ describe('opening', () => {
     // The log tells what happened: nothing was moved.
     expect(log.mock.calls[0]?.[0]).not.toMatch(/moved aside/);
     expect(readFileSync(notADir, 'utf8')).toBe('');
+  });
+
+  test('memory-store-touches-no-disk', async () => {
+    // No directory is given: there is nowhere on disk it could write.
+    const store = openMemorySessionStore();
+    expect(store.file).toBe(':memory:');
+    expect(store.isOpen).toBe(true);
+    expect(store.migrationIds()).toEqual(MIGRATIONS.map((m) => m.id).sort());
+    // A working store: what it writes, it reads back.
+    expect(await store.settings.setWhatsNewSeenVersion('1.2.3', NOW)).toBe(true);
+    expect(await store.settings.whatsNewSeenVersion()).toBe('1.2.3');
+    await store.close();
+    expect(store.isOpen).toBe(false);
   });
 });

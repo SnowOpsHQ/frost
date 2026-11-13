@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { openSessionStore, type SessionStore } from '@app/db';
+import { openMemorySessionStore, openSessionStore, type SessionStore } from '@app/db';
 import { defaultCrawlSettings, type CrawlSettings } from '@app/specs/site-crawl.schema';
 import type { CrawlPageJob } from '@app/specs/site-crawl.schema';
 import { analyseCrawlPage, type CrawlPageResult } from '../analyse';
@@ -120,6 +120,16 @@ export function tempStore(): { store: SessionStore; raw: DatabaseSync; count: (s
       rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     },
   };
+}
+
+/**
+ * The session store in memory, and its cleanup: for tests whose subject is not the database file.
+ * `tempStore` flushes every write to the disk, and a test that writes hundreds of rows one by one
+ * has timed out on Windows CI runners for that alone.
+ */
+export function memoryStore(): { store: SessionStore; close: () => Promise<void> } {
+  const store = openMemorySessionStore();
+  return { store, close: () => store.close() };
 }
 
 /** Settings for a crawl of `startUrl` (sitemaps off unless asked). */

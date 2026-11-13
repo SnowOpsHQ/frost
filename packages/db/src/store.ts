@@ -13,7 +13,7 @@ import { createLocationProfilesRepository, type LocationProfilesRepository } fro
 import { createContentNotesRepository, type ContentNotesRepository } from './content-notes';
 import { createHistoryRepository, type HistoryRepository } from './history';
 import { createSettingsRepository, type SettingsRepository } from './settings';
-import { openSessionDatabase, type OpenOptions } from './open';
+import { openMemoryDatabase, openSessionDatabase, type OpenedDatabase, type OpenOptions } from './open';
 import { createSessionRepository, type SessionRepository } from './repository';
 import { createSiteCrawlRepository, type SiteCrawlRepository } from './site-crawl/repository';
 import { createSessionWriter, type SessionWriter, type WriterOptions } from './writer';
@@ -68,7 +68,19 @@ export interface SessionStore {
 export type SessionStoreOptions = OpenOptions & Pick<WriterOptions, 'batchMs' | 'setTimer' | 'clearTimer'>;
 
 export function openSessionStore(options: SessionStoreOptions): SessionStore {
-  const { db, file } = openSessionDatabase(options);
+  return storeOn(openSessionDatabase(options), options);
+}
+
+/**
+ * The store on an in-memory database, as `openSessionStore` answers when no file can be used:
+ * nothing is read from or written to the disk. For tests whose subject is not the file: every
+ * write to a file is flushed to the disk, which is slow on Windows CI runners.
+ */
+export function openMemorySessionStore(options: Pick<WriterOptions, 'batchMs' | 'setTimer' | 'clearTimer'> = {}): SessionStore {
+  return storeOn(openMemoryDatabase(), options);
+}
+
+function storeOn({ db, file }: OpenedDatabase, options: Pick<WriterOptions, 'batchMs' | 'setTimer' | 'clearTimer'>): SessionStore {
   const drizzle = createDrizzle(db);
   const repository = createSessionRepository(drizzle);
   const writer = createSessionWriter(repository, options);
