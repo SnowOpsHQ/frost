@@ -1242,8 +1242,9 @@ Prerequisites:
 - Xcode Command Line Tools (`xcode-select --install`): `codesign`, plus the compiler node-gyp needs
   to build the DMG maker's native addons (`fs-xattr`, `macos-alias`).
 - Python 3 (for node-gyp; the one the Command Line Tools ship is enough).
-- Node ≥ 22.18 (`verify-mac-package.mjs` imports the `specs/*.ts` files with Node's built-in type
-  stripping).
+- Node ≥ 24, the version CI runs (`package.json#engines`). `verify-mac-package.mjs` imports the
+  `specs/*.ts` files with Node's built-in type stripping, and the telemetry unit tests need how
+  Node 24 keeps an `AsyncLocalStorage` context: under Node 22 they fail.
 - pnpm 12.15.0 (`package.json#packageManager`). Without changing a global pnpm, prefix each
   command below with `npx -y pnpm@12.15.0` instead of `pnpm`.
 
@@ -1287,7 +1288,7 @@ Real signing uses the hardened runtime with only `com.apple.security.cs.allow-ji
 ID); CI never receives these secrets.
 
 ## Building on Linux
-Prerequisites: Node ≥ 22.18 and pnpm 12.15.0 (as above), `dpkg-deb` (the deb maker and the deb
+Prerequisites: Node ≥ 24 and pnpm 12.15.0 (as above), `dpkg-deb` (the deb maker and the deb
 checks; part of Debian and Ubuntu), `mksquashfs` (`squashfs-tools`, for the AppImage) and, for
 `verify:linux`, `unzip` and a display (`xvfb-run -a` on a headless machine). `make:linux` downloads the
 AppImage runtime pinned in `specs/linux-package.spec.ts`.
@@ -1327,7 +1328,7 @@ job sets that sysctl before `verify:linux` (and launches the packaged tree, not 
 passing run does not mean the AppImage starts on a stock Ubuntu 24.04.
 
 ## Building on Windows
-Prerequisites: Windows 10 or later (x64), Node ≥ 22.18 and pnpm 12.15.0 (as above). The Squirrel
+Prerequisites: Windows 10 or later (x64), Node ≥ 24 and pnpm 12.15.0 (as above). The Squirrel
 maker's tools (NuGet, Squirrel, 7-Zip) come with the `electron-winstaller` package; `verify:win`
 uses Windows' own `tar.exe` to read the zip and the `.nupkg`.
 

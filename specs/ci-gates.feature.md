@@ -17,6 +17,14 @@ Each gate is a step named `Gate: <name>` in the job given (`gates-map-to-steps`,
     hashes). Checked with `pnpm turbo run lint test --dry=json`: a change under `packages/db/src`
     changes the hashes of `@app/desktop#lint` and `#test`, and likewise for `@app/ipc-contract` and
     `@app/specs`.
+  - **Scenario: turbo-build-follows-its-config** (`ci-workflows.test.ts`) — Turbo's cache never
+    replays a `build` made with another baked configuration: the task's `env` names every prefix
+    Vite bakes in (`FROST_PUBLIC_*`, `VITE_*`: `vite.main.config.ts`, `envPrefix`), which also lets
+    those variables reach the task under Turbo, and its `inputs` add `apps/desktop/.env*` (ignored
+    by git, so not among the default inputs). Its outputs leave out `out/make/**`: the installers
+    are `make`'s, and a cached `build` neither stores them nor puts stale ones back. Checked with
+    `pnpm turbo run build --filter @app/desktop --dry=json`: setting `FROST_PUBLIC_API_BASE_URL`,
+    or writing it to `apps/desktop/.env.local`, changes the task's hash.
 - **Gate: actionlint** (job `lint`) — `pnpm lint:workflows`: actionlint (pinned, run through
   `uvx`) over `.github/workflows/`, with its shellcheck and pyflakes passes off so the result does
   not depend on what the runner image has installed.

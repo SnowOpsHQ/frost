@@ -171,6 +171,14 @@ export function planCi(input: {
  */
 export const CI_REQUIRE_BUBBLEWRAP_ENV = 'FROST_REQUIRE_BUBBLEWRAP';
 
+/**
+ * Set to `1` for the desktop unit tests on Linux when `scripts/fetch-intent-model.mjs` put the
+ * pinned model files in place first: the real-model intent suite (`intent-model.test.ts`), which
+ * skips itself where the files are not cached, then fails instead. Left empty when the model's
+ * host could not be reached, so that host's bad day fails no run.
+ */
+export const CI_REQUIRE_INTENT_MODEL_ENV = 'FROST_REQUIRE_INTENT_MODEL';
+
 /** The jobs `ci-passed` waits for that run in every plan. */
 export const CI_ALWAYS_JOBS = ['preflight', 'lint', 'security', 'unit', 'e2e'] as const;
 

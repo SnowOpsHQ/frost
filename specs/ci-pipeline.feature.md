@@ -55,7 +55,12 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   `--shard` from `matrix.shard`. On Linux, before the desktop suite, it installs bubblewrap if it is
   missing and allows unprivileged user namespaces, and runs the suite with
   `CI_REQUIRE_BUBBLEWRAP_ENV` set to `1`, so the MCP containment suite cannot be skipped there
-  (`agent-mcp.feature.md`, `mcp-bubblewrap-required-where-asked`). On Windows, LF line endings are kept
+  (`agent-mcp.feature.md`, `mcp-bubblewrap-required-where-asked`). Also on Linux, before the desktop
+  suite, it restores `~/.cache/frost-models` (a cache keyed by the intent spec's hash) and runs
+  `node scripts/fetch-intent-model.mjs` (step id `intent`), and sets `CI_REQUIRE_INTENT_MODEL_ENV`
+  to `1` when that step's `available` output is `true`, so the real-model intent suite cannot be
+  skipped there (`intent-classifier.feature.md`, `intent-real-model-required-where-asked`); when
+  the model's host could not be reached, the variable stays empty and the suite skips itself. On Windows, LF line endings are kept
   before checkout (`git config --global core.autocrlf false`): the tests read repository files and
   match on `\n`.
 - **Scenario: e2e-job** — `e2e` builds the app (`pnpm --filter @app/desktop build`) and runs
@@ -85,13 +90,36 @@ the run did what the plan said. `ci-passed` is the one check to require on `main
   the version `package.json#packageManager` pins, Node 24 with pnpm's store cached, Electron's
   download cache for the platform keyed by the Electron version in `pnpm-lock.yaml` (so a lockfile
   change that leaves Electron alone downloads nothing), then `pnpm install --frozen-lockfile`.
-  Every job that installs the workspace uses it right after checkout.
+  Every job that installs the workspace uses it right after checkout. That Node is also the floor
+  the repository states (`package.json#engines`: `>=24`, and the desktop README's prerequisites):
+  no older Node is tested, so none is promised. Under Node 22.18, the earlier floor, the telemetry
+  unit tests fail: there a promise made inside an `AsyncLocalStorage` run carries own properties,
+  which `packages/telemetry` takes for a promise it must not follow.
 - **Scenario: workflows-lint-clean** — the root script `lint:workflows` runs actionlint at a pinned
   version with its shellcheck and pyflakes passes off, so the result depends only on the pinned
   package and the workflow files.
 - **Scenario: turbo-cache-follows-dependencies** — as in `ci-gates.feature.md`; also, the `test`
   task's inputs include the workflow, the setup action and `scripts/*.mjs`, so a change to any of
   them is never answered from Turbo's cache.
+
+## The intent model (`fetch-intent-model.test.ts`, `scripts/fetch-intent-model.mjs`)
+The on-device intent model is never committed (`intent-classifier.spec.ts`, `INTENT_MODEL`: two
+files pinned by URL at a fixed revision, size and sha256). The script puts them where the
+real-model suite reads them: `FROST_INTENT_MODEL_DIR`, else `~/.cache/frost-models/<model id>`.
+- **Scenario: intent-model-fetched** — each file that is missing, or on disk with another size or
+  sha256, is downloaded from its pinned URL (redirects followed, with a time limit) and written
+  under its pinned name; a file already there and matching is kept and its host is not asked.
+- **Scenario: intent-model-mismatch-is-refused** — a download with another sha256, fewer bytes or
+  more bytes than pinned (reading stops at the pinned size) is never written, no temporary file is
+  left, and the command exits 1 without an `available` output.
+- **Scenario: intent-model-unreachable-skips-the-suite** — a host that cannot be reached, or
+  answers anything but 200, is not a failure: every file is still tried, a file that did arrive is
+  kept, and the command exits 0 with `available=false` and a warning on the run naming the host.
+  It asks only for the pinned URLs.
+- **Scenario: intent-model-fetch-cli** — `node scripts/fetch-intent-model.mjs` appends
+  `available=true` to the file named by `GITHUB_OUTPUT` once every file is in place (nothing is
+  appended without `GITHUB_OUTPUT`), uses the named folder or the default one, and answers any
+  argument with its usage and exit code 2, asking no host.
 
 ## The plan (`ci-plan.test.ts`, `planCi`)
 - **Scenario: plan-runs-everything-outside-pull-requests** — for `push`, `workflow_dispatch` and

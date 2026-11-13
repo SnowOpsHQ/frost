@@ -156,10 +156,27 @@ jobs:
           command -v bwrap >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap; }
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # The real-model intent suite (intent-model.test.ts) needs the pinned model files, which are
+      # never committed. They are kept between runs and fetched from their pinned URLs when missing
+      # (sha256-checked: scripts/fetch-intent-model.mjs). If the host cannot be reached, the script
+      # warns, `available` is false and the suite skips itself as on a developer's machine.
+      - name: Restore the intent model
+        if: ${{ runner.os == 'Linux' && matrix.scope != 'packages' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/frost-models
+          key: intent-model-${{ hashFiles('specs/intent-classifier.spec.ts') }}
+
+      - name: Fetch the intent model
+        id: intent
+        if: ${{ runner.os == 'Linux' && matrix.scope != 'packages' }}
+        run: node scripts/fetch-intent-model.mjs
+
       - name: "Gate: unit (every workspace)"
         if: ${{ matrix.scope == 'all' }}
         env:
           FROST_REQUIRE_BUBBLEWRAP: ${{ runner.os == 'Linux' && '1' || '' }}
+          FROST_REQUIRE_INTENT_MODEL: ${{ steps.intent.outputs.available == 'true' && '1' || '' }}
         run: pnpm turbo run test
 
       - name: "Gate: unit (packages)"
@@ -171,6 +188,7 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}
           FROST_REQUIRE_BUBBLEWRAP: ${{ runner.os == 'Linux' && '1' || '' }}
+          FROST_REQUIRE_INTENT_MODEL: ${{ steps.intent.outputs.available == 'true' && '1' || '' }}
         run: pnpm --filter @app/desktop test --shard="$SHARD"
 
   # One job per platform and shard (the plan's `e2e` matrix), against the unpackaged build.
