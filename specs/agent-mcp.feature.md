@@ -48,7 +48,9 @@ none at all over HTTP (`mcp-client-answers-ping-refuses-other-server-requests`).
 ## Command servers
 - A command is one program (a name on `PATH` without spaces, or an absolute path), never a shell
   string; arguments are one per line in the form, each passed as one argument
-  → `mcp-command-rules`, `mcp-command-line-shown-exactly`
+  → `mcp-command-rules`, `mcp-command-line-shown-exactly` (a part with a space or a quote is shown
+  in double quotes, written as a Windows command line writes them, so a Windows path keeps its
+  single backslashes; read back by those rules, every part comes out as it went in)
 - It is spawned with `shell: false` (also on Windows), in its own process group on POSIX, in a
   fresh empty temporary folder, with only `PATH`, `HOME` (that folder) and the user's variables
   → `mcp-stdio-spawn-no-shell-minimal-env-cwd`, `mcp-stdio-launch-minimal-env-and-cwd`,

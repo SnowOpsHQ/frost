@@ -321,11 +321,16 @@ export function normalizeMcpToken(token: unknown): string | null {
 
 /**
  * The command line exactly as it will run, for the start dialog and the settings: each part as is
- * when it holds only plain characters, else as a JSON string (quoted, escapes shown), so a space or
- * a quote inside an argument can't make two parts look like one.
+ * when it holds only plain characters (a path's `\` among them), else in double quotes, so a space
+ * or a quote inside an argument can't make two parts look like one. Inside the quotes a `"` is
+ * written `\"`, and a `\` is doubled only where it would otherwise read as part of that (a run of
+ * them before a `"`, or before the closing quote): the way a Windows command line is written, so
+ * `C:\Program Files\nodejs\node.exe` reads as typed. A part holds no line break or invisible
+ * character (`isMcpCommand`, `isMcpArg`), so nothing else needs an escape.
  */
 export function mcpCommandLine(command: string, args: readonly string[]): string {
-  const part = (text: string) => (/^[A-Za-z0-9_\-.,/:=@%+]+$/.test(text) ? text : JSON.stringify(text));
+  const quoted = (text: string) => `"${text.replace(/(\\*)("|$)/g, (_all, slashes: string, quote: string) => `${slashes}${slashes}${quote === '"' ? '\\"' : ''}`)}"`;
+  const part = (text: string) => (/^[A-Za-z0-9_\-.,/:=@%+\\]+$/.test(text) ? text : quoted(text));
   return cutText([command, ...args].map(part).join(' '), L.maxCommandLineChars);
 }
 
