@@ -202,11 +202,32 @@ describe('agent protocol', () => {
     expect(invoke({ list: named })).toBe(false);
     expect(invoke({ list: [1, , 3] })).toBe(false);
     expect(invoke({ list: new Array(3) })).toBe(false);
-    // A huge array fails on the value budget before its items are walked.
+    // A huge array fails on the value budget before its items are walked: nothing but its length is
+    // read, neither an item nor its list of keys. (Counted, not timed: a loaded runner took 82 and
+    // 136 ms over this call against a 50 ms limit, 2026-11-12 and 13.)
     const huge = new Array<number>(5_000_000).fill(0);
-    const started = performance.now();
-    expect(isBoundedJson(huge, Number.MAX_SAFE_INTEGER)).toBe(false);
-    expect(performance.now() - started).toBeLessThan(50);
+    let walked = 0;
+    const watched = new Proxy(huge, {
+      get(target, key, receiver) {
+        if (key !== 'length') walked += 1;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+      ownKeys(target) {
+        walked += 1;
+        return Reflect.ownKeys(target);
+      },
+    });
+    expect(isBoundedJson(watched, Number.MAX_SAFE_INTEGER)).toBe(false);
+    expect(walked).toBe(0);
+    // The watch sees a walk when there is one: an array within the budget is read item by item.
+    const small = new Proxy([1, 2, 3], {
+      get(target, key, receiver) {
+        if (key !== 'length') walked += 1;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    expect(isBoundedJson(small, Number.MAX_SAFE_INTEGER)).toBe(true);
+    expect(walked).toBeGreaterThanOrEqual(3);
     // A throwing getter makes it false, never throws.
     const trap = Object.defineProperty({}, 'a', { enumerable: true, get: () => { throw new Error('boom'); } });
     expect(() => isBoundedJson(trap, 100)).not.toThrow();

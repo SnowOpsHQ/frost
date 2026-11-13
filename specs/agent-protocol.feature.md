@@ -47,7 +47,8 @@ one named test.
 - **Scenario: tool-input-is-bounded-json** — a tool input deeper than `maxJsonDepth`, longer than
   `maxToolInputChars`, holding a non-finite number, a function, a class instance, a sparse array, an
   array with a named own key, or an own `__proto__`, `constructor` or `prototype` key is refused,
-  without exhausting the stack; an array of 5 million items fails fast (before its items are walked);
+  without exhausting the stack; an array of 5 million items is refused on its length alone (no item
+  and no list of its keys is read: counted in the test, not timed);
   a throwing getter is refused, not thrown.
 - **Scenario: json-is-copied** — a parsed tool input and tool output `data` are fresh copies of
   their JSON text: equal, not the same object, `-0` read as `0`.

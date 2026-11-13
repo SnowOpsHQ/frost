@@ -150,7 +150,8 @@ snapshot, `ServedStateSchema`, `javascript.refetchServed`'s input), `specs/seo-r
 - **Scenario: served-parse-decodes** — a BOM, the header charset, a meta charset in the first
   `prescanBytes`, else UTF-8; an unknown label is UTF-8.
 - **Scenario: served-html-is-bounded** — a document past `maxNodes` or `maxDepth` (100,000 nested
-  `<div>`s, a flood of elements) stops at the cap, `partial`, within the parse time budget; garbage
+  `<div>`s, a flood of elements) stops at the cap, `partial`, within the parse time budget
+  (`ANALYSIS_TIMEOUT_MS`, the fastest of three runs); garbage
   bytes and a non-web URL never throw.
 - **Scenario: served-parse-attribute-bomb** — a tag with 300,000 attributes parses in well under a
   second, keeping the first `maxAttributes`.
