@@ -335,4 +335,18 @@ describe('turbo', () => {
       expect(turbo.tasks['test']?.inputs, input).toContain(input);
     }
   });
+
+  test('turbo-build-follows-its-config', () => {
+    const { build } = (JSON.parse(read('turbo.json')) as { tasks: Record<string, { inputs?: string[]; env?: string[]; outputs?: string[] }> }).tasks;
+    // What Vite bakes into the bundle: `FROST_PUBLIC_*` and `VITE_*` (vite.main.config.ts, envPrefix),
+    // from the environment or from `apps/desktop/.env*` (ignored by git, so named besides the default inputs).
+    const envPrefix = /envPrefix: \[([^\]]*)\]/.exec(read('apps/desktop/vite.main.config.ts'))?.[1] ?? '';
+    const prefixes = [...envPrefix.matchAll(/'([A-Z_]+)'/g)].map((match) => `${match[1]}*`);
+    expect(prefixes).toEqual(['VITE_*', 'FROST_PUBLIC_*']);
+    expect([...(build?.env ?? [])].sort()).toEqual([...prefixes].sort());
+    expect(build?.inputs).toEqual(['$TURBO_DEFAULT$', '.env*']);
+    // The task makes `.vite/` and the packaged app under `out/`; the installers under `out/make/`
+    // are `make`'s, never this task's to store or to put back.
+    expect(build?.outputs).toEqual(['.vite/**', 'out/**', '!out/make/**']);
+  });
 });

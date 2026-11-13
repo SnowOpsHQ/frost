@@ -6,7 +6,9 @@
     },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".vite/**", "out/**"]
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "env": ["FROST_PUBLIC_*", "VITE_*"],
+      "outputs": [".vite/**", "out/**", "!out/make/**"]
     },
     "test": {
       "dependsOn": ["transit"],
