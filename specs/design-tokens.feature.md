@@ -163,7 +163,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   26px monospace at 0.12em: Geist Mono is bundled only at `--text-mono`'s 12px and 400, and a type
   token's letter-spacing is its own. A focused button keeps `--focus-ring` hovered, busy and primary
   (`FOCUS_RING_RULES`): the hovers' state checks sit in `:where()`, so they add no weight, and the
-  plain `:focus-visible` rules come after them. A switch's knob, when on, has a 1px `--bg-surface` edge:
+  plain `:focus-visible` rules come after them. A busy button shows it by its colours, not by fading
+  (an `opacity` would dim the ring too): `--text-faint` text, and a primary one `--accent` on
+  `--accent-soft`; a busy switch or an unavailable choice fades only while it is not focused. A switch's knob, when on, has a 1px `--bg-surface` edge:
   `--knob` on `--accent` is 2.65:1 in dark, the edge on the track 3:1 or more in both themes. Help's
   sheet frame keeps the page card's `--bg-surface` (no screen
   draws Help: it is a document, not cards, and it also frames the Crawl and AI answers sheets, whose
@@ -232,8 +234,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry, in light and
   dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
   none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
-  `var(--focus-ring)` and `outline` to `2px solid transparent`: a focused button keeps its ring when
-  hovered, when busy (`aria-disabled`) and when primary. The resolver itself scores
+  `var(--focus-ring)` and `outline` to `2px solid transparent`, and sets no `opacity` under 1: a focused
+  button keeps its ring, at full strength, when hovered, when busy (`aria-disabled`) and when primary;
+  so does a focused switch, and the chosen choice. The resolver itself scores
   `.a:hover:where(:not([x], :disabled))` as two classes.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,

@@ -643,8 +643,10 @@ export const TEXT_COLOUR_RULES = [
  * draw) in every state it can be focused in: hovered, busy (`aria-disabled`, which stays focusable),
  * primary or not. `element` lists the selectors, in `stylesheet`, that such an element matches in that
  * state; resolving the cascade over them (as `TEXT_COLOUR_RULES`: specificity, `:where()` adding none,
- * then source order) gives `box-shadow: var(--focus-ring)` and `outline: 2px solid transparent`. So a
- * hover's or a primary button's own box-shadow never outranks the focus rule.
+ * then source order) gives `box-shadow: var(--focus-ring)` and `outline: 2px solid transparent`, and no
+ * `opacity` under 1 (it would dim the ring: at 0.55 it falls to about 2.4–2.8:1). So a hover's or a
+ * primary button's own box-shadow never outranks the focus rule, and a busy button shows it is busy by
+ * its colours, not by fading; a busy switch or choice fades only while it is not focused.
  */
 export interface FocusRingRule {
   readonly stylesheet: string;
@@ -686,6 +688,16 @@ export const FOCUS_RING_RULES = [
     stylesheet: 'help.css',
     element: ['.diagnostics-save', ".diagnostics-save[aria-disabled='true']", '.diagnostics-save:focus-visible'],
     why: 'Export Diagnostics\' Save… while it saves (aria-disabled, still focusable)',
+  },
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-switch', ".settings-switch[aria-checked='true']", '.settings-switch:focus-visible'],
+    why: 'a Telemetry or History switch, on and focused (busy, it fades only while not focused)',
+  },
+  {
+    stylesheet: 'settings-ai-checks.css',
+    element: ['.settings-choice', ".settings-choice[aria-checked='true']", '.settings-choice:focus-visible'],
+    why: 'the chosen AI checks or History choice, focused: its --accent ring gives way to --focus-ring (unavailable, it fades only while not focused)',
   },
   {
     stylesheet: 'help.css',

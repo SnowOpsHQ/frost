@@ -446,6 +446,15 @@ test('focus-rings-outlast-hover-and-busy', () => {
     for (const theme of THEME_NAMES) {
       expect(resolveOnElement(css, rule.element, 'box-shadow', theme), `${rule.why} (${theme})`).toBe('var(--focus-ring)');
       expect(resolveOnElement(css, rule.element, 'outline', theme), `${rule.why}: outline (${theme})`).toBe('2px solid transparent');
+      // Nothing fades the ring: an opacity, if the element's rules set one, is 1.
+      const faded = (() => {
+        try {
+          return resolveOnElement(css, rule.element, 'opacity', theme);
+        } catch {
+          return '1';
+        }
+      })();
+      expect(faded, `${rule.why}: opacity (${theme})`).toBe('1');
     }
   }
 });
