@@ -229,6 +229,8 @@ test('removed-legacy-tokens-are-gone', () => {
   expect(REMOVED).toEqual(expect.arrayContaining(['--start-mark', '--start-glow', '--jump-tile-edge', '--jump-monogram-bg']));
   // So did the agent panel's.
   expect(REMOVED).toEqual(expect.arrayContaining(['--agent-edge', '--agent-user', '--agent-code-bg', '--agent-approval-edge', '--agent-approval-bg']));
+  // And Settings and Help's.
+  expect(REMOVED).toEqual(expect.arrayContaining(['--settings-switch-off']));
   for (const name of REMOVED) {
     expect(LIGHT.has(name), `${name} (light)`).toBe(false);
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);

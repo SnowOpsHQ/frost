@@ -17,8 +17,8 @@
  * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used
  *    (the command palette first: its retired `--palette-*` names are `removed`, and it is the first
  *    surface to read the `--text-*` type tokens, so the first to draw Geist; then the new-tab view,
- *    whose retired `--start-*` and `--jump-*` names are `removed`, and the agent panel, whose retired
- *    `--agent-*` names are `removed`).
+ *    whose retired `--start-*` and `--jump-*` names are `removed`, the agent panel, whose retired
+ *    `--agent-*` names are `removed`, and Settings and Help, which retired `--settings-switch-off`).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -313,7 +313,7 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--gsc-line', kind: 'alias', signal: '--accent', was: 'accent', note: '' },
   { legacy: '--gsc-grid', kind: 'retire', signal: '--divider', was: '#e7ebf1', note: '' },
   { legacy: '--gsc-axis', kind: 'alias', signal: '--text-faint', was: 'faint', note: '' },
-  { legacy: '--settings-switch-off', kind: 'retire', signal: '--switch-off', was: '#c9cfd9', note: '' },
+  { legacy: '--settings-switch-off', kind: 'retire', signal: '--switch-off', was: '#c9cfd9', note: '', removed: true },
   // Agent panel (--agent-*): its surface PR moved every rule onto Signal and dropped the retired names.
   { legacy: '--agent-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '' },
   { legacy: '--agent-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
@@ -357,6 +357,18 @@ export const SIGNAL_SURFACES = [
   { name: 'new tab: Jump back in', stylesheet: 'styles.css', selectorPrefix: '.jump' },
   // Every rule in the panel's own stylesheet (specs/agent-panel.feature.md, agent-styles-are-delimited).
   { name: 'agent panel', stylesheet: 'components/agent/agent.css', selectorPrefix: '.agent' },
+  // Settings (specs/account-settings.feature.md and each section's spec): every rule of its four stylesheets.
+  { name: 'Settings', stylesheet: 'settings.css', selectorPrefix: '.settings' },
+  { name: 'Settings: AI checks', stylesheet: 'settings-ai-checks.css', selectorPrefix: '.settings' },
+  { name: 'Settings: Data sources', stylesheet: 'settings-data-sources.css', selectorPrefix: '.settings' },
+  { name: 'Settings: Locations', stylesheet: 'settings-locations.css', selectorPrefix: '.settings' },
+  // Help (specs/help.feature.md, specs/diagnostics.feature.md): every rule of help.css. Its sheet frame
+  // (`.help-*`) also holds the Crawl and AI answers sheets, whose own rules are their surfaces'.
+  { name: 'Help', stylesheet: 'help.css', selectorPrefix: '.help' },
+  { name: 'Help: keyboard shortcuts', stylesheet: 'help.css', selectorPrefix: '.shortcuts' },
+  { name: "Help: What's New", stylesheet: 'help.css', selectorPrefix: '.whats-new' },
+  { name: 'Help: the setup checklist', stylesheet: 'help.css', selectorPrefix: '.setup' },
+  { name: 'Help: Export Diagnostics', stylesheet: 'help.css', selectorPrefix: '.diagnostics' },
 ] as const satisfies readonly SignalSurface[];
 
 /**
@@ -365,7 +377,7 @@ export const SIGNAL_SURFACES = [
  * raise it. Counted when every `:root` token moved into `tokens.css`. It counts hex only: a colour
  * written as `rgb()`, `hsl()` or a keyword is for review to catch.
  */
-export const HEX_COLOUR_RATCHET = 53;
+export const HEX_COLOUR_RATCHET = 52;
 
 /**
  * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
@@ -487,6 +499,15 @@ export const CONTRAST_PAIRS = [
   { fg: '--text', bg: '--bg-hover', over: '--bg-sheet', min: 4.5, why: 'the agent panel\'s chat rows, hovered (--bg-hover over the sheet) (4.5:1)' },
   { fg: '--text', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'the agent panel\'s attach menu: an option hovered or focused (--agent-user → --accent-soft) on the menu\'s card (4.5:1)' },
   { fg: '--warn-ink', bg: '--bg-subtle', min: 4.5, why: 'the agent panel\'s risk chip: --warn-ink (was the approval edge) on the chip\'s --bg-subtle fill (11px) (4.5:1)' },
+  // Settings and Help (their surface PR). Already covered above: body, muted and faint text on the sheet
+  // and on its cards, links, the nav's selected item (--text on --bg-surface) and its hovered ones (--text
+  // on --bg-hover over the sheet), buttons hovered (over --bg-surface), a checked choice (--text and
+  // --text-muted on --accent-soft over a card), the avatar (--accent on --accent-soft over a card), the
+  // plan chip (--text-muted on --bg-subtle), notices (--warn-ink on --warn-soft over the sheet and a
+  // card), errors (--danger-ink on the sheet and a card) and the diagnostics report (--text on
+  // --bg-subtle). New with it: what drew --ok as text (KNOWN_CONTRAST_EXCEPTIONS) now draws --ok-ink.
+  { fg: '--ok-ink', bg: '--bg-surface', min: 4.5, why: 'Settings\' key and plan status, the account\'s feature marks and the setup checklist\'s "Done" (12–13px, was --ok) on a card (4.5:1)' },
+  { fg: '--ok-ink', bg: '--bg-sheet', min: 4.5, why: 'Settings\' Search Console headline when connected (15px, was --ok) on the Settings sheet (4.5:1)' },
   // Status text on a soft fill
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },
@@ -541,8 +562,8 @@ export const KNOWN_CONTRAST_EXCEPTIONS = [
     fg: '--ok',
     bg: '--bg-surface',
     min: 4.5,
-    rules: 21,
-    why: '--ok as body text ("Good length", passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink.',
+    rules: 17,
+    why: '--ok as body text ("Good length", passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4).',
   },
 ] as const satisfies readonly ContrastException[];
 
