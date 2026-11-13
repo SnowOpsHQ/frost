@@ -147,19 +147,24 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   squares at `--r-md` with `--text-muted` icons at `--icon-size` (`--icon`), `--bg-hover` and
   `--bg-active` under the pointer; the open panel's item is raised (`--bg-surface`, `--e-raised`, its
   icon `--accent`, a transparent outline for forced colours) and loses the 3px side marker, as on the
-  screen. Status dots say it by shape too: an error a filled `--danger` dot, a warning a `--warn` ring
-  (`--caution`), a pass a filled `--ok` dot (the screen's check glyph needs markup: a later PR), each cut
-  out by a halo in the fill under it. The rail tip and "More panels" are `--bg-surface` menus with
-  `--e-overlay` (`--r-sm`, `--r-md`) in place of a border and a black drop shadow, a transparent 1px
-  border kept for forced colours; a focused menu item takes `--accent-soft` (the menu's scroll box would
-  clip a `--focus-ring`). The header follows the agent panel's: no fill of its own, the panel's name at
+  screen. Status dots say it by shape, not hue alone: an error a filled `--danger` square (corners
+  half of `--r-xs`), a warning a `--warn` ring (`--caution`; a 2px border, not a shadow, so forced
+  colours keep it), a pass a filled `--ok` disc (the screen's check glyph needs markup: a later PR), each
+  cut out by a halo in the sheet or card under it. The dots keep their own colours in forced colours
+  (`forced-color-adjust: none`), where the halo and the ring's fill turn transparent. The rail tip and
+  "More panels" are `--bg-surface` menus with `--e-overlay` (`--r-sm`, `--r-md`) in place of a border and
+  a black drop shadow, a transparent 1px border kept for forced colours; a focused menu item takes
+  `--focus-ring` (the menu's 4px padding holds it) beside a transparent outline, over `--accent-soft`,
+  and a hovered one `--bg-hover`. The header follows the agent panel's: no fill of its own, the panel's name at
   `--text-title` over its host in `--text-small`, a `--divider` rule; its tools keep the chrome's `.tool`
   style. The pressed pin and the toolbar's pressed toggle take `--accent` on `--accent-soft`. Cards
   (`.seo-section`, `.seo-score-card`, `.seo-issues`, the skeleton's score card) are `--bg-surface` at
   `--r-md` with `--e-ring` in place of their border (`--seo-card-edge`, `--shadow-card`; a transparent
-  1px border stays), section titles `--text-caps`, count badges `--h-badge` pills on `--bg-subtle` in
+  1px border stays) with their 12px by 14px padding (`--space-4` by `--space-2` + `--space-3`), so the
+  panels' interiors keep their width, section titles `--text-caps`, count badges `--h-badge` pills on `--bg-subtle` in
   `--text-micro`, and a severity's badge (and the chip) its `-soft` fill with `-ink` text (`--caution` →
-  `--warn`, `--info-tone` → `--accent`); notes `--text-small` in `--text-faint`, mono values
+  `--warn`, `--info-tone` → `--accent`; inside a Changes region's title, a line of text, a badge keeps
+  the line's height); notes `--text-small` in `--text-faint`, mono values
   `--text-mono`, the link button `--text-body` at its emphasis weight over a `--divider` rule. The body
   keeps its 12px (`--space-4`) padding where the screen draws 16px, so the panels' interiors keep their
   width until their own PRs. The skeleton is `--bg-subtle` (`--seo-skeleton`) with a soft `--bg-sheet`
@@ -249,7 +254,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `rgb()`, `rgb()` in `filter`, hex in `scrollbar-color`, and a `--focus-ring` with `outline: 0` or
   no outline; it accepts a component property (`--tone-ink: var(--ok-ink)`) read in the same rule,
   `text-decoration: underline`, and `--focus-ring` beside `outline: 2px solid transparent`; it ignores
-  `.palettes`, `.x-palette`, and `.table-*` for a `.tab` surface. For a surface that lists its classes
+  `.palettes`, `.x-palette`, and `.table-*` for a `.tab` surface. Each class and keyframes name an entry
+  lists matches at least one rule of its stylesheet (a stale name fails). For a surface that lists its classes
   (`.seo`, `.seo-panel`, `.seo-chip`, `.seo-rail-*`, keyframes `seo-panel-in`) it checks those, the
   `-*` family's members and the listed keyframes, and ignores the panels' classes under the same prefix
   (`.seo-links`, `.seo-panel-tools`, `.seo-chip-button`, `.seo-chips`, `.seo-toggle`), `.seo-railway`,

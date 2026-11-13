@@ -351,10 +351,11 @@ export interface SignalSurface {
    * For a prefix other surfaces share (`.seo` names every SEO panel's classes): the surface's classes
    * are only these, in place of the prefix's whole family. Each starts with `selectorPrefix` and is
    * exact (`.seo-chip` is never `.seo-chip-button`), or ends in `-*` for a family (`.seo-rail-*`:
-   * `.seo-rail`, `.seo-rail-item`, …), matched on a class boundary like the prefix.
+   * `.seo-rail`, `.seo-rail-item`, …), matched on a class boundary like the prefix. Each names at
+   * least one rule of `stylesheet` (a stale name fails the guard).
    */
   readonly classes?: readonly string[];
-  /** With `classes`: the surface's `@keyframes`, by exact name (in place of the prefix's stem). */
+  /** With `classes`: the surface's `@keyframes`, by exact name (in place of the prefix's stem); each is in `stylesheet`. */
   readonly keyframes?: readonly string[];
 }
 
@@ -492,7 +493,7 @@ export const CONTRAST_PAIRS = [
     bg: '--accent-soft',
     over: '--bg-surface',
     min: 4.5,
-    why: 'the palette\'s selected row: its detail line and group name (12px, --text-muted) (4.5:1)',
+    why: 'the palette\'s selected row: its detail line and group name (12px, --text-muted); the SEO sidebar\'s focused "More panels" item: its icon (4.5:1)',
   },
   { fg: '--warn-ink', bg: '--bg-surface', min: 4.5, why: 'the palette\'s confirm step: its caution note (12px, was --caution) on the card (4.5:1)' },
   {
