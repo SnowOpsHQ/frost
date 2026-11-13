@@ -419,12 +419,13 @@ test('chrome-row-tab-order', async () => {
   // A background tab, then the active one with somewhere to go back and forward to.
   await go(`${site.origin}/a`);
   await page.getByTestId('new-tab').click();
-  for (const name of ['b', 'c']) {
+  for (const name of ['b', 'c', 'd']) {
     await go(`${site.origin}/${name}`);
     await expect(activeTab()).toHaveAttribute('title', `Page ${name.toUpperCase()}`);
   }
   await page.getByTestId('back').click();
-  await expect(activeTab()).toHaveAttribute('title', 'Page B');
+  await expect(activeTab()).toHaveAttribute('title', 'Page C');
+  await expect(page.getByTestId('back')).toBeEnabled();
   await expect(page.getByTestId('forward')).toBeEnabled();
   await expect(page.getByTestId('reload')).toBeEnabled();
 
@@ -466,23 +467,29 @@ async function withNarrowWindowAndManyTabs(body: () => Promise<void>): Promise<v
 
 test('narrow-tabs-scroll-and-address-keeps-its-width', async () => {
   await withNarrowWindowAndManyTabs(async () => {
+    // The active tab (the last one opened) is scrolled into view, whole.
+    await expect
+      .poll(() =>
+        tablist().evaluate((list) => {
+          const box = list.getBoundingClientRect();
+          const active = list.querySelector('[role="tab"][aria-selected="true"]')!.closest('.tab')!.getBoundingClientRect();
+          return active.left >= box.left && active.right <= box.right;
+        }),
+      )
+      .toBe(true);
     const facts = await row().evaluate((el) => {
       const list = el.querySelector('[role="tablist"]')!;
-      const listBox = list.getBoundingClientRect();
-      const active = list.querySelector('[role="tab"][aria-selected="true"]')!.closest('.tab')!.getBoundingClientRect();
       return {
         height: el.getBoundingClientRect().height,
         tabWidths: [...list.querySelectorAll('.tab')].map((t) => t.getBoundingClientRect().width),
         scrolls: list.scrollWidth > list.clientWidth,
         address: el.querySelector('[data-testid="address"]')!.closest('.address')!.getBoundingClientRect().width,
-        activeInView: active.left >= listBox.left && active.right <= listBox.right,
       };
     });
     expect(facts.height).toBe(CHROME_ROW_HEIGHT_PX);
     for (const width of facts.tabWidths) expect(width).toBeGreaterThanOrEqual(TAB_MIN_WIDTH_PX - 0.5);
     expect(facts.scrolls).toBe(true);
     expect(facts.address).toBeGreaterThanOrEqual(ADDRESS_MIN_WIDTH_PX - 0.5);
-    expect(facts.activeInView).toBe(true);
   });
 });
 

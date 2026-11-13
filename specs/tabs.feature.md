@@ -27,8 +27,9 @@ Phase 1 Task 2. Each scenario maps to one named test.
   - **Width:** the tablist is as wide as its tabs and gives way first. Tabs shrink to
     `TAB_MIN_WIDTH_PX`, then the tablist scrolls sideways (no scrollbar; the active tab, or the
     focused one, is scrolled into view), while the address bar keeps at least
-    `ADDRESS_MIN_WIDTH_PX`. With room to spare the address bar takes it. Each tab is drawn whole or
-    scrolled out of view, never squeezed under its minimum.
+    `ADDRESS_MIN_WIDTH_PX`. With room to spare the address bar takes it. No tab is squeezed under its
+    minimum: the tablist's ends clip the tabs scrolled past them. Scrolling a tab into view (the
+    active one, or keyboard focus) brings in the whole pill, its × included.
   - **Focus ring:** the tablist keeps `--space-1` of room around its tabs, also as scroll padding, so a
     focused tab's `--focus-ring` (4px) is drawn whole inside the scrolling tablist, at either end too.
   - **Window controls and dragging** stay the OS's: the window keeps its native frame and title bar on
