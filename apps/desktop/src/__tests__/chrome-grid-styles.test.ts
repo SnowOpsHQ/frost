@@ -5,6 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
+import { ADDRESS_MIN_WIDTH_PX, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
 
 const RENDERER = fileURLToPath(new URL('../renderer/', import.meta.url));
 const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8');
@@ -44,6 +45,36 @@ test('chrome-grid-has-a-row-per-slot', () => {
   // The workspace and the status bar are pinned to the last two rows, counted from the end.
   expect(rule('styles.css', '.chrome > .workspace-stack')).toMatch(/grid-row:\s*-3;/);
   expect(rule('styles.css', '.chrome > .status-bar')).toMatch(/grid-row:\s*-2;/);
+});
+
+test('chrome-row-is-one-fixed-track', () => {
+  // specs/tabs.feature.md (The chrome row): the tab row and the toolbar are one --h-chrome row, the grid's first track.
+  const tracks = rule('styles.css', '.chrome').match(/grid-template-rows:\s*([^;]+);/)![1]!.trim();
+  expect(tracks.split(/\s+/)[0]).toBe('var(--h-chrome)');
+  const app = read('App.tsx');
+  const body = app.slice(app.indexOf('<div className="chrome">'));
+  const first = body.split('\n').find((line) => /^ {6}<[A-Za-z]/.test(line));
+  expect(first).toMatch(/^ {6}<ChromeRow\b/);
+  const row = rule('styles.css', '.chrome-row');
+  expect(row).toMatch(/display:\s*flex;/);
+  expect(row).not.toMatch(/flex-wrap:\s*wrap/);
+  expect(row).toMatch(/overflow:\s*hidden;/);
+  // Tabs shrink to their minimum, then the tablist scrolls; the address bar keeps its own minimum.
+  expect(rule('styles.css', '.tab')).toMatch(new RegExp(`min-width:\\s*${TAB_MIN_WIDTH_PX}px;`));
+  expect(rule('styles.css', '.address')).toMatch(new RegExp(`min-width:\\s*${ADDRESS_MIN_WIDTH_PX}px;`));
+  const tablist = rule('styles.css', '.tabs');
+  expect(tablist).toMatch(/overflow-x:\s*auto;/);
+  expect(tablist).toMatch(/min-width:\s*0;/);
+  // Room for a focused tab's 4px ring, also when focus scrolls a tab into view at either end.
+  expect(tablist).toMatch(/padding:\s*var\(--space-1\);/);
+  expect(tablist).toMatch(/scroll-padding-inline:\s*var\(--space-1\);/);
+  // The two rows' classes are gone from every stylesheet.
+  const stale = CSS_FILES.flatMap((file) =>
+    rules(read(file))
+      .filter(({ selector }) => /\.(tabstrip|toolbar)(?![\w-])/.test(selector))
+      .map(({ selector }) => `${file}: ${selector}`),
+  );
+  expect(stale).toEqual([]);
 });
 
 test('no-style-drops-a-chrome-slot', () => {

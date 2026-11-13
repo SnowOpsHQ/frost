@@ -1,8 +1,8 @@
-// Spec: specs/tabs.spec.ts (MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, RESERVED_TAB_SHORTCUTS) · Acceptance: specs/tabs.feature.md (End to end)
+// Spec: specs/tabs.spec.ts (MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, RESERVED_TAB_SHORTCUTS, CHROME_ROW, CHROME_ROW_HEIGHT_PX, TAB_MIN_WIDTH_PX, ADDRESS_MIN_WIDTH_PX) · Acceptance: specs/tabs.feature.md (End to end)
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
-import { MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES } from '@app/specs/browser.spec';
+import { ADDRESS_MIN_WIDTH_PX, CHROME_ROW, CHROME_ROW_HEIGHT_PX, MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, TAB_MIN_WIDTH_PX } from '@app/specs/browser.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -363,6 +363,146 @@ test('tablist-keyboard-navigation', async () => {
   await strip().nth(0).focus();
   await page.keyboard.press('Delete');
   await expect(strip()).toHaveCount(2);
+  // Focus stays in the strip, on the neighbour that remains.
+  await expect(strip().nth(0)).toBeFocused();
+});
+
+const row = () => page.getByTestId('chrome-row');
+const tablist = () => page.getByRole('tablist', { name: 'Tabs' });
+/** A `CHROME_ROW` control: the tablist's is its one Tab stop, the active tab. */
+const control = (id: (typeof CHROME_ROW)[number]) => (id === 'tab-strip' ? activeTab() : page.getByTestId(id));
+
+test('chrome-row-holds-tabs-address-and-tools', async () => {
+  await go(`${site.origin}/a`);
+  await expect(activeTab()).toHaveAttribute('title', 'Page A');
+  const facts = await row().evaluate((el, ids) => {
+    const box = el.getBoundingClientRect();
+    const controls = ids.map((id) => el.querySelector<HTMLElement>(`[data-testid="${id}"]`));
+    const list = el.querySelector('[role="tablist"]')!;
+    const input = el.querySelector('[data-testid="address"]')!;
+    const below = (selector: string) => document.querySelector(selector)!.getBoundingClientRect().top;
+    return {
+      top: box.top,
+      height: box.height,
+      found: controls.map((c) => c !== null),
+      inOrder: controls.every((c, i) => i === 0 || (controls[i - 1]!.compareDocumentPosition(c!) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0),
+      // Each control's centre against the row's.
+      offCentre: controls.map((c) => {
+        const r = c!.getBoundingClientRect();
+        return Math.abs(r.top + r.height / 2 - (box.top + box.height / 2));
+      }),
+      addressIsNextSibling: list.nextElementSibling?.contains(input) === true && !list.contains(input),
+      listHoldsOnlyTabs: [...list.querySelectorAll('input, button:not([aria-hidden="true"]), [data-testid="new-tab"]')].length === 0,
+      tabsInList: list.querySelectorAll('[role="tab"]').length,
+      bands: ['.prompt-slot', '.render-slot', '.find-slot', '[data-testid="page-area"]'].map(below),
+      bottom: box.bottom,
+    };
+  }, [...CHROME_ROW]);
+  expect(facts.top).toBe(0);
+  expect(facts.height).toBe(CHROME_ROW_HEIGHT_PX);
+  expect(facts.found).toEqual(CHROME_ROW.map(() => true));
+  expect(facts.inOrder).toBe(true);
+  for (const [i, off] of facts.offCentre.entries()) expect(off, CHROME_ROW[i]).toBeLessThanOrEqual(1);
+  expect(facts.addressIsNextSibling).toBe(true);
+  expect(facts.listHoldsOnlyTabs).toBe(true);
+  expect(facts.tabsInList).toBe(1);
+  for (const top of facts.bands) expect(top).toBeGreaterThanOrEqual(facts.bottom);
+  // The tab's view starts at the page area's top, right under the row (and the bands, empty here).
+  const areaTop = await page.getByTestId('page-area').evaluate((el) => el.getBoundingClientRect().top);
+  expect(areaTop).toBeLessThanOrEqual(facts.bottom + 1);
+  await expect
+    .poll(() => app.evaluate(({ BrowserWindow }) => (BrowserWindow.getAllWindows()[0]!.contentView.children[0] as Electron.WebContentsView).getBounds().y))
+    .toBe(Math.round(areaTop));
+});
+
+test('chrome-row-tab-order', async () => {
+  // A background tab, then the active one with somewhere to go back and forward to.
+  await go(`${site.origin}/a`);
+  await page.getByTestId('new-tab').click();
+  for (const name of ['b', 'c']) {
+    await go(`${site.origin}/${name}`);
+    await expect(activeTab()).toHaveAttribute('title', `Page ${name.toUpperCase()}`);
+  }
+  await page.getByTestId('back').click();
+  await expect(activeTab()).toHaveAttribute('title', 'Page B');
+  await expect(page.getByTestId('forward')).toBeEnabled();
+  await expect(page.getByTestId('reload')).toBeEnabled();
+
+  await page.getByTestId('back').focus();
+  for (const id of CHROME_ROW.slice(1)) {
+    await page.keyboard.press('Tab');
+    await expect(control(id), `Tab to ${id}`).toBeFocused();
+  }
+  for (const id of CHROME_ROW.slice(0, -1).reverse()) {
+    await page.keyboard.press('Shift+Tab');
+    await expect(control(id), `Shift+Tab to ${id}`).toBeFocused();
+  }
+  // Shift+Tab from the address bar returns to the active tab, whose tablist keys still work.
+  await address().focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(activeTab()).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(strip().nth(0)).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(strip().nth(1)).toBeFocused();
+  // Mod+L from the page (the menu item its accelerator runs) focuses the address bar.
+  await menu('focus-address-bar');
+  await expect(address()).toBeFocused();
+});
+
+/** Opens enough tabs to overflow the tablist in an 800px wide window; restores the window after. */
+async function withNarrowWindowAndManyTabs(body: () => Promise<void>): Promise<void> {
+  const original = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentSize());
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(800, 700));
+  try {
+    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(800);
+    for (let i = 0; i < 11; i++) await menu('new-tab');
+    await expect(strip()).toHaveCount(12);
+    await body();
+  } finally {
+    await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0]!.setContentSize(w!, h!), original);
+  }
+}
+
+test('narrow-tabs-scroll-and-address-keeps-its-width', async () => {
+  await withNarrowWindowAndManyTabs(async () => {
+    const facts = await row().evaluate((el) => {
+      const list = el.querySelector('[role="tablist"]')!;
+      const listBox = list.getBoundingClientRect();
+      const active = list.querySelector('[role="tab"][aria-selected="true"]')!.closest('.tab')!.getBoundingClientRect();
+      return {
+        height: el.getBoundingClientRect().height,
+        tabWidths: [...list.querySelectorAll('.tab')].map((t) => t.getBoundingClientRect().width),
+        scrolls: list.scrollWidth > list.clientWidth,
+        address: el.querySelector('[data-testid="address"]')!.closest('.address')!.getBoundingClientRect().width,
+        activeInView: active.left >= listBox.left && active.right <= listBox.right,
+      };
+    });
+    expect(facts.height).toBe(CHROME_ROW_HEIGHT_PX);
+    for (const width of facts.tabWidths) expect(width).toBeGreaterThanOrEqual(TAB_MIN_WIDTH_PX - 0.5);
+    expect(facts.scrolls).toBe(true);
+    expect(facts.address).toBeGreaterThanOrEqual(ADDRESS_MIN_WIDTH_PX - 0.5);
+    expect(facts.activeInView).toBe(true);
+  });
+});
+
+test('focused-tab-ring-shows-in-scrolled-tablist', async () => {
+  await withNarrowWindowAndManyTabs(async () => {
+    /** The focused tab's box grown by the ring (4px), inside the tablist's box. */
+    const ringInside = () =>
+      tablist().evaluate((list) => {
+        const tab = document.activeElement!.closest('.tab')!.getBoundingClientRect();
+        const box = list.getBoundingClientRect();
+        return tab.left - 4 >= box.left - 0.5 && tab.right + 4 <= box.right + 0.5 && tab.top - 4 >= box.top - 0.5 && tab.bottom + 4 <= box.bottom + 0.5;
+      });
+    await activeTab().focus();
+    await page.keyboard.press('Home');
+    await expect(strip().nth(0)).toBeFocused();
+    await expect.poll(ringInside).toBe(true);
+    await page.keyboard.press('End');
+    await expect(strip().nth(11)).toBeFocused();
+    await expect.poll(ringInside).toBe(true);
+  });
 });
 
 test('background-page-close-closes-tab-e2e', async () => {

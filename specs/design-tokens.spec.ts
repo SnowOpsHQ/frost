@@ -21,7 +21,8 @@
  *    `--agent-*` names are `removed`, Settings and Help, which retired `--settings-switch-off`, and
  *    the SEO sidebar's frame and shared parts, whose retired `--seo-skeleton` and
  *    `--seo-skeleton-shine` are `removed`, and the browser chrome's rows, which retired the rows'
- *    heights, `--bg-strip` and `--bg-tab-hover`).
+ *    heights, `--bg-strip` and `--bg-tab-hover`, then merged the tab row and the toolbar into one
+ *    `--h-chrome` row).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -164,7 +165,7 @@ export const SIGNAL_TOKENS = {
     { name: '--h-status', light: '28px', use: 'status bar' },
     { name: '--h-control', light: '34px', use: 'buttons, tabs' },
     { name: '--h-field', light: '38px', use: 'fields, address, rail items' },
-    { name: '--h-chrome', light: '56px', use: 'the tab row, fixed' },
+    { name: '--h-chrome', light: '56px', use: 'the chrome row (tabs, address, tools), fixed' },
     { name: '--w-rail', light: '48px', use: 'SEO rail (SIDEBAR_RAIL_WIDTH)' },
     { name: '--w-panel', light: '360px', use: 'SEO panel (SIDEBAR_PANEL_WIDTH)' },
     { name: '--icon-size', light: '18px', use: 'every icon' },
@@ -227,8 +228,8 @@ export interface LegacyTokenMigration {
  * not `removed` are declared in `tokens.css`.
  */
 export const LEGACY_TOKEN_MIGRATION = [
-  // Chrome sizes: the chrome's surface PR sized its rows from --h-control, --h-field and --h-status (the
-  // merged --h-chrome row is a markup change of its own) and dropped the three heights.
+  // Chrome sizes: the chrome's surface PR sized its rows from --h-control, --h-field and --h-status and
+  // dropped the three heights; the merged row's PR made the tab row and the toolbar one --h-chrome row.
   { legacy: '--tabstrip-height', kind: 'retire', signal: '--h-chrome', was: '40px', note: 'with --toolbar-height: one 56px row', removed: true },
   { legacy: '--toolbar-height', kind: 'retire', signal: '--h-chrome', was: '50px', note: 'buttons join the tab row', removed: true },
   { legacy: '--status-height', kind: 'retire', signal: '--h-status', was: '26px', note: '28px', removed: true },
@@ -351,7 +352,7 @@ export interface SignalSurface {
   readonly stylesheet: string;
   /**
    * A class name with its dot (`.palette`): the surface's classes are it and it followed by `-…`.
-   * Omitted for a surface whose classes share no prefix (the browser chrome: `.tabstrip`, `.toolbar`,
+   * Omitted for a surface whose classes share no prefix (the browser chrome: `.chrome-row`, `.tab`,
    * `.address`, …): it then lists every one in `classes`, and its `keyframes`.
    */
   readonly selectorPrefix?: string;
@@ -506,8 +507,8 @@ export const SIGNAL_SURFACES = [
     keyframes: ['seo-panel-in', 'seo-skeleton-sweep'],
   },
   // The browser chrome's rows (specs/browser-chrome.feature.md, Layout; permissions.feature.md;
-  // page-commands.feature.md): the grid, the tab row, the toolbar with the address bar and its loading
-  // line, the permission prompt, the fullscreen notice, the page area's frame and the status bar. Its
+  // page-commands.feature.md; tabs.feature.md, The chrome row): the grid, the one chrome row (the tablist,
+  // the address bar, the tools and its loading line), the permission prompt, the fullscreen notice, the page area's frame and the status bar. Its
   // classes share no prefix, so it lists them. Not the shared `.icon` and `.visually-hidden`, the
   // new tab's view and the error panels (their own rules), nor the bars and badges later surface PRs
   // move: the render-profile editor bar and chips (`.tab-profile`, `.status-render-profile`,
@@ -523,8 +524,8 @@ export const SIGNAL_SURFACES = [
       '.workspace-stack',
       '.workspace',
       '.page-area',
-      // The tab row
-      '.tabstrip',
+      // The chrome row (the merged tab row and toolbar): its tablist, then the toolbar's parts
+      '.chrome-row',
       '.tabs',
       '.tab',
       '.tab-main',
@@ -537,8 +538,6 @@ export const SIGNAL_SURFACES = [
       '.tab-label',
       '.tab-close',
       '.new-tab',
-      // The toolbar
-      '.toolbar',
       '.nav-buttons',
       '.tool',
       '.sidebar-toggle',

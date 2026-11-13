@@ -68,3 +68,32 @@ export const RESERVED_TAB_SHORTCUTS = {
   'reopen-closed-tab': ['Mod+Shift+T'],
 } as const;
 export type TabCommand = keyof typeof RESERVED_TAB_SHORTCUTS;
+
+/**
+ * The chrome row (`tabs.feature.md`, The chrome row): one `--h-chrome` (56px) row holding, in this DOM
+ * order, which is also the Tab order, the navigation tools, the tablist, the address bar (the tablist's
+ * sibling, never inside it), the new-tab button and the toolbar's toggles. Each entry is the control's
+ * `data-testid`; the tablist contributes only its active tab to the Tab order (roving tabindex), and a
+ * disabled tool (Back or Forward with nowhere to go, Reload on an empty tab) is skipped. The canvas
+ * also draws an "Ask frost" button, a score on the SEO sidebar toggle and a "More tabs" menu: none of
+ * them is part of merging the rows, so none is here yet.
+ */
+export const CHROME_ROW = ['back', 'forward', 'reload', 'tab-strip', 'address', 'new-tab', 'seo-toggle', 'render-profile-toggle'] as const;
+export type ChromeRowControl = (typeof CHROME_ROW)[number];
+
+/** The chrome row's height in CSS px: Signal's `--h-chrome` (`design-tokens.spec.ts`). */
+export const CHROME_ROW_HEIGHT_PX = 56;
+
+/**
+ * Narrowest a tab gets before the tablist scrolls sideways (CSS px). frost draws no favicons, so a
+ * glyph-only tab (the canvas's 34px) could not be told from its neighbours: at 84px a tab keeps its
+ * glyph and the first few characters of its label.
+ */
+export const TAB_MIN_WIDTH_PX = 84;
+
+/**
+ * Narrowest the address bar gets, however many tabs are open (CSS px): the canvas's minimum for the
+ * active tab's address slot, room for a host and the start of its path beside the security badge.
+ * The tablist gives way first: it shrinks, then scrolls.
+ */
+export const ADDRESS_MIN_WIDTH_PX = 240;

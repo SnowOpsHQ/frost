@@ -240,15 +240,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the toolbar with the address bar and its loading line, the permission prompt, the fullscreen notice,
   the page area's frame and the status bar; and the toolbar's SEO sidebar toggle) follow the Migration
   notes, the token `use` notes and the approved canvas's chrome row, band slot, status bar and
-  interaction states, where they agree. The two rows stay: the canvas's one 56px row (`--h-chrome`, the
-  tablist with the address input beside it) changes the markup and the keyboard contract, so it is a
-  PR of its own. The chrome's classes share no prefix, so its `SIGNAL_SURFACES` entry lists them with
+  interaction states, where they agree. The two rows it kept are one row since the merged row's PR
+  (below). The chrome's classes share no prefix, so its `SIGNAL_SURFACES` entry lists them with
   its keyframes and no `selectorPrefix`; the shared `.icon` (now `--icon-size`) and `.visually-hidden`,
   the new tab's view, the error panels and the bars later PRs move (the render-profile editor bar and
-  chips, the find bar, History, the update notice) stay out. Both rows sit on `--bg-window` (no separate
-  strip: `--bg-strip` is `removed`), each as high as what it holds needs: the tab row `--h-control` and
-  `--space-1` above and below it (the room a focused tab's ring needs inside the scrolling row), the
-  toolbar `--h-field` and `--space-2` above and below, the status bar `--h-status`, 28px where it was 26
+  chips, the find bar, History, the update notice) stay out. The rows sit on `--bg-window` (no separate
+  strip: `--bg-strip` is `removed`); the status bar is `--h-status`, 28px where it was 26
   (`--tabstrip-height`, `--toolbar-height` and `--status-height` are `removed`). Text is Geist from the
   `--text-*` tokens: tabs, the address and the prompt `--text-body`, the status bar `--text-small` with
   the zoom in `--text-mono`. Tabs are `--h-control` pills `--space-1` apart, as `TAB_STRIP` describes:
@@ -303,6 +300,23 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   render-profile bar waits for its PR. The connection
   dot keeps `--ok` beside its label, which says the state.
 
+- **The merged chrome row** (`tabs.feature.md`, The chrome row, and its keyboard contract): the tab row
+  (42px: `--h-control` with `--space-1` above and below) and the toolbar (50px: `--h-field` with
+  `--space-2` above and below) became the canvas's one `--h-chrome` row, 56px, the chrome grid's first
+  track, so the page area and the tab's view move up 36px. The row (`.chrome-row`, which takes the
+  place of `.tabstrip` and `.toolbar`; the tablist keeps `.tabs`) is on `--bg-window`, `--space-3` in
+  from the window's edges, its parts `--space-1` apart as the canvas's are; the canvas's order with the
+  address bar as the tablist's next sibling. The canvas lays the address input over the active tab's
+  slot only while editing (the active tab is the address "in place"); frost keeps its address bar
+  always shown, an `--h-field` pill beside the tablist, so the "+" follows it, as the canvas's DOM order
+  has it. The tablist scrolls with `--space-1` of padding and scroll padding, the room a focused tab's
+  4px ring needs at either end (the reason the tab row was 42px). The loading line runs along the row's
+  foot. No colour, type or state of a tab, tool or the address changed, so `TAB_STRIP`,
+  `FOCUS_RING_RULES`, `FORCED_COLOURS_BUSY`, `FORCED_COLOURS_PRESSED` and `CONTRAST_PAIRS` keep their
+  values; the chrome's `SIGNAL_SURFACES` entry lists `.chrome-row` where it listed `.tabstrip` and
+  `.toolbar`. No token was read by the toolbar alone, so nothing more is retired: `--tabstrip-height`
+  and `--toolbar-height` were `removed` with the chrome's rows, and `--h-chrome` is now read.
+
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
 2. Foundation (done).
@@ -316,8 +330,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    `--settings-nav-width` stay layout constants), then the SEO sidebar's frame and shared parts
    (`--seo-skeleton` and `--seo-skeleton-shine`; the panels still read `--seo-card-edge`, `--caution`,
    `--info-tone` and `--bg-chrome-edge`), then the browser chrome's rows (`--tabstrip-height`,
-   `--toolbar-height`, `--status-height`, `--bg-strip` and `--bg-tab-hover`; the merged 56px row is its
-   own PR). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
+   `--toolbar-height`, `--status-height`, `--bg-strip` and `--bg-tab-hover`), then the merged 56px row
+   (`--h-chrome`; markup and the keyboard contract). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
    from the moment the test starts watching.
 
@@ -417,7 +431,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `-*` family's members and the listed keyframes, and ignores the panels' classes under the same prefix
   (`.seo-links`, `.seo-panel-tools`, `.seo-chip-button`, `.seo-chips`, `.seo-toggle`), `.seo-railway`,
   `.x-seo-rail`, `.seos` and any other keyframes (`seo-ring-fill`, `seo-panel-in-more`). For a surface
-  with no prefix (the browser chrome: `.tabstrip`, `.tab`, `.address-*`, keyframes `tab-spin`) it checks
+  with no prefix (a fixture like the browser chrome's: `.tabstrip`, `.tab`, `.address-*`, keyframes `tab-spin`) it checks
   exactly those (`.tab[data-active='true']`, `.tab:has(.tab-main:focus-visible)`, `.address-input`) and
   ignores `.tabs`, `.tab-profile`, `.tabstrip-x`, `.addressbook`, `.x-tab` and `tab-spin-more`.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments

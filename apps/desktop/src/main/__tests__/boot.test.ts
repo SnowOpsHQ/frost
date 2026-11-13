@@ -1,5 +1,7 @@
 // Spec: specs/window-hardening.spec.ts · Acceptance: specs/window-hardening.feature.md
 // Spec: specs/app-protocol.spec.ts · Acceptance: specs/app-protocol.feature.md (Loading the renderer)
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, test, vi } from 'vitest';
 import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
 import { HARDENED_WEB_PREFERENCES } from '@app/specs/window-hardening.spec';
@@ -42,6 +44,23 @@ describe('main window', () => {
     } finally {
       Object.defineProperty(process, 'platform', original);
     }
+  });
+
+  // Acceptance: specs/tabs.feature.md (The chrome row: window controls and dragging stay the OS's)
+  test.each(['darwin', 'linux', 'win32'] as const)('window-keeps-native-controls (%s)', (platform) => {
+    const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: platform });
+    try {
+      const options = (createMainWindow() as unknown as FakeBrowserWindow).options as Record<string, unknown>;
+      for (const key of ['frame', 'titleBarStyle', 'titleBarOverlay', 'trafficLightPosition']) expect(Object.hasOwn(options, key), key).toBe(false);
+    } finally {
+      Object.defineProperty(process, 'platform', original);
+    }
+    const renderer = fileURLToPath(new URL('../../renderer/', import.meta.url));
+    const sheets = (readdirSync(renderer, { recursive: true }) as string[]).filter((name) => name.endsWith('.css'));
+    expect(sheets.length).toBeGreaterThan(5);
+    const dragging = sheets.filter((name) => /(^|[\s;{-])app-region\s*:/.test(readFileSync(`${renderer}${name}`, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')));
+    expect(dragging).toEqual([]);
   });
 });
 
