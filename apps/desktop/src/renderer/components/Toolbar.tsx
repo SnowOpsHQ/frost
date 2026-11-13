@@ -58,7 +58,7 @@ export function Toolbar({
       {/* The SEO sidebar's panel (spec `seo-sidebar.feature.md`): also View › SEO Sidebar, Mod+Shift+S. */}
       <button
         type="button"
-        className="tool seo-toggle"
+        className="tool sidebar-toggle"
         data-testid="seo-toggle"
         aria-pressed={sidebarOpen}
         aria-label="SEO sidebar"

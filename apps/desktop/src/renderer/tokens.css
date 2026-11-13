@@ -9,8 +9,8 @@
       spec maps each one to its Signal token (alias or retire):
       - an alias is var() of its Signal token, declared once (light) with no dark override, so it
         follows that token in both themes;
-      - a retired name keeps its pre-Signal value until its surface PR (except --bg-strip and
-        --bg-tab-hover, retuned around the Signal active tab: TAB_STRIP); a layout constant keeps its value.
+      - a retired name keeps its pre-Signal value until its surface PR, which drops it; a layout
+        constant keeps its value.
       Self-aliases (Signal names that existed with the same meaning: --text, --text-muted,
       --text-faint, --accent, --accent-soft, --accent-hover, --on-accent, --ok, --warn, --danger,
       --bg-hover and --bg-active) are not here: part 2 declares them at their Signal values.
@@ -25,19 +25,11 @@
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Inter', Roboto, Ubuntu, Cantarell, 'Noto Sans',
     'Helvetica Neue', Arial, sans-serif;
 
-  --tabstrip-height: 40px;
-  --toolbar-height: 50px;
-  --status-height: 26px;
   --radius-control: 9px;
   --radius-field: 11px;
 
   --bg-chrome: var(--bg-window);
   --bg-chrome-edge: #e2e6ec;
-  /* Retuned for the values step (TAB_STRIP in the spec): the active tab is --bg-chrome, now
-     --bg-window, so the strip sits ≥ 1.1:1 below it, a hovered tab between the two, and the
-     divider between inactive tabs (--border-field) ≥ 1.1:1 off the strip. */
-  --bg-strip: #d0d0d5;
-  --bg-tab-hover: rgb(255 255 255 / 0.3);
   --bg-field: var(--bg-surface);
   --bg-field-hover: #ffffff;
   --border-field: #d7dce4;
@@ -115,9 +107,6 @@
   :root {
     /* ---- Chrome, surfaces, icons and the SEO sidebar (was in styles.css; text, accent, status and state: part 2) */
     --bg-chrome-edge: #2c3038;
-    /* Retuned (TAB_STRIP): the strip sits ≥ 1.1:1 above the active tab; hover darkens toward it. */
-    --bg-strip: #202024;
-    --bg-tab-hover: rgb(0 0 0 / 0.35);
     --bg-field-hover: #30353e;
     --border-field: #3a3f49;
 
