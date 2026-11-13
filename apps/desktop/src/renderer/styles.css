@@ -5547,6 +5547,14 @@ input {
   border-color: var(--render-edge);
 }
 
+/* Under forced colours, pressed as the SEO sidebar toggle is (FORCED_COLOURS_PRESSED): after the rule
+   above, which would otherwise win at the same weight. */
+@media (forced-colors: active) {
+  .render-toggle[aria-pressed='true'] {
+    border-color: Highlight;
+  }
+}
+
 /* ---- Editor bar ---- */
 
 .render-bar {
