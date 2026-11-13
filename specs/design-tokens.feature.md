@@ -161,7 +161,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   avatar an `--h-field` circle on `--accent-soft`; the confirmation card rings in `--accent` with an
   `--accent-soft` halo. The sign-in code is `--text-display` with tabular figures, where it was a
   26px monospace at 0.12em: Geist Mono is bundled only at `--text-mono`'s 12px and 400, and a type
-  token's letter-spacing is its own. Help's sheet frame keeps the page card's `--bg-surface` (no screen
+  token's letter-spacing is its own. A focused button keeps `--focus-ring` hovered, busy and primary
+  (`FOCUS_RING_RULES`): the hovers' state checks sit in `:where()`, so they add no weight, and the
+  plain `:focus-visible` rules come after them. A switch's knob, when on, has a 1px `--bg-surface` edge:
+  `--knob` on `--accent` is 2.65:1 in dark, the edge on the track 3:1 or more in both themes. Help's
+  sheet frame keeps the page card's `--bg-surface` (no screen
   draws Help: it is a document, not cards, and it also frames the Crawl and AI answers sheets, whose
   own text keeps its face until their surface PRs), with Settings' header and close button; shortcut
   groups take `--text-caps`, their rows `--divider` rules (they were `--bg-active`), the key hints
@@ -225,6 +229,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)` (and
   `background` to `var(<background>)` where the entry names one), and that pair is in
   `CONTRAST_PAIRS`.
+- **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry, in light and
+  dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
+  none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
+  `var(--focus-ring)` and `outline` to `2px solid transparent`: a focused button keeps its ring when
+  hovered, when busy (`aria-disabled`) and when primary. The resolver itself scores
+  `.a:hover:where(:not([x], :disabled))` as two classes.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).

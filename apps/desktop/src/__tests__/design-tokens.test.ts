@@ -6,6 +6,7 @@ import { expect, test } from 'vitest';
 import {
   BUNDLED_FONTS,
   CONTRAST_PAIRS,
+  FOCUS_RING_RULES,
   HEX_COLOUR_RATCHET,
   KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
@@ -18,6 +19,7 @@ import {
   TOKENS_STYLESHEET,
   type ContrastException,
   type ContrastPair,
+  type FocusRingRule,
   type LegacyTokenMigration,
   type SignalSurface,
   type TextColourRule,
@@ -324,8 +326,48 @@ test('tab-strip-orders-strip-hover-active', () => {
   }
 });
 
-/** A selector's specificity as one number (ids aside: the renderer's rules use none). */
-function specificity(selector: string): number {
+/** `text` without each `:where(…)` (parentheses balanced): it adds no specificity. */
+function withoutWhere(text: string): string {
+  let out = '';
+  for (let i = 0; i < text.length; ) {
+    if (text.startsWith(':where(', i)) {
+      let depth = 0;
+      let j = i + ':where'.length;
+      do {
+        if (text[j] === '(') depth += 1;
+        else if (text[j] === ')') depth -= 1;
+        j += 1;
+      } while (depth > 0 && j < text.length);
+      i = j;
+    } else {
+      out += text[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/** A selector list split at its top-level commas (never inside `:not(a, b)` or `:where(…)`). */
+function splitSelectors(list: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of list) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) {
+      parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  return [...parts, current];
+}
+
+/** A selector's specificity as one number (ids aside: the renderer's rules use none; `:where()` adds none). */
+function specificity(raw: string): number {
+  const selector = withoutWhere(raw);
   const classes = selector.match(/\.[\w-]+|\[[^\]]+\]|(?<!:):(?!not\(|is\(|where\()[\w-]+/g)?.length ?? 0;
   const types = selector.replace(/\[[^\]]+\]|\([^)]*\)/g, '').match(/(?:^|[\s>+~])[a-z][\w-]*/gi)?.length ?? 0;
   return classes * 1000 + types;
@@ -343,7 +385,7 @@ function resolveOnElement(css: string, element: readonly string[], property: str
   parse(css).declarations.forEach((d, order) => {
     const outer = d.context.slice(0, -1);
     if (!(outer.length === 0 || (theme === 'dark' && outer.length === 1 && outer[0] === DARK))) return;
-    const selectors = (d.context.at(-1) ?? '').split(',').map((s) => s.replace(/\s+/g, ' ').trim());
+    const selectors = splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim());
     const hits = selectors.filter((s) => wanted.has(s));
     if (hits.length === 0) return;
     matched.push({ order, spec: Math.max(...hits.map(specificity)), property: d.property, value: d.value });
@@ -385,6 +427,26 @@ test('text-colour-rules-resolve', () => {
       pairs.some((pair) => pair.fg === rule.color && (rule.background === undefined || pair.bg === rule.background)),
       `${rule.color}${rule.background ? ` on ${rule.background}` : ''} has a CONTRAST_PAIRS entry`,
     ).toBe(true);
+  }
+});
+
+test('focus-rings-outlast-hover-and-busy', () => {
+  // The resolver: `:where()` adds nothing, and a comma inside it does not split the list.
+  expect(specificity(".a:hover:where(:not([x], :disabled))")).toBe(2000);
+  const sample = `.a:hover:where(:not([x], :disabled)), .b { box-shadow: none; } .a:focus-visible { box-shadow: var(--ring); }`;
+  expect(resolveOnElement(sample, ['.a:hover:where(:not([x], :disabled))', '.a:focus-visible'], 'box-shadow', 'light')).toBe('var(--ring)');
+
+  const rules: readonly FocusRingRule[] = FOCUS_RING_RULES;
+  expect(rules.length).toBeGreaterThan(0);
+  for (const rule of rules) {
+    const css = read(rule.stylesheet);
+    // Every selector named is one of the stylesheet's (a typo would quietly drop out of the cascade).
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of rule.element) expect(selectors.has(selector), `${rule.stylesheet} has ${selector}`).toBe(true);
+    for (const theme of THEME_NAMES) {
+      expect(resolveOnElement(css, rule.element, 'box-shadow', theme), `${rule.why} (${theme})`).toBe('var(--focus-ring)');
+      expect(resolveOnElement(css, rule.element, 'outline', theme), `${rule.why}: outline (${theme})`).toBe('2px solid transparent');
+    }
   }
 });
 

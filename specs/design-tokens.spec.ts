@@ -508,6 +508,15 @@ export const CONTRAST_PAIRS = [
   // --bg-subtle). New with it: what drew --ok as text (KNOWN_CONTRAST_EXCEPTIONS) now draws --ok-ink.
   { fg: '--ok-ink', bg: '--bg-surface', min: 4.5, why: 'Settings\' key and plan status, the account\'s feature marks and the setup checklist\'s "Done" (12–13px, was --ok) on a card (4.5:1)' },
   { fg: '--ok-ink', bg: '--bg-sheet', min: 4.5, why: 'Settings\' Search Console headline when connected (15px, was --ok) on the Settings sheet (4.5:1)' },
+  { fg: '--text-muted', bg: '--bg-hover', over: '--bg-sheet', min: 3, why: 'Settings\' close button, hovered: its --text-muted icon on --bg-hover over the sheet (graphics, 3:1)' },
+  { fg: '--text-muted', bg: '--bg-hover', over: '--bg-surface', min: 3, why: 'Help\'s close button, hovered: its --text-muted icon on --bg-hover over the page card (graphics, 3:1)' },
+  {
+    fg: '--bg-surface',
+    bg: '--accent',
+    min: 3,
+    why: 'a switch that is on: its knob\'s 1px edge (--bg-surface, the card it sits on) against the --accent track, since --knob on --accent is 2.65:1 in dark (graphics, 3:1)',
+  },
+  { fg: '--knob', bg: '--switch-off', min: 3, why: 'a switch that is off: its --knob on the --switch-off track (graphics, 3:1)' },
   // Status text on a soft fill
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-surface', min: 4.5, why: INK },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-surface', min: 4.5, why: INK },
@@ -628,6 +637,62 @@ export const TEXT_COLOUR_RULES = [
   },
   { stylesheet: 'styles.css', element: ['.changes-segment', ".changes-segment[data-op='del']"], color: '--danger-ink', why: DANGER_TINT },
 ] as const satisfies readonly TextColourRule[];
+
+/**
+ * A control whose keyboard focus must show `--focus-ring` (and the transparent 2px outline forced colours
+ * draw) in every state it can be focused in: hovered, busy (`aria-disabled`, which stays focusable),
+ * primary or not. `element` lists the selectors, in `stylesheet`, that such an element matches in that
+ * state; resolving the cascade over them (as `TEXT_COLOUR_RULES`: specificity, `:where()` adding none,
+ * then source order) gives `box-shadow: var(--focus-ring)` and `outline: 2px solid transparent`. So a
+ * hover's or a primary button's own box-shadow never outranks the focus rule.
+ */
+export interface FocusRingRule {
+  readonly stylesheet: string;
+  readonly element: readonly string[];
+  readonly why: string;
+}
+
+const SETTINGS_BUTTON_HOVER = ".settings-button:hover:where(:not([aria-disabled='true'], :disabled))";
+const SETTINGS_PRIMARY_HOVER = ".settings-button-primary:hover:where(:not([aria-disabled='true'], :disabled))";
+const DIAGNOSTICS_SAVE_HOVER = ".diagnostics-save:hover:where(:not(:disabled, [aria-disabled='true']))";
+
+export const FOCUS_RING_RULES = [
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-button', SETTINGS_BUTTON_HOVER, '.settings-button:focus-visible'],
+    why: 'a Settings button, focused and hovered',
+  },
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-button', SETTINGS_BUTTON_HOVER, '.settings-button-primary', SETTINGS_PRIMARY_HOVER, '.settings-button:focus-visible'],
+    why: 'a primary Settings button (Sign in, Connect, Save), focused and hovered: its hover sets box-shadow: none',
+  },
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-button', ".settings-button[aria-disabled='true']", '.settings-button:focus-visible'],
+    why: 'a Settings button while its section is busy (aria-disabled, still focusable: Account, Search Console)',
+  },
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-button', '.settings-button-primary', ".settings-button[aria-disabled='true']", '.settings-button:focus-visible'],
+    why: 'a primary Settings button while busy, or a confirmation not yet armed (aria-disabled)',
+  },
+  {
+    stylesheet: 'help.css',
+    element: ['.diagnostics-save', DIAGNOSTICS_SAVE_HOVER, '.diagnostics-save:focus-visible'],
+    why: 'Export Diagnostics\' Save…, focused and hovered',
+  },
+  {
+    stylesheet: 'help.css',
+    element: ['.diagnostics-save', ".diagnostics-save[aria-disabled='true']", '.diagnostics-save:focus-visible'],
+    why: 'Export Diagnostics\' Save… while it saves (aria-disabled, still focusable)',
+  },
+  {
+    stylesheet: 'help.css',
+    element: ['.setup-action', '.setup-action:hover', '.setup-action:focus-visible'],
+    why: 'a setup checklist action, focused and hovered',
+  },
+] as const satisfies readonly FocusRingRule[];
 
 /**
  * The tab row until the chrome's surface PR rebuilds it as one row on `--bg-window`: the strip
