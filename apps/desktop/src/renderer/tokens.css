@@ -62,8 +62,6 @@
   --seo-card: var(--bg-surface);
   --seo-card-edge: #e3e7ee;
   --seo-track: var(--track);
-  --seo-skeleton: #e9edf3;
-  --seo-skeleton-shine: #f4f6f9;
   --caution: #b7791f;
   --info-tone: #4b72b8;
   --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04);
@@ -135,8 +133,6 @@
     --shadow-prompt: 0 1px 3px rgb(0 0 0 / 0.35);
 
     --seo-card-edge: #2c3038;
-    --seo-skeleton: #262a31;
-    --seo-skeleton-shine: #2f343c;
     --caution: #f0b552;
     --info-tone: #8fb0e8;
     --shadow-card: none;
