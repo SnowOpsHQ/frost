@@ -541,7 +541,11 @@ purge in `workspace-db.feature.md` (API readings (Phase 12)) and `retention.feat
   `capture-run-refuses-a-moved-tab`, `capture-run-fails-fast-on-a-load-error`,
   `capture-run-records-query-params` (a search target is captured with the run tab's parameters
   from `searchParamsOf` on a matching `ready` reading; a page target with the tab's, else none), `capture-run-retries-a-screenshot-behind-another-tab`,
-  `capture-run-applies-profiles`, `capture-run-never-removes-a-pin`, `capture-run-cancels-on-tab-close`,
+  `capture-run-applies-profiles`, `capture-run-fails-when-the-browser-throws-between-tabs` (between
+  two profile groups the browser throws when asked for its state, or when the last group's tab is
+  closed: the run ends `failed`, never `done`, the rest `cancelled`, its tab closed, and the next
+  run starts normally; a profile that throws when set is logged like one refused, and the run goes
+  on in that tab), `capture-run-never-removes-a-pin`, `capture-run-cancels-on-tab-close`,
   `capture-run-cancels`, `capture-run-cancel-during-a-capture`, `capture-run-times-out-per-target`,
   `capture-run-restores-previous-tab`, `capture-run-keeps-the-users-tab`, `one-run-at-a-time`,
   `capture-run-retries-a-busy-screenshot`, `capture-run-stops-on-quit` (the hook: `before-quit` and a

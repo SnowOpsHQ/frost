@@ -356,7 +356,16 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     } catch {
       return null;
     }
-    if (tabId !== null && profile !== null && !browser.setRenderProfile(tabId, profile)) log('a run tab’s render profile could not be set');
+    if (tabId !== null && profile !== null) {
+      // A profile that cannot be set, by a `false` or by a throw, is logged and the tab is still the run's.
+      let set = false;
+      try {
+        set = browser.setRenderProfile(tabId, profile);
+      } catch {
+        set = false;
+      }
+      if (!set) log('a run tab’s render profile could not be set');
+    }
     return tabId;
   };
 
@@ -708,6 +717,11 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
           }
         }
       }
+    } catch (error) {
+      // A browser call between two tabs threw (asking for its state, closing the last group's tab):
+      // the run failed. Without this it would end `done`, and reject where nothing listens.
+      log(`the run failed between targets (${error instanceof Error ? error.name : 'unknown error'})`);
+      end = run.cancelled ? 'cancelled' : 'failed';
     } finally {
       cancelRest();
       // Its tab goes (if still open; `stop` may have closed it already).

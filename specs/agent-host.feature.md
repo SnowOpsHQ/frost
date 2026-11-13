@@ -164,6 +164,12 @@ one named test.
   because another program has a file open (EPERM, EACCES, EBUSY) is tried again after each of
   `RENAME_RETRY_WAITS_MS` (under 2 s in all), then fails with the last refusal; any other error is
   final at once, and so is every error on other platforms.
+- **Scenario: main-renames-go-through-rename-over** (`durable.test.ts`) — every file main replaces
+  by renaming a new one over it goes through `renameOver`: the agent's settings, keys and ChatGPT
+  host id, the secret store, the intent model, screenshots, the SERP pack, the sync config, and
+  the update's download and prefs. No other file under `src/main` calls the file system's rename
+  itself. One exception is listed by name in the test: the telemetry consent file, which is
+  written synchronously.
 - **Scenario: credentials-read-error-not-cached** — a file that can't be read makes `setKey` and
   `clearKey` fail without writing (other slots survive); once readable it is read afresh.
 - **Scenario: credentials-re-encrypted-when-asked** — when decryption answers `shouldReEncrypt`, the

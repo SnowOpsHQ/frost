@@ -1,7 +1,7 @@
 import { CHATGPT_EFFORTS_ENTRY_MAX_BYTES, CHATGPT_LIMITS, CHATGPT_MODEL_PREFIX, isChatgptModelView, type ChatgptModelView } from '@app/specs/agent-chatgpt.spec';
 import { DEFAULT_AGENT_MODEL_SETTINGS, isUsableModelSettings, type AgentModelSettings } from '@app/specs/agent-proxy.spec';
 import { DEFAULT_REASONING_EFFORT, isReasoningEffort, REASONING_EFFORTS, type ReasoningEffort } from '@app/specs/agent-reasoning.spec';
-import { syncDirectoryOf, type DirectorySync } from '../durable';
+import { renameOver, syncDirectoryOf, type DirectorySync } from '../durable';
 
 // The agent's model settings (Phase 5 Task 3, plan decision 1; acceptance
 // `specs/agent-host.feature.md`, Settings): the route (bring-your-own-key Anthropic or OpenAI, or the
@@ -137,7 +137,7 @@ export function createAgentSettings(deps: AgentSettingsDeps): AgentSettings {
     }
     try {
       await deps.fs.writeFile(temp, `${text}\n`, { mode: 0o600, flag: 'wx', flush: true });
-      await deps.fs.rename(temp, deps.file);
+      await renameOver(deps.fs, temp, deps.file);
       await syncDirectoryOf(deps.fs, deps.file);
     } catch {
       log('agent settings: the settings file could not be written');

@@ -3,6 +3,7 @@ import { mkdir, open, readdir, rename, rm, stat, writeFile } from 'node:fs/promi
 import path from 'node:path';
 import type { BoundedFetcher } from '@app/specs/fetcher.spec';
 import { INTENT_DOWNLOAD_LIMITS, INTENT_MODEL, INTENT_MODEL_DIR, type IntentEnableOutcome, type IntentModelFile } from '@app/specs/intent-classifier.spec';
+import { renameOver } from '../durable';
 
 // The intent model on disk (spec `intent-classifier.spec.ts`, The model; acceptance
 // `intent-classifier.feature.md`, Model download). The model and its vocabulary are downloaded only
@@ -253,7 +254,7 @@ export function fileModelStorage(dir: string): ModelStorage {
       const temp = `${file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
       try {
         await writeFile(temp, bytes, { mode: 0o600, flush: true });
-        await rename(temp, file);
+        await renameOver({ rename }, temp, file);
       } catch (error) {
         await rm(temp, { force: true });
         throw error;

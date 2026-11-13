@@ -1019,7 +1019,7 @@ test('agent-mcp-tool-asks', async () => {
   const dialogs = (await app!.evaluate(() => structuredClone((globalThis as { __frostMcpDialogs?: unknown[] }).__frostMcpDialogs ?? []))) as { title: string; message: string; detail: string }[];
   expect(dialogs).toHaveLength(1);
   expect(dialogs[0]!.title).toBe('Start an untrusted MCP server?');
-  // As the spec writes a command line: a Windows path has `\`, so it is shown quoted there.
+  // As the spec writes a command line (a Windows path is shown as typed, with its single backslashes).
   expect(dialogs[0]!.detail).toContain(mcpCommandLine(node, [fixture]));
   expect(dialogs[0]!.detail).toContain(sandbox!);
   // Sandboxed, it lists every folder it may read (real paths) and the network setting; always every variable's name.

@@ -273,6 +273,53 @@ describe('MCP server configuration', () => {
     expect(mcpCommandLine('/usr/bin/node', ['server.js', '--port=3000'])).toBe('/usr/bin/node server.js --port=3000');
     // A space or a quote can't make two parts look like one.
     expect(mcpCommandLine('/usr/bin/node', ['a b', 'c"d', ''])).toBe('/usr/bin/node "a b" "c\\"d" ""');
+    // A Windows path reads as typed: its backslashes are not doubled, in quotes or out of them.
+    expect(mcpCommandLine('C:\\tools\\node.exe', ['D:\\srv\\index.js'])).toBe('C:\\tools\\node.exe D:\\srv\\index.js');
+    expect(mcpCommandLine('C:\\Program Files\\nodejs\\node.exe', ['C:\\My Servers\\index.js'])).toBe('"C:\\Program Files\\nodejs\\node.exe" "C:\\My Servers\\index.js"');
+    // A backslash is doubled only where it would read as part of an escaped quote: before a quote, or before the closing one.
+    expect(mcpCommandLine('node', ['C:\\My Folder\\', 'say \\"hi\\"'])).toBe('node "C:\\My Folder\\\\" "say \\\\\\"hi\\\\\\""');
+
+    /** The parts of a line, read by the rules it is written with (a Windows command line's). */
+    const readBack = (line: string): string[] => {
+      const parts: string[] = [];
+      let at = 0;
+      while (at < line.length) {
+        if (line[at] === ' ') {
+          at += 1;
+          continue;
+        }
+        let part = '';
+        if (line[at] !== '"') {
+          while (at < line.length && line[at] !== ' ') part += line[at++];
+          parts.push(part);
+          continue;
+        }
+        at += 1;
+        for (;;) {
+          let slashes = 0;
+          while (line[at] === '\\') {
+            slashes += 1;
+            at += 1;
+          }
+          if (line[at] !== '"') {
+            if (at >= line.length) throw new Error(`unclosed quote in ${line}`);
+            part += '\\'.repeat(slashes) + line[at++];
+            continue;
+          }
+          // Before a quote, each pair of backslashes is one; an odd one left makes the quote a character.
+          part += '\\'.repeat(Math.floor(slashes / 2));
+          at += 1;
+          if (slashes % 2 === 0) break;
+          part += '"';
+        }
+        parts.push(part);
+      }
+      return parts;
+    };
+    const awkward = ['C:\\Program Files\\node.exe', 'a b', 'c"d', '', 'ends\\', 'ends with a space\\', 'q\\"x y', '\\\\server\\share\\x y', 'plain', 'a\\\\b c', '"', '\\', ' ', '" "', 'a\\\\" b', 'é ü', "it's"];
+    expect(readBack(mcpCommandLine(awkward[0]!, awkward.slice(1)))).toEqual(awkward);
+    // No part can pass for two, or for another: each one alone reads back as itself.
+    for (const one of awkward) expect(readBack(mcpCommandLine('node', [one])), one).toEqual(['node', one]);
   });
 
   test('mcp-start-dialog-wording', () => {

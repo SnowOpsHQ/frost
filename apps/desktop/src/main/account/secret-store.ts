@@ -12,6 +12,7 @@ import {
   SECRETS_DIR_MODE,
   type SecretName,
 } from '@app/specs/secret-store.spec';
+import { renameOver } from '../durable';
 
 // Main's secret store (spec `secret-store.spec.ts`; acceptance `entitlements-client.feature.md`,
 // Secret store; plan decision "Secrets need a real keychain"). No Electron import: main passes
@@ -188,7 +189,7 @@ export async function createSecretStore(options: CreateSecretStoreOptions): Prom
       ensureDir();
       fs.writeFileSync(temp, encrypted, { mode: SECRET_FILE_MODE, flag: 'wx' });
       fs.chmodSync(temp, SECRET_FILE_MODE);
-      fs.renameSync(temp, file);
+      await renameOver({ rename: async (from, to) => fs.renameSync(from, to) }, temp, file);
       return true;
     } catch (error) {
       removeFile(temp);

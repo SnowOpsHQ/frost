@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isChatgptHostId } from '@app/specs/agent-chatgpt.spec';
 import { ChatgptHostFileSchema } from '@app/specs/agent-chatgpt.schema';
 import type { CredentialFs } from '../credentials';
-import { syncDirectoryOf } from '../../durable';
+import { renameOver, syncDirectoryOf } from '../../durable';
 
 // This install's ChatGPT host id (spec `agent-chatgpt.spec.ts`, `CHATGPT_HOST_ID_FILE`,
 // `isChatgptHostId`; acceptance `agent-chatgpt.feature.md`, Decisions, "Host id"): `urn:uuid:` and
@@ -50,7 +50,7 @@ export function createHostIdStore(deps: HostIdDeps): HostIdStore {
     const temp = `${deps.file}.${tempSuffix()}.tmp`;
     try {
       await deps.fs.writeFile(temp, `${JSON.stringify({ v: 1, hostId })}\n`, { mode: 0o600, flag: 'wx', flush: true });
-      await deps.fs.rename(temp, deps.file);
+      await renameOver(deps.fs, temp, deps.file);
       await syncDirectoryOf(deps.fs, deps.file);
     } catch (error) {
       log('agent chatgpt: the host id could not be written');
