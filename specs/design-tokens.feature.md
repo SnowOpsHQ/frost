@@ -165,7 +165,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`FOCUS_RING_RULES`): the hovers' state checks sit in `:where()`, so they add no weight, and the
   plain `:focus-visible` rules come after them. A busy button shows it by its colours, not by fading
   (an `opacity` would dim the ring too): `--text-faint` text, and a primary one `--accent` on
-  `--accent-soft`; a busy switch or an unavailable choice fades only while it is not focused. A switch's knob, when on, has a 1px `--bg-surface` edge:
+  `--accent-soft`; under forced colours, which replace both, a busy button's text and edge are
+  `GrayText`. A busy switch or choice fades only while it is not focused. A switch's knob, when on,
+  has a 1px `--bg-surface` edge:
   `--knob` on `--accent` is 2.65:1 in dark, the edge on the track 3:1 or more in both themes. Help's
   sheet frame keeps the page card's `--bg-surface` (no screen
   draws Help: it is a document, not cards, and it also frames the Crawl and AI answers sheets, whose
@@ -238,6 +240,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   button keeps its ring, at full strength, when hovered, when busy (`aria-disabled`) and when primary;
   so does a focused switch, and the chosen choice. The resolver itself scores
   `.a:hover:where(:not([x], :disabled))` as two classes.
+- **Scenario: busy-buttons-show-under-forced-colours** — for each `FORCED_COLOURS_BUSY` entry, a rule
+  inside `@media (forced-colors: active)` in its stylesheet names its selector and sets `color` and
+  `border-color` to `GrayText` (busy is shown by colour, which forced colours replace).
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).
@@ -251,7 +256,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   legacy name; holds no hex colour or colour function in any property; a colour-bearing value
   (`background-image` and custom properties included) holds only those, `transparent`,
   `currentColor`, `inherit`, `none`, lengths and `color-mix()` (so hex, `rgb()`, a gradient, `unset`,
-  `initial`, any named colour fail; `text-decoration` may also name its line and style keywords); a
+  `initial`, any named colour fail; `text-decoration` may also name its line and style keywords, and
+  a rule inside `@media (forced-colors: active)` the CSS system colours, `FORCED_COLOURS_SYSTEM_COLOURS`); a
   rule whose `box-shadow` reads `--focus-ring` sets an `outline` forced colours draw (non-zero width,
   not `none`: `outline: 2px solid transparent`); no `font-size`, `font-family` or `line-height`; `font` only `var(--text-*)`; a
   rule whose `--text-*` token has a non-zero tracking sets exactly that `letter-spacing`, and any
@@ -262,9 +268,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   fallback (in a colour and in `padding`), a colour in the surface's keyframes, a caps rule without
   its letter-spacing, a body rule with caps letter-spacing, a gradient `background-image`,
   `color: unset`, Geist Mono at 500, a redeclared Signal or legacy name, a component property holding
-  `rgb()`, `rgb()` in `filter`, hex in `scrollbar-color`, and a `--focus-ring` with `outline: 0` or
-  no outline; it accepts a component property (`--tone-ink: var(--ok-ink)`) read in the same rule,
-  `text-decoration: underline`, and `--focus-ring` beside `outline: 2px solid transparent`; it ignores
+  `rgb()`, `rgb()` in `filter`, hex in `scrollbar-color`, a `--focus-ring` with `outline: 0` or
+  no outline, `GrayText` outside a forced-colours block and a named colour inside one; it accepts a component property (`--tone-ink: var(--ok-ink)`) read in the same rule,
+  `text-decoration: underline`, `--focus-ring` beside `outline: 2px solid transparent`, and `GrayText`
+  inside `@media (forced-colors: active)`; it ignores
   `.palettes`, `.x-palette`, and `.table-*` for a `.tab` surface.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.

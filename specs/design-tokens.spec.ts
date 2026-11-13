@@ -336,7 +336,8 @@ export const LEGACY_TOKEN_MIGRATION = [
  * name; no value of it holds a hex colour or a colour function; its colour-bearing values
  * (`background-image` and custom properties included) hold nothing else but `transparent`,
  * `currentColor`, `inherit`, `none`, lengths and `color-mix()` of those (plus `text-decoration`'s line
- * and style keywords); a rule whose `box-shadow` reads `--focus-ring` also sets an `outline` forced
+ * and style keywords, and, only inside an `@media (forced-colors: active)` block, the CSS system colours
+ * in `FORCED_COLOURS_SYSTEM_COLOURS`); a rule whose `box-shadow` reads `--focus-ring` also sets an `outline` forced
  * colours draw (they drop box-shadows): a non-zero width, not `none`, e.g. `2px solid transparent`; its type comes from a `--text-*` token (`font: var(--text-*)`,
  * with that token's `tracking` as `letter-spacing` in the same rule when it isn't `0`); a
  * `font-weight` beside it is one `BUNDLED_FONTS` has for that token's family (Geist Mono: 400 only).
@@ -347,6 +348,43 @@ export interface SignalSurface {
   /** A class name with its dot (`.palette`): the surface's classes are it and it followed by `-…`. */
   readonly selectorPrefix: string;
 }
+
+/**
+ * The CSS system colours (CSS Color 4, lower-cased) a surface rule may name, only inside an
+ * `@media (forced-colors: active)` block: there the page's own colours are replaced by these, so a
+ * state shown only by colour (a busy button) names one of them (`GrayText`) to stay visible.
+ */
+export const FORCED_COLOURS_SYSTEM_COLOURS = [
+  'accentcolor',
+  'accentcolortext',
+  'activetext',
+  'buttonborder',
+  'buttonface',
+  'buttontext',
+  'canvas',
+  'canvastext',
+  'field',
+  'fieldtext',
+  'graytext',
+  'highlight',
+  'highlighttext',
+  'linktext',
+  'mark',
+  'marktext',
+  'selecteditem',
+  'selecteditemtext',
+  'visitedtext',
+] as const;
+
+/**
+ * Busy controls that show it only by colour (`FOCUS_RING_RULES`: fading would dim their focus ring).
+ * Forced colours replace those colours, so each `selector`, in `stylesheet`, has a rule inside
+ * `@media (forced-colors: active)` that sets `color` and `border-color` to `GrayText`.
+ */
+export const FORCED_COLOURS_BUSY = [
+  { stylesheet: 'settings.css', selector: ".settings-button[aria-disabled='true']" },
+  { stylesheet: 'help.css', selector: ".diagnostics-save[aria-disabled='true']" },
+] as const satisfies readonly { readonly stylesheet: string; readonly selector: string }[];
 
 export const SIGNAL_SURFACES = [
   // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).
@@ -676,7 +714,7 @@ export const FOCUS_RING_RULES = [
   },
   {
     stylesheet: 'settings.css',
-    element: ['.settings-button', '.settings-button-primary', ".settings-button[aria-disabled='true']", '.settings-button:focus-visible'],
+    element: ['.settings-button', '.settings-button-primary', ".settings-button[aria-disabled='true']", ".settings-button-primary[aria-disabled='true']", '.settings-button:focus-visible'],
     why: 'a primary Settings button while busy, or a confirmation not yet armed (aria-disabled)',
   },
   {
@@ -692,12 +730,22 @@ export const FOCUS_RING_RULES = [
   {
     stylesheet: 'settings.css',
     element: ['.settings-switch', ".settings-switch[aria-checked='true']", '.settings-switch:focus-visible'],
-    why: 'a Telemetry or History switch, on and focused (busy, it fades only while not focused)',
+    why: 'a Telemetry or History switch, on and focused',
+  },
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-switch', ".settings-switch[aria-disabled='true']", '.settings-switch:focus-visible'],
+    why: 'a switch while its call runs (aria-disabled, still focusable), focused: it fades only while not focused',
   },
   {
     stylesheet: 'settings-ai-checks.css',
     element: ['.settings-choice', ".settings-choice[aria-checked='true']", '.settings-choice:focus-visible'],
-    why: 'the chosen AI checks or History choice, focused: its --accent ring gives way to --focus-ring (unavailable, it fades only while not focused)',
+    why: 'the chosen AI checks or History choice, focused: its --accent ring gives way to --focus-ring',
+  },
+  {
+    stylesheet: 'settings-ai-checks.css',
+    element: ['.settings-choice', ".settings-choice[aria-disabled='true']", '.settings-choice:focus-visible'],
+    why: 'a choice while its call runs (aria-disabled, still focusable), focused: it fades only while not focused',
   },
   {
     stylesheet: 'help.css',

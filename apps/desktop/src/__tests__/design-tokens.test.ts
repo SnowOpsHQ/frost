@@ -7,6 +7,8 @@ import {
   BUNDLED_FONTS,
   CONTRAST_PAIRS,
   FOCUS_RING_RULES,
+  FORCED_COLOURS_BUSY,
+  FORCED_COLOURS_SYSTEM_COLOURS,
   HEX_COLOUR_RATCHET,
   KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
@@ -446,15 +448,28 @@ test('focus-rings-outlast-hover-and-busy', () => {
     for (const theme of THEME_NAMES) {
       expect(resolveOnElement(css, rule.element, 'box-shadow', theme), `${rule.why} (${theme})`).toBe('var(--focus-ring)');
       expect(resolveOnElement(css, rule.element, 'outline', theme), `${rule.why}: outline (${theme})`).toBe('2px solid transparent');
-      // Nothing fades the ring: an opacity, if the element's rules set one, is 1.
+      // Nothing fades the ring: an opacity, if the element's rules set one, is 1 (only "no opacity" is swallowed).
       const faded = (() => {
         try {
           return resolveOnElement(css, rule.element, 'opacity', theme);
-        } catch {
-          return '1';
+        } catch (error) {
+          if (error instanceof Error && error.message.endsWith(`: no opacity (${theme})`)) return '1';
+          throw error;
         }
       })();
       expect(faded, `${rule.why}: opacity (${theme})`).toBe('1');
+    }
+  }
+});
+
+test('busy-buttons-show-under-forced-colours', () => {
+  const FORCED = /^@media\s*\(\s*forced-colors\s*:\s*active\s*\)$/;
+  for (const entry of FORCED_COLOURS_BUSY) {
+    const inForced = parse(read(entry.stylesheet)).declarations.filter(
+      (d) => d.context.slice(0, -1).some((level) => FORCED.test(level)) && splitSelectors(d.context.at(-1) ?? '').some((s) => s.trim() === entry.selector),
+    );
+    for (const property of ['color', 'border-color']) {
+      expect(inForced.find((d) => d.property === property)?.value.toLowerCase(), `${entry.stylesheet}: ${entry.selector} { ${property} } under forced colours`).toBe('graytext');
     }
   }
 });
@@ -480,6 +495,8 @@ test('tokens-load-before-every-other-stylesheet', () => {
 const SURFACE_COLOUR_WORDS = new Set(['transparent', 'currentcolor', 'inherit', 'none', 'solid', 'dashed', 'dotted', 'double', 'inset', 'color-mix', 'in', 'srgb', 'calc', 'min', 'max', 'clamp']);
 /** `text-decoration`'s line and style keywords: not colours (a colour in it still needs the allowlist). */
 const TEXT_DECORATION_WORDS = new Set(['underline', 'overline', 'line-through', 'wavy']);
+/** The CSS system colours, allowed in a surface rule only under `@media (forced-colors: active)`. */
+const SYSTEM_COLOURS = new Set<string>(FORCED_COLOURS_SYSTEM_COLOURS);
 /** A literal colour in any property: hex or a colour function. */
 const COLOUR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
 /** Properties whose value can carry a colour (these, and custom properties, get the colour allowlist). */
@@ -527,7 +544,11 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
       const rest = d.value.replace(/var\(\s*--[\w-]+\s*\)/g, ' ').toLowerCase();
       const words = rest.replace(/-?\d*\.?\d+[a-z%]*/g, ' ').match(/[a-z][\w-]*/g) ?? [];
       const decoration = d.property.startsWith('text-decoration');
-      const strays = words.filter((word) => !SURFACE_COLOUR_WORDS.has(word) && !(decoration && TEXT_DECORATION_WORDS.has(word)));
+      // Inside `@media (forced-colors: active)` only, the CSS system colours (GrayText for a busy button).
+      const forced = d.context.some((level) => /^@media\s*\(\s*forced-colors\s*:\s*active\s*\)$/.test(level));
+      const strays = words.filter(
+        (word) => !SURFACE_COLOUR_WORDS.has(word) && !(decoration && TEXT_DECORATION_WORDS.has(word)) && !(forced && SYSTEM_COLOURS.has(word)),
+      );
       if (rest.includes('#') || strays.length > 0) problems.push(`${label}: a literal colour (${rest.includes('#') ? '#' : strays.join(', ')})`);
     }
     if (['font-size', 'font-family', 'line-height'].includes(d.property)) problems.push(`${label}: type comes from a --text-* token`);
@@ -589,6 +610,9 @@ test('surface-rules-read-signal-tokens', () => {
     'hex in scrollbar-color': '.palette-list { scrollbar-color: #f00 #00f; }',
     'focus ring with outline: 0': '.palette-x:focus-visible { outline: 0; box-shadow: var(--focus-ring); }',
     'focus ring with no outline': '.palette-x:focus-visible { box-shadow: var(--focus-ring); }',
+    'a system colour outside forced colours': ".palette-x[aria-disabled='true'] { color: GrayText; }",
+    'a named colour inside forced colours': "@media (forced-colors: active) { .palette-x[aria-disabled='true'] { color: red; } }",
+    'a system colour under another media query': "@media (prefers-contrast: more) { .palette-x { border-color: GrayText; } }",
   };
   for (const [name, css] of Object.entries(caught)) expect(problemsIn(css), name).not.toEqual([]);
   // ... and these pass: a token rule, a class-boundary miss, a caps rule with its tracking.
@@ -599,6 +623,8 @@ test('surface-rules-read-signal-tokens', () => {
   expect(problemsIn('.palette-hit { text-decoration: underline; }')).toEqual([]);
   // A focus ring forced colours still draw (they drop box-shadows): a transparent outline beside it.
   expect(problemsIn('.palette-x:focus-visible { outline: 2px solid transparent; outline-offset: 2px; box-shadow: var(--focus-ring); }')).toEqual([]);
+  // A busy state shown only by colour stays visible under forced colours: a system colour, in that block only.
+  expect(problemsIn("@media (forced-colors: active) { .palette-x[aria-disabled='true'] { color: GrayText; border-color: GrayText; } }")).toEqual([]);
   expect(surfaceProblems('.table-row { color: red; }', { name: 'tab', stylesheet: 'n/a', selectorPrefix: '.tab' }).checked).toBe(0);
   expect(surfaceProblems('.palettes, .x-palette { color: red; }', palette).checked).toBe(0);
 
