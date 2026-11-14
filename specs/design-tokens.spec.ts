@@ -1517,7 +1517,7 @@ export const FOCUS_RING_RULES = [
   // toggles, actions, chips, segments, search fields and Settings-style buttons are the shared rules').
   {
     stylesheet: 'styles.css',
-    element: ['.seo-toggle', SEO_TOGGLE_HOVER, '.seo-toggle-danger', SEO_TOGGLE_DANGER_HOVER, '.seo-toggle:focus-visible'],
+    element: ['.seo-toggle', SEO_TOGGLE_HOVER, SEO_TOGGLE_DANGER_HOVER, '.seo-toggle:focus-visible'],
     why: 'Content\'s "Delete draft" and "Delete all notes…", focused and hovered: the danger hover sets its edge and text only',
   },
   { stylesheet: 'styles.css', element: ['.seo-field-input', '.seo-field-input:focus-visible'], why: 'Content: a draft\'s title and description and the site-name field, focused: --e-raised gives way to --focus-ring (it was an --accent edge with a halo)' },

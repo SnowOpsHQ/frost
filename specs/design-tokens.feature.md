@@ -568,10 +568,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   info badge (`--h-badge` pill, `--accent` on `--accent-soft`, `--text-micro`; it was a 14% tint), its
   confidence `--text-small` in `--text-muted`; the composition bar `--r-pill` on `--track` (its segments
   and swatches keep `SERP_OUTLINE_STYLES`' colours, SVG attributes, as the outlines in the page), its
-  counts `--text-small`; tables `--text-small`, their header cells `--text-caps` in `--text-muted`, rows
+  counts `--text-small`; tables `--text-small`, their header cells `--text-small` at weight 600 in
+  `--text-muted` (sentence case: `--text-caps` pushed the ownership table past a 360px panel), rows
   ruled by `--divider` (`border-spacing: 0`, not `border-collapse`); a result's rank `--text-small` in
   `--text-faint`, its type `--text-caps` in `--text-muted`, title `--text-body`, domain `--text-small` in
-  `--text-faint` ("No link" keeps its italics); a state that is not a reading an `--r-md` tile of
+  `--text-faint` ("No link" keeps its italics); a state that is not a reading a 32px `--r-sm` tile of
   `--accent-soft` with an `--accent` icon, a problem (unreadable, disabled) `--warn-soft` and `--warn`
   (`--caution`; they were mixes with `--seo-bg`), its title `--text-body` at weight 600; Edit search and
   Track this search are cards as the parameters, their labels the parameters' labels, their selects
