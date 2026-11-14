@@ -618,6 +618,80 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   button in the drawer's table is a block that ellipsizes its own name, and the cells have `--space-1`
   of block padding, so its `--focus-ring` is drawn whole inside the clipping cell.
 
+- **The panel stylesheets** (each feature's own stylesheet: `gsc-panel.css`, `gsc-inspection.css`,
+  `gsc-targets.css`, `ai-checks.css`, `ai-readiness.css`, `ai-answers.css`, `crawl.css` and `location.css`;
+  `gsc-panel.feature.md`, `gsc-inspection.feature.md`, `seo-content.feature.md`, `ai-checks.feature.md`,
+  `ai-readiness.feature.md`, `page-type.feature.md`, `ai-answers.feature.md`, `site-crawl.feature.md`,
+  `location-profiles.feature.md`) follow the Migration notes, the token `use` notes and the canvas's
+  component board (buttons, field, segmented control, chips and badges), where they agree; no screen
+  draws them. Each stylesheet has one `SIGNAL_SURFACES` entry, by its prefix (`.gsc`, `.gsc-inspect`,
+  `.gsc-targets`, `.ai-judgment`, `.crawl`, `.tab-location`) or, where its classes share none, a class
+  list (`ai-readiness.css`: `.ai-*`, `.page-type-*`, `.page-intent-*`; `ai-answers.css`: `.ai-answers-*`,
+  `.ai-answer-*`). Text is Geist from the `--text-*` tokens, every space a `--space-*` step, every corner
+  an `--r-*`, every rule `--divider` (`--seo-card-edge`, `--border-field`, `--bg-chrome-edge`, `--gsc-grid`),
+  cards `--bg-surface` at `--r-md` with `--e-ring` and a transparent border (`--seo-card`, `--shadow-card`),
+  fields inside a card `--h-control` at `--r-sm` on `--bg-surface` with `--e-raised` and a transparent
+  border (`--radius-field`, `--bg-field`), status text its `-ink` (`--caution` → `--warn-ink`, `--danger` →
+  `--danger-ink`, AI readiness's pass `--ok` → `--ok-ink`), and focus `--focus-ring` beside a transparent
+  2px outline (`FOCUS_RING_RULES`), where they had a 2px `--accent` outline or an `--accent` border and halo;
+  a part's own geometry (the calendar's 256px, the AI ring's 64px, the notice art's 48px, the badge's
+  18px) stays a layout constant. A feature stylesheet loads before `styles.css` (its component imports it,
+  inside `App`), so a shared control's rule there wins a tie: a rule of these sheets that changes a
+  shared control (`.panel-button`, `.seo-chip-button`, `.seo-select`) outweighs it by naming both classes,
+  and its guard entries read `styles.css` after the stylesheet (`loadsBefore`). **Search Console:** the
+  panel's cards stand `--space-4` apart; its property line `--text-small`, its label `--text-caps`; the
+  month and filter selects are the panels' select at `--text-small`, a filter in force an `--accent` edge
+  and text; the custom dates in force or open a pressed chip (`--accent` on `--accent-soft`, an `--accent`
+  edge, `PRESSED_EDGES`), each `Highlight` under forced colours. The calendar is a popover card with
+  `--e-overlay` (a literal shadow); its arrows `--h-chip` circles; a day `--h-chip` tall at `--r-sm`,
+  `--bg-hover` hovered, the chosen range an `--accent-soft` band in `--accent` with its ends `--accent`
+  and `--on-accent`, each day of it ringed `Highlight` under forced colours (a transparent border, so they
+  draw it); an arrow or a day out of range `DISABLED_INK` and `GrayText` (they faded to 0.35 and 0.45). A
+  notice is a card, its art on `--accent-soft` (an error's `--warn-soft` with `--warn-ink` art, as the
+  sidebar's unavailable hint), its title `--text-heading`. A total tile is a card button: label
+  `--text-small`, value `--text-title`, hint `--text-small` in `--text-muted` (`--text-faint` is 4.26:1 on
+  a hovered tile in dark); hover lays `--bg-hover` over it, skipping the pressed one
+  (`HOVER_OVERLAYS_SKIP_PRESSED`); the tile the chart shows keeps its fill and draws a 2px `--accent` edge
+  (its border and a line inside it, as on main), `Highlight` under forced colours. The chart is a card:
+  its line and dots `--accent` (one series, 4.5:1 or more on the card; its values are in the hidden
+  table and the summary), its grid `--divider` (`--gsc-grid`, `removed`), its axis labels `--text-micro`
+  at weight 400 in `--text-faint` (`--gsc-axis`, `--gsc-line`: aliases, now unread, kept). Top queries:
+  `--text-small`, heads `--text-micro` in `--text-muted`, rows ruled `--divider`. While another scope or
+  range is read the data dims to 0.55 only while focus is not inside it (a fade would dim a focused
+  tile's ring, as a busy switch in Settings); so does the URL Inspection card's body. **URL Inspection:**
+  `--text-small` throughout; a rich result item an `--r-sm` box ruled `--divider`; a group's label
+  `--text-caps`, "Error" `--danger-ink`, "Warning" `--warn-ink`. **Content's targets:** rows ruled
+  `--divider`, `--text-small`; "Use as target" is the panels' chip at `--h-chip` (it was squeezed to 24px)
+  and no longer fades (`opacity: 0.5` stacked on the chip's disabled colour). **AI judgment:** its model
+  text set apart by a 2px `--divider` rule on its leading edge; fields `--text-small`; the target chip at
+  `--h-chip`. Check with AI while its call runs (`aria-disabled`, still focusable) faded to 0.6, dimming
+  its focus ring: it is `DISABLED_INK` (`DISABLED_CONTROLS`, unfaded), `GrayText` under forced colours,
+  and keeps `--focus-ring`; its rule names `.seo-chip-button` too, so the chip's hover (`--text`) does not
+  win. **AI readiness:** the 64px ring's value `--text-title`; the basis line `--text-body` at 600; checks
+  and assistants ruled `--divider`, labels `--text-body` at 600, the rest `--text-small`; a verdict says
+  its word beside a glyph shaped by status (check, triangle, cross, info), in `--ok-ink`, `--warn-ink`,
+  `--danger-ink` or `--text-muted`. **The "Page" card:** its type `--text-heading`, "Unsure" `--warn-ink`;
+  a signal that disagrees `--warn-ink` with a wavy `--warn` underline, so it reads without hue; the intent
+  row ruled `--divider`. **The Crawl and AI answers sheets** (in Help's frame, which keeps no font of its
+  own: each sheet sets `--text-body` on its root, and nothing in the frame relies on the system face any
+  more, so Help could set it itself; this PR leaves `help.css` alone): section titles `--text-heading`,
+  notes `--text-small` in `--text-muted`, the status line an `--accent-soft` notice at `--r-sm`; fields,
+  selects and the crawl's textareas the field inside a card; a crawl run and an answer are cards (a run
+  chosen, an answer or a citation of the watched domain `--accent-soft` with an `--accent` edge,
+  `PRESSED_EDGES`, `Highlight` under forced colours); an answer in the list a row at `--r-sm`, `--bg-hover`
+  hovered (skipping the chosen one); a cited domain a `--bg-subtle` pill; the crawl's Pages and Site
+  structure are a segmented control (they were underlined tabs: the chosen one raised, `Highlight` under
+  forced colours); the table `--text-small` with `--text-micro` heads; the depth bars keep the native
+  meter in `--accent`, which forced colours draw. Their destructive buttons (`.crawl-danger`,
+  `.ai-answers-danger`) never looked destructive: their rule loaded before `.panel-button`'s `--text`, at
+  the same weight. They are `--danger-ink` now by a two-class rule (`TEXT_COLOUR_RULES`, resting and
+  hovered), disabled still `--text-faint`. **Location badge:** an 18px pill in `--text-micro`,
+  `--accent-hover` on `--accent-soft`, since it lies on every tab state and `--accent` there is 4.18:1 on a
+  hovered inactive tab in light. Retired names: `--gsc-grid` had no other reader and is `removed`; the
+  others these sheets read stay for `styles.css` and `rankings.css` (`--seo-card-edge`, `--border-field`,
+  `--bg-chrome-edge`, `--caution`, `--shadow-card`, `--radius-field`, `--radius-control`). One rule drew
+  `--ok` as text (AI readiness's pass), so the exception count drops by 1; the sheets held no hex.
+
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
 2. Foundation (done).
@@ -636,7 +710,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    On-Page first (no name retired: later panels read them all), then Links, Images, Social and Schema
    with the panels' shared controls (none retired either), then the rest of the browser chrome
    (`--find-height`, `--bg-prompt`, `--prompt-edge`, `--shadow-prompt`, `--render-accent`, `--render-soft`,
-   `--render-edge`, `--bg-field-hover`, `--shadow-field` and `--panel-art`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
+   `--render-edge`, `--bg-field-hover`, `--shadow-field` and `--panel-art`), then the panel stylesheets
+   (`--gsc-grid`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
    from the moment the test starts watching.
 
@@ -677,7 +752,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the active tab a `box-shadow` holding `TAB_STRIP.activeIndicatorShadow` (`inset 0 -2px 0
   var(--accent)`, the whole term), so the cue is really drawn, under the pointer too.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
-  the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)` (and
+  the cascade over its `element` selectors in its stylesheet (and then each of its `loadsBefore`, read
+  after it: a later sheet's rule wins a tie, two classes win whatever the order) resolves `color` to `var(<color>)` (and
   `background` to `var(<background>)` where the entry names one), and that pair is in
   `CONTRAST_PAIRS`; for an `unfaded` entry (a disabled button shown by its colours), `opacity` resolves to
   nothing under 1, so a fade put back in place of the colours fails.
@@ -733,8 +809,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.x:hover { background }`, `.x.y:hover`, `.x:not(:disabled):hover` and `.tools .x:hover`, and ignores a
   hover that sets only `color` and `.x-danger:hover`.
 - **Scenario: disabled-controls-dim-their-text** — for each `DISABLED_CONTROLS` entry (a disabled
-  filter chip and segment), in light and dark, the cascade over its `element` selectors resolves `color`
-  to `DISABLED_INK`.
+  filter chip and segment; the AI judgment's busy chip, the Search Console calendar's arrows and days out
+  of range, Content's "Use as target"), in light and dark, the cascade over its `element` selectors
+  resolves `color` to `DISABLED_INK` and sets no `opacity` under 1.
 - **Scenario: pressed-controls-draw-an-edge** — for each `PRESSED_EDGES` entry (a pressed filter chip),
   in light and dark, the cascade over its `element` selectors resolves `border-color` to `var(<edge>)`
   with a border that draws (non-zero width, a style other than `none` or `hidden`, shorthand included;
@@ -744,7 +821,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).
 - **Scenario: tokens-load-before-every-other-stylesheet** — `main.tsx` imports `tokens.css` first
-  among stylesheets and before `App`.
+  among stylesheets and before `App`, and `styles.css` after `App`; every guard entry's `loadsBefore` is
+  `styles.css`, for a stylesheet `main.tsx` does not import (a feature's own, inside `App`). Every guard
+  that resolves a cascade (`FORCED_COLOURS_*`, `TEXT_COLOUR_RULES`, `FOCUS_RING_RULES`, `DISABLED_CONTROLS`,
+  `PRESSED_EDGES`) reads an entry's stylesheet and then its `loadsBefore` as one.
 - **Scenario: surface-rules-read-signal-tokens** — for each `SIGNAL_SURFACES` entry, every rule of the
   surface in its stylesheet (any selector in its list names one of the surface's classes on a class
   boundary, at any nesting: `@media`, `@container`; or it is in the surface's `@keyframes`; an entry's

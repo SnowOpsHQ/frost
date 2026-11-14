@@ -1,4 +1,4 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, DISABLED_CONTROLS)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, DISABLED_CONTROLS, LoadsBefore)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -27,10 +27,12 @@ import {
   TOKENS_STYLESHEET,
   type ContrastException,
   type ContrastPair,
+  type DisabledControl,
   type FocusRingRule,
   type ForcedColoursBusy,
   type HoverSkipsPressed,
   type LegacyTokenMigration,
+  type LoadsBefore,
   type PressedEdge,
   type SignalSurface,
   type TextColourRule,
@@ -41,6 +43,8 @@ import { SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.
 
 const RENDERER = fileURLToPath(new URL('../renderer/', import.meta.url));
 const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8');
+/** An entry's cascade: its stylesheet, then each stylesheet that loads after it (`loadsBefore`), as one. */
+const cascade = (entry: { readonly stylesheet: string } & LoadsBefore) => [entry.stylesheet, ...(entry.loadsBefore ?? [])].map(read).join('\n');
 
 /** Every file under the renderer, relative to it. */
 const RENDERER_FILES = (readdirSync(RENDERER, { recursive: true }) as string[]).map((name) => name.replaceAll('\\', '/')).sort();
@@ -246,6 +250,8 @@ test('removed-legacy-tokens-are-gone', () => {
   expect(REMOVED).toEqual(expect.arrayContaining(['--settings-switch-off']));
   // And the SEO sidebar's frame (its skeleton's names; the panels still read the other --seo-* names).
   expect(REMOVED).toEqual(expect.arrayContaining(['--seo-skeleton', '--seo-skeleton-shine']));
+  // And the panel stylesheets' (Search Console's chart grid).
+  expect(REMOVED).toEqual(expect.arrayContaining(['--gsc-grid']));
   for (const name of REMOVED) {
     expect(LIGHT.has(name), `${name} (light)`).toBe(false);
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
@@ -479,12 +485,18 @@ test('text-colour-rules-resolve', () => {
   expect(resolveOnElement(sample, ['.a', ".a[data-k='v']"], 'color', 'light')).toBe('var(--two)');
   expect(resolveOnElement(sample, ['.a'], 'color', 'dark')).toBe('var(--three)');
   expect(specificity('.update-button.update-primary:hover:not(:disabled)')).toBe(4000);
+  // A cascade of two stylesheets (`loadsBefore`): the later one's rule wins a tie, so a feature sheet's
+  // one-class rule loses to a shared control's in styles.css, and two classes win whatever the order.
+  const feature = '.x-danger { color: var(--danger-ink); } .b.x-danger { color: var(--danger-ink); }';
+  const shared = '.b { color: var(--text); }';
+  expect(resolveOnElement(`${feature}\n${shared}`, ['.b', '.x-danger'], 'color', 'light')).toBe('var(--text)');
+  expect(resolveOnElement(`${feature}\n${shared}`, ['.b', '.x-danger', '.b.x-danger'], 'color', 'light')).toBe('var(--danger-ink)');
 
   const pairs: readonly { fg: string; bg: string }[] = CONTRAST_PAIRS;
   const rules: readonly TextColourRule[] = TEXT_COLOUR_RULES;
   for (const rule of rules) {
     for (const theme of THEME_NAMES) {
-      const css = read(rule.stylesheet);
+      const css = cascade(rule);
       expect(resolveOnElement(css, rule.element, 'color', theme), `${rule.element.at(-1)} (${theme})`).toBe(`var(${rule.color})`);
       if (rule.background !== undefined) {
         expect(resolveOnElement(css, rule.element, 'background', theme), `${rule.element.at(-1)} background (${theme})`).toBe(`var(${rule.background})`);
@@ -519,7 +531,7 @@ test('focus-rings-outlast-hover-and-busy', () => {
   const rules: readonly FocusRingRule[] = FOCUS_RING_RULES;
   expect(rules.length).toBeGreaterThan(0);
   for (const rule of rules) {
-    const css = read(rule.stylesheet);
+    const css = cascade(rule);
     // Every selector named is one of the stylesheet's (a typo would quietly drop out of the cascade).
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of rule.element) expect(selectors.has(selector), `${rule.stylesheet} has ${selector}`).toBe(true);
@@ -551,7 +563,7 @@ test('busy-buttons-show-under-forced-colours', () => {
 
   const entries: readonly ForcedColoursBusy[] = FORCED_COLOURS_BUSY;
   for (const entry of entries) {
-    const css = read(entry.stylesheet);
+    const css = cascade(entry);
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
     for (const theme of THEME_NAMES) {
@@ -565,7 +577,7 @@ test('busy-buttons-show-under-forced-colours', () => {
 test('pressed-toggles-show-under-forced-colours', () => {
   const entries: readonly ForcedColoursBusy[] = FORCED_COLOURS_PRESSED;
   for (const entry of entries) {
-    const css = read(entry.stylesheet);
+    const css = cascade(entry);
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
     for (const theme of THEME_NAMES) {
@@ -583,7 +595,7 @@ test('status-marks-keep-their-colours-under-forced-colours', () => {
   const entries: readonly ForcedColoursBusy[] = FORCED_COLOURS_KEPT;
   expect(entries.length).toBeGreaterThan(0);
   for (const entry of entries) {
-    const css = read(entry.stylesheet);
+    const css = cascade(entry);
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
     for (const theme of THEME_NAMES) {
@@ -698,11 +710,24 @@ function edgeProblems(css: string, element: readonly string[], edge: string): st
 }
 
 test('disabled-controls-dim-their-text', () => {
-  for (const entry of DISABLED_CONTROLS) {
-    const css = read(entry.stylesheet);
+  const entries: readonly DisabledControl[] = DISABLED_CONTROLS;
+  for (const entry of entries) {
+    const css = cascade(entry);
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
-    for (const theme of THEME_NAMES) expect(resolveOnElement(css, entry.element, 'color', theme), `${entry.why} (${theme})`).toBe(DISABLED_INK);
+    for (const theme of THEME_NAMES) {
+      expect(resolveOnElement(css, entry.element, 'color', theme), `${entry.why} (${theme})`).toBe(DISABLED_INK);
+      // ... by its colour alone, never faded as well (only "no opacity" is swallowed, as the focus-ring check does).
+      const faded = (() => {
+        try {
+          return resolveOnElement(css, entry.element, 'opacity', theme);
+        } catch (error) {
+          if (error instanceof Error && error.message.endsWith(`: no opacity (${theme})`)) return '1';
+          throw error;
+        }
+      })();
+      expect(faded, `${entry.why}: opacity (${theme})`).toBe('1');
+    }
   }
 });
 
@@ -718,7 +743,7 @@ test('pressed-controls-draw-an-edge', () => {
   const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
   const entries: readonly PressedEdge[] = PRESSED_EDGES;
   for (const entry of entries) {
-    const css = read(entry.stylesheet);
+    const css = cascade(entry);
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
     expect(edgeProblems(css, entry.element, entry.edge), entry.why).toEqual([]);
@@ -746,6 +771,25 @@ test('tokens-load-before-every-other-stylesheet', () => {
   // First stylesheet imported, and before `App`, whose components import the feature stylesheets.
   expect(imports.filter((path) => path.endsWith('.css'))[0]).toBe(`./${TOKENS_STYLESHEET}`);
   expect(imports.indexOf(`./${TOKENS_STYLESHEET}`)).toBeLessThan(imports.indexOf('./App'));
+  // `loadsBefore` is the real order: styles.css comes after `App`, and the feature stylesheets an entry
+  // reads before it are not imported here (their components import them, inside `App`).
+  expect(imports.indexOf('./styles.css')).toBeGreaterThan(imports.indexOf('./App'));
+  const entries: readonly ({ readonly stylesheet: string } & LoadsBefore)[] = [
+    ...TEXT_COLOUR_RULES,
+    ...FOCUS_RING_RULES,
+    ...FORCED_COLOURS_BUSY,
+    ...FORCED_COLOURS_PRESSED,
+    ...FORCED_COLOURS_KEPT,
+    ...DISABLED_CONTROLS,
+    ...PRESSED_EDGES,
+  ];
+  for (const entry of entries) {
+    for (const later of entry.loadsBefore ?? []) {
+      expect(later, `${entry.stylesheet} loads before ${later}`).toBe('styles.css');
+      expect(imports, `main.tsx imports ${entry.stylesheet}`).not.toContain(`./${entry.stylesheet}`);
+      expect(entry.stylesheet).not.toBe('styles.css');
+    }
+  }
 });
 
 /** Keywords a colour-bearing value on a surface may hold besides `var()` of a Signal token or alias. */
