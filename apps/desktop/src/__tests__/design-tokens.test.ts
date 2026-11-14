@@ -491,6 +491,19 @@ test('text-colour-rules-resolve', () => {
       if (rule.background !== undefined) {
         expect(resolveOnElement(css, rule.element, 'background', theme), `${rule.element.at(-1)} background (${theme})`).toBe(`var(${rule.background})`);
       }
+      // A disabled button shown by its colours is never faded as well (or instead).
+      if (rule.unfaded) {
+        // Only "no opacity" is swallowed, as the focus-ring check does.
+        const faded = (() => {
+          try {
+            return resolveOnElement(css, rule.element, 'opacity', theme);
+          } catch (error) {
+            if (error instanceof Error && error.message.endsWith(`: no opacity (${theme})`)) return '1';
+            throw error;
+          }
+        })();
+        expect(faded, `${rule.element.at(-1)}: opacity (${theme})`).toBe('1');
+      }
     }
     expect(
       pairs.some((pair) => pair.fg === rule.color && (rule.background === undefined || pair.bg === rule.background)),
