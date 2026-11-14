@@ -800,8 +800,9 @@ const TEXT_DECORATION_WORDS = new Set(['underline', 'overline', 'line-through', 
 const SYSTEM_COLOURS = new Set<string>(FORCED_COLOURS_SYSTEM_COLOURS);
 /** A literal colour in any property: hex or a colour function. */
 const COLOUR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
-/** Properties whose value can carry a colour (these, and custom properties, get the colour allowlist). */
-const COLOUR_PROPERTY = /^(?:color|background(?:-color|-image)?|border(?:-[a-z-]+)?|outline(?:-color)?|box-shadow|text-shadow|fill|stroke|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?)$/;
+/** Properties whose value can carry a colour (these, and custom properties, get the colour allowlist).
+ * Not a table's `border-collapse` or `border-spacing`: keywords and lengths, never a colour. */
+const COLOUR_PROPERTY = /^(?:color|background(?:-color|-image)?|border(?:-(?!collapse$|spacing$)[a-z-]+)?|outline(?:-color)?|box-shadow|text-shadow|fill|stroke|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?)$/;
 
 /**
  * Every `forced-color-adjust` declaration among `declarations` (of `stylesheet`) whose selector
@@ -968,6 +969,9 @@ test('surface-rules-read-signal-tokens', () => {
   // A component-scoped property (the values step's --tone-ink pattern), and text-decoration's keywords.
   expect(problemsIn('.palette { --tone-ink: var(--ok-ink); color: var(--tone-ink); }')).toEqual([]);
   expect(problemsIn('.palette-hit { text-decoration: underline; }')).toEqual([]);
+  // A table's border-collapse and border-spacing hold no colour; a border colour still does.
+  expect(problemsIn('.palette-table { border-collapse: separate; border-spacing: 0 2px; }')).toEqual([]);
+  expect(problemsIn('.palette-table { border-bottom: 1px solid red; }')).not.toEqual([]);
   // A focus ring forced colours still draw (they drop box-shadows): a transparent outline beside it.
   expect(problemsIn('.palette-x:focus-visible { outline: 2px solid transparent; outline-offset: 2px; box-shadow: var(--focus-ring); }')).toEqual([]);
   // A busy state shown only by colour stays visible under forced colours: a system colour, in that block only.

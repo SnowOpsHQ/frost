@@ -1,36 +1,39 @@
 /* The Search Console panel (Phase 4 Task 10, Phase 9 Task 3; specs/gsc-panel.feature.md). Bundled and served from
-   app:// (CSP style-src 'self'): no inline styles; the chart is SVG attributes plus these classes. */
+   app:// (CSP style-src 'self'): no inline styles; the chart is SVG attributes plus these classes.
+   Signal (specs/design-tokens.feature.md, The panel stylesheets): cards --space-4 apart, text from the
+   --text-* tokens. This sheet loads before styles.css, so a rule that changes a shared control
+   (.seo-chip-button, .seo-select) names its class too and outweighs it whatever the order. */
 
 .gsc {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  animation: panel-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  gap: var(--space-4);
+  font: var(--text-body);
+  animation: panel-in var(--dur-base) var(--ease-out) both;
 }
 
 .gsc-controls {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .gsc-property {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
   margin: 0;
-  padding: 0 2px;
+  padding: 0 var(--space-1);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .gsc-property-label {
   flex: none;
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -44,14 +47,14 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .gsc-range-row,
 .gsc-filter-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   width: 100%;
   min-width: 0;
 }
@@ -61,10 +64,10 @@
   min-width: 0;
 }
 
+/* The panels' select (--h-control at --r-sm), at --text-small so "More ranges…" fits beside the days. */
 .gsc .gsc-select {
   min-width: 0;
-  height: 30px;
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .gsc-range-row .gsc-select {
@@ -76,8 +79,10 @@
   flex: 1 1 0;
 }
 
+/* A filter in force (a month preset, a country, a device): an --accent edge on its transparent border and
+   --accent text; Highlight under forced colours. Its value says which. */
 .gsc .gsc-select[data-active='true'] {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-field));
+  border-color: var(--accent);
   color: var(--accent);
 }
 
@@ -87,58 +92,64 @@
   font-variant-numeric: tabular-nums;
 }
 
-.gsc-dates[data-active='true'],
-.gsc-dates[aria-expanded='true'] {
+/* The custom dates in force, or its calendar open: a pressed chip (PRESSED_EDGES). Two classes, so the
+   chip's own hover (--text, in styles.css) never wins. */
+.seo-chip-button.gsc-dates[data-active='true'],
+.seo-chip-button.gsc-dates[aria-expanded='true'] {
   border-color: var(--accent);
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
 .gsc-cal-pop {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + var(--space-2));
   right: 0;
   z-index: 20;
 }
 
+/* The calendar: a popover card over the panel (--e-overlay: "menus and dialogs in the chrome"). */
 .gsc-cal {
   width: 256px;
-  padding: 10px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 12px;
-  background: var(--seo-card);
-  box-shadow: 0 12px 32px rgb(16 24 40 / 0.18), var(--shadow-card);
-  animation: panel-in 160ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  padding: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-overlay);
+  animation: panel-in var(--dur-base) var(--ease-out) both;
 }
 
 .gsc-cal-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
 }
 
 .gsc-cal-month {
   margin: 0;
-  font-size: 12.5px;
+  font: var(--text-body);
   font-weight: 600;
 }
 
+/* Previous and next month: --h-chip circles in --text-muted; at the end of the range, --text-faint at half
+   strength (DISABLED_INK, as the toolbar's disabled tool), where they faded. */
 .gsc-cal-nav {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: var(--h-chip);
+  height: var(--h-chip);
   padding: 0;
-  border: 0;
-  border-radius: 7px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--text-muted);
 }
 
 .gsc-cal-nav .icon {
-  width: 15px;
-  height: 15px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .gsc-cal-previous .icon {
@@ -149,55 +160,54 @@
   transform: rotate(-90deg);
 }
 
-.gsc-cal-nav:hover:not(:disabled) {
+.gsc-cal-nav:hover:where(:not(:disabled)) {
   background: var(--bg-hover);
   color: var(--text);
 }
 
 .gsc-cal-nav:disabled {
-  opacity: 0.35;
+  color: color-mix(in srgb, var(--text-faint) 50%, transparent);
+  cursor: default;
 }
 
 .gsc-cal-grid {
   width: 100%;
   border-collapse: separate;
-  border-spacing: 0 2px;
+  border-spacing: 0 calc(var(--space-1) / 2);
   table-layout: fixed;
-  font-size: 11.5px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
 .gsc-cal-weekday {
-  padding-bottom: 4px;
-  color: var(--text-faint);
-  font-size: 10px;
-  font-weight: 600;
+  padding-bottom: var(--space-1);
+  color: var(--text-muted);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
   text-align: center;
 }
 
 .gsc-cal-day,
 .gsc-cal-blank {
-  height: 30px;
+  height: var(--h-chip);
   padding: 0;
   text-align: center;
 }
 
+/* A day: --h-chip at --r-sm, --bg-hover hovered. Its transparent border is the edge forced colours draw
+   around a chosen day. */
 .gsc-cal-day {
-  border-radius: 7px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
   color: var(--text);
   cursor: pointer;
 }
 
-.gsc-cal-day:hover:not([aria-disabled='true']) {
+.gsc-cal-day:hover:where(:not([aria-disabled='true'], [aria-selected='true'])) {
   background: var(--bg-hover);
 }
 
-.gsc-cal-day:focus-visible,
-.gsc-cal-nav:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
+/* The chosen range: an --accent-soft band in --accent, its first and last day filled --accent. */
 .gsc-cal-day[aria-selected='true'] {
   border-radius: 0;
   background: var(--accent-soft);
@@ -205,15 +215,15 @@
 }
 
 .gsc-cal-day[data-edge='true'] {
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: var(--accent);
   color: var(--on-accent);
   font-weight: 600;
 }
 
+/* A day Search Console has no data for: not focusable, --text-faint at half strength (it faded). */
 .gsc-cal-day[aria-disabled='true'] {
-  color: var(--text-faint);
-  opacity: 0.45;
+  color: color-mix(in srgb, var(--text-faint) 50%, transparent);
   cursor: default;
 }
 
@@ -221,27 +231,27 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .gsc-cal-status {
   margin: 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font: var(--text-small);
 }
 
-/* Notices: one card per state (not connected, no property, errors). */
+/* Notices: one card per state (not connected, no property, errors), the sidebar hint's art and title. */
 .gsc-notice {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 20px 16px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 12px;
-  background: var(--seo-card);
-  box-shadow: var(--shadow-card);
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-5);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
   text-align: center;
 }
 
@@ -250,10 +260,9 @@
   place-items: center;
   width: 48px;
   height: 48px;
-  margin-bottom: 4px;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--seo-bg));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, var(--seo-bg));
+  margin-bottom: var(--space-1);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
@@ -262,97 +271,105 @@
   height: 26px;
 }
 
+/* An error (an expired sign-in, quota, the network, an invalid answer): --warn-ink on --warn-soft, as the
+   sidebar's unavailable hint. */
 .gsc-notice[data-state='auth-expired'] .gsc-notice-art,
 .gsc-notice[data-state='quota'] .gsc-notice-art,
 .gsc-notice[data-state='network'] .gsc-notice-art,
 .gsc-notice[data-state='invalid'] .gsc-notice-art {
-  background: color-mix(in srgb, var(--caution) 12%, var(--seo-bg));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--caution) 22%, var(--seo-bg));
-  color: var(--caution);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
 }
 
 .gsc-notice-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font: var(--text-heading);
 }
 
 .gsc-notice-message {
   max-width: 34ch;
   margin: 0;
   color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.45;
+  font: var(--text-body);
 }
 
 .gsc-notice-button {
-  margin-top: 6px;
+  margin-top: var(--space-2);
 }
 
 /* Totals: four tiles, each the chart's metric switch. */
 .gsc-tiles {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--space-2);
 }
 
+/* A tile is a card button; hover lays --bg-hover over it (not over the pressed one: its line would go).
+   The tile the chart shows keeps its fill and draws a 2px --accent edge: its border and a line inside it. */
 .gsc-tile {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
   min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 10px;
-  background: var(--seo-card);
-  box-shadow: var(--shadow-card);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
   color: var(--text);
   text-align: left;
   cursor: pointer;
+  transition: box-shadow var(--dur-fast) var(--ease-out);
 }
 
-.gsc-tile:hover {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--seo-card-edge));
-}
-
-.gsc-tile:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.gsc-tile:hover:where(:not([aria-pressed='true'])) {
+  box-shadow:
+    inset 0 0 0 100vmax var(--bg-hover),
+    var(--e-ring);
 }
 
 .gsc-tile[aria-pressed='true'] {
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    var(--e-ring);
+}
+
+.gsc-tile:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .gsc-tile-label {
   color: var(--text-muted);
-  font-size: 11px;
+  font: var(--text-small);
   font-weight: 500;
 }
 
 .gsc-tile-value {
-  font-size: 18px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font: var(--text-title);
   letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
 }
 
+/* "lower is better": --text-muted, since --text-faint on a hovered tile is 4.26:1 in dark. */
 .gsc-tile-hint {
-  color: var(--text-faint);
-  font-size: 10.5px;
+  color: var(--text-muted);
+  font: var(--text-small);
 }
 
-/* The chart. */
+/* The chart: a card. One series, its line and dots --accent (4.5:1 or more on the card), its grid
+   --divider, its axis labels --text-faint; the values are in the hidden table and the summary. */
 .gsc-chart {
   position: relative;
   margin: 0;
-  padding: 8px 6px 4px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 12px;
-  background: var(--seo-card);
-  box-shadow: var(--shadow-card);
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
 }
 
 .gsc-chart-svg {
@@ -363,26 +380,28 @@
 }
 
 .gsc-grid {
-  stroke: var(--gsc-grid);
+  stroke: var(--divider);
   stroke-width: 1;
 }
 
 .gsc-axis-label {
-  fill: var(--gsc-axis);
-  font-size: 9px;
+  fill: var(--text-faint);
+  font: var(--text-micro);
+  font-weight: 400;
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
 }
 
 .gsc-line {
   fill: none;
-  stroke: var(--gsc-line);
+  stroke: var(--accent);
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .gsc-dot {
-  fill: var(--gsc-line);
+  fill: var(--accent);
 }
 
 /* Top queries. */
@@ -390,14 +409,14 @@
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .gsc-queries-table th {
-  padding: 0 0 6px;
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 600;
+  padding: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
   text-align: left;
 }
 
@@ -410,14 +429,14 @@
 }
 
 .gsc-queries-table td {
-  padding: 4px 0;
-  border-top: 1px solid var(--seo-card-edge);
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--divider);
   font-variant-numeric: tabular-nums;
 }
 
 .gsc-query {
   overflow: hidden;
-  padding-right: 6px;
+  padding-right: var(--space-2);
 }
 
 .gsc-query .seo-page-text {
@@ -433,49 +452,78 @@
 .gsc-freshness {
   margin: 0;
   color: var(--text-faint);
-  font-size: 11px;
-  line-height: 1.4;
+  font: var(--text-small);
 }
 
 .gsc-freshness {
-  padding: 0 2px;
+  padding: 0 var(--space-1);
 }
 
 /* Loading. */
 .gsc-loading {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
 .gsc .gsc-skeleton-tile {
   height: 56px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 
 .gsc .gsc-skeleton-chart {
   height: 150px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
 }
 
 .gsc-data {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  transition: opacity 160ms ease;
+  gap: var(--space-4);
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 
-/* Another scope or range is being read: the last data stays, dimmed. */
-.gsc[data-pending='true'] .gsc-data {
+/* Another scope or range is being read: the last data stays, dimmed, but not while focus is inside it
+   (a fade would dim a focused tile's ring, as a busy switch in Settings). */
+.gsc[data-pending='true'] .gsc-data:not(:focus-within) {
   opacity: 0.55;
 }
 
 .gsc-through {
   grid-column: 1 / -1;
   margin: 0;
-  padding: 0 2px;
+  padding: 0 var(--space-1);
   color: var(--text-muted);
-  font-size: 11px;
+  font: var(--text-small);
+}
+
+/* Focus: the ring, after every hover and pressed rule. A day is raised above its neighbours so its
+   ring is whole. */
+.gsc-cal-nav:focus-visible,
+.gsc-cal-day:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* Forced colours replace the colours that say chosen (Highlight) and disabled (GrayText):
+   FORCED_COLOURS_PRESSED, FORCED_COLOURS_BUSY. */
+@media (forced-colors: active) {
+  .gsc-tile[aria-pressed='true'],
+  .seo-chip-button.gsc-dates[data-active='true'],
+  .seo-chip-button.gsc-dates[aria-expanded='true'],
+  .gsc .gsc-select[data-active='true'],
+  .gsc-cal-day[aria-selected='true'] {
+    border-color: Highlight;
+  }
+
+  .gsc-cal-nav:disabled,
+  .gsc-cal-day[aria-disabled='true'] {
+    border-color: GrayText;
+    color: GrayText;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

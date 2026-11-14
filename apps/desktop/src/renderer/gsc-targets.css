@@ -2,28 +2,30 @@
    specs/seo-content.feature.md, Search Console targets). Bundled and served from app:// (CSP style-src
    'self'): no inline styles. Facts only: nothing here is toned or coloured by rank, and this page is
    marked with words ("This page"), never a colour. Text from Google is isolated (`unicode-bidi:
-   isolate`, `.seo-page-text`) so a bidi override in it cannot reorder frost's own labels. */
+   isolate`, `.seo-page-text`) so a bidi override in it cannot reorder frost's own labels. Signal
+   (specs/design-tokens.feature.md, The panel stylesheets): rows ruled --divider, --text-small; "Use as
+   target" is the panels' chip as it is, its disabled colour unfaded. */
 
 .gsc-targets {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--seo-card-edge);
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
 }
 
 .gsc-targets-part {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .gsc-targets-title {
   margin: 0;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-weight: 600;
 }
 
@@ -38,11 +40,11 @@
 .gsc-targets-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 3px 0;
-  border-top: 1px solid var(--seo-card-edge);
-  font-size: 12px;
+  gap: var(--space-3);
+  min-height: var(--h-control);
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--divider);
+  font: var(--text-small);
 }
 
 .gsc-targets-row:first-child {
@@ -65,22 +67,16 @@
 .gsc-targets-metric {
   flex: none;
   color: var(--text-muted);
-  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 
 .gsc-targets-current {
   flex: none;
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 .gsc-targets-use {
   flex: none;
-  height: 24px;
-}
-
-.gsc-targets-use:disabled {
-  opacity: 0.5;
 }
