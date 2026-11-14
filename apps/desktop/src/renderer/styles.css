@@ -9944,6 +9944,10 @@ input {
   min-width: 0;
 }
 
+.retention-modes input {
+  accent-color: var(--accent);
+}
+
 .retention-legend {
   margin-bottom: calc(var(--space-1) / 2);
   padding: 0;
