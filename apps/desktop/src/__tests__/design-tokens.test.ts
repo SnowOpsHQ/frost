@@ -1,4 +1,4 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, DISABLED_CONTROLS)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,7 @@ import {
   KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
   PRESSED_EDGES,
+  STATE_EDGES,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
   SIGNAL_SURFACES,
   SIGNAL_TOKENS,
@@ -34,6 +35,7 @@ import {
   type HoverSkipsPressed,
   type LegacyTokenMigration,
   type PressedEdge,
+  type StateEdge,
   type SignalSurface,
   type TextColourRule,
   type SignalToken,
@@ -261,6 +263,8 @@ test('removed-legacy-tokens-are-gone', () => {
   expect(REMOVED).toEqual(expect.arrayContaining(['--settings-switch-off']));
   // And the SEO sidebar's frame (its skeleton's names; the panels still read the other --seo-* names).
   expect(REMOVED).toEqual(expect.arrayContaining(['--seo-skeleton', '--seo-skeleton-shine']));
+  // And Content's (its result preview's retired --serp-* names; --serp-card and --serp-text are aliases).
+  expect(REMOVED).toEqual(expect.arrayContaining(['--serp-title', '--serp-path', '--serp-glyph', '--serp-glyph-mark']));
   for (const name of REMOVED) {
     expect(LIGHT.has(name), `${name} (light)`).toBe(false);
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
@@ -443,6 +447,25 @@ function specificity(raw: string): number {
   return classes * 1000 + types;
 }
 
+/** `css`'s declarations by each selector of their rule's list (normalized), with their source order and
+ * the at-rules around the rule: built once per stylesheet text, for `resolveOnElement`. */
+const SELECTOR_INDEX = new Map<string, Map<string, { order: number; outer: string[]; property: string; value: string }[]>>();
+function selectorIndex(css: string): Map<string, { order: number; outer: string[]; property: string; value: string }[]> {
+  let index = SELECTOR_INDEX.get(css);
+  if (index === undefined) {
+    const built = new Map<string, { order: number; outer: string[]; property: string; value: string }[]>();
+    parse(css).declarations.forEach((d, order) => {
+      const entry = { order, outer: d.context.slice(0, -1), property: d.property, value: d.value };
+      for (const selector of new Set(splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim()))) {
+        built.set(selector, [...(built.get(selector) ?? []), entry]);
+      }
+    });
+    index = built;
+    SELECTOR_INDEX.set(css, index);
+  }
+  return index;
+}
+
 /**
  * The value `property` resolves to for an element matching exactly the selectors `element` in `css`:
  * rules whose selector list holds one of them (top level, or in the dark media block for dark),
@@ -451,17 +474,20 @@ function specificity(raw: string): number {
  */
 function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark', options: { readonly forced?: boolean } = {}): string {
   const wanted = new Set(element.map((s) => s.replace(/\s+/g, ' ').trim()));
-  const matched: { order: number; spec: number; property: string; value: string }[] = [];
-  parse(css).declarations.forEach((d, order) => {
-    const outer = d.context.slice(0, -1);
-    // Top level; the dark block in dark; and with `forced`, the forced-colours block (forced colours on).
-    const applies = (level: string) => (theme === 'dark' && level === DARK) || (options.forced === true && FORCED_COLOURS_MEDIA.test(level));
-    if (!(outer.length === 0 || (outer.length === 1 && applies(outer[0]!)))) return;
-    const selectors = splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim());
-    const hits = selectors.filter((s) => wanted.has(s));
-    if (hits.length === 0) return;
-    matched.push({ order, spec: Math.max(...hits.map(specificity)), property: d.property, value: d.value });
-  });
+  // Top level; the dark block in dark; and with `forced`, the forced-colours block (forced colours on).
+  const applies = (level: string) => (theme === 'dark' && level === DARK) || (options.forced === true && FORCED_COLOURS_MEDIA.test(level));
+  // Each declaration once, at the highest specificity among the wanted selectors of its list.
+  const byOrder = new Map<number, { order: number; spec: number; property: string; value: string }>();
+  const index = selectorIndex(css);
+  for (const selector of wanted) {
+    for (const d of index.get(selector) ?? []) {
+      if (!(d.outer.length === 0 || (d.outer.length === 1 && applies(d.outer[0]!)))) continue;
+      const spec = specificity(selector);
+      const seen = byOrder.get(d.order);
+      if (seen === undefined || spec > seen.spec) byOrder.set(d.order, { order: d.order, spec, property: d.property, value: d.value });
+    }
+  }
+  const matched = [...byOrder.values()];
   matched.sort((a, b) => a.spec - b.spec || a.order - b.order);
   const own = new Map<string, string>();
   for (const m of matched) {
@@ -756,6 +782,40 @@ test('pressed-controls-draw-an-edge', () => {
   }
 });
 
+test('state-edges-draw-their-shape', () => {
+  // The resolver reads the style and width from the shorthand and the longhands alike.
+  const term = ['.t', ".t[data-on='true']"];
+  const sample = ".t { border: 1px dashed var(--faint); } .t[data-on='true'] { border-style: solid; border-color: var(--ok); }";
+  expect(resolveOnElement(sample, term, 'border-style', 'light')).toBe('solid');
+  expect(resolveOnElement(sample, ['.t'], 'border-style', 'light')).toBe('dashed');
+  expect(resolveOnElement(sample, term, 'border-width', 'dark')).toBe('1px');
+  // A forced-colours rule that changes the style is read in forced mode.
+  const forcedSample = `${sample} @media (forced-colors: active) { .t { border-style: solid; } }`;
+  expect(resolveOnElement(forcedSample, ['.t'], 'border-style', 'light', { forced: true })).toBe('solid');
+
+  const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
+  const entries: readonly StateEdge[] = STATE_EDGES;
+  for (const entry of entries) {
+    const css = read(entry.stylesheet);
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
+    expect.soft(edgeProblems(css, entry.element, entry.edge), entry.why).toEqual([]);
+    for (const theme of THEME_NAMES) {
+      expect.soft(resolveOnElement(css, entry.element, 'border-style', theme), `${entry.why}: style (${theme})`).toBe(entry.style);
+      expect.soft(resolveOnElement(css, entry.element, 'border-width', theme), `${entry.why}: width (${theme})`).toBe(entry.width);
+      // ... and under forced colours too (their rules read), where the style is all that says it.
+      expect.soft(resolveOnElement(css, entry.element, 'border-style', theme, { forced: true }), `${entry.why}: style under forced colours (${theme})`).toBe(entry.style);
+      expect.soft(resolveOnElement(css, entry.element, 'border-width', theme, { forced: true }), `${entry.why}: width under forced colours (${theme})`).toBe(entry.width);
+    }
+    for (const fill of entry.fills) {
+      expect.soft(
+        pairs.some((p) => p.fg === entry.edge && p.bg === fill.bg && p.over === fill.over && p.min >= 3),
+        `${entry.edge} on ${fill.bg}${fill.over ? ` over ${fill.over}` : ''} is a CONTRAST_PAIRS pair at 3:1 or more`,
+      ).toBe(true);
+    }
+  }
+});
+
 test('no-other-stylesheet-declares-root-tokens', () => {
   for (const name of STYLESHEETS) {
     if (name === TOKENS_STYLESHEET) continue;
@@ -1020,23 +1080,27 @@ test('surface-rules-read-signal-tokens', () => {
 test('projects-sheet-stacks-by-its-own-width', () => {
   const narrow = PROJECTS_SHEET_NARROW;
   const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
-  const declarations = parse(read(narrow.stylesheet)).declarations;
+  // Rules looked up by selector (the index the cascade checks use).
+  const index = selectorIndex(read(narrow.stylesheet));
   // The sheet is the named container.
-  expect(declarations.some((d) => collapse(d.context.at(-1) ?? '') === narrow.sheet && d.property === 'container' && collapse(d.value) === narrow.container)).toBe(true);
+  expect((index.get(narrow.sheet) ?? []).some((d) => d.outer.length === 0 && d.property === 'container' && collapse(d.value) === narrow.container)).toBe(true);
   // The stack rule sits in that container's query (never a viewport @media).
-  const stack = declarations.filter((d) => collapse(d.context.at(-1) ?? '') === narrow.stack.selector && d.property === narrow.stack.property && d.value === narrow.stack.value);
+  const stack = (index.get(narrow.stack.selector) ?? []).filter((d) => d.property === narrow.stack.property && d.value === narrow.stack.value);
   expect(stack.length, `${narrow.stack.selector} { ${narrow.stack.property}: ${narrow.stack.value} }`).toBeGreaterThan(0);
-  for (const d of stack) expect(d.context.slice(0, -1).map(collapse)).toEqual([narrow.query]);
+  for (const d of stack) expect(d.outer.map(collapse)).toEqual([narrow.query]);
   // Every container query of a Projects rule names the sheet's container.
   for (const name of narrow.stylesheets) {
-    for (const d of parse(read(name)).declarations) {
-      const query = d.context.find((level) => level.startsWith('@container'));
-      if (query !== undefined && /\.projects?-/.test(d.context.at(-1) ?? '')) expect(collapse(query), `${name}: ${d.context.join(' > ')}`).toMatch(/^@container projects \(/);
+    for (const [selector, entries] of selectorIndex(read(name))) {
+      if (!/\.projects?-/.test(selector)) continue;
+      for (const d of entries) {
+        const query = d.outer.find((level) => level.startsWith('@container'));
+        if (query !== undefined) expect(collapse(query), `${name}: ${selector}`).toMatch(/^@container projects \(/);
+      }
     }
   }
   // Bulk add's fieldsets shrink.
-  const shrink = parse(read(narrow.shrink.stylesheet)).declarations.filter((d) => collapse(d.context.at(-1) ?? '') === narrow.shrink.selector && d.context.length === 1);
-  expect(shrink.filter((d) => d.property === narrow.shrink.property).at(-1)?.value).toBe(narrow.shrink.value);
+  const shrink = (selectorIndex(read(narrow.shrink.stylesheet)).get(narrow.shrink.selector) ?? []).filter((d) => d.outer.length === 0 && d.property === narrow.shrink.property);
+  expect(shrink.at(-1)?.value).toBe(narrow.shrink.value);
 });
 
 test('hex-colours-do-not-grow', () => {
