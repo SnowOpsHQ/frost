@@ -26,7 +26,8 @@ export const actions = {
   /** Resolves whether a navigation started (`false` on a no-op or an IPC failure). */
   navigate: (input: string) => ipc.browser.navigate.mutate({ input }).catch(() => false),
   newTab: () => ipc.browser.newTab.mutate().catch(ignore),
-  closeTab: (tabId: number) => ipc.browser.closeTab.mutate({ tabId }).catch(ignore),
+  /** `keepFocus`: the tablist's Delete, which keeps focus on the neighbour tab (`tabs.feature.md`). */
+  closeTab: (tabId: number, keepFocus = false) => ipc.browser.closeTab.mutate(keepFocus ? { tabId, keepFocus: true } : { tabId }).catch(ignore),
   activateTab: (tabId: number) => ipc.browser.activateTab.mutate({ tabId }).catch(ignore),
   back: () => ipc.browser.back.mutate().catch(ignore),
   forward: () => ipc.browser.forward.mutate().catch(ignore),

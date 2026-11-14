@@ -31,9 +31,10 @@ export function AddressBar({ tab, focusSeq }: { readonly tab: TabState | undefin
     if (!loading) dispatch({ type: 'load-ended' });
   }, [loading]);
 
-  // An empty tab puts the caret in the address bar.
+  // An empty tab puts the caret in the address bar, unless keyboard focus is on a tab: the tablist's
+  // Delete keeps it on the neighbour tab (`tabs.feature.md`), even when that tab is empty.
   useEffect(() => {
-    if (empty && tabId !== undefined) focusAll();
+    if (empty && tabId !== undefined && document.activeElement?.getAttribute('role') !== 'tab') focusAll();
   }, [empty, tabId]);
   // Main asked for the address bar (new tab, Cmd/Ctrl+L, switching to an empty tab).
   useSeqChange(focusSeq, focusAll);

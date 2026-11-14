@@ -5,6 +5,7 @@ import {
   NavigateInputSchema,
   OpenBackgroundTabInputSchema,
   PageBoundsSchema,
+  CloseTabInputSchema,
   TabIdInputSchema,
   WATCH_TIMEOUT_MS,
   WatchInputSchema,
@@ -108,8 +109,8 @@ const browserRouter = router({
   closeTab: publicProcedure
     .use(enforceSender)
     .use(requireBrowser)
-    .input(TabIdInputSchema)
-    .mutation(({ ctx, input }) => ctx.browser.closeTab(input.tabId) === true),
+    .input(CloseTabInputSchema)
+    .mutation(({ ctx, input }) => ctx.browser.closeTab(input.tabId, input.keepFocus === true) === true),
   activateTab: publicProcedure
     .use(enforceSender)
     .use(requireBrowser)

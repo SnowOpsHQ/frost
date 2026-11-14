@@ -86,19 +86,22 @@ input {
    and --space-4 in from the window's edges. It never wraps, and it clips rather than scrolls (focus
    must never scroll Back off the edge). The tools never shrink. The tablist gives way first: its
    tabs shrink to --tab-min, then it scrolls, while the address bar keeps --address-basis; only once
-   the tablist is down to one whole tab (a narrow window) does the address bar give way, to
-   --address-min. The window's minimum content width (CHROME_MIN_CONTENT_WIDTH_PX) is exactly the
-   row with one tab and that minimum. The loading line runs along its foot. */
+   the tablist is down to one whole tab (a narrow window) does the address bar give way: to 240px at
+   the window's minimum (CHROME_MIN_CONTENT_WIDTH_PX, exactly the row with one tab and that width),
+   and below it (a tiling window manager ignores the minimum) on toward nothing, before any tool. It
+   measures its own width (an inline-size container), not the window's. The loading line runs along
+   its foot. */
 .chrome-row {
-  /* TAB_MIN_WIDTH_PX, ADDRESS_BASIS_PX and ADDRESS_MIN_WIDTH_PX (specs/tabs.spec.ts). */
+  /* TAB_MIN_WIDTH_PX and ADDRESS_BASIS_PX (specs/tabs.spec.ts). */
   --tab-min: 84px;
   --address-basis: 360px;
-  --address-min: 240px;
   /* One whole tab with its ring room: the least the tablist shows. */
   --one-tab: calc(var(--tab-min) + 2 * var(--space-1));
-  /* The room for the tablist and the address bar: the window less the row's padding, its six tools
-     (Back, Forward, Reload, New tab and the two toggles) and its seven gaps. */
-  --row-free: calc(100vw - 2 * var(--space-4) - 6 * var(--h-control) - 7 * var(--space-1));
+  /* The room for the tablist and the address bar: the row's content width less its six tools (Back,
+     Forward, Reload, New tab and the two toggles) and its seven gaps (CHROME_ROW). Read where it is
+     used, inside the row, so 100cqw is the row's own width. */
+  --row-free: calc(100cqw - 6 * var(--h-control) - 7 * var(--space-1));
+  container-type: inline-size;
   position: relative;
   display: flex;
   align-items: center;
@@ -404,13 +407,13 @@ input {
 /* An --h-field pill on --bg-surface with --e-raised, the tablist's next sibling; the transparent border
    is the edge forced colours draw (1px less padding). Focus rings the whole field. It takes the room
    the tabs leave and keeps --address-basis however many tabs are open; only the room left beside one
-   whole tab, in a narrow window, takes it under that, never under --address-min. */
+   whole tab, in a narrow window, takes it under that (240px at the window's minimum, less below it). */
 .address {
   flex: 1 1 var(--address-basis);
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-width: clamp(var(--address-min), var(--row-free) - var(--one-tab), var(--address-basis));
+  min-width: min(var(--address-basis), max(0px, var(--row-free) - var(--one-tab)));
   height: var(--h-field);
   padding: 0 calc(var(--space-4) - 1px);
   border: 1px solid transparent;

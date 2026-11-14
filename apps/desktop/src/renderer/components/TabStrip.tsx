@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
 import { AlertIcon, CloseIcon, FrostMark, GlobeIcon } from '../icons';
 import { actions } from '../ipc';
@@ -11,13 +11,12 @@ import { tablistFocusTarget } from '../tablist-keys';
 // only (strict CSP).
 
 /**
- * Focuses a tab and scrolls its whole pill (its × too) into view, with the tablist's scroll padding:
- * focus alone would leave a half-visible tab where it is, its ring cut off (`tabs.feature.md`).
+ * Scrolls a tab's whole pill (its × too) into view, with the tablist's scroll padding (the focus
+ * ring's room): focus alone would leave a half-visible tab where it is, its ring cut off
+ * (`tabs.feature.md`, A focused tab is shown whole).
  */
-function focusWhole(tab: HTMLElement | undefined): void {
-  if (!tab) return;
-  tab.focus({ preventScroll: true });
-  tab.parentElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+function showWhole(tab: Element | null | undefined): void {
+  tab?.closest('.tab')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 /**
@@ -32,8 +31,7 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
   // Phase 12 Task 10b: a location tab always shows where it browses from.
   const location = locationBadge(tab);
   useEffect(() => {
-    // The whole pill (its × too), with the tablist's scroll padding: room for the focus ring.
-    if (active) ref.current?.parentElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (active) showWhole(ref.current);
   }, [active]);
   const activate = () => void actions.activateTab(tab.id);
   const close = () => void actions.closeTab(tab.id);
@@ -62,6 +60,7 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
         aria-keyshortcuts="Delete"
         tabIndex={active ? 0 : -1}
         title={label}
+        onFocus={(event) => showWhole(event.currentTarget)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
@@ -71,8 +70,9 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
             // Keep keyboard focus in the strip: on the neighbour that remains.
             const items = [...(event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
             const index = items.indexOf(event.currentTarget);
-            focusWhole(items[index + 1] ?? items[index - 1]);
-            close();
+            (items[index + 1] ?? items[index - 1])?.focus();
+            // Main leaves focus here, on the neighbour, even when this was the active tab.
+            void actions.closeTab(tab.id, true);
           }
         }}
       >
@@ -133,8 +133,17 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
  * Tab order; Left/Right/Home/End move focus inside the tablist.
  */
 export function TabStrip({ state }: { readonly state: BrowserState | null }) {
+  const list = useRef<HTMLDivElement>(null);
+  const tabIds = state?.tabs.map((tab) => tab.id).join(' ');
+  // After the tabs change (one closed, one added), the focused tab may have slid out of view: bring
+  // its whole pill back (a Delete scrolled to the neighbour before the closed tab went).
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    if (focused?.getAttribute('role') === 'tab' && list.current?.contains(focused)) showWhole(focused);
+  }, [tabIds]);
   return (
     <div
+      ref={list}
       className="tabs"
       role="tablist"
       aria-label="Tabs"
@@ -146,7 +155,7 @@ export function TabStrip({ state }: { readonly state: BrowserState | null }) {
         const next = tablistFocusTarget(event.key, items.indexOf(target), items.length);
         if (next === null) return;
         event.preventDefault();
-        focusWhole(items[next]);
+        items[next]?.focus();
       }}
     >
       {state?.tabs.map((tab) => <Tab key={tab.id} tab={tab} active={tab.id === state.activeTabId} />)}
