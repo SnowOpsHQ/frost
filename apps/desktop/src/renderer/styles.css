@@ -1914,7 +1914,7 @@ input {
 }
 
 .seo-category[data-status='info'] .seo-category-dot {
-  border: 1.5px solid var(--accent);
+  border: 2px solid var(--accent);
   border-radius: calc(var(--r-xs) / 4);
   background: transparent;
   transform: rotate(45deg);
