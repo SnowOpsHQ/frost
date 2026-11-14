@@ -345,13 +345,16 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   it was `--caution`, `--danger`) on a `--track` circle (`--seo-track`), easing in `--dur-slow`; the
   value `--text-display` in `--text`; the eyebrow ("Health score") `--text-micro` in `--text-muted`, in
   sentence case, as on the screen (it was 10.5px uppercase `--text-faint`, and every panel's eyebrow
-  follows it); the band's label `--text-heading` in `--text`, as on the screen: the ring carries the
+  that labels a verdict or a value follows it; Page Speed's "Since the page loaded" heads its metric
+  tiles instead, so it stays a section head: `--text-caps`, upper case); the band's label `--text-heading` in `--text`, as on the screen: the ring carries the
   band's colour and the word its name (it was 19px in the band's colour, and `--ok` text is 3.30:1);
   the summary `--text-small` in `--text-muted`, a noindexed page's reasons in `--danger-ink`. The
   partial note is a `--warn-soft` notice at `--r-md` (`--caution` at 12%), its text `--text-muted`, a
   transparent border kept for forced colours. **Counts:** the screen's pills, where they were three
   bordered tiles: `--h-chip` pills on `--bg-subtle`, the severity's icon, the number at weight 600 and
-  its word in `--text-small`; a zero count is `--text-faint`, icon and all (it faded to 0.6).
+  its word in `--text-small`; a zero count is `--text-faint`, icon and all (it faded to 0.6), and
+  `GrayText`, text and edge, under forced colours, which would otherwise show it like any other
+  (`FORCED_COLOURS_BUSY`).
   **Issues:** they stay rows in the one `.seo-issues` card the frame drew, ruled by `--divider`
   (`--seo-card-edge`), where the screen draws each as its own card: that card is the frame's, and the
   other panels' issue lists share it. A row is `--r-sm`, `--bg-hover` under the pointer, its title
@@ -367,10 +370,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   by `--space-4` apart, as on the screen, the count `--text-muted`; the status mark is 8px and differs
   by shape, as the rail's dots do: a filled `--ok` disc for a pass (the screen's check glyph needs
   markup), a filled `--danger` square for an error, a `--warn` ring (a 2px border) for a warning (it was
-  a `--caution` disc), a hollow `--accent` diamond for a notice (an `--info-tone` disc; the screen draws
+  a `--caution` disc), a hollow `--accent` diamond for a notice (the 8px box with a 1.5px border, turned 45°, so its
+  hollow stays open; an `--info-tone` disc; the screen draws
   it a ring like the warning's, in another hue only). The marks keep their colours in forced colours
   (`forced-color-adjust: none`, `FORCED_COLOURS_KEPT`), where a fill would turn to the canvas and every
-  status look the same. **The audit's render profile** (above Overview) is an `--accent-soft` notice at
+  status look the same; and only these marks and the rail's dots may opt out of forced colours (a
+  surface rule setting `forced-color-adjust` must be one `FORCED_COLOURS_KEPT` names). **The audit's render profile** (above Overview) is an `--accent-soft` notice at
   `--r-md` (`--render-soft`; its `--render-edge` border is a transparent one for forced colours), its
   summary `--text-small` at weight 600. **On-Page:** the measured title and description are
   `--text-body`, their sections ruled by `--divider`; a length meter is a 6px `--r-pill` bar, its track
@@ -460,7 +465,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.a:hover:where(:not([x], :disabled))` as two classes.
 - **Scenario: busy-buttons-show-under-forced-colours** — for each `FORCED_COLOURS_BUSY` entry (a
   Settings button, a primary one and Export Diagnostics' Save, each busy and disabled; a disabled
-  toolbar tool; the permission prompt's buttons before they arm), in light and
+  toolbar tool; the permission prompt's buttons before they arm; Overview's zero-count pill), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too (a `border` shorthand counting as its colour) resolves `color` and `border-color` to `GrayText`:
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
@@ -492,7 +497,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `initial`, any named colour fail; `text-decoration` may also name its line and style keywords, and
   a rule inside `@media (forced-colors: active)` the CSS system colours, `FORCED_COLOURS_SYSTEM_COLOURS`); a
   rule whose `box-shadow` reads `--focus-ring` sets an `outline` forced colours draw (non-zero width,
-  not `none`: `outline: 2px solid transparent`); no `font-size`, `font-family` or `line-height`; `font` only `var(--text-*)`; a
+  not `none`: `outline: 2px solid transparent`); a rule setting `forced-color-adjust` has every selector
+  named by a `FORCED_COLOURS_KEPT` entry for its stylesheet (it catches `.palette-x { forced-color-adjust:
+  none; }`, and passes `.seo-rail-dot` in `styles.css`); no `font-size`, `font-family` or `line-height`; `font` only `var(--text-*)`; a
   rule whose `--text-*` token has a non-zero tracking sets exactly that `letter-spacing`, and any
   `letter-spacing` equals the tracking of the token its own rule sets; a `font-weight` is one
   `BUNDLED_FONTS` has for the family of its rule's own `--text-*` token (or for Geist when the rule

@@ -399,7 +399,7 @@ export const FORCED_COLOURS_SYSTEM_COLOURS = [
 
 /**
  * Busy or disabled controls that show it only by colour (`FOCUS_RING_RULES`: fading would dim their
- * focus ring). Forced colours replace those colours, so for each entry the cascade over its `element`
+ * focus ring), and an empty count shown dimmed (Overview's zero-count pill). Forced colours replace those colours, so for each entry the cascade over its `element`
  * selectors in `stylesheet`, with the rules inside `@media (forced-colors: active)` read too (as the
  * dark block is in dark), resolves `color` and `border-color` to `GrayText` in light and dark: a later
  * rule of the control's own (the primary button's `--accent` text) must not win over it.
@@ -428,6 +428,8 @@ export const FORCED_COLOURS_BUSY = [
   // The browser chrome: a disabled tool (Back, Forward, Reload with no page) is --text-faint at half strength, where it faded.
   { stylesheet: 'styles.css', element: ['.tool', '.tool:disabled'], why: 'a disabled toolbar tool (Back or Forward with nowhere to go)' },
   { stylesheet: 'styles.css', element: ['.prompt-button', '.prompt-button:disabled'], why: 'the permission prompt\'s Allow and Block before they arm, and once answered' },
+  // Overview: a severity with no finding is a dimmed pill (--text-faint, where it faded); forced colours mark it GrayText, text and edge.
+  { stylesheet: 'styles.css', element: ['.seo-count', ".seo-count[data-count='0']"], why: 'Overview\'s count pill for a severity with no finding ("0 errors")' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -449,7 +451,10 @@ export const FORCED_COLOURS_PRESSED = [
  * `element` selectors in `stylesheet`, with the rules inside `@media (forced-colors: active)` read too,
  * resolves `forced-color-adjust` to `none` in light and dark: the mark keeps its own colours there, as
  * the SEO rail's dots do. (The score ring and the length meters are SVG strokes and fills, which
- * Chromium's forced colours leave as they are; their state is also in words beside them.)
+ * Chromium's forced colours leave as they are; their state is also in words beside them.) It is also
+ * the only place a surface may opt out of forced colours: `surface-rules-read-signal-tokens` fails a
+ * surface rule that sets `forced-color-adjust` unless every selector of it is named here, for its
+ * stylesheet.
  */
 export const FORCED_COLOURS_KEPT = [
   { stylesheet: 'styles.css', element: ['.seo-rail-dot'], why: 'an SEO rail dot (a pass disc)' },
@@ -1009,7 +1014,8 @@ export const TEXT_COLOUR_RULES = [
     color: '--danger-ink',
     why: 'On-Page\'s "Missing" (12px, was the meter\'s --danger, 4.83:1 on a card in light): status text takes its -ink',
   },
-  { stylesheet: 'styles.css', element: ['.seo-not-indexable'], color: '--danger-ink', why: 'Overview\'s not-indexable reasons (12px, was --danger): status text takes its -ink' },
+  // The reasons are a summary line too (`.seo-score-summary.seo-not-indexable`): the summary's own colour must not win.
+  { stylesheet: 'styles.css', element: ['.seo-score-summary', '.seo-not-indexable'], color: '--danger-ink', why: 'Overview\'s not-indexable reasons (12px, was --danger): status text takes its -ink' },
 ] as const satisfies readonly TextColourRule[];
 
 /**
