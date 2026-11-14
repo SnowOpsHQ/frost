@@ -1442,7 +1442,7 @@ export const TEXT_COLOUR_RULES = [
     color: '--warn-ink',
     why: 'the URL Inspection card\'s "Warning" group label (was --caution)',
   },
-  { stylesheet: 'ai-readiness.css', element: ['.ai-status', ".ai-status[data-status='pass']"], color: '--ok-ink', why: `AI readiness: a check that passed, its verdict and glyph (was --ok: ${'3.30:1 on a card in light'})` },
+  { stylesheet: 'ai-readiness.css', element: ['.ai-status', ".ai-status[data-status='pass']"], color: '--ok-ink', why: 'AI readiness: a check that passed, its verdict and glyph (was --ok: 3.30:1 on a card in light)' },
   { stylesheet: 'ai-readiness.css', element: ['.ai-status', ".ai-status[data-status='warn']"], color: '--warn-ink', why: 'AI readiness: a check with a warning (was --caution)' },
   { stylesheet: 'ai-readiness.css', element: ['.ai-status', ".ai-status[data-status='fail']"], color: '--danger-ink', why: 'AI readiness: a check that failed (was --danger)' },
   { stylesheet: 'ai-readiness.css', element: ['.page-type-confidence', ".page-type-confidence[data-confidence='unsure']"], color: '--warn-ink', why: 'the Page card\'s "Unsure" (was --caution)' },
