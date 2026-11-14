@@ -56,9 +56,10 @@ describe('main window', () => {
     const row = 2 * space4 + 6 * control + 7 * space1 + (TAB_MIN_WIDTH_PX + 2 * space1) + ADDRESS_MIN_WIDTH_PX;
     expect(row).toBe(CHROME_MIN_CONTENT_WIDTH_PX);
     expect(CHROME_MIN_CONTENT_WIDTH_PX).toBe(588);
-    const options = (createMainWindow() as unknown as FakeBrowserWindow).options;
-    expect(options.useContentSize).toBe(true);
-    expect(options.minWidth).toBe(CHROME_MIN_CONTENT_WIDTH_PX);
+    // The minimum counts the frame (the fake's is 16px wide): the content's minimum plus it; the height is kept.
+    const win = createMainWindow() as unknown as FakeBrowserWindow;
+    expect(win.getMinimumSize()).toEqual([CHROME_MIN_CONTENT_WIDTH_PX + 16, 0]);
+    expect(win.getMinimumSize()[0] - (win.getSize()[0] - win.getContentSize()[0])).toBe(CHROME_MIN_CONTENT_WIDTH_PX);
   });
 
   // Acceptance: specs/tabs.feature.md (The chrome row: window controls and dragging stay the OS's)

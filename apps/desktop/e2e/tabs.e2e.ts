@@ -553,8 +553,17 @@ test('tabs-give-way-before-the-address-bar', async () => {
 });
 
 test('narrowest-window-keeps-the-row-whole', async () => {
+  // The minimum counts the frame, and is the OS's to enforce on a user's resize (Electron doesn't
+  // clamp setContentSize): less the frame's width, it is the row's minimum.
+  const minContent = await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0]!;
+    return win.getMinimumSize()[0]! - (win.getSize()[0]! - win.getContentSize()[0]!);
+  });
+  // Never less; a fractional display scale may round the frame's width by a pixel.
+  expect(minContent).toBeGreaterThanOrEqual(CHROME_MIN_CONTENT_WIDTH_PX);
+  expect(minContent).toBeLessThanOrEqual(CHROME_MIN_CONTENT_WIDTH_PX + 1);
   await withContentWidth(
-    400,
+    CHROME_MIN_CONTENT_WIDTH_PX,
     async () => {
       await openTabs(4);
       const facts = await rowFacts();
@@ -568,7 +577,6 @@ test('narrowest-window-keeps-the-row-whole', async () => {
       expect(facts.address).toBeCloseTo(ADDRESS_MIN_WIDTH_PX, 0);
       for (const tool of facts.tools) expect([tool.width, tool.height], tool.id).toEqual([34, 34]);
     },
-    CHROME_MIN_CONTENT_WIDTH_PX,
   );
 });
 

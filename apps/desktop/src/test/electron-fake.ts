@@ -89,6 +89,14 @@ export class FakeBrowserWindow {
   loadFile = vi.fn(async (_path: string) => {});
   on = vi.fn();
   once = vi.fn();
+  /** The window's size is the options' (800×600 by default) around content 16px narrower and 30px lower: a frame, as on Windows. */
+  getSize = (): [number, number] => [this.options.width ?? 800, this.options.height ?? 600];
+  getContentSize = (): [number, number] => [(this.options.width ?? 800) - 16, (this.options.height ?? 600) - 30];
+  private minimumSize: [number, number] = [0, 0];
+  getMinimumSize = (): [number, number] => [...this.minimumSize];
+  setMinimumSize = vi.fn((width: number, height: number) => {
+    this.minimumSize = [width, height];
+  });
 
   constructor(options: BrowserWindowConstructorOptions = {}) {
     this.options = options;

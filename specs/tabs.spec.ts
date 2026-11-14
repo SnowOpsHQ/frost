@@ -105,7 +105,7 @@ export const ADDRESS_MIN_WIDTH_PX = 240;
 export const ADDRESS_BASIS_PX = 360;
 
 /**
- * The window's minimum content width (CSS px; `minWidth` with `useContentSize`): what the chrome row
+ * The window's minimum content width (CSS px; the window's minimum size adds its frame): what the chrome row
  * needs to fit whole, from the tokens: its padding (2 × `--space-4` = 24), six `--h-control` tools
  * (Back, Forward, Reload, New tab, the SEO and render-profile toggles: 204), seven `--space-1` gaps
  * (28), one tab with its ring room (`TAB_MIN_WIDTH_PX` + 2 × `--space-1` = 92) and

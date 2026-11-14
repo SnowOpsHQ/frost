@@ -36,11 +36,12 @@ Phase 1 Task 2. Each scenario maps to one named test.
     included) is scrolled into view whole, its × included.
   - **Never scrolled itself:** the row clips what does not fit (`overflow: clip`), so focusing a
     control cannot scroll the row and move Back off the window's edge.
-  - **Minimum window width:** the window's content is at least `CHROME_MIN_CONTENT_WIDTH_PX` wide
-    (`minWidth` with `useContentSize`, so it counts the page and not the frame): exactly the row's
+  - **Minimum window width:** the window's content is at least `CHROME_MIN_CONTENT_WIDTH_PX` wide (its
+    minimum size is that plus the frame's width, so it counts the page and not the frame): exactly the row's
     padding, its tools, one whole tab with its ring room and `ADDRESS_MIN_WIDTH_PX`, so the row
-    always fits whole and always shows a tab. frost saves no window size, so nothing restores a
-    smaller one; a request for less is clamped to it.
+    always fits whole and always shows a tab. The OS keeps a user's resize at or above it (a minimum
+    size is a window-manager constraint: Electron does not clamp a program's own `setContentSize`).
+    frost saves and restores no window size and never sizes its window below the minimum.
   - **Focus ring:** the tablist keeps `--space-1` of room around its tabs, also as scroll padding, so a
     focused tab's `--focus-ring` (4px) is drawn whole inside the scrolling tablist, at either end too.
   - **Window controls and dragging** stay the OS's: the window keeps its native frame and title bar on
@@ -219,8 +220,9 @@ Phase 1 Task 2. Each scenario maps to one named test.
 ## Window (`apps/desktop/src/main/__tests__/boot.test.ts`)
 - **Scenario: menu-bar-auto-hides-off-macos** — `createMainWindow()` sets `autoHideMenuBar: true`
   on Linux/Windows and `false` on macOS; the webPreferences are unchanged.
-- **Scenario: window-has-a-minimum-content-width** — `createMainWindow()` sets `useContentSize: true`
-  and `minWidth: CHROME_MIN_CONTENT_WIDTH_PX`, which equals, from `tokens.css`, `2 × --space-4` (the
+- **Scenario: window-has-a-minimum-content-width** — `createMainWindow()` sets the window's minimum
+  width to `CHROME_MIN_CONTENT_WIDTH_PX` plus the frame's width (its size less its content size; the
+  minimum height is kept), and `CHROME_MIN_CONTENT_WIDTH_PX` equals, from `tokens.css`, `2 × --space-4` (the
   row's padding) + `6 × --h-control` (Back, Forward, Reload, New tab and the two toggles) +
   `7 × --space-1` (the gaps) + `TAB_MIN_WIDTH_PX + 2 × --space-1` (one tab, ring room) +
   `ADDRESS_MIN_WIDTH_PX`: 588.
@@ -286,8 +288,8 @@ Phase 1 Task 2. Each scenario maps to one named test.
   is exactly `TAB_MIN_WIDTH_PX`, the tablist scrolls, and the address bar is still at least
   `ADDRESS_BASIS_PX`; every tool (`CHROME_ROW` but the tablist and the address bar) stays
   `--h-control` square (34×34) throughout.
-- **Scenario: narrowest-window-keeps-the-row-whole** — asked for a 400px wide content area, the window
-  gives `CHROME_MIN_CONTENT_WIDTH_PX`; with several tabs the row holds every `CHROME_ROW` control inside
+- **Scenario: narrowest-window-keeps-the-row-whole** — the window's minimum width less its frame's is
+  `CHROME_MIN_CONTENT_WIDTH_PX`; with its content exactly that wide and several tabs, the row holds every `CHROME_ROW` control inside
   its box, the tablist shows one whole tab (at least `TAB_MIN_WIDTH_PX`), the address bar is
   `ADDRESS_MIN_WIDTH_PX` wide and every tool 34×34.
 - **Scenario: focus-never-scrolls-the-row** — with the row made narrower than its contents (a test-only
