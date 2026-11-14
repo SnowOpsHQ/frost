@@ -1666,6 +1666,15 @@ input {
   color: var(--text-faint);
 }
 
+/* Forced colours repaint --text-faint like any text: an empty count is GrayText, text, icon and edge. */
+@media (forced-colors: active) {
+  .seo-count[data-count='0'],
+  .seo-count[data-count='0'] .seo-severity {
+    border-color: GrayText;
+    color: GrayText;
+  }
+}
+
 /* The ranked issues: rows in the issues card, ruled by --divider. */
 .seo-issue-list {
   display: flex;
@@ -1905,9 +1914,7 @@ input {
 }
 
 .seo-category[data-status='info'] .seo-category-dot {
-  width: 7px;
-  height: 7px;
-  border: 2px solid var(--accent);
+  border: 1.5px solid var(--accent);
   border-radius: calc(var(--r-xs) / 4);
   background: transparent;
   transform: rotate(45deg);
@@ -4687,6 +4694,13 @@ input {
 
 .seo-speed-since {
   margin: 2px 2px -4px;
+}
+
+/* It heads the metric tiles, so it reads as a section head, not as a verdict's eyebrow. */
+.seo-speed-since .seo-eyebrow {
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .seo-speed-soft {
