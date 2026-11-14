@@ -65,7 +65,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (only the 11px chips moved in the values step; Settings and Help moved their 4, leaving 17;
   Overview its band label and all-clear line, leaving 15; On-Page's "Good length" drew `--ok` through
   the meter's own property, so it never counted; the panels' all-clear line, Images' alt badge and
-  Schema's block status, leaving 12; the DevTools drawer its robots line and 2xx code, leaving 10).
+  Schema's block status, leaving 12; the DevTools drawer its robots line and 2xx code, leaving 10;
+  Page Speed's "Live" source badge, leaving 9).
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
   (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`. The status bar's failed-overrides
@@ -78,7 +79,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the fullscreen notice's two went with the chrome's, so it is 50; Overview's and On-Page's rules held
   none, so it stays 50; Links' kind and rel flags, their dark overrides, the share card's image label
   and Schema's error mark held 17, so it is 33; the render profile's page-area frame held three literal
-  whites, so it is 30).
+  whites, so it is 30; Page Speed's phase and resource-type hues, light and dark, held 26, so it is 4).
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
   official `geist` npm package (`GEIST_PACKAGE`: pinned exactly, SIL Open Font License 1.1, listed in
   `THIRD_PARTY_NOTICES` with the licence text). Only static woff2 files, only the weights the type
@@ -617,6 +618,114 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   notice's buttons, the quick profiles and the drawer's buttons), so a fade put back fails. A row
   button in the drawer's table is a block that ellipsizes its own name, and the cells have `--space-1`
   of block padding, so its `--focus-ring` is drawn whole inside the clipping cell.
+- **The SEO panels' Indexability, Page Speed and Compliance** (`seo-indexability.feature.md`,
+  `seo-speed.feature.md` and `seo-compliance.feature.md`, Panel; `seo-checks.feature.md`, the sitemap and
+  return-link checks; what their components render, less the frame's, Overview's, On-Page's and the
+  shared controls' parts) follow the Migration notes, the token `use` notes and the canvas's component
+  board (badges, status dots, notice), where they agree; no screen draws these panels. Each panel has a
+  `SIGNAL_SURFACES` entry listing its classes; Indexability's holds the parts Compliance, JavaScript and
+  Search Console draw too (the verdict card, its signals, the tone pills and status chips), whose rules
+  sit with it, and the sitemap checks' rules that Links' PR left (the samples, the files). Text is Geist
+  from the `--text-*` tokens, every space a `--space-*` step, every corner an `--r-*`; a part's own
+  geometry (the 44px verdict tile and its 26px glyph, the 18px status chip, the chain's and the rows'
+  label columns, the meters' and bars' heights) stays a layout constant. The panels stand their cards
+  `--space-4` apart. **Verdict cards** (Indexability's, the security verdict, Page Speed's lab verdict,
+  and JavaScript's) are cards like the others: `--bg-surface` at `--r-md` with `--e-ring` and a
+  transparent border, where they were a gradient wash of the verdict's colour with a tinted edge and a
+  card shadow (no gradients). The verdict's colour is its icon's: an `--r-md` tile on the verdict's
+  `-soft` fill (indexable, secure and good `--ok`, canonicalised, attention and needs improvement
+  `--warn` where it was `--caution`, not indexable, insecure and poor `--danger`, pending and local
+  `--accent` where it was `--info-tone`, a measurement with no band `--text-faint` on `--bg-subtle`); a
+  panel that sets only `--verdict` (JavaScript, until its PR) gets a 14% tint of it (left to JavaScript's PR: its passing icon is 2.82:1 on that tint in light, 2.75:1 on main). The label is
+  `--text-title` in `--text`, as Overview's band, the icon and the word carrying the verdict (it was
+  18px in the verdict's colour, `--ok` text 3.30:1); the summary `--text-small` in `--text-muted`, the
+  reasons `--text-small` at weight 500 beside a 6px bullet in the verdict's colour. The **signals** under
+  a verdict are shape-coded as the rail's dots and kept in forced colours (`FORCED_COLOURS_KEPT`): a
+  pass a filled `--ok` disc, a warning a 2px `--warn` ring, an error a filled `--danger` square, a
+  neutral one ("Unknown", "Not applicable") an 8×2px `--text-faint` dash (they were discs in four hues
+  with a tinted halo), their label `--text-micro` in `--text-muted` (10.5px `--text-faint`), their value
+  `--text-small` at weight 600, ruled off by `--divider`. **Tone pills** (`.seo-pill`: an HTTP status,
+  the canonical's state, robots.txt's outcome, a crawler's verdict, a header's state, a sitemap's
+  state) are the canvas's status badges, as the frame's `.seo-badge`: `--h-badge` pills in `--text-micro`,
+  a status one `-ink` on its `-soft` fill (warn `--warn-ink` on `--warn-soft` where it was `--caution`
+  on its 14% tint), a neutral one `--text-muted` on `--bg-subtle` (`--bg-hover`). **Status chips**
+  (`.seo-flag-chip`: an hreflang flag, a mixed resource's kind, a return link's outcome, a link's status
+  and the link checks' counts) are 18px at `--r-xs` in `--text-micro`, the same pairs; a link's status
+  chip sits in a row button, so its pairs are composed over a hovered row too (`under`): its warn tone
+  was `--caution` on a 13% tint, 2.88:1 in light there, and `--warn-ink` on `--warn-soft` is 5.30 or
+  more. **Notes** (the response's source, the mixed content and accessibility notes) are an
+  `--accent-soft` notice at `--r-sm` (a 10% `--info-tone` tint) in `--text-small` `--text-muted`;
+  **warnings and problems** (Page Speed's Wayland note, a check that timed out or failed) a `--warn-soft`
+  notice in `--text-small` `--text` with a `--warn` icon; each keeps a transparent border for forced
+  colours. **Nested lists** (robots.txt's crawlers, the security headers, an impact's group) are
+  `--r-sm` boxes with `--e-ring` and a transparent border on the card, where they were bordered
+  `--seo-bg` boxes, their rows ruled by `--divider`; an impact's group loses its 3px left edge in the
+  impact's colour (its badge says it). Card titles' icons are `--icon-sm` in `--text-muted` (`--icon`),
+  sub-heads `--text-small` at weight 600, inline icons `--icon-sm`. **Indexability:** the redirect chain's
+  arrow `--text-faint`, a hop's URL `--text-muted` and the final one `--text` (it was bold: Geist Mono
+  is bundled at 400 only); a kept header's name `--text-mono` in `--text-muted` (600 10.5px system
+  monospace); a crawler's name `--text-body` at weight 500, its rule `--text`, its group `--text-small`
+  in `--text-faint`; robots.txt's pending mark an `--accent` disc that pulses; an hreflang code that is
+  not valid `--danger-ink` on `--danger-soft` (it was its 14% tint). **Page Speed:** the live line is
+  `--text-small` in `--text-muted`, its 8px mark shape-coded and kept in forced colours (measuring or
+  paused a `--text-faint` disc, live an `--ok` disc pulsing in `--ok`, unavailable a `--warn` ring);
+  Resume is `--text-small` at weight 600 in `--accent`, underlined hovered, `--focus-ring` focused (an
+  `--accent` outline); the lab note a `--bg-subtle` note at `--r-sm` (`--bg-hover`). "Since the page
+  loaded" heads the metric tiles, so it takes the section heads' rule (`.seo-section-title`, which now
+  names it) in place of a rule of its own that repeated it. A metric tile is a card (`--r-md`,
+  `--e-ring`) without its 3px top edge in the band's colour; its short name `--text-caps` in
+  `--text-muted`, its band a badge (`-ink` on `-soft`: good `--ok`, needs improvement `--warn`, poor
+  `--danger`; it was the band's colour as 11px text, `--ok` 3.30:1; the head wraps, and so does the
+  badge's text, so "Needs improvement" stays inside a half-width tile at the 300px panel), its value `--text-display` in
+  `--text` (it was 22px in the band's colour), its hint `--text-small` in `--text-faint` with an `--accent`
+  icon, its name `--text-small` in `--text-faint`; the meter's zones mix the band's graphics colour 55%
+  into `--track` (`--seo-track`, `--caution` → `--warn`), its marker `--text`. The timing and totals tiles
+  are `--bg-subtle` at `--r-sm` (`--bg-hover`), their labels `--text-small` in `--text-faint`, their values
+  `--text-body` at weight 600. **One accent, no second hue:** the navigation timing's six phases were six
+  hues and the requests by type seven (26 literal hex with their dark overrides): the phases are now
+  steps of `--accent` mixed into `--track` in time order (redirect 55%, then 64, 73, 82 and 91%, the
+  response `--accent`). Neighbouring steps are only about 1.1:1 apart, so every segment is outlined by a
+  `--bg-surface` stroke: 2px at any scale (`vector-effect: non-scaling-stroke`), painted under the fill
+  (`paint-order: stroke`) on whole pixels (`shape-rendering: crispEdges`), so a solid 1px column of it
+  shows past each segment's end, never over a segment's own fill. That boundary is at least 3:1 off both
+  segments it divides, and the stroke never covers a segment's own fill when nothing follows within its
+  width (a phase widened to the 0.8% minimum is still covered by the next one, which starts at its real
+  end, as on main). The stroke's colour, width and paint order are pinned (`TEXT_COLOUR_RULES`, `drawn`). The
+  legend's swatches are the same steps, with no edge: the palest, 55% of `--accent` in `--track`, is
+  3.20:1 on the card in light and 3.40:1 in dark (`CONTRAST_PAIRS`; the boundary beside the palest
+  segment is the same pair), and the ramp can't start lower (40% is 2.56:1 in light). They are kept in
+  forced colours (the bars are SVG fills, which forced colours leave as they are); every type's bar is
+  `--accent` on `--track`, its row's label naming it; the load and DOM-ready marks are `--text` and
+  `--text-muted` (load was `--danger`, which is no error). A type with no request is `--text-faint`
+  (it faded to half). Party and cache flags and the issues' source are badges: "3rd party"
+  `--warn-ink` on `--warn-soft` (`--caution` on its tint), "Live" `--ok-ink` on `--ok-soft` (it drew `--ok`
+  text, one of the `--ok`-as-text exceptions), the others `--text-muted` on `--bg-subtle`. A largest
+  request's open button is the chrome's tool at `--h-chip`. **Compliance:** a header's name `--text-mono`
+  (600 11.5px system monospace), wrapping at its hyphens rather than cut short (12px Geist Mono beside
+  "Not applicable" no longer fits), `--text-muted` when unknown or not applicable; a mixed resource's
+  element `--text-mono` in `--text-faint`. The accessibility check's intro is an `--accent-soft` notice at
+  `--r-md` (a dashed 30% `--accent` edge on a 5% tint), its art an `--accent` glyph on a `--bg-surface`
+  tile; its hint `--text-small` in `--text-faint`; its progress an `--accent` bar on `--track`, easing in
+  `--dur-base`; Run keeps the app's panel button (the chrome's PR moved it: disabled, `--text-faint` on
+  `--bg-subtle`), less the 32px height and the 0.7 fade its own rules added: the panel button's height
+  and its own disabled state show it. The **impacts** keep the
+  canvas's statuses: critical `--danger`, serious and moderate `--warn` (moderate was `--caution`, a
+  second amber), minor the accent's (`--info-tone`); the word says which. The tally's tiles are
+  `--bg-subtle` at `--r-sm` with a transparent border (they were tinted by the impact, edge and fill), the
+  number `--text-title` in the impact's -ink (`--accent-hover` for minor), the label `--text-small` in
+  `--text-muted`, a zero `--text-faint` and `GrayText`, text and edge, under forced colours
+  (`FORCED_COLOURS_BUSY`), as Overview's zero-count pill. An impact's badge is `-ink` on `-soft`
+  (`--accent-hover` on `--accent-soft` for minor); "Scored" `--text-caps` in `--text-muted` (10.5px
+  `--text-faint`). A rule's row is a row button: `--r-sm`, `--bg-hover` hovered (`--dur-fast`), its help
+  `--text-body` at weight 500, its id and count `--text-small` in `--text-muted` (`--text-faint` is under
+  4.5:1 on a hovered row in dark), its count a neutral `--h-badge` pill, `--text-muted` on `--bg-subtle`
+  (it was the impact's colour on its tint, which over a hovered row would need its own pairs; the group's
+  badge already names the impact); focus is `--focus-ring` beside a transparent outline (an inset
+  `--accent` outline). An element's sample is a `--bg-subtle` box at `--r-sm` (a bordered card), its
+  selector `--text`, its summary `--text-small` in `--text-muted`. No retired name these panels read is
+  unread elsewhere, so none is `removed`: `--seo-card-edge`, `--caution`, `--shadow-card`, `--info-tone`
+  and `--icon` (retired) and `--seo-card`, `--seo-bg` and `--seo-track` (aliases) are still read by
+  JavaScript, Search Console, Changes, the AI cards and other later panels.
 
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
@@ -636,7 +745,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    On-Page first (no name retired: later panels read them all), then Links, Images, Social and Schema
    with the panels' shared controls (none retired either), then the rest of the browser chrome
    (`--find-height`, `--bg-prompt`, `--prompt-edge`, `--shadow-prompt`, `--render-accent`, `--render-soft`,
-   `--render-edge`, `--bg-field-hover`, `--shadow-field` and `--panel-art`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
+   `--render-edge`, `--bg-field-hover`, `--shadow-field` and `--panel-art`), then Indexability, Page Speed and Compliance (none retired: JavaScript,
+   Search Console and later panels read each). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
    from the moment the test starts watching.
 
@@ -680,14 +790,17 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)` (and
   `background` to `var(<background>)` where the entry names one), and that pair is in
   `CONTRAST_PAIRS`; for an `unfaded` entry (a disabled button shown by its colours), `opacity` resolves to
-  nothing under 1, so a fade put back in place of the colours fails.
+  nothing under 1, so a fade put back in place of the colours fails; and each of a `drawn` entry's
+  declarations resolves to its value (the timing boundary's `stroke: currentColor`, `stroke-width: 2px` and
+  `paint-order: stroke`).
 - **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry (Settings' and
   Help's controls, the chrome's tools, tabs, new-tab button, address bar and prompt buttons, an SEO
   issue's heading row and the panels' link button, the panels' toggles, row actions, segments,
   chips, select, search field and rows, and Schema's entity rows, references, open-URL button and
   "Show more", and the rest of the chrome's: the error panels' and the bands' buttons, the find bar's
   field and tools, the editor bar's chips and fields, the frame's buttons, the DevTools drawer's tabs,
-  buttons, links and fields, and History's controls), in light and
+  buttons, links and fields, and History's controls; and Page Speed's Resume and Compliance's
+  accessibility rule rows), in light and
   dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
   none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
   `var(--focus-ring)` and `outline` to `2px solid transparent`, and sets no `opacity` under 1: a focused
@@ -698,7 +811,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   Settings button, a primary one and Export Diagnostics' Save, each busy and disabled; a disabled
   toolbar tool; the permission prompt's buttons before they arm; Overview's zero-count pill; a disabled
   panel toggle, row action, segment, filter chip and Schema's open-URL button; a disabled error-panel
-  button, primary or not, update notice button, find bar tool, editor bar chip or button), in light and
+  button, primary or not, update notice button, find bar tool, editor bar chip or button; the
+  accessibility tally's tile for an impact with no violated rule), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too (a `border` shorthand counting as its colour) resolves `color` and `border-color` to `GrayText`:
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
@@ -711,7 +825,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `Highlight`. Every selector named is one of the stylesheet's.
 - **Scenario: status-marks-keep-their-colours-under-forced-colours** — for each `FORCED_COLOURS_KEPT`
   entry (the SEO rail's dots, Overview's category marks: pass, error, warning and notice; Schema's status
-  mark: valid, warnings, errors), in light and
+  mark: valid, warnings, errors; a verdict's signal marks: pass, warning, error and neutral; Page Speed's
+  live line: measuring or paused, live and unavailable; its navigation timing's phase swatches), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too resolves `forced-color-adjust` to `none`, so a mark whose fill or border colour is its status keeps
   it. Every selector named is one of the stylesheet's.
@@ -722,7 +837,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   mark's is `none` (a nested `auto` would hand it back unseen by the cascade check); a declaration
   in a nested at-rule is matched on its nearest enclosing selector. It passes the kept marks at the top
   level, inside `@media (forced-colors: active)` and with that block nested in their rule; it catches
-  `.seo-speed-source` (a panel not yet converted) in `styles.css`, `.seo-overview` and the kept
+  `.seo-speed-source` (no kept mark) in `styles.css`, `.seo-overview` and the kept
   `.seo-rail-dot` in `settings.css`, `auto`, a list with one unkept selector, an unkept rule with a
   nested block and a kept mark set to `auto` in a nested block.
 - **Scenario: hover-overlays-skip-pressed-controls** — for each `HOVER_OVERLAYS_SKIP_PRESSED` entry

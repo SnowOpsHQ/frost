@@ -451,6 +451,9 @@ export const FORCED_COLOURS_BUSY = [
     why: 'the editor bar\'s Apply (a primary button) while its profile is invalid, and Reset with nothing to reset',
   },
   { stylesheet: 'styles.css', element: ['.devtools-button', '.devtools-button:disabled'], why: 'a DevTools drawer button with nothing to act on' },
+  // Compliance (Indexability, Page Speed and Compliance's PR): an impact with no violated rule is a
+  // dimmed tile (--text-faint, where its tinted edge and fill went), as Overview's zero-count pill.
+  { stylesheet: 'styles.css', element: ['.seo-a11y-tally-item', ".seo-a11y-tally-item[data-count='0']"], why: 'the accessibility tally\'s tile for an impact with no violated rule ("0 Minor")' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -510,6 +513,20 @@ export const FORCED_COLOURS_KEPT = [
   { stylesheet: 'styles.css', element: ['.seo-status-dot'], why: 'Schema\'s status mark: valid (a disc)' },
   { stylesheet: 'styles.css', element: ['.seo-status-dot', ".seo-status-dot[data-status='warn']"], why: 'Schema\'s status mark: warnings (a ring)' },
   { stylesheet: 'styles.css', element: ['.seo-status-dot', ".seo-status-dot[data-status='error']"], why: 'Schema\'s status mark: errors (a square)' },
+  // Indexability's, Compliance's and JavaScript's signals under a verdict (Indexability, Page Speed and
+  // Compliance's PR), shaped as the rail's dots, and a neutral one a dash (it was a disc in four hues).
+  { stylesheet: 'styles.css', element: ['.seo-signal-dot'], why: 'a verdict\'s signal mark, neutral (a dash: "Unknown", "Not applicable")' },
+  { stylesheet: 'styles.css', element: ['.seo-signal-dot', ".seo-signal[data-tone='ok'] .seo-signal-dot"], why: 'a verdict\'s signal mark, passing (a disc)' },
+  { stylesheet: 'styles.css', element: ['.seo-signal-dot', ".seo-signal[data-tone='warn'] .seo-signal-dot"], why: 'a verdict\'s signal mark, a warning (a ring)' },
+  { stylesheet: 'styles.css', element: ['.seo-signal-dot', ".seo-signal[data-tone='error'] .seo-signal-dot"], why: 'a verdict\'s signal mark, an error (a square)' },
+  // Page Speed's live line: measuring or paused a --text-faint disc, live an --ok disc that pulses,
+  // unavailable a --warn ring; the line's words say it too.
+  { stylesheet: 'styles.css', element: ['.seo-speed-live-dot'], why: 'Page Speed\'s live line, measuring or paused (a --text-faint disc)' },
+  { stylesheet: 'styles.css', element: ['.seo-speed-live-dot', ".seo-speed-live[data-state='live'] .seo-speed-live-dot"], why: 'Page Speed\'s live line, live (an --ok disc)' },
+  { stylesheet: 'styles.css', element: ['.seo-speed-live-dot', ".seo-speed-live[data-state='unavailable'] .seo-speed-live-dot"], why: 'Page Speed\'s live line, unavailable (a --warn ring)' },
+  // The navigation timing's legend: each phase's swatch is its bar's shade (SVG fills, which forced
+  // colours leave as they are), so the key keeps it too.
+  { stylesheet: 'styles.css', element: ['.seo-speed-swatch'], why: 'Page Speed\'s navigation timing legend: a phase\'s swatch, the shade of its bar' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 export const SIGNAL_SURFACES = [
@@ -797,6 +814,49 @@ export const SIGNAL_SURFACES = [
   { name: 'History sheet', stylesheet: 'styles.css', selectorPrefix: '.history' },
   // The update notice (specs/update-client.feature.md, Chrome), a band.
   { name: 'update notice', stylesheet: 'styles.css', selectorPrefix: '.update' },
+  // Indexability (specs/seo-indexability.feature.md, Panel; seo-checks.feature.md, the sitemap and
+  // return-link checks): the verdict card with its reasons and signals, the tone pills and status chips
+  // (`.seo-pill`, `.seo-flag-chip`: Compliance's, JavaScript's, Search Console's and the link checks' too),
+  // the evidence cards (their titles, sub-heads and source note, the redirect chain, the kept headers,
+  // the robots directives, robots.txt with its crawlers, sitemaps and pending state, the hreflang rows)
+  // and the checks' samples and files. The verdict card and the signals are Compliance's and
+  // JavaScript's too; JavaScript's own `.seo-js-state` rules (its verdicts' colours) wait for its PR.
+  {
+    name: 'SEO panel: Indexability',
+    stylesheet: 'styles.css',
+    selectorPrefix: '.seo',
+    classes: [
+      '.seo-index',
+      '.seo-index-*',
+      '.seo-pill',
+      '.seo-flag-chip',
+      '.seo-verdict-*',
+      '.seo-signals',
+      '.seo-signal-*',
+      '.seo-inline-icon',
+      '.seo-chain-*',
+      '.seo-headers',
+      '.seo-header',
+      '.seo-directives',
+      '.seo-directive-*',
+      '.seo-robots-*',
+      '.seo-sitemaps',
+      '.seo-sitemap',
+      '.seo-hreflang-*',
+      '.seo-checks',
+      '.seo-checks-samples',
+      '.seo-checks-file',
+    ],
+    keyframes: ['seo-robots-pulse'],
+  },
+  // Page Speed (specs/seo-speed.feature.md, Panel): the lab verdict and live line, the metric tiles and
+  // their meters, the cards (navigation timing, requests by type, largest requests, hosts, DOM) and the
+  // issue list's source badge. Its issue rows are Overview's, its tools row the shared controls'.
+  { name: 'SEO panel: Page Speed', stylesheet: 'styles.css', selectorPrefix: '.seo', classes: ['.seo-speed-*'], keyframes: ['seo-speed-pulse'] },
+  // Compliance (specs/seo-compliance.feature.md, Panel): the security verdict's colours (its card is
+  // Indexability's), the security headers, the mixed content rows and the accessibility check (intro,
+  // run button, progress, problems, the tally by impact, the groups, rules and elements).
+  { name: 'SEO panel: Compliance', stylesheet: 'styles.css', selectorPrefix: '.seo', classes: ['.seo-sec-*', '.seo-mixed-*', '.seo-a11y-*'] },
 ] as const satisfies readonly SignalSurface[];
 
 /**
@@ -805,7 +865,7 @@ export const SIGNAL_SURFACES = [
  * raise it. Counted when every `:root` token moved into `tokens.css`. It counts hex only: a colour
  * written as `rgb()`, `hsl()` or a keyword is for review to catch.
  */
-export const HEX_COLOUR_RATCHET = 30;
+export const HEX_COLOUR_RATCHET = 4;
 
 /**
  * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
@@ -1005,9 +1065,45 @@ export const CONTRAST_PAIRS = [
   // an entity's notice count) take --accent-hover: 6.19 light, 5.03 dark hovered; 6.80 and 5.96 at rest.
   { fg: '--accent-hover', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'an internal link\'s "int" badge, a Schema type badge and an entity\'s notice count (11px, --accent-hover on --accent-soft) in a row at rest (4.5:1)' },
   { fg: '--accent-hover', bg: '--accent-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: 'the same badges in a row hovered or open (--accent-soft over --bg-hover over the card) (4.5:1)' },
-  { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: Images' "Alt" badge in a row hovered or open` },
-  { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: Images' "Missing alt" badge and loading flags, and an entity's warning count, in a row hovered or open` },
-  { fg: '--danger-ink', bg: '--danger-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: an entity's error count in a row hovered or open` },
+  { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: Images' "Alt" badge, and a link's status chip ("OK"), in a row hovered or open` },
+  {
+    fg: '--warn-ink',
+    bg: '--warn-soft',
+    over: '--bg-hover',
+    under: '--bg-surface',
+    min: 4.5,
+    why: `${INK}: Images' "Missing alt" badge and loading flags, an entity's warning count, and a link's status chip ("Redirect", "Temporary": --caution on its 13% tint there was 2.88:1 in light), in a row hovered or open`,
+  },
+  { fg: '--danger-ink', bg: '--danger-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: an entity's error count, and a link's status chip ("Broken"), in a row hovered or open` },
+  // The SEO panels' Indexability, Page Speed and Compliance (their surface PR). Already covered above:
+  // the verdict cards' text on a card (--text, --text-muted), their icon tiles (--warn, --danger and
+  // --accent on their -soft fill over a card; a measurement with no band --text-faint on --bg-subtle),
+  // the signal marks and the live line's dot (--ok, --warn, --danger, --text-faint on a card), the tone
+  // pills, status chips, band and party badges and impact badges (-ink on -soft over a card, a link's
+  // status chip over a hovered row too; neutral --text-muted on --bg-subtle; a minor impact
+  // --accent-hover on --accent-soft), the source notes (--text-muted on --accent-soft over a card), the
+  // warnings and problems (--text and the --warn icon on --warn-soft over a card), the lab note, timing
+  // tiles and element samples (--text, --text-muted and --text-faint on --bg-subtle), a hreflang code
+  // that is not valid (--danger-ink on --danger-soft over a card), a rule row hovered (--text and
+  // --text-muted on --bg-hover over a card, its count --text-muted on --bg-subtle), Resume (--accent on
+  // a card) and the tally's numbers for serious and moderate (--warn-ink on --bg-subtle), a zero
+  // --text-faint. New with them:
+  { fg: '--ok', bg: '--ok-soft', over: '--bg-surface', min: 3, why: 'an Indexability, Compliance or Page Speed verdict that passes: its icon (--ok) on its --ok-soft tile inside the card (graphics, 3:1)' },
+  { fg: '--accent-hover', bg: '--bg-subtle', min: 4.5, why: 'Compliance\'s accessibility tally: the number of minor rules (18px, --accent-hover, was --info-tone) on its --bg-subtle tile (4.5:1)' },
+  { fg: '--accent', bg: '--track', min: 3, why: 'Page Speed\'s requests by type and the accessibility check\'s progress: the --accent bar on its --track (graphics, 3:1)' },
+  // Council round 2 on PR #48: the navigation timing's palest step, 55% of --accent in --track (a mix
+  // composites as --accent at 0.55 over --track), against --bg-surface: the legend's palest swatch on the
+  // card, and the boundary stroke beside the palest segment. 3.20:1 light, 3.40:1 dark; at 40% it would be
+  // 2.56:1 in light, so the ramp starts at 55%.
+  {
+    fg: '--bg-surface',
+    bg: '--accent',
+    alpha: 0.55,
+    over: '--track',
+    min: 3,
+    why: 'Page Speed\'s navigation timing: the palest step (redirect, 55% of --accent in --track) on the card as a legend swatch, and against the --bg-surface boundary beside it (graphics, 3:1)',
+  },
+  { fg: '--text', bg: '--track', min: 3, why: 'Page Speed\'s metric meters: the value\'s marker (--text) across the bar, its no-band --track included (graphics, 3:1)' },
   // The browser chrome's rows (its surface PR). Already covered above: the active tab's label and the
   // address on --bg-surface (--text; the placeholder, the address badge and the active tab's glyph
   // --text-faint and --text-muted), the toolbar's tools, the new-tab button and the status bar on
@@ -1062,10 +1158,10 @@ export const CONTRAST_PAIRS = [
   { fg: '--danger', bg: '--bg-sheet', min: 3, why: RING },
   // Rules the values step pinned (TEXT_COLOUR_RULES)
   { fg: '--warn-ink', bg: '--bg-chrome', min: 4.5, why: 'the status bar\'s notice (.status-notice) on --bg-chrome (4.5:1)' },
-  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
-  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
-  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
-  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
+  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-surface', min: 4.5, why: 'text on its tone\'s 14% tint (no rule draws it since the SEO pills and status chips, and .agent-chip, moved to -ink on -soft; Changes\' inserted segment still draws --ok there, KNOWN_CONTRAST_EXCEPTIONS) (4.5:1)' },
+  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: 'text on its tone\'s 14% tint (no rule draws it since the SEO pills and status chips, and .agent-chip, moved to -ink on -soft; Changes\' inserted segment still draws --ok there, KNOWN_CONTRAST_EXCEPTIONS) (4.5:1)' },
+  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-surface', min: 4.5, why: 'text on its tone\'s 14% tint (Changes\' deleted segment; the SEO pills and status chips, and .agent-chip, moved to -ink on -soft) (4.5:1)' },
+  { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: 'text on its tone\'s 14% tint (Changes\' deleted segment; the SEO pills and status chips, and .agent-chip, moved to -ink on -soft) (4.5:1)' },
   // The rest of the browser chrome (its surface PR). Already covered above: text and icons on the
   // bands (--text, --text-muted, --accent on --accent-soft over --bg-window), the band buttons and the
   // .panel-button (--text on --bg-surface, hovered over --bg-hover; the primary --on-accent on --accent and
@@ -1095,7 +1191,7 @@ export const CONTRAST_PAIRS = [
   { fg: '--warn-ink', bg: '--bg-sheet', min: 4.5, why: 'the DevTools drawer\'s notices (12px, were --caution) on the drawer (4.5:1)' },
   { fg: '--ok-ink', bg: '--bg-subtle', min: 4.5, why: 'the DevTools drawer\'s 2xx status code (11px, was --ok) on its --bg-subtle pill (4.5:1)' },
   { fg: '--warn-ink', bg: '--bg-subtle', min: 4.5, why: 'the DevTools drawer\'s 3xx status code (11px, was --caution) on its --bg-subtle pill (4.5:1)' },
-  { fg: '--danger-ink', bg: '--bg-subtle', min: 4.5, why: 'the DevTools drawer\'s 4xx and 5xx status codes (11px, were --danger) on their --bg-subtle pill (4.5:1)' },
+  { fg: '--danger-ink', bg: '--bg-subtle', min: 4.5, why: 'the DevTools drawer\'s 4xx and 5xx status codes (11px, were --danger) on their --bg-subtle pill, and Compliance\'s accessibility tally: the number of critical rules (18px, was --danger) on its --bg-subtle tile (4.5:1)' },
   { fg: '--danger-ink', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'the DevTools drawer: a failed request\'s row, selected (--accent-soft) (4.5:1)' },
   { fg: '--danger-ink', bg: '--bg-hover', over: '--bg-sheet', min: 4.5, why: 'the DevTools drawer: a failed request\'s row, hovered (4.5:1)' },
   { fg: '--accent', bg: '--accent-soft', over: '--bg-sheet', min: 3, why: 'the DevTools drawer: the resize edge under the pointer, focused --accent beside its --accent-soft (graphics, 3:1)' },
@@ -1138,8 +1234,8 @@ export const KNOWN_CONTRAST_EXCEPTIONS = [
     fg: '--ok',
     bg: '--bg-surface',
     min: 4.5,
-    rules: 10,
-    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property; the panels\' all-clear line, Images\' alt badge and Schema\'s block status their 3; the DevTools drawer its robots line and 2xx code, 2).',
+    rules: 9,
+    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property; the panels\' all-clear line, Images\' alt badge and Schema\'s block status their 3; the DevTools drawer its robots line and 2xx code, 2; Page Speed its "Live" source badge).',
   },
 ] as const satisfies readonly ContrastException[];
 
@@ -1158,6 +1254,8 @@ export interface TextColourRule {
   readonly background?: TokenName;
   /** A disabled button shown by its colours: the cascade also gives no `opacity` under 1 (a fade would replace them). */
   readonly unfaded?: true;
+  /** Further declarations the colour only works with (an SVG stroke in `currentColor`): each property resolves to exactly its value. */
+  readonly drawn?: Readonly<Record<string, string>>;
   readonly why: string;
 }
 
@@ -1192,11 +1290,35 @@ export const TEXT_COLOUR_RULES = [
     why: 'the update notice\'s primary button, hovered: --on-accent on --accent-hover (the secondary hover\'s overlay must not win)',
   },
   // 11px chips on their tone's tint: --ok text is 2.82:1 on its 14% tint and --danger 3.88:1 (light).
-  // The tint and .seo-signal's dot keep the tone; .seo-signal draws no tone text, so it has no entry.
-  { stylesheet: 'styles.css', element: ['.seo-pill', ".seo-pill[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
-  { stylesheet: 'styles.css', element: ['.seo-pill', ".seo-pill[data-tone='error']"], color: '--danger-ink', why: DANGER_TINT },
-  { stylesheet: 'styles.css', element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='ok']"], color: '--ok-ink', why: OK_TINT },
-  { stylesheet: 'styles.css', element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='error']"], color: '--danger-ink', why: DANGER_TINT },
+  // Indexability's PR put the pills and status chips on the sheet's -soft fills (badges), so the pair
+  // is -ink on -soft, and the warn tone takes its -ink too (it drew --caution on its tint). The signal
+  // marks keep the tone; .seo-signal draws no tone text, so it has no entry.
+  { stylesheet: 'styles.css', element: ['.seo-pill', ".seo-pill[data-tone='ok']"], color: '--ok-ink', background: '--ok-soft', why: OK_TINT },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-pill', ".seo-pill[data-tone='warn']"],
+    color: '--warn-ink',
+    background: '--warn-soft',
+    why: 'a warning pill ("Does not list itself", a redirect hop, a weak header; 11px, was --caution on its 14% tint)',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-pill', ".seo-pill[data-tone='error']"], color: '--danger-ink', background: '--danger-soft', why: DANGER_TINT },
+  { stylesheet: 'styles.css', element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='ok']"], color: '--ok-ink', background: '--ok-soft', why: OK_TINT },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='warn']"],
+    color: '--warn-ink',
+    background: '--warn-soft',
+    why: 'a warning status chip (a link that redirects, an hreflang flag, passive mixed content; 11px): --caution on its 13% tint was 2.88:1 in light on a hovered link row',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-flag-chip', ".seo-flag-chip[data-tone='error']"], color: '--danger-ink', background: '--danger-soft', why: DANGER_TINT },
+  // A link's status chip carries both classes, in a row button that can be hovered or open.
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-flag-chip', '.seo-link-status', ".seo-flag-chip[data-tone='warn']"],
+    color: '--warn-ink',
+    background: '--warn-soft',
+    why: 'Links: a link that redirects or answers "try later", its status chip in a row hovered or open (CONTRAST_PAIRS composes it over --bg-hover)',
+  },
   // The agent panel's surface PR put its chips on the sheet's -soft fills, so the pair is -ink on -soft.
   { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='ok']"], color: '--ok-ink', background: '--ok-soft', why: OK_TINT },
   { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='denied']"], color: '--danger-ink', background: '--danger-soft', why: DANGER_TINT },
@@ -1213,10 +1335,12 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'styles.css', element: ['.seo-badge', ".seo-badge[data-severity='error']"], color: '--danger-ink', why: DANGER_TINT },
   // Schema's PR put the block status on the sheet's -soft fills (a badge), so the pair is -ink on -soft.
   { stylesheet: 'styles.css', element: ['.seo-block-status', ".seo-block-status[data-status='invalid']"], color: '--danger-ink', background: '--danger-soft', why: DANGER_TINT },
+  // An hreflang code is a tag too (`seo-tag seo-hreflang-code`); an invalid one is a --danger-soft badge.
   {
     stylesheet: 'styles.css',
-    element: ['.seo-hreflang-code', ".seo-hreflang-row[data-valid='false'] .seo-hreflang-code"],
+    element: ['.seo-tag', '.seo-hreflang-code', ".seo-hreflang-row[data-valid='false'] .seo-hreflang-code"],
     color: '--danger-ink',
+    background: '--danger-soft',
     why: DANGER_TINT,
   },
   { stylesheet: 'styles.css', element: ['.changes-segment', ".changes-segment[data-op='del']"], color: '--danger-ink', why: DANGER_TINT },
@@ -1321,6 +1445,82 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'styles.css', element: ['.update-button', '.update-primary', '.update-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the update notice\'s Download or Show file while its step runs' },
   { stylesheet: 'styles.css', element: ['.render-chip', '.render-chip:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the editor bar\'s quick profiles with no tab' },
   { stylesheet: 'styles.css', element: ['.devtools-button', '.devtools-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'a DevTools drawer button with nothing to act on' },
+  // Page Speed (Indexability, Page Speed and Compliance's PR): a band, a party and the measurement's
+  // source are badges, -ink on -soft (they drew the tone on its tint: --ok 3.30:1 as text); the band is
+  // set on the metric (`[data-band]`), whose tile the badge sits in.
+  { stylesheet: 'styles.css', element: ['.seo-speed-metric-band', ".seo-speed [data-band='good']"], color: '--ok-ink', background: '--ok-soft', why: `Page Speed: a metric in the good band, "Good" (11px, was --ok): ${OK_TINT}` },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-speed-metric-band', ".seo-speed [data-band='needs-improvement']"],
+    color: '--warn-ink',
+    background: '--warn-soft',
+    why: 'Page Speed: a metric that needs improvement (11px, was --caution: 3.65:1 on a card in light)',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-speed-metric-band', ".seo-speed [data-band='poor']"], color: '--danger-ink', background: '--danger-soft', why: 'Page Speed: a poor metric (11px, was --danger: 4.83:1 on a card in light, under 4.5 on its tint)' },
+  { stylesheet: 'styles.css', element: ['.seo-speed-flag', ".seo-speed-flag[data-party='third']"], color: '--warn-ink', background: '--warn-soft', why: 'Page Speed: a third-party request or host, "3rd party" (11px, was --caution on its 15% tint)' },
+  { stylesheet: 'styles.css', element: ['.seo-speed-source', ".seo-speed-source[data-source='live']"], color: '--ok-ink', background: '--ok-soft', why: `Page Speed: the issues come from the live measurement, "Live" (11px, was --ok on its 14% tint): ${OK_TINT}` },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-speed-type-label', ".seo-speed-type[data-empty='true'] .seo-speed-type-label"],
+    color: '--text-faint',
+    why: 'Page Speed: a resource type with no request, dimmed by colour (it faded to half: --text at 50% is under 4.5:1)',
+  },
+  // Compliance: an impact is a badge, -ink on -soft (critical --danger, serious and moderate --warn, minor
+  // the accent's), and the tally's numbers take the -ink on their --bg-subtle tiles; the impact is set on
+  // the tile (`[data-impact]`), whose number inherits it. A zero is --text-faint.
+  { stylesheet: 'styles.css', element: ['.seo-a11y-impact', ".seo-a11y-impact[data-impact='critical']"], color: '--danger-ink', background: '--danger-soft', why: 'Compliance: a group of critical rules, "Critical" (11px, was --danger on its 15% tint)' },
+  { stylesheet: 'styles.css', element: ['.seo-a11y-impact', ".seo-a11y-impact[data-impact='serious']"], color: '--warn-ink', background: '--warn-soft', why: 'Compliance: a group of serious rules, "Serious" (11px, was --warn on its 15% tint)' },
+  { stylesheet: 'styles.css', element: ['.seo-a11y-impact', ".seo-a11y-impact[data-impact='moderate']"], color: '--warn-ink', background: '--warn-soft', why: 'Compliance: a group of moderate rules, "Moderate" (11px, was --caution on its 15% tint)' },
+  { stylesheet: 'styles.css', element: ['.seo-a11y-impact'], color: '--accent-hover', background: '--accent-soft', why: 'Compliance: a group of minor rules, "Minor" (11px, was --info-tone on its 15% tint)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-a11y-tally-item', ".seo-a11y-tally-item[data-impact='critical']", '.seo-a11y-tally-value'],
+    color: '--danger-ink',
+    background: '--bg-subtle',
+    why: 'Compliance: the tally\'s critical count (18px, was --danger on an 8% tint)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-a11y-tally-item', ".seo-a11y-tally-item[data-impact='serious']", '.seo-a11y-tally-value'],
+    color: '--warn-ink',
+    background: '--bg-subtle',
+    why: 'Compliance: the tally\'s serious count (18px, was --warn on an 8% tint)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-a11y-tally-item', ".seo-a11y-tally-item[data-impact='moderate']", '.seo-a11y-tally-value'],
+    color: '--warn-ink',
+    background: '--bg-subtle',
+    why: 'Compliance: the tally\'s moderate count (18px, was --caution: 3.65:1 on a card in light)',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-a11y-tally-item', '.seo-a11y-tally-value'], color: '--accent-hover', background: '--bg-subtle', why: 'Compliance: the tally\'s minor count (18px, was --info-tone)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-a11y-tally-item', ".seo-a11y-tally-item[data-impact='critical']", ".seo-a11y-tally-item[data-count='0']", '.seo-a11y-tally-value', ".seo-a11y-tally-item[data-count='0'] .seo-a11y-tally-value"],
+    color: '--text-faint',
+    background: '--bg-subtle',
+    why: 'Compliance: an impact with no violated rule, its count dimmed by colour (GrayText under forced colours, FORCED_COLOURS_BUSY)',
+  },
+  // Council round 1 on PR #48: colours chosen for contrast that no entry pinned. A verdict's label is
+  // --text (the icon carries the verdict's colour: --ok text is 3.30:1 on a card in light); a rule row's
+  // id and count line is --text-muted (--text-faint is 4.26:1 on the hovered row in dark).
+  { stylesheet: 'styles.css', element: ['.seo-verdict-label'], color: '--text', why: 'Indexability\'s, Compliance\'s and JavaScript\'s verdict label (18px; it was the verdict\'s colour, --ok 3.30:1 in light)' },
+  { stylesheet: 'styles.css', element: ['.seo-speed-verdict-label'], color: '--text', why: 'Page Speed\'s lab verdict label (18px; it was the band\'s colour, --ok 3.30:1 in light)' },
+  { stylesheet: 'styles.css', element: ['.seo-a11y-rule-meta'], color: '--text-muted', why: 'Compliance: a rule row\'s id and element count (12px) in a row button that can be hovered (--text-faint there is 4.26:1 in dark)' },
+  // The navigation timing's segments are steps of --accent in --track, too close to one another to tell
+  // apart (1.2:1 between neighbours): each is outlined by a --bg-surface stroke (currentColor, set through
+  // `color`; 2px, painted under the fill on whole pixels, so a solid 1px of it shows past each segment's
+  // end), so a boundary separates every two. The steps start at 55% of --accent so the stroke is at least
+  // 3:1 off each (CONTRAST_PAIRS: --bg-surface against 55% of --accent over --track, and --accent itself).
+  // `drawn` pins the stroke as well as its colour: without `paint-order: stroke` it paints over a short
+  // segment's fill.
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-speed-phase'],
+    color: '--bg-surface',
+    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke' },
+    why: 'Page Speed\'s navigation timing: the 1px boundary stroke around every phase\'s segment',
+  },
 ] as const satisfies readonly TextColourRule[];
 
 /**
@@ -1616,6 +1816,14 @@ export const FOCUS_RING_RULES = [
   { stylesheet: 'styles.css', element: ['.history-open', '.history-open:focus-visible'], why: 'a History row\'s link, focused' },
   { stylesheet: 'styles.css', element: ['.history-more', '.history-more:hover', '.history-more:focus-visible'], why: 'History\'s Show more, focused and hovered' },
   { stylesheet: 'styles.css', element: ['.history-select', '.history-select:focus-visible'], why: 'History\'s project and range selects, focused' },
+  // Indexability, Page Speed and Compliance (their surface PR): their own controls (the rest are the
+  // shared toggles and row actions, the frame's link button and the chrome's tool and panel button).
+  { stylesheet: 'styles.css', element: ['.seo-speed-resume', '.seo-speed-resume:hover', '.seo-speed-resume:focus-visible'], why: 'Page Speed: Resume on a paused live line, focused and hovered (it had a 2px --accent outline)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-a11y-rule-head', '.seo-a11y-rule-head:hover', '.seo-a11y-rule-head:focus-visible'],
+    why: 'Compliance: an accessibility rule\'s row, focused (it opens the rule) and hovered: its --bg-hover fill keeps the ring (it had an inset 2px --accent outline)',
+  },
 ] as const satisfies readonly FocusRingRule[];
 
 /**
