@@ -688,10 +688,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--bg-surface` stroke: 2px at any scale (`vector-effect: non-scaling-stroke`), painted under the fill
   (`paint-order: stroke`) on whole pixels (`shape-rendering: crispEdges`), so a solid 1px column of it
   shows past each segment's end, never over a segment's own fill. That boundary is at least 3:1 off both
-  segments it divides (the steps start at 55% for that: 3.18:1 light, 3.35:1 dark at the palest; the
-  stroke's colour is pinned, its contrast with a mixed step measured, not pinned), and a segment at its
-  0.8% minimum (2–2.5px) keeps at least 1px of fill. The legend's
-  swatches are the same steps with a 1px `--text-faint` edge (`PRESSED_EDGES`'s shape), kept in
+  segments it divides, and the stroke never covers a segment's own fill when nothing follows within its
+  width (a phase widened to the 0.8% minimum is still covered by the next one, which starts at its real
+  end, as on main). The stroke's colour, width and paint order are pinned (`TEXT_COLOUR_RULES`, `drawn`). The
+  legend's swatches are the same steps, with no edge: the palest, 55% of `--accent` in `--track`, is
+  3.20:1 on the card in light and 3.40:1 in dark (`CONTRAST_PAIRS`; the boundary beside the palest
+  segment is the same pair), and the ramp can't start lower (40% is 2.56:1 in light). They are kept in
   forced colours (the bars are SVG fills, which forced colours leave as they are); every type's bar is
   `--accent` on `--track`, its row's label naming it; the load and DOM-ready marks are `--text` and
   `--text-muted` (load was `--danger`, which is no error). A type with no request is `--text-faint`
@@ -788,7 +790,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)` (and
   `background` to `var(<background>)` where the entry names one), and that pair is in
   `CONTRAST_PAIRS`; for an `unfaded` entry (a disabled button shown by its colours), `opacity` resolves to
-  nothing under 1, so a fade put back in place of the colours fails.
+  nothing under 1, so a fade put back in place of the colours fails; and each of a `drawn` entry's
+  declarations resolves to its value (the timing boundary's `stroke: currentColor`, `stroke-width: 2px` and
+  `paint-order: stroke`).
 - **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry (Settings' and
   Help's controls, the chrome's tools, tabs, new-tab button, address bar and prompt buttons, an SEO
   issue's heading row and the panels' link button, the panels' toggles, row actions, segments,

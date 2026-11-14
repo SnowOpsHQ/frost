@@ -502,6 +502,10 @@ test('text-colour-rules-resolve', () => {
         })();
         expect(faded, `${rule.element.at(-1)}: opacity (${theme})`).toBe('1');
       }
+      // The declarations the colour only works with (an SVG stroke drawn in currentColor).
+      for (const [property, value] of Object.entries(rule.drawn ?? {})) {
+        expect(resolveOnElement(css, rule.element, property, theme), `${rule.element.at(-1)} ${property} (${theme})`).toBe(value);
+      }
     }
     expect(
       pairs.some((pair) => pair.fg === rule.color && (rule.background === undefined || pair.bg === rule.background)),

@@ -1091,6 +1091,18 @@ export const CONTRAST_PAIRS = [
   { fg: '--ok', bg: '--ok-soft', over: '--bg-surface', min: 3, why: 'an Indexability, Compliance or Page Speed verdict that passes: its icon (--ok) on its --ok-soft tile inside the card (graphics, 3:1)' },
   { fg: '--accent-hover', bg: '--bg-subtle', min: 4.5, why: 'Compliance\'s accessibility tally: the number of minor rules (18px, --accent-hover, was --info-tone) on its --bg-subtle tile (4.5:1)' },
   { fg: '--accent', bg: '--track', min: 3, why: 'Page Speed\'s requests by type and the accessibility check\'s progress: the --accent bar on its --track (graphics, 3:1)' },
+  // Council round 2 on PR #48: the navigation timing's palest step, 55% of --accent in --track (a mix
+  // composites as --accent at 0.55 over --track), against --bg-surface: the legend's palest swatch on the
+  // card, and the boundary stroke beside the palest segment. 3.20:1 light, 3.40:1 dark; at 40% it would be
+  // 2.56:1 in light, so the ramp starts at 55%.
+  {
+    fg: '--bg-surface',
+    bg: '--accent',
+    alpha: 0.55,
+    over: '--track',
+    min: 3,
+    why: 'Page Speed\'s navigation timing: the palest step (redirect, 55% of --accent in --track) on the card as a legend swatch, and against the --bg-surface boundary beside it (graphics, 3:1)',
+  },
   { fg: '--text', bg: '--track', min: 3, why: 'Page Speed\'s metric meters: the value\'s marker (--text) across the bar, its no-band --track included (graphics, 3:1)' },
   // The browser chrome's rows (its surface PR). Already covered above: the active tab's label and the
   // address on --bg-surface (--text; the placeholder, the address badge and the active tab's glyph
@@ -1242,6 +1254,8 @@ export interface TextColourRule {
   readonly background?: TokenName;
   /** A disabled button shown by its colours: the cascade also gives no `opacity` under 1 (a fade would replace them). */
   readonly unfaded?: true;
+  /** Further declarations the colour only works with (an SVG stroke in `currentColor`): each property resolves to exactly its value. */
+  readonly drawn?: Readonly<Record<string, string>>;
   readonly why: string;
 }
 
@@ -1496,10 +1510,17 @@ export const TEXT_COLOUR_RULES = [
   // The navigation timing's segments are steps of --accent in --track, too close to one another to tell
   // apart (1.2:1 between neighbours): each is outlined by a --bg-surface stroke (currentColor, set through
   // `color`; 2px, painted under the fill on whole pixels, so a solid 1px of it shows past each segment's
-  // end), so a boundary separates every two. The steps start at 55% of --accent so the stroke
-  // is at least 3:1 off each (3.18:1 at 55% in light, 3.35:1 in dark; measured, not pinned: a step is a
-  // color-mix, not a token); against the darkest, --accent itself, --bg-surface is the pair below.
-  { stylesheet: 'styles.css', element: ['.seo-speed-phase'], color: '--bg-surface', why: 'Page Speed\'s navigation timing: the 1px boundary stroke around every phase\'s segment' },
+  // end), so a boundary separates every two. The steps start at 55% of --accent so the stroke is at least
+  // 3:1 off each (CONTRAST_PAIRS: --bg-surface against 55% of --accent over --track, and --accent itself).
+  // `drawn` pins the stroke as well as its colour: without `paint-order: stroke` it paints over a short
+  // segment's fill.
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-speed-phase'],
+    color: '--bg-surface',
+    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke' },
+    why: 'Page Speed\'s navigation timing: the 1px boundary stroke around every phase\'s segment',
+  },
 ] as const satisfies readonly TextColourRule[];
 
 /**
@@ -1565,15 +1586,6 @@ export const PRESSED_EDGES = [
     edge: '--accent',
     fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
     why: 'a filter chip, pressed (Images\' filters, Content\'s preview chips): an --accent edge beside its --accent-soft fill',
-  },
-  // Council round 1 on PR #48: not a pressed control, but the same shape of guard: a phase's legend swatch
-  // (the pale steps are near the card's colour) draws a 1px --text-faint edge, at least 3:1 on the card.
-  {
-    stylesheet: 'styles.css',
-    element: ['.seo-speed-swatch'],
-    edge: '--text-faint',
-    fills: [{ bg: '--bg-surface' }],
-    why: 'Page Speed\'s navigation timing legend: a phase\'s swatch, its edge on the card',
   },
 ] as const satisfies readonly PressedEdge[];
 
