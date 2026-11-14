@@ -211,9 +211,11 @@ const CAPTURES = [
   'seo-images',
   'seo-social',
   'seo-schema',
+  'seo-indexability',
   'seo-page-speed',
   'seo-page-speed-middle',
   'seo-page-speed-lower',
+  'seo-compliance',
   'seo-search-console',
   'seo-search-console-lower',
   'seo-changes',
@@ -462,6 +464,15 @@ test.describe('page surfaces', () => {
     await capture('seo-schema');
   });
 
+  test('seo-indexability', async () => {
+    // seo-indexability.e2e.ts's indexable-page-e2e: the verdict once robots.txt answered (it allows all).
+    await audit('/guide');
+    await showPanel('indexability');
+    await expect(page.getByTestId('seo-index-verdict')).toHaveAttribute('data-verdict', 'indexable', { timeout: AUDIT_WAIT });
+    await expect(page.getByTestId('seo-index-robots-agent')).toHaveCount(3);
+    await capture('seo-indexability');
+  });
+
   test('seo-page-speed', async () => {
     // seo-speed.e2e.ts's `measure`: the panel's live measurement of this URL.
     await audit('/guide');
@@ -485,6 +496,15 @@ test.describe('page surfaces', () => {
     // Navigation timing, Requests), then the end (Requests, Largest requests, Hosts, DOM).
     await capture('seo-page-speed-middle', { scroll: { selector: '.seo-body', top: 600 } });
     await capture('seo-page-speed-lower', { scroll: { selector: '.seo-body', to: 'end' } });
+  });
+
+  test('seo-compliance', async () => {
+    // seo-compliance.e2e.ts: the security verdict of a plain-http page, its headers, the check not run.
+    await audit('/guide');
+    await showPanel('compliance');
+    await expect(page.getByTestId('seo-security-verdict')).toBeVisible();
+    await expect(page.getByTestId('seo-a11y-state')).toHaveAttribute('data-state', 'idle');
+    await capture('seo-compliance');
   });
 
   test('seo-changes', async () => {

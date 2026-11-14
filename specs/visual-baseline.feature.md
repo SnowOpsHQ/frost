@@ -55,9 +55,11 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `seo-images` | seo-images | Images: the guide's two images, one without alt | `seo-panels` |
 | `seo-social` | seo-social | Social: the Open Graph and summary cards drawn from the tags | `seo-panels` |
 | `seo-schema` | seo-schema | Schema: three valid JSON-LD blocks, the tree | `seo-schema` schema-valid-page-shows-clean-tree |
+| `seo-indexability` | seo-indexability | Indexability: the guide indexable, its signals, issues and HTTP response | `seo-indexability` indexable-page-e2e |
 | `seo-page-speed` | seo-page-speed | Page Speed, live: LCP, CLS, FCP and TTFB measured, all good | `seo-speed` `measure` |
 | `seo-page-speed-middle` | seo-page-speed | the same, `.seo-body` at 600 px: the vitals' end, Issues, Navigation timing, Requests | |
 | `seo-page-speed-lower` | seo-page-speed | the same, `.seo-body` at its end: Requests, Largest requests, Hosts, DOM | |
+| `seo-compliance` | seo-compliance | Compliance: the guide's security verdict, issues and headers, the check not run | `seo-compliance` missing-headers-show-issues-e2e |
 | `seo-search-console` | seo-search-console | Search Console connected to the fake Google: this page, 28 days, the clicks chart | `gsc-panel` not-connected, page-totals-and-chart |
 | `seo-search-console-lower` | seo-search-console | the same at its end: the top queries, the freshness line | |
 | `seo-changes` | seo-changes | Changes: two captures, the diff by region | `changes` capture-first-version, diff-by-region |
@@ -76,7 +78,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `agent-empty` | agent-empty | the agent panel open, no chat yet | `agent` `launchWith` |
 | `agent-conversation` | agent-conversation | one scripted turn: a `page_text` tool card, then the answer | `agent` agent-chat-export-and-restore (scripted model seam) |
 
-29 captures, 58 images. No state is skipped. The ChatGPT route's conversation is not captured: the
+31 captures, 62 images. No state is skipped. The ChatGPT route's conversation is not captured: the
 scripted-model turn already shows the same chat surface without a sign-in.
 
 ## What is compared
@@ -196,7 +198,7 @@ included) in both themes; in each capture the media query follows the emulated s
 body's background differs between light and dark, and the stylesheet's marker is in effect; a
 scrolled capture's scroller has something below the fold and reached its offset.
 - **Scenario: new-tab**, **jump-back-in-and-history** (a fresh profile).
-- **Scenario: seo-overview**, **seo-on-page**, **seo-links**, **seo-images**, **seo-social**, **seo-schema**, **seo-page-speed**, **seo-changes**,
+- **Scenario: seo-overview**, **seo-on-page**, **seo-links**, **seo-images**, **seo-social**, **seo-schema**, **seo-indexability**, **seo-page-speed**, **seo-compliance**, **seo-changes**,
   **devtools-drawer**, **find-bar**, **command-palette**, **settings**, **projects**,
   **render-profile**, **permission-bar** (one app; each starts from one tab, everything closed).
 - **Scenario: agent-empty**, **agent-conversation** (the scripted model seam).
