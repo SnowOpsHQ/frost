@@ -564,8 +564,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   are `--bg-subtle` at `--r-sm` (`--bg-hover`), their labels `--text-small` in `--text-faint`, their values
   `--text-body` at weight 600. **One accent, no second hue:** the navigation timing's six phases were six
   hues and the requests by type seven (26 literal hex with their dark overrides): the phases are now
-  steps of `--accent` mixed into `--track` in time order (redirect lightest, the response `--accent`),
-  each bar ruled from the next by a 1px `--bg-surface` stroke, their swatches the same steps and kept in
+  steps of `--accent` mixed into `--track` in time order (redirect 25%, then 40, 55, 70 and 85%, the
+  response `--accent`), their legend's swatches the same steps and kept in
   forced colours (the bars are SVG fills, which forced colours leave as they are); every type's bar is
   `--accent` on `--track`, its row's label naming it; the load and DOM-ready marks are `--text` and
   `--text-muted` (load was `--danger`, which is no error). A type with no request is `--text-faint`
@@ -577,8 +577,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   element `--text-mono` in `--text-faint`. The accessibility check's intro is an `--accent-soft` notice at
   `--r-md` (a dashed 30% `--accent` edge on a 5% tint), its art an `--accent` glyph on a `--bg-surface`
   tile; its hint `--text-small` in `--text-faint`; its progress an `--accent` bar on `--track`, easing in
-  `--dur-base`; Run keeps the app's panel button (the chrome's PR moves it), less the 0.7 fade its
-  disabled state added: the panel button's own disabled state shows it. The **impacts** keep the
+  `--dur-base`; Run keeps the app's panel button (the chrome's PR moves it), less the 32px height and
+  the 0.7 fade its own rules added: the panel button's height and its own disabled state show it. The **impacts** keep the
   canvas's statuses: critical `--danger`, serious and moderate `--warn` (moderate was `--caution`, a
   second amber), minor the accent's (`--info-tone`); the word says which. The tally's tiles are
   `--bg-subtle` at `--r-sm` with a transparent border (they were tinted by the impact, edge and fill), the
