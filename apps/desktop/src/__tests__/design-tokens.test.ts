@@ -87,21 +87,22 @@ interface Declaration {
   readonly block: number;
 }
 
-/** `parseText`, once per stylesheet text: the resolver looks the same cascade up for every entry, property
- * and theme (re-parsing styles.css each time timed the focus-ring test out under load). Read-only results. */
-const parsed = new Map<string, { declarations: Declaration[]; blocks: string[][] }>();
+/** `parseOnce`, memoised by the stylesheet's text: the cascade checks resolve hundreds of properties over
+ * the same stylesheets, and parsing styles.css for each one outgrew the test timeout on slow runners. Every
+ * caller only reads the result. */
+const PARSED = new Map<string, { declarations: Declaration[]; blocks: string[][] }>();
 function parse(css: string): { declarations: Declaration[]; blocks: string[][] } {
-  let result = parsed.get(css);
-  if (result === undefined) {
-    result = parseText(css);
-    parsed.set(css, result);
+  let parsed = PARSED.get(css);
+  if (parsed === undefined) {
+    parsed = parseOnce(css);
+    PARSED.set(css, parsed);
   }
-  return result;
+  return parsed;
 }
 
 /** The declarations of `css`, each with its context, and the context of every block. (The
  * renderer's CSS has no braces or semicolons inside strings, so a brace walk is enough.) */
-function parseText(css: string): { declarations: Declaration[]; blocks: string[][] } {
+function parseOnce(css: string): { declarations: Declaration[]; blocks: string[][] } {
   const declarations: Declaration[] = [];
   const blocks: string[][] = [];
   const stack: string[] = [];
@@ -548,6 +549,10 @@ test('text-colour-rules-resolve', () => {
           }
         })();
         expect(faded, `${rule.element.at(-1)}: opacity (${theme})`).toBe('1');
+      }
+      // The declarations the colour only works with (an SVG stroke drawn in currentColor).
+      for (const [property, value] of Object.entries(rule.drawn ?? {})) {
+        expect(resolveOnElement(css, rule.element, property, theme), `${rule.element.at(-1)} ${property} (${theme})`).toBe(value);
       }
     }
     expect(
