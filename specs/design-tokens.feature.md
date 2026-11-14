@@ -572,10 +572,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   hues and the requests by type seven (26 literal hex with their dark overrides): the phases are now
   steps of `--accent` mixed into `--track` in time order (redirect 55%, then 64, 73, 82 and 91%, the
   response `--accent`). Neighbouring steps are only about 1.1:1 apart, so every segment is outlined by a
-  1px `--bg-surface` stroke that keeps its width at any scale (`vector-effect: non-scaling-stroke`): a
-  boundary at least 3:1 off both segments it divides (the steps start at 55% for that: 3.18:1 light,
-  3.35:1 dark at the palest; the stroke's colour is pinned, its contrast with a mixed step measured, not
-  pinned), and a segment at its 0.8% minimum (2–2.5px) keeps more than 1px of fill. The legend's
+  `--bg-surface` stroke: 2px at any scale (`vector-effect: non-scaling-stroke`), painted under the fill
+  (`paint-order: stroke`) on whole pixels (`shape-rendering: crispEdges`), so a solid 1px column of it
+  shows past each segment's end, never over a segment's own fill. That boundary is at least 3:1 off both
+  segments it divides (the steps start at 55% for that: 3.18:1 light, 3.35:1 dark at the palest; the
+  stroke's colour is pinned, its contrast with a mixed step measured, not pinned), and a segment at its
+  0.8% minimum (2–2.5px) keeps at least 1px of fill. The legend's
   swatches are the same steps with a 1px `--text-faint` edge (`PRESSED_EDGES`'s shape), kept in
   forced colours (the bars are SVG fills, which forced colours leave as they are); every type's bar is
   `--accent` on `--track`, its row's label naming it; the load and DOM-ready marks are `--text` and

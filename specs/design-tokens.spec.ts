@@ -1365,8 +1365,9 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'styles.css', element: ['.seo-speed-verdict-label'], color: '--text', why: 'Page Speed\'s lab verdict label (18px; it was the band\'s colour, --ok 3.30:1 in light)' },
   { stylesheet: 'styles.css', element: ['.seo-a11y-rule-meta'], color: '--text-muted', why: 'Compliance: a rule row\'s id and element count (12px) in a row button that can be hovered (--text-faint there is 4.26:1 in dark)' },
   // The navigation timing's segments are steps of --accent in --track, too close to one another to tell
-  // apart (1.2:1 between neighbours): each is outlined by a 1px --bg-surface stroke (currentColor, set
-  // through `color`), so a boundary separates every two. The steps start at 55% of --accent so the stroke
+  // apart (1.2:1 between neighbours): each is outlined by a --bg-surface stroke (currentColor, set through
+  // `color`; 2px, painted under the fill on whole pixels, so a solid 1px of it shows past each segment's
+  // end), so a boundary separates every two. The steps start at 55% of --accent so the stroke
   // is at least 3:1 off each (3.18:1 at 55% in light, 3.35:1 in dark; measured, not pinned: a step is a
   // color-mix, not a token); against the darkest, --accent itself, --bg-surface is the pair below.
   { stylesheet: 'styles.css', element: ['.seo-speed-phase'], color: '--bg-surface', why: 'Page Speed\'s navigation timing: the 1px boundary stroke around every phase\'s segment' },

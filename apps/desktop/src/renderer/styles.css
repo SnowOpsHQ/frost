@@ -4488,13 +4488,17 @@ input {
   fill: var(--track);
 }
 
-/* Every segment outlined by a 1px --bg-surface boundary (the stroke is currentColor), 1px at any scale:
-   neighbouring steps are too close to tell apart by their shade alone. A segment is at least 0.8% wide
-   (2–2.5px), so its fill still shows inside the stroke. */
+/* A 1px --bg-surface boundary between segments (the stroke is currentColor): neighbouring steps are too
+   close to tell apart by their shade alone. The 2px stroke is painted under the fill, so only its outer
+   1px shows, over the previous segment's end, and never over its own fill; on whole pixels (crispEdges)
+   and 2px at any scale, so it is a solid column, not two anti-aliased halves. A segment at its 0.8%
+   minimum (2–2.5px) keeps at least 1px of fill. */
 .seo-speed-phase {
   color: var(--bg-surface);
   stroke: currentColor;
-  stroke-width: 1px;
+  stroke-width: 2px;
+  paint-order: stroke;
+  shape-rendering: crispEdges;
   vector-effect: non-scaling-stroke;
 }
 
