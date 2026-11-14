@@ -462,11 +462,25 @@ export const FORCED_COLOURS_BUSY = [
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
+ * A pressed or chosen item whose unchosen siblings draw no edge of their own under forced colours. Forced
+ * colours paint a transparent border too (in `CanvasText`), so a row, tab or swatch whose chosen edge is a
+ * recoloured transparent border resets it to the canvas when unchosen, or every item would draw the same
+ * edge and the chosen one would differ by colour alone. `rest: 'canvas'`: the cascade over `element[0]`
+ * alone (the item unchosen), forced colours read, resolves `border-color` to `Canvas`. `match:
+ * 'canvastext'` (the Inspector's source): over `element[0]` and `element[1]` (a matching line that is not
+ * the current one) it resolves to `CanvasText`.
+ */
+export interface ForcedColoursPressed extends ForcedColoursBusy {
+  readonly rest?: 'canvas';
+  readonly match?: 'canvastext';
+}
+
+/**
  * Toggle tools that show they are pressed by a fill and an edge colour (`aria-pressed`). Forced colours
  * replace both, so for each entry the cascade over its `element` selectors in `stylesheet`, with the
  * rules inside `@media (forced-colors: active)` read too, resolves `border-color` to `Highlight` in
  * light and dark: a later rule of the toggle's own (the render toggle's `--render-edge`) must not win
- * over it.
+ * over it. An entry with `rest` (and `match`) also pins the unchosen item's edge (`ForcedColoursPressed`).
  */
 export const FORCED_COLOURS_PRESSED = [
   { stylesheet: 'styles.css', element: ['.tool', ".sidebar-toggle[aria-pressed='true']"], why: 'the SEO sidebar toggle, pressed (the sidebar open)' },
@@ -482,8 +496,8 @@ export const FORCED_COLOURS_PRESSED = [
   // The Changes panel, Projects, Rankings, Inspector and the screenshot editor (their surface PR): a chosen
   // item drawn by its fill and an --accent edge (PRESSED_EDGES), or by an --accent line, which forced colours replace.
   { stylesheet: 'styles.css', element: ['.changes-version', ".changes-version[aria-pressed='true']"], why: 'the Changes panel\'s chosen version (the one the diff shows)' },
-  { stylesheet: 'styles.css', element: ['.projects-item', ".projects-item[data-selected='true']"], why: 'the Projects sheet\'s chosen project' },
-  { stylesheet: 'styles.css', element: ['.inspector-row', ".inspector-row[data-selected='true']"], why: 'the Inspector\'s selected node' },
+  { stylesheet: 'styles.css', element: ['.projects-item', ".projects-item[data-selected='true']"], rest: 'canvas', why: 'the Projects sheet\'s chosen project' },
+  { stylesheet: 'styles.css', element: ['.inspector-row', ".inspector-row[data-selected='true']"], rest: 'canvas', why: 'the Inspector\'s selected node' },
   {
     stylesheet: 'styles.css',
     element: ['.seo-action', ".inspector-view-button[aria-pressed='true']"],
@@ -492,11 +506,13 @@ export const FORCED_COLOURS_PRESSED = [
   {
     stylesheet: 'styles.css',
     element: ['.inspector-source-row', ".inspector-source-row[data-match='true']", ".inspector-source-row[aria-current='true']"],
+    rest: 'canvas',
+    match: 'canvastext',
     why: 'the source\'s current match (its --accent line; the other matches are CanvasText)',
   },
-  { stylesheet: 'styles.css', element: ['.shot-editor-swatch', ".shot-editor-swatch[aria-pressed='true']"], why: 'the screenshot editor\'s chosen colour (its --accent ring)' },
-  { stylesheet: 'rankings.css', element: ['.projects-view-tab', ".projects-view-tab[aria-selected='true']"], why: 'the Projects sheet\'s chosen view (its --accent underline)' },
-] as const satisfies readonly ForcedColoursBusy[];
+  { stylesheet: 'styles.css', element: ['.shot-editor-swatch', ".shot-editor-swatch[aria-pressed='true']"], rest: 'canvas', why: 'the screenshot editor\'s chosen colour (its --accent ring)' },
+  { stylesheet: 'rankings.css', element: ['.projects-view-tab', ".projects-view-tab[aria-selected='true']"], rest: 'canvas', why: 'the Projects sheet\'s chosen view (its --accent underline)' },
+] as const satisfies readonly ForcedColoursPressed[];
 
 /**
  * Status marks drawn in a fill or a border colour, whose shape and colour together are the status (a

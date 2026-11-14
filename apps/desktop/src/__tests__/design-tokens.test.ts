@@ -29,6 +29,7 @@ import {
   type ContrastPair,
   type FocusRingRule,
   type ForcedColoursBusy,
+  type ForcedColoursPressed,
   type HoverSkipsPressed,
   type LegacyTokenMigration,
   type PressedEdge,
@@ -563,15 +564,21 @@ test('busy-buttons-show-under-forced-colours', () => {
 });
 
 test('pressed-toggles-show-under-forced-colours', () => {
-  const entries: readonly ForcedColoursBusy[] = FORCED_COLOURS_PRESSED;
+  const entries: readonly ForcedColoursPressed[] = FORCED_COLOURS_PRESSED;
   for (const entry of entries) {
     const css = read(entry.stylesheet);
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
     for (const theme of THEME_NAMES) {
-      expect(resolveOnElement(css, entry.element, 'border-color', theme, { forced: true }).toLowerCase(), `${entry.why}: border-color under forced colours (${theme})`).toBe('highlight');
+      const edge = (element: readonly string[]) => resolveOnElement(css, element, 'border-color', theme, { forced: true }).toLowerCase();
+      expect(edge(entry.element), `${entry.why}: border-color under forced colours (${theme})`).toBe('highlight');
+      // The unchosen item resets the transparent border forced colours would paint, so only the chosen one draws an edge.
+      if (entry.rest !== undefined) expect(edge(entry.element.slice(0, 1)), `${entry.why}: the unchosen item's edge under forced colours (${theme})`).toBe(entry.rest);
+      if (entry.match !== undefined) expect(edge(entry.element.slice(0, 2)), `${entry.why}: a match's edge under forced colours (${theme})`).toBe(entry.match);
     }
   }
+  // At least the four the Changes panel's PR added keep their unchosen items at the canvas.
+  expect(entries.filter((entry) => entry.rest === 'canvas').length).toBeGreaterThanOrEqual(4);
 });
 
 test('status-marks-keep-their-colours-under-forced-colours', () => {

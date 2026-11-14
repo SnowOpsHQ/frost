@@ -805,7 +805,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   version, project, view, node, Inspector view, source match and swatch), in light
   and dark, the cascade over its
   `element` selectors with the `@media (forced-colors: active)` rules read too resolves `border-color` to
-  `Highlight`. Every selector named is one of the stylesheet's.
+  `Highlight`. An entry with `rest` (a project, a tree row, a source line, a swatch, a Projects view) also
+  resolves `border-color` to `Canvas` over its first selector alone, the item unchosen (forced colours paint a
+  transparent border, so without the reset every item draws the same edge), and the source line's `match`
+  to `CanvasText` over its first two, a matching line that is not the current one. Every selector named is
+  one of the stylesheet's.
 - **Scenario: status-marks-keep-their-colours-under-forced-colours** — for each `FORCED_COLOURS_KEPT`
   entry (the SEO rail's dots, Overview's category marks: pass, error, warning and notice; Schema's status
   mark: valid, warnings, errors), in light and
