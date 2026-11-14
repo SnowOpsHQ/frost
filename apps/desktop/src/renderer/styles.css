@@ -4140,14 +4140,15 @@ input {
    (Phase 2 Task 5, specs/seo-speed.feature.md.) Bars and markers are SVG rects sized by attributes;
    only their fills come from here. Band colours: good --ok, needs improvement --warn, poor --danger.
    One accent, no second hue: the navigation timing's phases are steps of --accent mixed into --track,
-   in time order (the response --accent), and every request type's bar is --accent (its row names it). */
+   in time order (the response --accent), and every request type's bar is --accent (its row names it).
+   The steps start at 55%, so the 1px --bg-surface boundary between segments is 3:1 off the palest. */
 
 .seo-speed {
-  --speed-redirect: color-mix(in srgb, var(--accent) 25%, var(--track));
-  --speed-dns: color-mix(in srgb, var(--accent) 40%, var(--track));
-  --speed-connect: color-mix(in srgb, var(--accent) 55%, var(--track));
-  --speed-tls: color-mix(in srgb, var(--accent) 70%, var(--track));
-  --speed-request: color-mix(in srgb, var(--accent) 85%, var(--track));
+  --speed-redirect: color-mix(in srgb, var(--accent) 55%, var(--track));
+  --speed-dns: color-mix(in srgb, var(--accent) 64%, var(--track));
+  --speed-connect: color-mix(in srgb, var(--accent) 73%, var(--track));
+  --speed-tls: color-mix(in srgb, var(--accent) 82%, var(--track));
+  --speed-request: color-mix(in srgb, var(--accent) 91%, var(--track));
   --speed-response: var(--accent);
   display: flex;
   flex-direction: column;
@@ -4343,8 +4344,10 @@ input {
   grid-column: 1 / -1;
 }
 
+/* It wraps at the 300px panel: a half-width tile has no room for "Needs improvement" beside "INP". */
 .seo-speed-metric-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
@@ -4359,14 +4362,14 @@ input {
 .seo-speed-metric-band {
   display: inline-flex;
   align-items: center;
-  height: var(--h-badge);
-  padding: 0 var(--space-3);
+  max-width: 100%;
+  min-height: var(--h-badge);
+  padding: calc(var(--space-1) / 2) var(--space-3);
   border-radius: var(--r-pill);
   background: var(--band-soft);
   color: var(--band-ink);
   font: var(--text-micro);
   letter-spacing: 0.01em;
-  white-space: nowrap;
 }
 
 .seo-speed-metric-value {
@@ -4485,6 +4488,16 @@ input {
   fill: var(--track);
 }
 
+/* Every segment outlined by a 1px --bg-surface boundary (the stroke is currentColor), 1px at any scale:
+   neighbouring steps are too close to tell apart by their shade alone. A segment is at least 0.8% wide
+   (2–2.5px), so its fill still shows inside the stroke. */
+.seo-speed-phase {
+  color: var(--bg-surface);
+  stroke: currentColor;
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
 .seo-speed-phase[data-phase='redirect'],
 .seo-speed-phase-item[data-phase='redirect'] .seo-speed-swatch {
   fill: var(--speed-redirect);
@@ -4550,8 +4563,10 @@ input {
 /* A phase's swatch, the shade of its bar: kept in forced colours (FORCED_COLOURS_KEPT), as the bars'
    SVG fills are. */
 .seo-speed-swatch {
+  box-sizing: border-box;
   width: 8px;
   height: 8px;
+  border: 1px solid var(--text-faint);
   border-radius: calc(var(--r-xs) / 2);
   forced-color-adjust: none;
 }
@@ -4839,12 +4854,12 @@ input {
   border-top: 1px solid var(--divider);
 }
 
+/* A name wraps (at its hyphens) rather than being cut beside a long state ("Not applicable"). */
 .seo-sec-header-name {
-  overflow: hidden;
+  min-width: 0;
   color: var(--text);
   font: var(--text-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .seo-sec-header[data-state='unknown'] .seo-sec-header-name,
