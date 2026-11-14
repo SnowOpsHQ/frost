@@ -704,7 +704,6 @@ export const SIGNAL_SURFACES = [
       '.seo-chip-button',
       '.seo-table-*',
       '.seo-flag',
-      '.seo-flag-plain',
       '.seo-row-actions',
       '.seo-action',
       '.seo-all-clear-line',
