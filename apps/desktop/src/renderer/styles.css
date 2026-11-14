@@ -8865,29 +8865,29 @@ input {
 
 /* Changes panel (Phase 6) ------------------------------------------------------------------------
    Phase 6 Task 4, specs/changes-panel.feature.md: Capture now, the page's versions (by lane) and the
-   diff of two versions, by region. Kinds are text and colour; page text wraps anywhere. */
+   diff of two versions, by region. Kinds are a word, a mark and a tone; page text wraps anywhere.
+   Signal (specs/design-tokens.feature.md, The Changes panel, …): Geist from the --text-* tokens, status
+   words on their -ink, every rule --divider. The Inspector's root is a .changes too. */
 .changes {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
+  font: var(--text-body);
 }
 
 .changes-hint {
-  margin-top: 12px;
+  margin-top: var(--space-4);
 }
 
 .changes-capture-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
-.changes-capture:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
+/* Capture now is a primary .panel-button: disabled, its colours say so (no fade on top). Busy, its
+   icon pulses. */
 .changes-capture[data-busy='true'] .icon {
   animation: changes-pulse 0.9s ease-in-out infinite alternate;
 }
@@ -8903,20 +8903,19 @@ input {
 }
 
 .changes-note {
-  margin: 8px 0 0;
+  margin: var(--space-3) 0 0;
   color: var(--text-muted);
-  font-size: 11.5px;
-  line-height: 1.45;
+  font: var(--text-small);
 }
 
 .changes-note[data-tone='warn'] {
-  color: var(--caution);
+  color: var(--warn-ink);
 }
 
 .changes-status {
-  margin: 8px 0 0;
+  margin: var(--space-3) 0 0;
   color: var(--text);
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 500;
 }
 
@@ -8927,19 +8926,19 @@ input {
 
 .changes-status[data-outcome='refused'],
 .changes-status[data-outcome='failed'] {
-  color: var(--caution);
+  color: var(--warn-ink);
 }
 
 .changes-status[data-outcome='first'],
 .changes-status[data-outcome='new'] {
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 
 .changes-error {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .changes-lane-label {
@@ -8953,85 +8952,93 @@ input {
 .changes-versions {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* A version: an --r-sm row (its transparent border is the edge forced colours draw), --bg-hover under
+   the pointer; the chosen one --accent-soft with an --accent edge (PRESSED_EDGES). */
 .changes-version {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 3px;
+  gap: var(--space-1);
   width: 100%;
-  padding: 7px 9px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text);
-  font: inherit;
+  font: var(--text-body);
   text-align: left;
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 
-.changes-version:hover {
+.changes-version:hover:where(:not([aria-pressed='true'])) {
   background: var(--bg-hover);
 }
 
-.changes-version:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.changes-version[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
-.changes-version[aria-pressed='true'] {
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+/* After the hover and the chosen state; raised so the ring is whole over the next row. */
+.changes-version:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .changes-version-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .changes-version-time {
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
+/* --text-muted, not --text-faint: a hovered row (--bg-hover over a card) leaves --text-faint at 4.26:1 in dark. */
 .changes-version-count {
   flex: none;
-  color: var(--text-faint);
-  font-size: 11px;
+  color: var(--text-muted);
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
 .changes-version-summary {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .changes-version-summary[data-first='true'] {
-  color: var(--text-faint);
+  color: var(--text-muted);
   font-style: italic;
 }
 
 .changes-load-more {
   align-self: flex-start;
-  margin-top: 8px;
+  margin-top: var(--space-3);
 }
 
 /* ---- Diff ---- */
 .changes-pair {
   margin: 0;
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .changes-pair-label {
   color: var(--text-faint);
-  font-size: 11px;
+  font: var(--text-small);
 }
 
 .changes-pair-time {
@@ -9042,8 +9049,8 @@ input {
 .changes-compare {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .changes-compare .seo-select {
@@ -9052,16 +9059,16 @@ input {
 }
 
 .changes-region {
-  margin-top: 12px;
+  margin-top: var(--space-4);
 }
 
 .changes-region-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 0 0 4px;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
   color: var(--text);
-  font-size: 12.5px;
+  font: var(--text-body);
   font-weight: 600;
 }
 
@@ -9082,50 +9089,53 @@ input {
 .changes-change {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 7px 0;
-  border-top: 1px solid var(--seo-card-edge);
-  font-size: 12px;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--divider);
+  font: var(--text-small);
 }
 
 .changes-change-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .changes-change-field {
   font-weight: 600;
 }
 
-/* The kind: its word and a tone, plus a mark before the word (never colour alone). */
+/* The kind: its word with a mark before it (+ added, − removed, ~ changed), never colour alone; a badge,
+   -ink on its tone's -soft fill (it was the tone on its own 14% tint). */
 .changes-kind {
-  --tone: var(--caution);
+  --tone-soft: var(--warn-soft);
+  --tone-ink: var(--warn-ink);
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: 4px;
-  height: 20px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--tone) 14%, transparent);
-  color: var(--tone);
-  font-size: 11px;
-  font-weight: 600;
+  gap: var(--space-1);
+  height: var(--h-badge);
+  padding: 0 var(--space-3);
+  border-radius: var(--r-pill);
+  background: var(--tone-soft);
+  color: var(--tone-ink);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 .changes-kind[data-kind='added'] {
-  --tone: var(--ok);
+  --tone-soft: var(--ok-soft);
+  --tone-ink: var(--ok-ink);
 }
 
 .changes-kind[data-kind='removed'] {
-  --tone: var(--danger);
+  --tone-soft: var(--danger-soft);
+  --tone-ink: var(--danger-ink);
 }
 
 .changes-kind::before {
   content: '~' / '';
-  font-weight: 700;
 }
 
 .changes-kind[data-kind='added']::before {
@@ -9139,15 +9149,14 @@ input {
 .changes-sides {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 3px 8px;
+  gap: var(--space-1) var(--space-3);
   margin: 0;
 }
 
 .changes-sides dt {
   color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -9164,22 +9173,24 @@ input {
 
 .changes-segments {
   margin: 0;
-  line-height: 1.55;
+  font: var(--text-small);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
+/* The edits: removed words struck through, added words underlined, each on its -soft fill with -ink
+   text, and said to screen readers (below); so they read without hue, and under forced colours too. */
 .changes-segment[data-op='del'] {
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-radius: var(--r-xs);
+  background: var(--danger-soft);
   color: var(--danger-ink);
   text-decoration: line-through;
 }
 
 .changes-segment[data-op='ins'] {
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-  color: var(--ok);
+  border-radius: var(--r-xs);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
   text-decoration: underline;
 }
 
@@ -9212,26 +9223,25 @@ input {
 .changes-context {
   margin: 0;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .changes-context-label {
   color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .changes-unchanged-block {
-  margin-top: 12px;
+  margin-top: var(--space-4);
 }
 
 .changes-unchanged {
-  margin: 8px 0 0;
-  padding-left: 18px;
+  margin: var(--space-3) 0 0;
+  padding-left: var(--space-5);
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 /* The rail scrolls when it holds more items than fit in the window, rather than squeezing or
@@ -9248,28 +9258,28 @@ input {
 
 /* ---- Screenshots (Phase 6 Task 5, specs/screenshot.feature.md) ---- */
 .changes-status[data-outcome='saved'] {
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 
 .changes-shot {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--seo-card-edge);
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--divider);
 }
 
 .changes-shot-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .changes-shot-label {
   flex: none;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 600;
 }
 
@@ -9278,6 +9288,7 @@ input {
   min-width: 0;
 }
 
+/* The kinds are the shared segments: disabled, --text-faint at half strength (DISABLED_INK). */
 .changes-shot-kind-button:disabled {
   cursor: default;
 }
@@ -9290,27 +9301,30 @@ input {
   margin: 0;
 }
 
+/* Choosing an area (and the Inspector's Pick element): an --accent-soft notice at --r-md; the
+   transparent border is the edge forced colours draw (1px less padding). */
 .changes-shot-selecting {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  gap: var(--space-3);
+  padding: calc(var(--space-2) - 1px) calc(var(--space-3) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
   color: var(--text);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .changes-shots .changes-load-more {
-  margin-top: 8px;
+  margin-top: var(--space-3);
 }
 
 .changes-shot-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin: 8px 0 0;
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
   padding: 0;
   list-style: none;
 }
@@ -9318,9 +9332,9 @@ input {
 .changes-shot-item {
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr);
-  gap: 6px 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--seo-card-edge);
+  gap: var(--space-2) var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
 }
 
 .changes-shot-thumb {
@@ -9329,9 +9343,9 @@ input {
   justify-content: center;
   max-height: 144px;
   overflow: hidden;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 6px;
-  background: var(--bg-hover);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
 }
 
 .changes-shot-thumb img {
@@ -9341,25 +9355,25 @@ input {
 }
 
 .changes-shot-missing {
-  padding: 18px 6px;
+  padding: var(--space-5) var(--space-2);
   color: var(--text-faint);
-  font-size: 11px;
+  font: var(--text-small);
   text-align: center;
 }
 
 .changes-shot-meta {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   min-width: 0;
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .changes-shot-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .changes-shot-kind {
@@ -9369,20 +9383,20 @@ input {
 .changes-shot-time {
   flex: none;
   color: var(--text-faint);
-  font-size: 11px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
 .changes-shot-size {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
 .changes-shot-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .changes-shot-profile {
@@ -9395,8 +9409,8 @@ input {
 .changes-shot-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 10px;
-  margin-top: 2px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .changes-shot-feedback {
@@ -9413,7 +9427,7 @@ input {
   grid-column: 1 / -1;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-3);
   margin: 0;
 }
 
@@ -9421,8 +9435,15 @@ input {
   display: block;
   max-width: 100%;
   height: auto;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 6px;
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
+}
+
+/* Forced colours replace the chosen version's fill and edge (FORCED_COLOURS_PRESSED). */
+@media (forced-colors: active) {
+  .changes-version[aria-pressed='true'] {
+    border-color: Highlight;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -9439,7 +9460,8 @@ input {
    while open it fills the column and the page area shrinks to nothing; while a capture run is under
    way it is a band of fixed height and the page area takes the rest, so the run's tab is on screen
    and its viewport screenshots are of the page area below the band), and the Changes panel's
-   project picker. */
+   project picker. Signal (specs/design-tokens.feature.md, The Changes panel, …): a --bg-surface sheet
+   in Geist, as History; its buttons the canvas's secondary button at --h-chip, its fields Settings'. */
 
 .page-column:has(> .projects-sheet) > .page-area {
   flex: 0 0 0;
@@ -9459,14 +9481,15 @@ input {
   min-height: 0;
   overflow: hidden;
   contain: inline-size;
-  background: var(--bg-page);
+  background: var(--bg-surface);
   outline: none;
+  font: var(--text-body);
 }
 
 .projects-sheet[data-running='true'] {
   flex: 0 0 auto;
   height: var(--projects-run-band);
-  border-bottom: 1px solid var(--bg-chrome-edge);
+  border-bottom: 1px solid var(--divider);
 }
 
 .projects {
@@ -9479,15 +9502,14 @@ input {
 .projects-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-4);
   flex: none;
-  padding: 18px 20px 10px;
+  padding: var(--space-5) var(--space-5) var(--space-4);
 }
 
 .projects-title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font: var(--text-title);
   letter-spacing: -0.01em;
 }
 
@@ -9496,22 +9518,30 @@ input {
   min-width: 0;
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
   overflow-wrap: anywhere;
 }
 
+/* Close (--h-control) and a list's icon buttons, the star and Remove (--h-chip): circles in
+   --text-muted, --bg-hover under the pointer. The transparent border is the edge forced colours draw. */
 .projects-close,
 .projects-icon-button {
   display: grid;
   place-items: center;
   flex: none;
-  width: 30px;
-  height: 30px;
+  width: var(--h-control);
+  height: var(--h-control);
   padding: 0;
-  border: 0;
-  border-radius: var(--radius-control);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   background: transparent;
-  color: var(--icon);
+  color: var(--text-muted);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.projects-icon-button {
+  width: var(--h-chip);
+  height: var(--h-chip);
 }
 
 .projects-close:hover,
@@ -9520,29 +9550,33 @@ input {
 }
 
 .projects-icon-button .icon {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
+/* Adding a page from the Changes panel: an --accent-soft notice at --r-md (1px less padding: the
+   transparent border is the edge forced colours draw). */
 .projects-adding {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin: 0 20px 10px;
-  padding: 8px 12px;
-  border-radius: var(--radius-field);
+  gap: var(--space-3);
+  margin: 0 var(--space-5) var(--space-4);
+  padding: calc(var(--space-3) - 1px) calc(var(--space-4) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
   background: var(--accent-soft);
   overflow-wrap: anywhere;
 }
 
+/* The columns sit --space-1 in, so a focused row's or field's ring is drawn whole inside their scroll boxes. */
 .projects-body {
   display: grid;
   grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
-  gap: 18px;
+  gap: var(--space-4);
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 20px 20px;
+  padding: 0 var(--space-4) var(--space-5);
 }
 
 /* Positioned, as `.settings-content`: screen-reader-only text stays inside the scroll box. */
@@ -9550,6 +9584,7 @@ input {
 .projects-main {
   position: relative;
   min-height: 0;
+  padding: var(--space-1);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -9562,30 +9597,36 @@ input {
   list-style: none;
 }
 
+/* A project: an --r-sm row; the chosen one --accent-soft with an --accent edge (PRESSED_EDGES) on the
+   transparent border, which forced colours draw only for the chosen one (below). */
 .projects-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px;
-  border-radius: var(--radius-control);
+  gap: var(--space-1);
+  padding: calc(var(--space-1) / 2 - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
 }
 
 .projects-item[data-selected='true'] {
+  border-color: var(--accent);
   background: var(--accent-soft);
 }
 
 .projects-item-open {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 6px 8px;
+  padding: var(--space-2) var(--space-3);
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text);
   text-align: start;
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 
-.projects-item-open:hover {
+/* The chosen project lays no hover over its --accent-soft (Unfiled's --text-muted would be 4.30:1 there in dark). */
+.projects-item:where(:not([data-selected='true'])) .projects-item-open:hover {
   background: var(--bg-hover);
 }
 
@@ -9607,7 +9648,7 @@ input {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .projects-rename {
@@ -9615,96 +9656,127 @@ input {
 }
 
 .projects-create {
-  margin-top: 12px;
+  margin-top: var(--space-4);
 }
 
+/* Fields and menus (Settings'): --h-control at --r-sm on --bg-surface with --e-raised; the
+   transparent border is the edge forced colours draw. Also the Inspector's search and find. */
 .projects-input,
 .projects-select {
   flex: 1 1 120px;
   min-width: 0;
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-field);
-  background: var(--bg-field);
+  height: var(--h-control);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
+  font: var(--text-body);
   user-select: text;
 }
 
-.projects-input:focus,
-.projects-select:focus {
-  border-color: var(--accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--accent-soft);
+.projects-input::placeholder {
+  color: var(--text-faint);
 }
 
+/* A sheet button: the canvas's secondary button at --h-chip, a pill on --bg-surface with --e-raised
+   (1px less padding: the transparent border is the edge forced colours draw); a hover lays --bg-hover
+   over it, its state check in :where() so the focus rule below wins. */
 .projects-small-button {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-2);
   flex: none;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-control);
-  background: transparent;
+  height: var(--h-chip);
+  padding: 0 calc(var(--space-4) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
+  font: var(--text-small);
+  font-weight: 500;
   white-space: nowrap;
+  transition: box-shadow var(--dur-fast) var(--ease-out);
 }
 
-.projects-small-button:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-
-.projects-small-button:disabled {
-  opacity: 0.5;
+.projects-small-button:hover:where(:not(:disabled)) {
+  box-shadow:
+    inset 0 0 0 var(--h-chip) var(--bg-hover),
+    var(--e-raised);
 }
 
 .projects-small-button .icon {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--text-muted);
 }
 
 .projects-danger {
-  color: var(--danger);
+  color: var(--danger-ink);
+}
+
+/* Disabled: the token sheet's disabled control, --text-faint on --bg-subtle with no shadow (it faded). */
+.projects-small-button:disabled {
+  background: var(--bg-subtle);
+  box-shadow: none;
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.projects-small-button:disabled .icon {
+  color: currentColor;
+}
+
+/* Focus: the ring, after every hover; the transparent outline is what forced colours draw. */
+.projects-close:focus-visible,
+.projects-icon-button:focus-visible,
+.projects-item-open:focus-visible,
+.projects-input:focus-visible,
+.projects-select:focus-visible,
+.projects-small-button:focus-visible,
+.projects-entry-open:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .projects-detail {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-5);
 }
 
 .projects-detail-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .projects-detail-name {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+  font: var(--text-heading);
   overflow-wrap: anywhere;
 }
 
 .projects-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .projects-section-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .projects-count {
@@ -9716,28 +9788,32 @@ input {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 .projects-check {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
+}
+
+.projects-check input {
+  accent-color: var(--accent);
 }
 
 .projects-field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   min-width: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .projects-profile {
   flex-direction: row;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .projects-profile .projects-select {
@@ -9748,24 +9824,25 @@ input {
 .projects-empty {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .projects-entry {
   display: flex;
   align-items: center;
-  gap: 4px;
-  border-bottom: 1px solid var(--bg-chrome-edge);
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--divider);
 }
 
 .projects-entry-open {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
   flex: 1 1 auto;
   min-width: 0;
-  padding: 6px 4px;
+  padding: var(--space-2) var(--space-1);
   border: 0;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text);
   text-align: start;
@@ -9777,16 +9854,16 @@ input {
 
 .projects-entry-meta {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .projects-query-form {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   align-items: end;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .projects-field-wide {
@@ -9797,19 +9874,23 @@ input {
   flex: none;
 }
 
+/* A capture run: a --bg-surface card at --r-md with --e-ring (1px less padding: the transparent border
+   is the edge forced colours draw). */
 .projects-run {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-field);
+  gap: var(--space-2);
+  padding: calc(var(--space-3) - 1px) calc(var(--space-4) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
 }
 
 .projects-run-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .projects-run-progress {
@@ -9822,40 +9903,41 @@ input {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  padding: 3px 0;
-  font-size: 12px;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  font: var(--text-small);
 }
 
 .projects-run-target .projects-entry-label {
   min-width: 0;
 }
 
+/* A target's outcome is a word ("Captured", "Failed", …) in its -ink. */
 .projects-run-outcome {
   flex: none;
   color: var(--text-muted);
 }
 
 .projects-run-target[data-outcome='captured'] .projects-run-outcome {
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 
 .projects-run-target[data-outcome='failed'] .projects-run-outcome,
 .projects-run-target[data-outcome='timed-out'] .projects-run-outcome {
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 /* A project's retention and disk usage (Retention.tsx). */
 .retention-policy {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .retention-modes {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   border: 0;
@@ -9863,10 +9945,10 @@ input {
 }
 
 .retention-legend {
-  margin-bottom: 2px;
+  margin-bottom: calc(var(--space-1) / 2);
   padding: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .retention-value-row,
@@ -9875,7 +9957,7 @@ input {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .retention-purge-row,
@@ -9894,16 +9976,16 @@ input {
 }
 
 .retention-subtitle {
-  margin: 6px 0 0;
+  margin: var(--space-2) 0 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 600;
 }
 
 .retention-usage {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 2px 12px;
+  gap: calc(var(--space-1) / 2) var(--space-4);
   margin: 0;
 }
 
@@ -9932,10 +10014,10 @@ input {
 .retention-log-entry {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
-  padding: 3px 0;
-  border-bottom: 1px solid var(--bg-chrome-edge);
-  font-size: 12px;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--divider);
+  font: var(--text-small);
 }
 
 .retention-log-when {
@@ -9947,32 +10029,56 @@ input {
   font-weight: 600;
 }
 
-/* The Changes panel's project picker, next to Capture now. */
+/* The Changes panel's project picker, next to Capture now: a field inside a card (Settings'). */
 .changes-project-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .changes-project {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .changes-project-select {
   max-width: 180px;
-  height: 30px;
-  padding: 0 6px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-field);
-  background: var(--bg-field);
+  height: var(--h-control);
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
+  font: var(--text-body);
+}
+
+.changes-project-select:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* Forced colours: only the chosen project's edge draws, in Highlight (FORCED_COLOURS_PRESSED). */
+@media (forced-colors: active) {
+  .projects-item {
+    border-color: Canvas;
+  }
+
+  .projects-item[data-selected='true'] {
+    border-color: Highlight;
+  }
+
+  .projects-small-button:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
 }
 
 @media (max-width: 640px) {
@@ -9985,17 +10091,14 @@ input {
 
 /* Inspector (Phase 6) ------------------------------------------------------------------------------
    Phase 6 Task 8, specs/inspector.feature.md: the page's DOM as a tree-view, Pick element and the
-   selected node's details. Page text is inert and wraps anywhere; the tree is monospaced. */
+   selected node's details. Page text is inert and wraps anywhere; the tree is monospaced. Signal
+   (specs/design-tokens.feature.md, The Changes panel, …): the tree, matches and sources --text-mono on
+   --bg-surface cards with --e-ring, --space-1 in, so a focused row's ring is whole. */
 .inspector-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-}
-
-.inspector-pick:disabled {
-  opacity: 0.5;
-  cursor: default;
+  gap: var(--space-3);
 }
 
 .inspector-tree,
@@ -10008,11 +10111,12 @@ input {
 .inspector-tree {
   max-height: 46vh;
   overflow: auto;
-  padding: 4px 0;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 8px;
-  background: var(--seo-card);
-  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  padding: var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
+  font: var(--text-mono);
 }
 
 .inspector-group {
@@ -10023,13 +10127,16 @@ input {
   outline: none;
 }
 
+/* A node: an --r-xs row (its transparent border carries the selected node's --accent edge,
+   PRESSED_EDGES), --bg-hover under the pointer, the selected one --accent-soft. */
 .inspector-row {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 1px 8px 1px 4px;
-  border-radius: 4px;
+  padding: 0 var(--space-3) 0 var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
   cursor: default;
 }
 
@@ -10037,12 +10144,18 @@ input {
   background: var(--bg-hover);
 }
 
-.inspector-item:focus-visible > .inspector-row {
-  box-shadow: inset 0 0 0 2px var(--accent);
+.inspector-row[data-selected='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
-.inspector-row[data-selected='true'] {
-  background: var(--accent-soft);
+/* The tree's roving focus is on the item; the ring goes round its row, above its neighbours. */
+.inspector-item:focus-visible > .inspector-row {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .inspector-twisty {
@@ -10054,10 +10167,12 @@ input {
 
 .inspector-twisty::before {
   content: '▸';
-  display: inline-block;
-  font-size: 10px;
-  line-height: 10px;
-  transition: transform 0.12s ease;
+  display: block;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
+  font-weight: 400;
+  text-align: center;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .inspector-twisty[data-open='true']::before {
@@ -10074,9 +10189,10 @@ input {
   white-space: nowrap;
 }
 
+/* --text-muted, not --text-faint: a hovered row (--bg-hover over the card) leaves --text-faint at 4.26:1 in dark. */
 .inspector-shadow {
   flex: none;
-  color: var(--text-faint);
+  color: var(--text-muted);
   font-style: italic;
 }
 
@@ -10089,21 +10205,21 @@ input {
 }
 
 .inspector-more {
-  padding: 2px 0 2px 18px;
+  padding: calc(var(--space-1) / 2) 0 calc(var(--space-1) / 2) calc(var(--space-5) + 2px);
 }
 
 .inspector-details {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .inspector-facts {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-  gap: 2px 10px;
+  gap: calc(var(--space-1) / 2) var(--space-3);
   margin: 0;
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .inspector-fact {
@@ -10119,17 +10235,18 @@ input {
   overflow-wrap: anywhere;
 }
 
+/* Separate borders with no spacing draw the same rules as collapsed ones. */
 .inspector-table {
   width: 100%;
-  border-collapse: collapse;
+  border-spacing: 0;
   table-layout: fixed;
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .inspector-table th,
 .inspector-table td {
-  padding: 2px 6px 2px 0;
-  border-bottom: 1px solid var(--seo-card-edge);
+  padding: calc(var(--space-1) / 2) var(--space-2) calc(var(--space-1) / 2) 0;
+  border-bottom: 1px solid var(--divider);
   text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
@@ -10142,12 +10259,11 @@ input {
 
 .inspector-table tbody th {
   width: 38%;
-  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
-  font-weight: 400;
+  font: var(--text-mono);
 }
 
 .inspector-cut {
-  margin-left: 4px;
+  margin-left: var(--space-1);
   color: var(--text-faint);
 }
 
@@ -10159,12 +10275,19 @@ input {
 .inspector-views {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
+/* The chosen view: the shared row action pressed, --accent on --accent-soft with an --accent edge on
+   its transparent border (PRESSED_EDGES). It sets no box-shadow, so the shared focus ring stays. */
 .inspector-view-button[aria-pressed='true'] {
+  border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.inspector-view-button[aria-pressed='true'] .icon {
+  color: currentColor;
 }
 
 .inspector-search,
@@ -10173,7 +10296,7 @@ input {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .inspector-search-mode {
@@ -10183,57 +10306,64 @@ input {
 .inspector-matches {
   max-height: 24vh;
   margin: 0;
-  padding: 4px 0;
+  padding: var(--space-1);
   overflow: auto;
   list-style: none;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 8px;
-  background: var(--seo-card);
-  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
+  font: var(--text-mono);
 }
 
 .inspector-match {
   width: 100%;
-  border: 0;
   background: none;
   color: inherit;
-  font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .inspector-match:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--accent);
-  outline: 0;
+  position: relative;
+  z-index: 1;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .inspector-source {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .inspector-find-count {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .inspector-source-lines {
   max-height: 60vh;
   margin: 0;
-  padding: 4px 0;
+  padding: var(--space-1);
   overflow: auto;
   list-style: none;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 8px;
-  background: var(--seo-card);
-  font: 11.5px/1.5 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
+  font: var(--text-mono);
 }
 
+/* A line: matches on --accent-soft, the current one a 2px --accent line on its leading edge (a border,
+   which forced colours keep: there the current line is Highlight, the other matches CanvasText). */
 .inspector-source-row {
   display: flex;
-  gap: 8px;
-  padding: 0 8px 0 4px;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) 0 calc(var(--space-1) - 2px);
+  border: 0 solid transparent;
+  border-inline-start-width: 2px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -10243,13 +10373,14 @@ input {
 }
 
 .inspector-source-row[aria-current='true'] {
-  box-shadow: inset 2px 0 0 var(--accent);
+  border-color: var(--accent);
 }
 
+/* --text-muted, not --text-faint: a matching line's --accent-soft leaves --text-faint under 4.5:1 in dark. */
 .inspector-source-no {
   flex: none;
   min-width: 4ch;
-  color: var(--text-faint);
+  color: var(--text-muted);
   text-align: right;
   user-select: none;
 }
@@ -10258,10 +10389,36 @@ input {
   align-self: flex-start;
 }
 
+/* Forced colours replace the fills that say selected, chosen and matched (FORCED_COLOURS_PRESSED): only the
+   chosen ones' edges draw, in Highlight, and a matching line's in CanvasText. */
+@media (forced-colors: active) {
+  .inspector-row {
+    border-color: Canvas;
+  }
+
+  .inspector-row[data-selected='true'],
+  .inspector-view-button[aria-pressed='true'] {
+    border-color: Highlight;
+  }
+
+  .inspector-source-row {
+    border-color: Canvas;
+  }
+
+  .inspector-source-row[data-match='true'] {
+    border-color: CanvasText;
+  }
+
+  .inspector-source-row[aria-current='true'] {
+    border-color: Highlight;
+  }
+}
+
 /* End of Inspector search and sources (Phase 11) */
 
 /* Screenshot editor (Phase 11 Task 7, `screenshot.feature.md`, Editing): a sheet over the page
-   column; the tab's view is hidden while it shows (as with Projects). */
+   column; the tab's view is hidden while it shows (as with Projects). Signal: a --bg-surface sheet in
+   Geist; its tools the shared segments and row actions, its field Settings'. */
 .page-column:has(> .shot-editor-sheet) > .page-area {
   flex: 0 0 0;
   height: 0;
@@ -10274,42 +10431,42 @@ input {
   min-height: 0;
   overflow: auto;
   contain: inline-size;
-  background: var(--bg-page);
+  background: var(--bg-surface);
   outline: none;
+  font: var(--text-body);
 }
 
 .shot-editor {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
   width: min(1200px, 100%);
   min-height: 0;
-  padding: 16px 20px 24px;
+  padding: var(--space-5) var(--space-5) var(--space-6);
 }
 
 .shot-editor-head {
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 .shot-editor-title {
   margin: 0;
-  font-size: 15px;
-  font-weight: 600;
+  font: var(--text-heading);
 }
 
 .shot-editor-hint {
   flex: 1 1 auto;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .shot-editor-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .shot-editor-tool-group {
@@ -10318,31 +10475,35 @@ input {
 
 .shot-editor-swatches {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
+/* A colour: an --h-badge circle. Its colour is an SVG fill from SCREENSHOT_EDIT_COLORS (a presentation
+   attribute, not an inline style), so the stylesheet holds no literal colours for it; its outline is the
+   circle's stroke (currentColor: --switch-off, 3:1 on the sheet, so a white swatch shows). The chosen one
+   is ringed by a 2px --accent border (PRESSED_EDGES); forced colours draw only that ring, in Highlight. */
 .shot-editor-swatch {
-  width: 22px;
-  height: 22px;
+  position: relative;
+  width: var(--h-badge);
+  height: var(--h-badge);
   padding: 0;
+  overflow: hidden;
   border: 2px solid transparent;
-  border-radius: 50%;
+  border-radius: var(--r-pill);
   background: none;
-  /* The circle's outline (its stroke is currentColor), so a light swatch stays visible. */
-  color: var(--border-field);
+  color: var(--switch-off);
 }
 
 .shot-editor-swatch[aria-pressed='true'] {
   border-color: var(--accent);
 }
 
-.shot-editor-swatch {
-  position: relative;
-  overflow: hidden;
+.shot-editor-swatch:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
-/* The swatch's colour is an SVG fill from SCREENSHOT_EDIT_COLORS (a presentation attribute, not an
-   inline style), so the stylesheet holds no literal colours for it; its outline is the circle's stroke. */
 .shot-editor-swatch > svg {
   position: absolute;
   inset: 0;
@@ -10354,24 +10515,41 @@ input {
 .shot-editor-check {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
+  gap: var(--space-1);
+  font: var(--text-small);
 }
 
+.shot-editor-check input {
+  accent-color: var(--accent);
+}
+
+/* The text field (Settings'): --h-control at --r-sm on --bg-surface with --e-raised. */
 .shot-editor-text {
   width: 220px;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-control);
-  background: var(--bg-field);
+  height: var(--h-control);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
+  font: var(--text-body);
+}
+
+.shot-editor-text::placeholder {
+  color: var(--text-faint);
+}
+
+.shot-editor-text:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .shot-editor-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   margin-left: auto;
 }
 
@@ -10388,10 +10566,20 @@ input {
   display: block;
   max-width: 100%;
   height: auto;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 6px;
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
   cursor: crosshair;
   touch-action: none;
+}
+
+@media (forced-colors: active) {
+  .shot-editor-swatch {
+    border-color: Canvas;
+  }
+
+  .shot-editor-swatch[aria-pressed='true'] {
+    border-color: Highlight;
+  }
 }
 
 /* The SERP panel's search tools (Phase 10 Task 9): Edit search and Track this search…. */
