@@ -32,14 +32,15 @@ Phase 1 Task 2. Each scenario maps to one named test.
     3. only once the tablist is down to one whole tab (`TAB_MIN_WIDTH_PX` and its focus-ring padding),
        in a narrow window, does the address bar give way: to `ADDRESS_MIN_WIDTH_PX` at the window's
        minimum (`CHROME_MIN_CONTENT_WIDTH_PX`), and below that minimum, which a tiling window manager
-       may impose (see Minimum window width), on down to nothing, so the tools and one whole tab stay
-       whole down to `CHROME_MIN_CONTENT_WIDTH_PX − ADDRESS_MIN_WIDTH_PX` (348px). Narrower still, the
+       may impose (see Minimum window width), on down to its own padding and border (24px), so the tools and one whole tab
+       stay whole down to `CHROME_MIN_CONTENT_WIDTH_PX − ADDRESS_MIN_WIDTH_PX` + 24 (372px). Narrower still, the
        row clips from its right end (the render-profile toggle first).
     No tab is squeezed under its minimum: the tablist's ends clip the tabs scrolled past them.
   - **A focused tab is shown whole:** whenever a tab takes focus (the tablist's keys, Tab or Shift+Tab,
-    a click, Delete's neighbour), and again after the strip re-renders (a closed tab gone, a tab
-    added), the focused tab's whole pill, its × included, is scrolled into view with the tablist's
-    scroll padding; so is the active tab whenever it changes.
+    a click, Delete's neighbour), and again once a Delete's closed tab is gone from the strip, the
+    focused tab's whole pill, its × included, is scrolled into view with the tablist's
+    scroll padding; so is the active tab whenever it changes. A tab opened or closed in the
+    background leaves the strip where the user scrolled it.
   - **Never scrolled itself:** the row clips what does not fit (`overflow: clip`), so focusing a
     control cannot scroll the row and move Back off the window's edge.
   - **Minimum window width:** the window asks for content at least `CHROME_MIN_CONTENT_WIDTH_PX` wide

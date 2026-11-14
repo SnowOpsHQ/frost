@@ -20,6 +20,13 @@ function showWhole(tab: Element | null | undefined): void {
 }
 
 /**
+ * Set by Delete, read once by the strip's next re-render: only a Delete brings the focused tab back
+ * after the tabs change, so a tab opened or closed in the background (a capture run, a page's
+ * `window.open`) never snaps a strip the user scrolled away.
+ */
+let showFocusedAfterDelete = false;
+
+/**
  * One tab in the strip: the `role="tab"` element (glyph or loading indicator, label; tooltip: the
  * full label) and, as its sibling, the close button. A tab's children are presentational, so the ×
  * is a mouse affordance outside it (`aria-hidden`, never focused); the keyboard closes the focused
@@ -71,6 +78,7 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
             const items = [...(event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
             const index = items.indexOf(event.currentTarget);
             (items[index + 1] ?? items[index - 1])?.focus();
+            showFocusedAfterDelete = true;
             // Main leaves focus here, on the neighbour, even when this was the active tab.
             void actions.closeTab(tab.id, true);
           }
@@ -135,9 +143,12 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
 export function TabStrip({ state }: { readonly state: BrowserState | null }) {
   const list = useRef<HTMLDivElement>(null);
   const tabIds = state?.tabs.map((tab) => tab.id).join(' ');
-  // After the tabs change (one closed, one added), the focused tab may have slid out of view: bring
-  // its whole pill back (a Delete scrolled to the neighbour before the closed tab went).
+  // After a Delete the closed tab goes and the neighbour that took focus may slide out of view (it was
+  // scrolled in before the closed tab went): bring its whole pill back. Other tab changes leave the
+  // strip where the user scrolled it.
   useLayoutEffect(() => {
+    if (!showFocusedAfterDelete) return;
+    showFocusedAfterDelete = false;
     const focused = document.activeElement;
     if (focused?.getAttribute('role') === 'tab' && list.current?.contains(focused)) showWhole(focused);
   }, [tabIds]);

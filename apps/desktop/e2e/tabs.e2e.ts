@@ -722,6 +722,12 @@ test('below-the-minimum-the-address-bar-gives-way', async () => {
     await activeTab().focus();
     await expect.poll(focusedPillInside).toBe(true);
   });
+  // The address bar keeps its padding and border (24px), so the tools stay whole down to 372px.
+  await withRowWidth(CHROME_MIN_CONTENT_WIDTH_PX - ADDRESS_MIN_WIDTH_PX + 24, async () => {
+    const facts = await rowFacts();
+    expect(facts.inside).toBe(true);
+    for (const tool of facts.tools) expect([tool.width, tool.height], tool.id).toEqual([34, 34]);
+  });
 });
 
 test('focused-tab-ring-shows-in-scrolled-tablist', async () => {
