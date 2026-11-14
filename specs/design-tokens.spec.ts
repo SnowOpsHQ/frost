@@ -564,12 +564,12 @@ export const SIGNAL_SURFACES = [
   // The browser chrome's rows (specs/browser-chrome.feature.md, Layout; permissions.feature.md;
   // page-commands.feature.md; tabs.feature.md, The chrome row): the grid, the one chrome row (the tablist,
   // the address bar, the tools and its loading line), the permission prompt, the fullscreen notice, the page area's frame and the status bar. Its
-  // classes share no prefix, so it lists them. Not the shared `.icon` and `.visually-hidden`, the
-  // new tab's view and the error panels (their own rules), nor the bars and badges later surface PRs
-  // move: the render-profile editor bar and chips (`.tab-profile`, `.status-render-profile`,
-  // `.status-tab-overrides`), the find bar, History and the update notice. Some of those later surfaces'
-  // rules name a chrome class, so this entry checks them today: `.status-render-profile + .status-zoom`
-  // and the `.page-column … > .page-area` rules of History, Projects and the shot editor (layout only).
+  // classes share no prefix, so it lists them, with `.page-column` (the page area and the sheets above
+  // it, layout only). Not the shared `.icon` and `.visually-hidden`, nor the new tab's view, the error
+  // panels, the render profile's parts, the find bar, History and the update notice: their own entries
+  // below. Some of their rules name a chrome class, so this entry checks those too:
+  // `.status-render-profile + .status-zoom` and the `.page-column … > .page-area` rules of History,
+  // Projects and the shot editor (layout only).
   {
     name: 'browser chrome',
     stylesheet: 'styles.css',
