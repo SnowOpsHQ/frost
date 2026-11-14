@@ -225,6 +225,7 @@ const CAPTURES = [
   'projects-lower',
   'render-profile',
   'permission-bar',
+  'page-error',
   'update-bar',
   'agent-empty',
   'agent-conversation',
@@ -620,6 +621,15 @@ test.describe('page surfaces', () => {
     await page.getByTestId('permission-block').click();
     await expect(prompt).toHaveCount(0);
     await asked;
+  });
+
+  test('page-error', async () => {
+    // browse-guard.e2e.ts: a load that fails shows the error panel in the page area. Chromium refuses
+    // port 9 before any request (ERR_UNSAFE_PORT), so the URL, the message and the code never vary.
+    await go('http://127.0.0.1:9/');
+    await expect(page.getByTestId('page-error')).toBeVisible();
+    await expect(page.getByTestId('page-error-detail')).toHaveText('ERR_UNSAFE_PORT');
+    await capture('page-error');
   });
 });
 
