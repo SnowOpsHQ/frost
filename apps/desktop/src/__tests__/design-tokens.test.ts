@@ -12,6 +12,7 @@ import {
   FORCED_COLOURS_BUSY,
   FORCED_COLOURS_KEPT,
   FORCED_COLOURS_PRESSED,
+  PROJECTS_SHEET_NARROW,
   FORCED_COLOURS_SYSTEM_COLOURS,
   HOVER_OVERLAYS_SKIP_PRESSED,
   HEX_COLOUR_RATCHET,
@@ -1014,6 +1015,28 @@ test('surface-rules-read-signal-tokens', () => {
     expect(result.problems, surface.name).toEqual([]);
     expect(result.typeRules, `${surface.name} reads the --text-* tokens`).toBeGreaterThan(0);
   }
+});
+
+test('projects-sheet-stacks-by-its-own-width', () => {
+  const narrow = PROJECTS_SHEET_NARROW;
+  const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const declarations = parse(read(narrow.stylesheet)).declarations;
+  // The sheet is the named container.
+  expect(declarations.some((d) => collapse(d.context.at(-1) ?? '') === narrow.sheet && d.property === 'container' && collapse(d.value) === narrow.container)).toBe(true);
+  // The stack rule sits in that container's query (never a viewport @media).
+  const stack = declarations.filter((d) => collapse(d.context.at(-1) ?? '') === narrow.stack.selector && d.property === narrow.stack.property && d.value === narrow.stack.value);
+  expect(stack.length, `${narrow.stack.selector} { ${narrow.stack.property}: ${narrow.stack.value} }`).toBeGreaterThan(0);
+  for (const d of stack) expect(d.context.slice(0, -1).map(collapse)).toEqual([narrow.query]);
+  // Every container query of a Projects rule names the sheet's container.
+  for (const name of narrow.stylesheets) {
+    for (const d of parse(read(name)).declarations) {
+      const query = d.context.find((level) => level.startsWith('@container'));
+      if (query !== undefined && /\.projects?-/.test(d.context.at(-1) ?? '')) expect(collapse(query), `${name}: ${d.context.join(' > ')}`).toMatch(/^@container projects \(/);
+    }
+  }
+  // Bulk add's fieldsets shrink.
+  const shrink = parse(read(narrow.shrink.stylesheet)).declarations.filter((d) => collapse(d.context.at(-1) ?? '') === narrow.shrink.selector && d.context.length === 1);
+  expect(shrink.filter((d) => d.property === narrow.shrink.property).at(-1)?.value).toBe(narrow.shrink.value);
 });
 
 test('hex-colours-do-not-grow', () => {

@@ -919,7 +919,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   version, project, view, node, Inspector view, source match and swatch), in light
   and dark, the cascade over its
   `element` selectors with the `@media (forced-colors: active)` rules read too resolves `border-color` to
-  `Highlight`. An entry with `rest` (a project, a tree row, a source line, a swatch, a Projects view) also
+  `Highlight`. An entry with `rest` (a version, a project, a tree row, a source line, a swatch, a Projects view) also
   resolves `border-color` to `Canvas` over its first selector alone, the item unchosen (forced colours paint a
   transparent border, so without the reset every item draws the same edge), and the source line's `match`
   to `CanvasText` over its first two, a matching line that is not the current one. Every selector named is
@@ -1001,6 +1001,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   with no prefix (a fixture like the browser chrome's: `.tabstrip`, `.tab`, `.address-*`, keyframes `tab-spin`) it checks
   exactly those (`.tab[data-active='true']`, `.tab:has(.tab-main:focus-visible)`, `.address-input`) and
   ignores `.tabs`, `.tab-profile`, `.tabstrip-x`, `.addressbook`, `.x-tab` and `tab-spin-more`.
+- **Scenario: projects-sheet-stacks-by-its-own-width** — `PROJECTS_SHEET_NARROW`: the sheet declares
+  `container: projects / inline-size`; the `.projects-body` rule setting `grid-template-columns:
+  minmax(0, 1fr)` sits inside `@container projects (max-width: 640px)` (a `@media` query, or an unnamed
+  `@container`, fails); every `@container` that holds a `.projects-*` rule in `styles.css` or `rankings.css`
+  names `projects`; and `.projects-bulk-group` keeps `min-inline-size: 0`.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
 

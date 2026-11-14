@@ -498,7 +498,7 @@ export const FORCED_COLOURS_PRESSED = [
   { stylesheet: 'styles.css', element: ['.devtools-tab', ".devtools-tab[aria-selected='true']"], why: 'the DevTools drawer\'s selected tab' },
   // The Changes panel, Projects, Rankings, Inspector and the screenshot editor (their surface PR): a chosen
   // item drawn by its fill and an --accent edge (PRESSED_EDGES), or by an --accent line, which forced colours replace.
-  { stylesheet: 'styles.css', element: ['.changes-version', ".changes-version[aria-pressed='true']"], why: 'the Changes panel\'s chosen version (the one the diff shows)' },
+  { stylesheet: 'styles.css', element: ['.changes-version', ".changes-version[aria-pressed='true']"], rest: 'canvas', why: 'the Changes panel\'s chosen version (the one the diff shows)' },
   { stylesheet: 'styles.css', element: ['.projects-item', ".projects-item[data-selected='true']"], rest: 'canvas', why: 'the Projects sheet\'s chosen project' },
   { stylesheet: 'styles.css', element: ['.inspector-row', ".inspector-row[data-selected='true']"], rest: 'canvas', why: 'the Inspector\'s selected node' },
   {
@@ -918,6 +918,24 @@ export const SIGNAL_SURFACES = [
   { name: 'Rankings', stylesheet: 'rankings.css', selectorPrefix: '.rankings' },
   { name: 'Rankings: Compare', stylesheet: 'rankings.css', selectorPrefix: '.compare' },
 ] as const satisfies readonly SignalSurface[];
+
+/**
+ * The Projects sheet sits in the page column, so its width is not the window's: it is a named inline-size
+ * container (`container`, on `sheet`), and its list stacks above the project by the sheet's own width
+ * (`stack`: the rule inside `query`); every `@container` query of a Projects rule, in either stylesheet,
+ * names that container, so one added inside the sheet later can't change what they measure. Bulk add's
+ * fieldsets give up their min-content width (`shrink`), or the form widens the column past its scrollbar.
+ * A viewport query never fired for a 327px sheet in a 776px window, which left the project a 29px column.
+ */
+export const PROJECTS_SHEET_NARROW = {
+  stylesheet: 'styles.css',
+  sheet: '.projects-sheet',
+  container: 'projects / inline-size',
+  query: '@container projects (max-width: 640px)',
+  stack: { selector: '.projects-body', property: 'grid-template-columns', value: 'minmax(0, 1fr)' },
+  stylesheets: ['styles.css', 'rankings.css'],
+  shrink: { stylesheet: 'rankings.css', selector: '.projects-bulk-group', property: 'min-inline-size', value: '0' },
+} as const;
 
 /**
  * The most literal hex colours (`#rgb`, `#rrggbb`, …, outside comments) the renderer's stylesheets
