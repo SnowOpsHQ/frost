@@ -65,7 +65,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (only the 11px chips moved in the values step; Settings and Help moved their 4, leaving 17;
   Overview its band label and all-clear line, leaving 15; On-Page's "Good length" drew `--ok` through
   the meter's own property, so it never counted; the panels' all-clear line, Images' alt badge and
-  Schema's block status, leaving 12).
+  Schema's block status, leaving 12; the DevTools drawer its robots line and 2xx code, leaving 10).
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
   (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`. The status bar's failed-overrides
@@ -77,7 +77,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   either, so it stays there, as it does for the SEO sidebar's frame; Settings' switch knob was its one, so it is 52;
   the fullscreen notice's two went with the chrome's, so it is 50; Overview's and On-Page's rules held
   none, so it stays 50; Links' kind and rel flags, their dark overrides, the share card's image label
-  and Schema's error mark held 17, so it is 33).
+  and Schema's error mark held 17, so it is 33; the render profile's page-area frame held three literal
+  whites, so it is 30).
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
   official `geist` npm package (`GEIST_PACKAGE`: pinned exactly, SIL Open Font License 1.1, listed in
   `THIRD_PARTY_NOTICES` with the licence text). Only static woff2 files, only the weights the type
@@ -504,6 +505,119 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   action also loses its fill and shadow and goes from `--text` to `--text-faint`, so it keeps plain
   `--text-faint`.
 
+- **The rest of the browser chrome** (the bands under the chrome row, the page area's panels, the
+  DevTools drawer and the History sheet: `browser-chrome.feature.md`, `browser-polish.feature.md`,
+  `render-profile.feature.md`, `devtools.feature.md`, `update-client.feature.md`) follows the
+  Migration notes, the token `use` notes and the canvas's band slot, buttons, field and segmented
+  control, where they agree. The chrome's PR already moved the permission prompt, the fullscreen
+  notice and the page area's frame; its entry now also lists `.page-column` (layout only: the page area
+  and the sheets above it). Each piece has its `SIGNAL_SURFACES` entry: the error and crash panels
+  (`.panel`), the render profile (no shared prefix: `.render-*`, the tab badge `.tab-profile-*`, the
+  status chips `.status-render-profile-*` and `.status-tab-overrides`), the DevTools drawer
+  (`.devtools`), the find bar (`.find`), History (`.history`) and the update notice (`.update`). Text
+  is Geist from the `--text-*` tokens, every space a `--space-*` step, every corner an `--r-*`, every
+  rule `--divider` (`--bg-chrome-edge`), and focus `--focus-ring` beside a transparent 2px outline
+  (they were 2px `--accent` outlines), after the hovers, whose state checks sit in `:where()`
+  (`FOCUS_RING_RULES`). A disabled button is the token sheet's "--text-faint on --bg-subtle, no
+  shadow" (it faded), `GrayText` under forced colours (`FORCED_COLOURS_BUSY`).
+  **Bands.** The render-profile editor bar, the find bar and the update notice take the canvas's band
+  slot, as the permission prompt did: "same shell for every band", an `--accent-soft` band at `--r-md`
+  inset by `--space-3` under the chrome row, at least 44px high, with no edge or shadow (`--bg-prompt`,
+  `--prompt-edge` and `--shadow-prompt` are `removed`; a transparent border stays for forced colours),
+  its lead icon a bare `--accent` glyph (the update notice's sat on a tinted tile). So the find bar is
+  52px with its inset where it was 40 (`--find-height`: "find is a band (≥ 44px)", `removed`), and the
+  update notice's row 52 where it was 49; the page area moves down by the difference, and the tab's
+  view with it (main lays it over the page area's box, whatever the rows above it measure). Band
+  buttons are `--h-chip` pills (the canvas's "band buttons"): a secondary one on `--bg-surface` with
+  `--e-raised` (hover lays `--bg-hover` over it), the primary one `--accent` with `--on-accent`
+  (`--accent-hover` hovered; the update notice's Download and Show file were outlined `--accent` text,
+  where the canvas fills them), a quiet one (Release notes, Later) transparent in `--text`, `--bg-hover`
+  hovered; the close and dismiss buttons `--h-chip` circles in `--text-muted`. **Update notice:** its
+  text `--text-body` in `--text-muted`, the headline `--text` at 600, release notes `--text-small`; a
+  failed update is a `--danger-soft` band with a `--danger` icon (its words say what failed). **Find
+  bar:** the input an `--h-chip` pill on `--bg-surface` with `--e-raised`, `--focus-ring` focused (it was
+  an `--accent` border with a 3px `--accent-soft` halo); the count `--text-small` in `--text-muted`, "no
+  matches" `--danger-ink` (it was `--danger`); its tools `--h-chip` circles in `--text-muted` (`--icon`),
+  disabled `--text-faint` at half strength as the chrome's tools; Match case, pressed, is the canvas's
+  segmented control's pressed item (`--bg-surface`, `--e-raised`, its "Aa" `--accent`; it was
+  `--accent-soft`, which the band already is), `Highlight` under forced colours
+  (`FORCED_COLOURS_PRESSED`); the divider `--divider`. **Render-profile editor bar:** its labels
+  `--text-caps` in `--text-muted` (they were 10.5px `--text-faint`), the quick profiles `--h-chip`
+  secondary pills (`--render-edge` and `--render-accent` under the pointer → `--bg-hover`), the selects
+  and the user-agent and location fields `--h-chip` pills on `--bg-surface` with `--e-raised` (`--r-pill`:
+  `--radius-field`), the user agent in `--text-mono`; Apply is the primary button, Reset a secondary
+  one; checkboxes `accent-color: --accent`; errors `--danger-ink`; its notes `--warn-ink` on
+  `--warn-soft` at `--r-sm` (a 10% `--caution` tint), the failed overrides' `--danger-ink` on
+  `--danger-soft`; a tag in the bar (CSS off) a `--bg-surface` chip. **Page-area frame:** one accent,
+  no second hue (`--render-accent`, `--render-soft`, `--render-edge` → `--accent`, `--accent-soft`,
+  `--accent`, all three `removed`): the 4px edge and the device's outline `--accent`, the 30px header
+  `--accent` with `--on-accent` text (`RENDER_FRAME` keeps its 30px header and 4px inset, so the view
+  doesn't move), its tags outlined in `--on-accent` at 62% (a white 18% fill left their 11px text at
+  3.5:1 in light; the edge, the one thing that groups a tag, is 3.41:1 on the header in light and 3.42:1 in
+  dark, where 45% was 2.48 and 2.38), the failed tag `--danger` with `--on-accent`; its buttons `--h-badge` pills outlined
+  the same way (62%, so the controls' edge is no weaker than the static tag's; `CONTRAST_PAIRS` computes it), hovered `--accent-hover`, the primary one (Reload to apply) `--on-accent` with `--accent`
+  text (its two literal whites and the bar's third went). **Tab badge and status chip:** the badge is an
+  `--icon-size` square at `--r-xs` on `--accent-soft` with an `--accent` icon, edged `--accent` (a border,
+  not an inset shadow) while the tab needs a reload or the profile failed (its name says which); the
+  status chip an `--h-badge` pill on `--accent-soft` in `--text-small` at weight 500, `--accent` text.
+  The toolbar's render toggle, while a profile is in force, is `--accent` on `--accent-soft`, as the SEO
+  toggle pressed; pressed, its edge is `--accent` (`--render-edge`).
+  **Error and crash panels:** on `--bg-page` (the page area's), `--space-7` in; the art keeps its 76px
+  badge, now at `--r-lg` with no inset edge, filled with its tone at 10% over the page (opaque, so the
+  art's gap strokes match it): `--text-faint` (`--panel-art`, `removed`), `--danger` for a certificate
+  error, `--warn` for a crash; the title `--text-display` (it was 22px), the message `--text-body` in
+  `--text-muted` (14px), the error code `--text-mono` in `--text-faint` on `--bg-subtle` at `--r-sm` (on
+  `--bg-hover` it was 4.2:1 in dark). Its buttons (`.panel-button`) are the app's secondary button:
+  `--h-control` pills on `--bg-surface` with `--e-raised` and a transparent border (`--border-field`,
+  `--shadow-field`, `--radius-control` and `--bg-field-hover`: hover lays `--bg-hover` over it), icons
+  `--text-muted` at `--icon-sm`, the primary one `--accent` (`--accent-hover` hovered). Every panel that
+  draws a `.panel-button` (Changes, Projects, the Crawl and AI answers sheets, the SERP, Visibility,
+  JavaScript, Compliance and Search Console panels, the SEO sidebar's Retry) gets it too, the same
+  there; it keeps their face (the rule sets no font: the error panel's own text sets `--text-body`), and
+  their own rules that fade a disabled one (`.changes-capture`, `.inspector-pick`, `.seo-a11y-run`) wait
+  for their PRs. The editor bar's checkbox labels still fade while disabled
+  (`.render-check:has(input:disabled)`, `opacity: 0.5`): a native checkbox can't take the disabled colours, so
+  the label fades with it. **DevTools drawer:** a `--bg-sheet` band ("rail, sidebar, agent panel") with a
+  `--divider` top edge (`--bg-chrome`), its text `--text-small`; the resize edge `--accent-soft` under
+  the pointer and `--accent` focused (inside it, a transparent outline forced colours draw: the drawer
+  clips anything outside); tabs `--h-chip` pills in `--text-muted` at weight 500, `--bg-hover` hovered,
+  the selected one the segmented control's pressed item (`--bg-surface`, `--e-raised`, `--text`; it was
+  `--accent-soft`), `Highlight` under forced colours (`FORCED_COLOURS_PRESSED`); the toolbar's search
+  and selects and its buttons `--h-badge` pills on `--bg-surface` with `--e-raised`; table heads
+  `--text-muted` at weight 500 on `--bg-sheet`, rows ruled `--divider` (they were `--bg-hover`), hovered
+  `--bg-hover`, selected `--accent-soft`; status text takes its -ink (a failed request, a blocked or
+  allowed robots line, a 2xx/3xx/4xx/5xx code: `--ok-ink`, `--warn-ink`, `--danger-ink`, where they drew
+  `--ok`, `--caution`, `--danger`), the codes `--text-micro` on `--bg-subtle` pills (the code says the
+  class, not the hue alone); the waterfall's SVG bars keep graphics colours (`--accent`, `--text-faint`
+  pending, `--warn` redirected, `--danger` failed); console rows `--text-mono`, a warning on `--warn-soft`
+  and an error on `--danger-soft` (they were literal 8% tints), the repeat count an `--accent-soft` pill,
+  the source `--text-muted` (`--text-faint` is 4.45:1 on `--danger-soft`); headings `--text-caps` in
+  `--text-muted`; a masked header value `--text-faint` with no letter-spacing of its own. **History:**
+  a `--bg-surface` sheet; its title `--text-title` (20px), day labels `--text-caps` in `--text-muted`,
+  sticky on the sheet; the search an `--h-control` pill on `--bg-surface` with `--e-raised`, `--focus-ring`
+  within (`:focus-within`; it was an `--accent` border and halo); Clear a secondary button in
+  `--danger-ink` (it was `--danger`), More a secondary button, the selects `--h-control` at `--r-sm` with
+  `--e-raised` (Settings'); rows `--h-field` at `--r-sm`, `--bg-hover` hovered, the time and host
+  `--text-small` in `--text-muted` (`--text-faint` is 4.26:1 on a hovered row in dark), the time on one line
+  in a 64px column (60px in a narrow column; "01:36 PM" wrapped in Geist at 56px), the label `--text-body`; the close and row actions `--h-control` and
+  `--h-chip` circles in `--text-muted` (`--icon`); the monogram an `--h-badge` square at `--r-xs` on
+  `--accent-soft`, its letter `--accent-hover` at `--text-micro` (it was 700, which Geist isn't bundled in);
+  a row's change count an `--h-badge` pill in `--text-micro`, `--accent-hover` on `--accent-soft` (both lie
+  over `--bg-hover` on a hovered row, where `--accent` is 3.84:1 in dark; `--accent-hover` is 5.03 there
+  and 6.19 in light). Retired
+  names these pieces were the last to read are `removed`: `--find-height`, `--bg-prompt`,
+  `--prompt-edge`, `--shadow-prompt`, `--render-accent`, `--render-soft`, `--render-edge`,
+  `--bg-field-hover`, `--shadow-field` and `--panel-art`. The others they read stay for the panels that
+  still do (`--bg-chrome-edge`, `--border-field`, `--radius-control`, `--radius-field`, `--icon`,
+  `--caution`). Two rules drew `--ok` as text (the robots line, a 2xx code) and the frame's three literal
+  whites were hex, so this PR takes 2 off the `--ok`-as-text exception and 3 off the hex ratchet. The visual baseline
+  gains `page-error` (a load Chromium refuses: `http://127.0.0.1:9/`, `ERR_UNSAFE_PORT`, so no request is
+  made and nothing varies). A disabled button's colours are pinned (`TEXT_COLOUR_RULES` with `unfaded`:
+  `--text-faint` on `--bg-subtle` and no `opacity` under 1, for `.panel-button`, primary or not, the update
+  notice's buttons, the quick profiles and the drawer's buttons), so a fade put back fails. A row
+  button in the drawer's table is a block that ellipsizes its own name, and the cells have `--space-1`
+  of block padding, so its `--focus-ring` is drawn whole inside the clipping cell.
+
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
 2. Foundation (done).
@@ -520,7 +634,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    `--toolbar-height`, `--status-height`, `--bg-strip` and `--bg-tab-hover`), then the merged 56px row
    (`--h-chrome`; markup and the keyboard contract), then the SEO panels' interiors, Overview and
    On-Page first (no name retired: later panels read them all), then Links, Images, Social and Schema
-   with the panels' shared controls (none retired either). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
+   with the panels' shared controls (none retired either), then the rest of the browser chrome
+   (`--find-height`, `--bg-prompt`, `--prompt-edge`, `--shadow-prompt`, `--render-accent`, `--render-soft`,
+   `--render-edge`, `--bg-field-hover`, `--shadow-field` and `--panel-art`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
    from the moment the test starts watching.
 
@@ -563,12 +679,15 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
   the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)` (and
   `background` to `var(<background>)` where the entry names one), and that pair is in
-  `CONTRAST_PAIRS`.
+  `CONTRAST_PAIRS`; for an `unfaded` entry (a disabled button shown by its colours), `opacity` resolves to
+  nothing under 1, so a fade put back in place of the colours fails.
 - **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry (Settings' and
   Help's controls, the chrome's tools, tabs, new-tab button, address bar and prompt buttons, an SEO
-  issue's heading row and the panels' link button, and the panels' toggles, row actions, segments,
+  issue's heading row and the panels' link button, the panels' toggles, row actions, segments,
   chips, select, search field and rows, and Schema's entity rows, references, open-URL button and
-  "Show more"), in light and
+  "Show more", and the rest of the chrome's: the error panels' and the bands' buttons, the find bar's
+  field and tools, the editor bar's chips and fields, the frame's buttons, the DevTools drawer's tabs,
+  buttons, links and fields, and History's controls), in light and
   dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
   none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
   `var(--focus-ring)` and `outline` to `2px solid transparent`, and sets no `opacity` under 1: a focused
@@ -578,14 +697,16 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: busy-buttons-show-under-forced-colours** — for each `FORCED_COLOURS_BUSY` entry (a
   Settings button, a primary one and Export Diagnostics' Save, each busy and disabled; a disabled
   toolbar tool; the permission prompt's buttons before they arm; Overview's zero-count pill; a disabled
-  panel toggle, row action, segment, filter chip and Schema's open-URL button), in light and
+  panel toggle, row action, segment, filter chip and Schema's open-URL button; a disabled error-panel
+  button, primary or not, update notice button, find bar tool, editor bar chip or button), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too (a `border` shorthand counting as its colour) resolves `color` and `border-color` to `GrayText`:
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
   over it. Every selector named is one of the stylesheet's.
 - **Scenario: pressed-toggles-show-under-forced-colours** — for each `FORCED_COLOURS_PRESSED` entry (the
   SEO sidebar toggle and the render-profile toggle, pressed; a panel toggle, the chosen segment and a
-  filter chip, pressed), in light and dark, the cascade over its
+  filter chip, pressed; the find bar's Match case, pressed; the DevTools drawer's selected tab), in light
+  and dark, the cascade over its
   `element` selectors with the `@media (forced-colors: active)` rules read too resolves `border-color` to
   `Highlight`. Every selector named is one of the stylesheet's.
 - **Scenario: status-marks-keep-their-colours-under-forced-colours** — for each `FORCED_COLOURS_KEPT`

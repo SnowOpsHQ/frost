@@ -31,19 +31,10 @@
   --bg-chrome: var(--bg-window);
   --bg-chrome-edge: #e2e6ec;
   --bg-field: var(--bg-surface);
-  --bg-field-hover: #ffffff;
   --border-field: #d7dce4;
   --bg-page: var(--bg-surface);
 
   --icon: #3a4556;
-
-  --shadow-field: 0 1px 2px rgb(16 24 40 / 0.06);
-
-  --panel-art: #6b7a90;
-
-  --bg-prompt: #ffffff;
-  --prompt-edge: #dfe4eb;
-  --shadow-prompt: 0 1px 3px rgb(16 24 40 / 0.07);
 
   /* SEO sidebar (SIDEBAR_PANEL_WIDTH / SIDEBAR_RAIL_WIDTH in specs/seo-sidebar.spec.ts). */
   --seo-panel-width: var(--w-panel);
@@ -65,11 +56,6 @@
   --palette-width: 640px;
   --palette-bg: var(--bg-surface);
 
-  /* ---- Render profiles (was in styles.css) */
-  --render-accent: #7a4fe0;
-  --render-soft: rgb(122 79 224 / 0.13);
-  --render-edge: rgb(122 79 224 / 0.55);
-
   /* ---- Content panel: the SERP previews (was in styles.css) */
   --serp-card: var(--bg-surface);
   --serp-title: #2450c8;
@@ -79,7 +65,6 @@
   --serp-glyph-mark: #6b7a90;
 
   /* ---- Browser polish: find bar, History, "Jump back in" (was in styles.css) */
-  --find-height: 40px;
   --history-width: 760px;
   --jump-tile-bg: var(--bg-surface);
 
@@ -107,28 +92,14 @@
   :root {
     /* ---- Chrome, surfaces, icons and the SEO sidebar (was in styles.css; text, accent, status and state: part 2) */
     --bg-chrome-edge: #2c3038;
-    --bg-field-hover: #30353e;
     --border-field: #3a3f49;
 
     --icon: #c9d0db;
-
-    --shadow-field: none;
-
-    --panel-art: #8f9bad;
-
-    --bg-prompt: #242830;
-    --prompt-edge: #343943;
-    --shadow-prompt: 0 1px 3px rgb(0 0 0 / 0.35);
 
     --seo-card-edge: #2c3038;
     --caution: #f0b552;
     --info-tone: #8fb0e8;
     --shadow-card: none;
-
-    /* ---- Render profiles (was in styles.css) */
-    --render-accent: #a98bff;
-    --render-soft: rgb(169 139 255 / 0.16);
-    --render-edge: rgb(169 139 255 / 0.55);
 
     /* ---- Content panel: the SERP previews (was in styles.css) */
     --serp-title: #93b4ff;
