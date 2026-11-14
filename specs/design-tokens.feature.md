@@ -462,7 +462,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   disc, warnings a 2px `--warn` ring, errors a filled `--danger` square; it was a disc in three hues with a
   tinted halo) and keeps its colours in forced colours (`FORCED_COLOURS_KEPT`), its verdict `--text-body`
   at weight 600; a top-level type count is a badge and its count `--text-micro` in `--text-muted`, ringed by
-  `--e-ring` with a transparent border (an `--accent` badge on `--bg-subtle` is 4.18:1 in dark); a block's
+  `--e-ring` with a transparent border (an `--accent` badge's `--accent-soft` tint over `--bg-subtle` is 4.18:1 in dark); a block's
   status is a frame badge (`--h-badge` pill, `-ink` on `-soft`: valid `--ok`, cut `--warn`, invalid
   `--danger`), its types `--text-small` in `--text-faint`; counts by severity `--text-small` at weight 600, a
   zero `--text-faint`, icon and all (it faded), and `GrayText` under forced colours; a node's issue a
@@ -484,7 +484,20 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   its text by padding or a fixed height, since a surface rule takes its type from a token. The pending,
   unavailable and empty states were all the frame's (#37), so nothing there moved. No retired name these
   panels read is unread elsewhere, so none is `removed`; each later panel PR removes the ones its rules
-  were the last to read.
+  were the last to read. **Council round 1** (PR #46): a tinted badge in a row button lies over
+  `--bg-hover` when the row is hovered or open, and `--accent` on `--accent-soft` there is 3.84:1 in dark,
+  so the badges that drew it in these panels (a link's "int", Schema's type badges, an entity row's
+  notice count, which is the frame's info badge) take `--accent-hover` (6.19 light, 5.03 dark hovered;
+  6.80 and 5.96 at rest); `CONTRAST_PAIRS` composes the tinted badges over the hovered row (`under`), and
+  the `-ink` on `-soft` badges pass there (alt, missing alt, loading flags, an entity's warning and
+  error counts: 5.30 or more); the neutral badges' `--bg-subtle` is opaque. A raised control's hover
+  overlay skips a pressed one (`HOVER_OVERLAYS_SKIP_PRESSED`): the Inspector's Tree, Rendered and Served
+  buttons are `.seo-action`s, and `--accent` on `--bg-hover` over the pressed `--accent-soft` was 3.78:1 in
+  dark. A nameless entity's "No name" is `--text-muted`, as "No anchor text". A pressed filter chip draws
+  an `--accent` edge on its transparent border (`PRESSED_EDGES`; its fill alone is 1.06:1 off an unpressed
+  chip in light), 3:1 or more on its fill and on the card. Three rules of later panels faded a disabled
+  chip by `opacity: 0.5` over the shared rule's `--text-faint` (SERP's snippet sources, Changes' shot
+  kinds, the AI judgment's targets in `ai-checks.css`): those declarations went.
 
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
@@ -529,7 +542,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`specs/seo-sidebar.spec.ts`).
 - **Scenario: signal-contrast-meets-aa** — every `CONTRAST_PAIRS` pair reaches its minimum WCAG 2.x
   contrast ratio in light and in dark, read from `tokens.css` (`var()` resolved, translucent colours
-  composited); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
+  composited, a translucent `over` on its `under` first: a tinted badge over a hovered row); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
 - **Scenario: known-contrast-exceptions-are-current** — each `KNOWN_CONTRAST_EXCEPTIONS` pair still
   misses its minimum in at least one theme, is not in `CONTRAST_PAIRS`, and exactly `rules`
   declarations in the renderer's stylesheets draw text in its `fg` (so fixing them removes the entry).
@@ -585,6 +598,15 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.seo-speed-source` (a panel not yet converted) in `styles.css`, `.seo-overview` and the kept
   `.seo-rail-dot` in `settings.css`, `auto`, a list with one unkept selector, an unkept rule with a
   nested block and a kept mark set to `auto` in a nested block.
+- **Scenario: hover-overlays-skip-pressed-controls** — for each `HOVER_OVERLAYS_SKIP_PRESSED` entry
+  (the panels' toggle and row action), its stylesheet has a `<control>:hover…` rule, and every such rule
+  that sets `box-shadow` or `background` names `[aria-pressed='true']` in its selector's `:not(…)`. It
+  passes `.x:hover:where(:not(:disabled, [aria-pressed='true']))`, catches `.x:hover:where(:not(:disabled))`
+  and `.x:hover { background }`, and ignores a hover that sets only `color`.
+- **Scenario: pressed-controls-draw-an-edge** — for each `PRESSED_EDGES` entry (a pressed filter chip),
+  in light and dark, the cascade over its `element` selectors resolves `border-color` to `var(<edge>)`,
+  and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or more. Every selector named is one
+  of the stylesheet's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).

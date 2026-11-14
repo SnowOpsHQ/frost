@@ -775,13 +775,15 @@ export const HEX_COLOUR_RATCHET = 33;
  * translucent `bg` (`--accent-soft`, a dark `-soft` fill) sits on, so the pair is composited first; a
  * translucent `fg` is composited over the (composited) `bg`. `alpha` makes `bg` a tint: the token at
  * that opacity, as `color-mix(in srgb, <bg> <alpha × 100>%, transparent)` draws it (then `over` is
- * needed). `why` cites the sheet.
+ * needed). `under` is the opaque surface under a translucent `over`: a tinted badge in a hovered row
+ * is `bg` over `--bg-hover` (`over`) over the card (`under`), composited in that order. `why` cites the sheet.
  */
 export interface ContrastPair {
   readonly fg: TokenName;
   readonly bg: TokenName;
   readonly min: 4.5 | 3;
   readonly over?: TokenName;
+  readonly under?: TokenName;
   readonly alpha?: number;
   readonly why: string;
 }
@@ -958,6 +960,15 @@ export const CONTRAST_PAIRS = [
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-subtle', min: 4.5, why: `${INK}: Schema's raw view: an invisible character's code point (11px, was --caution on its 14% tint) on the view's --bg-subtle` },
   { fg: '--accent', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'Schema\'s "Show more", hovered: its --accent text (12px) on --bg-hover over the card (4.5:1)' },
   { fg: '--warn-ink', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'Images: a missing width and height (--warn-ink, was --caution) in a row hovered or open (--bg-hover over the card) (4.5:1)' },
+  // Council round 1 on PR #46: a tinted badge inside a row button lies over --bg-hover when the row is
+  // hovered or open, so each pair is also checked composed over the hovered row. --accent on
+  // --accent-soft there is 3.84:1 in dark, so the badges that drew it (a link's kind, Schema's types and
+  // an entity's notice count) take --accent-hover: 6.19 light, 5.03 dark hovered; 6.80 and 5.96 at rest.
+  { fg: '--accent-hover', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'an internal link\'s "int" badge, a Schema type badge and an entity\'s notice count (11px, --accent-hover on --accent-soft) in a row at rest (4.5:1)' },
+  { fg: '--accent-hover', bg: '--accent-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: 'the same badges in a row hovered or open (--accent-soft over --bg-hover over the card) (4.5:1)' },
+  { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: Images' "Alt" badge in a row hovered or open` },
+  { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: Images' "Missing alt" badge and loading flags, and an entity's warning count, in a row hovered or open` },
+  { fg: '--danger-ink', bg: '--danger-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: an entity's error count in a row hovered or open` },
   // The browser chrome's rows (its surface PR). Already covered above: the active tab's label and the
   // address on --bg-surface (--text; the placeholder, the address badge and the active tab's glyph
   // --text-faint and --text-muted), the toolbar's tools, the new-tab button and the status bar on
@@ -1162,7 +1173,68 @@ export const TEXT_COLOUR_RULES = [
     color: '--text-muted',
     why: 'Links and Images: "No usable URL", "No source" in a row, hovered or open (--text-faint is 4.26:1 there in dark)',
   },
+  // Council round 1 on PR #46: --accent text on --accent-soft is 3.84:1 in dark when its row is hovered
+  // or open (the tint over --bg-hover); these badges sit in row buttons, so they take --accent-hover.
+  { stylesheet: 'styles.css', element: ['.seo-kind', ".seo-kind[data-kind='internal']"], color: '--accent-hover', background: '--accent-soft', why: 'Links: an internal link\'s "int" badge, in a row that can be hovered or open' },
+  { stylesheet: 'styles.css', element: ['.seo-page-text', '.seo-ellipsis', '.seo-type-badge'], color: '--accent-hover', background: '--accent-soft', why: 'Schema: a node\'s type badge, in an entity row that can be hovered' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-badge', ".seo-badge[data-severity='info']", ".seo-entity-head .seo-badge[data-severity='info']"],
+    color: '--accent-hover',
+    background: '--accent-soft',
+    why: 'Schema: an entity\'s issue count when its worst is a notice, in an entity row that can be hovered (the frame\'s info badge keeps --accent elsewhere)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-missing', '.seo-entity-name', '.seo-entity-name.seo-missing'],
+    color: '--text-muted',
+    why: 'Schema: a nameless entity\'s "No name", in a row that can be hovered (--text-faint there is 4.26:1 in dark)',
+  },
 ] as const satisfies readonly TextColourRule[];
+
+/**
+ * A raised control whose hover lays `--bg-hover` over it (an inset box-shadow) and which can also be
+ * pressed (`aria-pressed`, on an `--accent-soft` fill): the hover must skip a pressed one, since
+ * `--accent` text on `--bg-hover` over `--accent-soft` is 3.78:1 in dark (council round 1 on PR #46: the
+ * Inspector's Tree, Rendered and Served buttons are `.seo-action`s). Every rule of `stylesheet` with a
+ * selector `<control>:hover…` that sets `box-shadow` or `background` names `[aria-pressed='true']` in
+ * that selector's `:not(…)`.
+ */
+export interface HoverSkipsPressed {
+  readonly stylesheet: string;
+  readonly control: string;
+  readonly why: string;
+}
+
+export const HOVER_OVERLAYS_SKIP_PRESSED = [
+  { stylesheet: 'styles.css', control: '.seo-toggle', why: 'a panel toggle (Highlight on page, Broken only), pressed' },
+  { stylesheet: 'styles.css', control: '.seo-action', why: 'the Inspector\'s Tree, Rendered and Served buttons (`seo-action inspector-view-button`), the chosen one pressed' },
+] as const satisfies readonly HoverSkipsPressed[];
+
+/**
+ * A pressed control whose fill alone would say it (council round 1 on PR #46: a pressed filter chip's
+ * `--accent-soft` is 1.06:1 off an unpressed chip's `--bg-subtle` in light): it also draws an `edge` on its
+ * transparent border, not a box-shadow (which the focus ring replaces). For each entry the cascade over
+ * `element` in `stylesheet` resolves `border-color` to `var(<edge>)` in light and dark, and for each of
+ * `fills` (the pressed fill, the card around it) `CONTRAST_PAIRS` holds `edge` on it at 3:1 or more.
+ */
+export interface PressedEdge {
+  readonly stylesheet: string;
+  readonly element: readonly string[];
+  readonly edge: TokenName;
+  readonly fills: readonly { readonly bg: TokenName; readonly over?: TokenName }[];
+  readonly why: string;
+}
+
+export const PRESSED_EDGES = [
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-chip-button', ".seo-chip-button[aria-pressed='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
+    why: 'a filter chip, pressed (Images\' filters, Content\'s preview chips): an --accent edge beside its --accent-soft fill',
+  },
+] as const satisfies readonly PressedEdge[];
 
 /**
  * A control whose keyboard focus must show `--focus-ring` (and the transparent 2px outline forced colours

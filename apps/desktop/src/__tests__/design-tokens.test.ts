@@ -1,4 +1,4 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -11,9 +11,11 @@ import {
   FORCED_COLOURS_KEPT,
   FORCED_COLOURS_PRESSED,
   FORCED_COLOURS_SYSTEM_COLOURS,
+  HOVER_OVERLAYS_SKIP_PRESSED,
   HEX_COLOUR_RATCHET,
   KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
+  PRESSED_EDGES,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
   SIGNAL_SURFACES,
   SIGNAL_TOKENS,
@@ -25,7 +27,9 @@ import {
   type ContrastPair,
   type FocusRingRule,
   type ForcedColoursBusy,
+  type HoverSkipsPressed,
   type LegacyTokenMigration,
+  type PressedEdge,
   type SignalSurface,
   type TextColourRule,
   type SignalToken,
@@ -286,13 +290,15 @@ test('signal-contrast-meets-aa', () => {
   for (const theme of THEME_NAMES) {
     const colour = (name: string) => colourIn(theme, name);
     for (const pair of pairs) {
-      const label = `${pair.fg} on ${pair.bg}${pair.over ? ` over ${pair.over}` : ''} (${theme})`;
+      const label = `${pair.fg} on ${pair.bg}${pair.over ? ` over ${pair.over}` : ''}${pair.under ? ` over ${pair.under}` : ''} (${theme})`;
       let bg = colour(pair.bg);
       if (pair.alpha !== undefined) bg = [bg[0], bg[1], bg[2], bg[3] * pair.alpha];
       if (bg[3] < 1) {
         expect(pair.over, `${label}: a translucent background needs \`over\``).toBeDefined();
-        const surface = colour(pair.over ?? pair.bg);
-        expect(surface[3], `${label}: \`over\` must be opaque`).toBe(1);
+        let surface = colour(pair.over ?? pair.bg);
+        // A translucent `over` (a hovered row's --bg-hover) lies on its opaque `under` first.
+        if (pair.under !== undefined) surface = composite(surface, colour(pair.under));
+        expect(surface[3], `${label}: \`over\` (on \`under\`) must be opaque`).toBe(1);
         bg = composite(bg, surface);
       }
       const fg = composite(colour(pair.fg), bg);
@@ -558,6 +564,54 @@ test('only-kept-marks-opt-out-of-forced-colours', () => {
   for (const [name, [css, stylesheet]] of Object.entries(caught)) expect(check(css, stylesheet), name).not.toEqual([]);
   // Every renderer stylesheet, whole.
   for (const name of STYLESHEETS) expect(check(read(name), name), name).toEqual([]);
+});
+
+test('hover-overlays-skip-pressed-controls', () => {
+  // A hover rule of `control` that lays a fill must exclude [aria-pressed='true'] in its own :not(…).
+  const problemsIn = (css: string, control: string) => {
+    const problems: string[] = [];
+    let rules = 0;
+    for (const d of parse(css).declarations) {
+      if (d.property !== 'box-shadow' && !d.property.startsWith('background')) continue;
+      for (const selector of splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())) {
+        if (!selector.startsWith(`${control}:hover`)) continue;
+        rules += 1;
+        const excluded = /:not\([^)]*\[aria-pressed='true'\]/.test(selector);
+        if (!excluded) problems.push(`${selector} { ${d.property} } also lays its hover over a pressed ${control}`);
+      }
+    }
+    return { problems, rules };
+  };
+  expect(problemsIn(".x:hover:where(:not(:disabled, [aria-pressed='true'])) { box-shadow: var(--a); }", '.x')).toEqual({ problems: [], rules: 1 });
+  expect(problemsIn('.x:hover:where(:not(:disabled)) { box-shadow: var(--a); }', '.x').problems).toHaveLength(1);
+  expect(problemsIn('.x:hover { background: var(--a); }', '.x').problems).toHaveLength(1);
+  expect(problemsIn('.x:hover { color: var(--a); }', '.x').rules).toBe(0);
+
+  const entries: readonly HoverSkipsPressed[] = HOVER_OVERLAYS_SKIP_PRESSED;
+  for (const entry of entries) {
+    const { problems, rules } = problemsIn(read(entry.stylesheet), entry.control);
+    expect(rules, `${entry.stylesheet} has a hover rule for ${entry.control}`).toBeGreaterThan(0);
+    expect(problems, entry.why).toEqual([]);
+  }
+});
+
+test('pressed-controls-draw-an-edge', () => {
+  const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
+  const entries: readonly PressedEdge[] = PRESSED_EDGES;
+  for (const entry of entries) {
+    const css = read(entry.stylesheet);
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
+    for (const theme of THEME_NAMES) {
+      expect(resolveOnElement(css, entry.element, 'border-color', theme), `${entry.why}: border-color (${theme})`).toBe(`var(${entry.edge})`);
+    }
+    for (const fill of entry.fills) {
+      expect(
+        pairs.some((p) => p.fg === entry.edge && p.bg === fill.bg && p.over === fill.over && p.min >= 3),
+        `${entry.edge} on ${fill.bg}${fill.over ? ` over ${fill.over}` : ''} is a CONTRAST_PAIRS pair at 3:1 or more`,
+      ).toBe(true);
+    }
+  }
 });
 
 test('no-other-stylesheet-declares-root-tokens', () => {
