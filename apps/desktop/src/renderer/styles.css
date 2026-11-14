@@ -4500,8 +4500,8 @@ input {
 /* A 1px --bg-surface boundary between segments (the stroke is currentColor): neighbouring steps are too
    close to tell apart by their shade alone. The 2px stroke is painted under the fill, so only its outer
    1px shows, over the previous segment's end, and never over its own fill; on whole pixels (crispEdges)
-   and 2px at any scale, so it is a solid column, not two anti-aliased halves. A segment at its 0.8%
-   minimum (2–2.5px) keeps at least 1px of fill. */
+   and 2px at any scale, so it is a solid column, not two anti-aliased halves. It never covers a segment's
+   own fill when nothing follows within its width (the next phase starts at a short one's real end). */
 .seo-speed-phase {
   color: var(--bg-surface);
   stroke: currentColor;
@@ -4576,10 +4576,8 @@ input {
 /* A phase's swatch, the shade of its bar: kept in forced colours (FORCED_COLOURS_KEPT), as the bars'
    SVG fills are. */
 .seo-speed-swatch {
-  box-sizing: border-box;
   width: 8px;
   height: 8px;
-  border: 1px solid var(--text-faint);
   border-radius: calc(var(--r-xs) / 2);
   forced-color-adjust: none;
 }
