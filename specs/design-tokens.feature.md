@@ -626,8 +626,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   board (buttons, field, segmented control, chips and badges), where they agree; no screen draws them.
   Each prefix has its `SIGNAL_SURFACES` entry: `.changes` (Capture now and the project picker, the
   history, the diff, the screenshots; the pick hint `.changes-shot-selecting` is the Inspector's too),
-  `.inspector`, `.shot-editor`, and `.projects` and `.retention` in `styles.css`; `.projects`,
-  `.project-settings`, `.rankings` and `.compare` in `rankings.css`. No rule elsewhere is theirs alone;
+  `.inspector`, `.shot-editor`, and `.projects` and `.retention` in `styles.css`; in `rankings.css`
+  `.rankings`, `.compare`, and a class list for `.projects-*` with `.project-settings-*` (Settings has
+  no type of its own). No rule elsewhere is theirs alone;
   the `.page-column … > .page-area` rules of the Projects sheet and the shot editor are layout the chrome's
   entry checks too. Their `.panel-button`, `.seo-action`, `.seo-segment`, `.seo-select`, chips, badges,
   cards and hints are the shared ones, already converted, and stay. Text is Geist from the `--text-*`

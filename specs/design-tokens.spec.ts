@@ -486,7 +486,7 @@ export const FORCED_COLOURS_PRESSED = [
   { stylesheet: 'styles.css', element: ['.inspector-row', ".inspector-row[data-selected='true']"], why: 'the Inspector\'s selected node' },
   {
     stylesheet: 'styles.css',
-    element: ['.seo-action', '.inspector-view-button', ".inspector-view-button[aria-pressed='true']"],
+    element: ['.seo-action', ".inspector-view-button[aria-pressed='true']"],
     why: 'the Inspector\'s chosen view (Tree, Rendered or Served)',
   },
   {
@@ -833,11 +833,11 @@ export const SIGNAL_SURFACES = [
   // The screenshot editor (specs/screenshot.feature.md, Editing): a sheet over the page column.
   { name: 'screenshot editor', stylesheet: 'styles.css', selectorPrefix: '.shot-editor' },
   // The Projects sheet (specs/projects.feature.md) and a project's retention and disk usage
-  // (specs/retention.feature.md); its views, star, tags, Bulk add and blocked runs in rankings.css.
+  // (specs/retention.feature.md); in rankings.css its views, star, tags, Settings (`.project-settings`,
+  // no prefix of its own beside `.projects`), Bulk add and blocked runs.
   { name: 'Projects', stylesheet: 'styles.css', selectorPrefix: '.projects' },
   { name: 'Projects: retention', stylesheet: 'styles.css', selectorPrefix: '.retention' },
-  { name: 'Projects: views, star, tags and Bulk add', stylesheet: 'rankings.css', selectorPrefix: '.projects' },
-  { name: 'Projects: Settings', stylesheet: 'rankings.css', selectorPrefix: '.project-settings' },
+  { name: 'Projects: views, star, tags, Settings and Bulk add', stylesheet: 'rankings.css', classes: ['.projects-*', '.project-settings-*'] },
   // Rankings and Compare (specs/rankings.feature.md, The views): every other rule of rankings.css.
   { name: 'Rankings', stylesheet: 'rankings.css', selectorPrefix: '.rankings' },
   { name: 'Rankings: Compare', stylesheet: 'rankings.css', selectorPrefix: '.compare' },
@@ -1535,7 +1535,7 @@ export const DISABLED_CONTROLS = [
   { stylesheet: 'styles.css', element: ['.seo-segment', '.seo-segment:disabled'], why: 'a segment, disabled (Schema\'s Tree for a block that did not parse)' },
   {
     stylesheet: 'styles.css',
-    element: ['.seo-segment', '.changes-shot-kind-button', '.seo-segment:disabled', '.changes-shot-kind-button:disabled'],
+    element: ['.seo-segment', '.seo-segment:disabled', '.changes-shot-kind-button:disabled'],
     why: 'the Changes panel\'s screenshot kinds, disabled (no page, or a screenshot under way)',
   },
 ] as const satisfies readonly { readonly stylesheet: string; readonly element: readonly string[]; readonly why: string }[];
@@ -1573,7 +1573,7 @@ export const PRESSED_EDGES = [
   },
   {
     stylesheet: 'styles.css',
-    element: ['.seo-action', '.inspector-view-button', ".inspector-view-button[aria-pressed='true']"],
+    element: ['.seo-action', ".inspector-view-button[aria-pressed='true']"],
     edge: '--accent',
     fills: [{ bg: '--accent-soft', over: '--bg-sheet' }, { bg: '--bg-sheet' }],
     why: 'the Inspector\'s chosen view: an --accent edge beside its --accent-soft fill, on the sheet',
@@ -1849,7 +1849,7 @@ export const FOCUS_RING_RULES = [
     why: 'the Projects sheet\'s chosen view, focused and hovered: its --accent underline is a border, so the ring stays',
   },
   { stylesheet: 'rankings.css', element: ['.projects-link-button', '.projects-link-button:hover', '.projects-link-button:focus-visible'], why: 'a page\'s Edit tags link button, focused and hovered' },
-  { stylesheet: 'rankings.css', element: ['.rankings-row-open', '.rankings-row-open:hover', '.rankings-row-open:focus-visible'], why: 'a search in the rank table, focused (it opens its history) and hovered' },
+  { stylesheet: 'rankings.css', element: ['.rankings-row-open', '.rankings-row-open:focus-visible'], why: 'a search in the rank table, focused (it opens its history; under the pointer only its text turns --accent)' },
   {
     stylesheet: 'styles.css',
     element: ['.inspector-row', '.inspector-row:hover', '.inspector-item:focus-visible > .inspector-row'],
@@ -1867,7 +1867,7 @@ export const FOCUS_RING_RULES = [
   },
   {
     stylesheet: 'styles.css',
-    element: ['.seo-action', SEO_ACTION_HOVER, '.inspector-view-button', ".inspector-view-button[aria-pressed='true']", '.seo-action:focus-visible'],
+    element: ['.seo-action', SEO_ACTION_HOVER, ".inspector-view-button[aria-pressed='true']", '.seo-action:focus-visible'],
     why: 'the Inspector\'s chosen view, focused: its pressed rule sets no box-shadow, so the shared ring stays',
   },
   {
