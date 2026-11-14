@@ -72,14 +72,14 @@ interface Declaration {
   readonly block: number;
 }
 
-/** `parseUncached(css)`, once per stylesheet text: the cascade checks resolve thousands of elements
- * against the same `styles.css`, and parsing it each time took the focus-ring test past its budget on
- * macOS CI. Callers only read the result. */
+/** `parseOnce`, memoised by the stylesheet's text: the cascade checks resolve hundreds of properties over
+ * the same stylesheets, and parsing styles.css for each one outgrew the test timeout on slow runners. Every
+ * caller only reads the result. */
 const PARSED = new Map<string, { declarations: Declaration[]; blocks: string[][] }>();
 function parse(css: string): { declarations: Declaration[]; blocks: string[][] } {
   let parsed = PARSED.get(css);
   if (parsed === undefined) {
-    parsed = parseUncached(css);
+    parsed = parseOnce(css);
     PARSED.set(css, parsed);
   }
   return parsed;
@@ -87,7 +87,7 @@ function parse(css: string): { declarations: Declaration[]; blocks: string[][] }
 
 /** The declarations of `css`, each with its context, and the context of every block. (The
  * renderer's CSS has no braces or semicolons inside strings, so a brace walk is enough.) */
-function parseUncached(css: string): { declarations: Declaration[]; blocks: string[][] } {
+function parseOnce(css: string): { declarations: Declaration[]; blocks: string[][] } {
   const declarations: Declaration[] = [];
   const blocks: string[][] = [];
   const stack: string[] = [];
@@ -540,6 +540,10 @@ test('text-colour-rules-resolve', () => {
           }
         })();
         expect(faded, `${rule.element.at(-1)}: opacity (${theme})`).toBe('1');
+      }
+      // The declarations the colour only works with (an SVG stroke drawn in currentColor).
+      for (const [property, value] of Object.entries(rule.drawn ?? {})) {
+        expect(resolveOnElement(css, rule.element, property, theme), `${rule.element.at(-1)} ${property} (${theme})`).toBe(value);
       }
     }
     expect(
