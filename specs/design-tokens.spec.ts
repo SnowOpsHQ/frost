@@ -1264,7 +1264,7 @@ const PROMPT_BUTTON_HOVER = '.prompt-button:hover:where(:not(:disabled))';
 const PROMPT_DISMISS_HOVER = '.prompt-dismiss:hover:where(:not(:disabled))';
 const SEO_ISSUE_HOVER = '.seo-issue-head:hover';
 const SEO_TOGGLE_HOVER = ".seo-toggle:hover:where(:not(:disabled, [aria-pressed='true']))";
-const SEO_ACTION_HOVER = '.seo-action:hover:where(:not(:disabled))';
+const SEO_ACTION_HOVER = ".seo-action:hover:where(:not(:disabled, [aria-pressed='true']))";
 const SEO_REF_HOVER = '.seo-ref-head:hover:where(:not(:disabled))';
 const SEO_ICON_ACTION_HOVER = '.seo-icon-action:hover:where(:not(:disabled))';
 

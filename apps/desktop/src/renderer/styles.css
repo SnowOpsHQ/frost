@@ -2437,7 +2437,7 @@ input {
 
 /* The state checks sit in :where(), so a hover adds no weight over the focus rule below. */
 .seo-toggle:hover:where(:not(:disabled, [aria-pressed='true'])),
-.seo-action:hover:where(:not(:disabled)) {
+.seo-action:hover:where(:not(:disabled, [aria-pressed='true'])) {
   box-shadow:
     inset 0 0 0 var(--h-chip) var(--bg-hover),
     var(--e-raised);
@@ -2617,7 +2617,10 @@ input {
   color: var(--text);
 }
 
+/* Pressed: the fill and an --accent edge on the transparent border (the fill alone is 1.06:1 off an
+   unpressed chip in light; PRESSED_EDGES). */
 .seo-chip-button[aria-pressed='true'] {
+  border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -2744,7 +2747,8 @@ input {
 }
 
 /* A link's kind, its rel and target flags, Images' loading flags and alt badge: On-Page's tag, 18px at
-   --r-xs in --text-micro; neutral, a status one on its -soft fill with -ink text, internal --accent. */
+   --r-xs in --text-micro; neutral, a status one on its -soft fill with -ink text, internal
+   --accent-hover on --accent-soft (--accent there is 3.84:1 in dark once the row is hovered or open). */
 .seo-kind,
 .seo-flag,
 .seo-alt {
@@ -2763,7 +2767,7 @@ input {
 
 .seo-kind[data-kind='internal'] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-hover);
 }
 
 .seo-flag[data-flag='warn'],
@@ -3014,7 +3018,8 @@ input {
 }
 
 /* A top-level type and its count: a badge and a number in an --e-ring outline (a transparent border
-   for forced colours). On the card, not --bg-subtle: an --accent badge there is 4.18:1 in dark. */
+   for forced colours). On the card, not --bg-subtle: a badge's --accent-soft tint over --bg-subtle is
+   4.18:1 in dark. */
 .seo-type-count {
   display: inline-flex;
   align-items: center;
@@ -3037,8 +3042,8 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
-/* A node's type: On-Page's tag in --accent on --accent-soft, cut when long (a block: its height comes
-   from padding, not a line-height). */
+/* A node's type: On-Page's tag in --accent-hover on --accent-soft (--accent is 3.84:1 in dark on a
+   hovered entity row), cut when long (a block: its height comes from padding, not a line-height). */
 .seo-type-badge {
   display: inline-block;
   flex: none;
@@ -3046,7 +3051,7 @@ input {
   padding: calc(var(--space-1) / 2) var(--space-1);
   border-radius: var(--r-xs);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-hover);
   font: var(--text-micro);
   letter-spacing: 0.01em;
   overflow: hidden;
@@ -3269,9 +3274,17 @@ input {
   font-weight: 500;
 }
 
-/* "No name" keeps the frame's italic (the shorthand above resets font-style). */
+/* "No name": --text-muted (--text-faint on a hovered row is 4.26:1 in dark), and the frame's italic
+   (the shorthand above resets font-style). */
 .seo-entity-name.seo-missing {
+  color: var(--text-muted);
   font-style: italic;
+}
+
+/* An entity's issue count when its worst is a notice: the frame's info badge, in --accent-hover in a
+   row that can be hovered (--accent on --accent-soft over --bg-hover is 3.84:1 in dark). */
+.seo-entity-head .seo-badge[data-severity='info'] {
+  color: var(--accent-hover);
 }
 
 .seo-entity-body {
@@ -6040,10 +6053,6 @@ input {
 .seo-snippet-sources .icon {
   width: 13px;
   height: 13px;
-}
-
-.seo-snippet-sources .seo-chip-button:disabled {
-  opacity: 0.5;
 }
 
 .seo-serp {
@@ -9012,7 +9021,6 @@ input {
 }
 
 .changes-shot-kind-button:disabled {
-  opacity: 0.5;
   cursor: default;
 }
 
