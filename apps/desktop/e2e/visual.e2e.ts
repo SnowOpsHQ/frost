@@ -224,6 +224,8 @@ const CAPTURES = [
   'settings',
   'settings-lower',
   'help-shortcuts',
+  'crawl-sheet',
+  'ai-answers-sheet',
   'projects',
   'projects-lower',
   'render-profile',
@@ -584,6 +586,35 @@ test.describe('page surfaces', () => {
     await capture('help-shortcuts');
     await page.getByTestId('shortcuts-view-close').click();
     await expect(page.getByTestId('shortcuts-view')).toHaveCount(0);
+  });
+
+  /** Opens a Help-frame sheet from the palette by its action (crawl.e2e.ts, ai-answers.e2e.ts). */
+  async function paletteSheet(query: string, action: string, view: string): Promise<void> {
+    await menu(COMMAND_PALETTE_MENU_ID);
+    await expect(page.getByTestId('command-palette')).toBeVisible();
+    await page.getByTestId('command-palette-input').fill(query);
+    await page.locator(`[data-testid="command-palette-option"][data-action="${action}"]`).click();
+    await expect(page.getByTestId(view)).toBeVisible();
+  }
+
+  test('crawl-sheet', async () => {
+    // crawl.e2e.ts (crawl-gate-closed-as-shipped): the sheet as shipped, its form from the active tab's site, no runs.
+    await audit('/guide');
+    await paletteSheet('Show site crawl', 'crawl.show', 'crawl-view');
+    await expect(page.getByTestId('crawl-start-url')).toHaveValue(`${ORIGIN}/`);
+    await capture('crawl-sheet');
+    await page.getByTestId('crawl-view-close').click();
+    await expect(page.getByTestId('crawl-view')).toHaveCount(0);
+  });
+
+  test('ai-answers-sheet', async () => {
+    // ai-answers.e2e.ts: the sheet with no key set and no answers kept.
+    await audit('/guide');
+    await paletteSheet('show ai answers', 'ai-answers.show', 'ai-answers-view');
+    await expect(page.getByTestId('ai-answers-ask')).toBeVisible();
+    await capture('ai-answers-sheet');
+    await page.getByTestId('ai-answers-view-close').click();
+    await expect(page.getByTestId('ai-answers-view')).toHaveCount(0);
   });
 
   test('projects', async () => {
