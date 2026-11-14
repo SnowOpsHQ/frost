@@ -323,10 +323,14 @@ function layerProblems(pair: ContrastPair, theme: (typeof THEME_NAMES)[number]):
   let bg = colour(pair.bg);
   if (pair.alpha !== undefined) bg = [bg[0], bg[1], bg[2], bg[3] * pair.alpha];
   if (bg[3] < 1 && pair.over === undefined) problems.push('a translucent background needs `over`');
-  if (bg[3] < 1 && pair.over !== undefined) {
-    let surface = colour(pair.over);
-    if (pair.under !== undefined) surface = composite(surface, colour(pair.under));
-    if (surface[3] !== 1) problems.push('`over` (on `under`) must be opaque');
+  if (pair.under !== undefined) {
+    // Checked before compositing (which always returns an opaque colour): `under` is opaque and `over`
+    // translucent, or an opaque `over` would hide `under` and the stack would pass at its resting ratio.
+    if (pair.over === undefined) problems.push('`under` needs `over`');
+    if (colour(pair.under)[3] !== 1) problems.push('`under` must be opaque');
+    if (pair.over !== undefined && colour(pair.over)[3] === 1) problems.push('`over` must be translucent when it has an `under`');
+  } else if (bg[3] < 1 && pair.over !== undefined && colour(pair.over)[3] !== 1) {
+    problems.push('`over` must be opaque (or translucent on an opaque `under`)');
   }
   return problems;
 }
@@ -447,8 +451,14 @@ function resolveOnElement(css: string, element: readonly string[], property: str
   const own = new Map<string, string>();
   for (const m of matched) {
     own.set(m.property, m.value);
-    // A `border` shorthand sets `border-color` too (its colour is its last word here: `1px solid transparent`).
-    if (m.property === 'border') own.set('border-color', m.value.split(' ').at(-1) ?? '');
+    // A `border` shorthand sets `border-color` too (its colour is its last word here: `1px solid transparent`),
+    // and its width and style (the words that are a length or a style keyword; unset ones reset to 0 / none).
+    if (m.property === 'border') {
+      const words = m.value.split(' ');
+      own.set('border-color', words.at(-1) ?? '');
+      own.set('border-width', words.find((w) => /^-?\d*\.?\d+(?:px|em|rem)?$/.test(w)) ?? '0');
+      own.set('border-style', words.find((w) => /^(?:none|hidden|solid|dashed|dotted|double|groove|ridge|inset|outset)$/.test(w)) ?? 'none');
+    }
   }
   let value = own.get(property);
   if (value === undefined) throw new Error(`${element.join(' + ')}: no ${property} (${theme})`);
@@ -590,6 +600,36 @@ test('only-kept-marks-opt-out-of-forced-colours', () => {
   for (const name of STYLESHEETS) expect(check(read(name), name), name).toEqual([]);
 });
 
+/** A selector's compounds: split at the combinators (space, >, +, ~) outside parentheses and brackets. */
+function compounds(selector: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of selector) {
+    if (ch === '(' || ch === '[') depth += 1;
+    else if (ch === ')' || ch === ']') depth -= 1;
+    if (depth === 0 && /[\s>+~]/.test(ch)) {
+      if (current !== '') parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  return current === '' ? parts : [...parts, current];
+}
+
+/** Whether `compound` names the class `name` (with its dot) outside its parentheses, on a class boundary. */
+function classIn(compound: string, name: string): boolean {
+  let top = '';
+  let depth = 0;
+  for (const ch of compound) {
+    if (ch === '(') depth += 1;
+    if (depth === 0) top += ch;
+    if (ch === ')') depth -= 1;
+  }
+  return new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(top);
+}
+
 test('hover-overlays-skip-pressed-controls', () => {
   // A hover rule of `control` that lays a fill must exclude [aria-pressed='true'] in its own :not(…).
   const problemsIn = (css: string, control: string) => {
@@ -598,10 +638,13 @@ test('hover-overlays-skip-pressed-controls', () => {
     for (const d of parse(css).declarations) {
       if (d.property !== 'box-shadow' && !d.property.startsWith('background')) continue;
       for (const selector of splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())) {
-        if (!selector.startsWith(`${control}:hover`)) continue;
-        rules += 1;
-        const excluded = /:not\([^)]*\[aria-pressed='true'\]/.test(selector);
-        if (!excluded) problems.push(`${selector} { ${d.property} } also lays its hover over a pressed ${control}`);
+        // Every compound (between combinators) holding the class, on a class boundary, and :hover.
+        for (const compound of compounds(selector)) {
+          if (!classIn(compound, control) || !/:hover(?![\w-])/.test(compound)) continue;
+          rules += 1;
+          const excluded = /:not\([^)]*\[aria-pressed='true'\]/.test(compound);
+          if (!excluded) problems.push(`${selector} { ${d.property} } also lays its hover over a pressed ${control}`);
+        }
       }
     }
     return { problems, rules };
@@ -632,6 +675,11 @@ function edgeProblems(css: string, element: readonly string[], edge: string): st
   for (const theme of THEME_NAMES) {
     const colour = resolveOnElement(css, element, 'border-color', theme);
     if (colour !== `var(${edge})`) problems.push(`border-color ${colour} (${theme})`);
+    // ... on a border that draws: a non-zero width and a visible style (the shorthand counts).
+    const width = resolveOnElement(css, element, 'border-width', theme);
+    if (!(Number.parseFloat(width) > 0)) problems.push(`border-width ${width} (${theme})`);
+    const style = resolveOnElement(css, element, 'border-style', theme);
+    if (style === 'none' || style === 'hidden') problems.push(`border-style ${style} (${theme})`);
   }
   return problems;
 }

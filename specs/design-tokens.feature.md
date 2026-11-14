@@ -462,7 +462,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   disc, warnings a 2px `--warn` ring, errors a filled `--danger` square; it was a disc in three hues with a
   tinted halo) and keeps its colours in forced colours (`FORCED_COLOURS_KEPT`), its verdict `--text-body`
   at weight 600; a top-level type count is a badge and its count `--text-micro` in `--text-muted`, ringed by
-  `--e-ring` with a transparent border (`--accent` text on an `--accent-soft` tint over `--bg-subtle` is 4.18:1 in dark; the badge text is now `--accent-hover`, 5.47:1 there); a block's
+  `--e-ring` with a transparent border (`--accent` text on an `--accent-soft` tint over `--bg-subtle` is 4.18:1 in dark; the badge text is now `--accent-hover`, 5.47:1 there in dark); a block's
   status is a frame badge (`--h-badge` pill, `-ink` on `-soft`: valid `--ok`, cut `--warn`, invalid
   `--danger`), its types `--text-small` in `--text-faint`; counts by severity `--text-small` at weight 600, a
   zero `--text-faint`, icon and all (it faded), and `GrayText` under forced colours; a node's issue a
