@@ -1,4 +1,4 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, DISABLED_CONTROLS)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ import {
   KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
   PRESSED_EDGES,
+  STATE_EDGES,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
   SIGNAL_SURFACES,
   SIGNAL_TOKENS,
@@ -32,6 +33,7 @@ import {
   type HoverSkipsPressed,
   type LegacyTokenMigration,
   type PressedEdge,
+  type StateEdge,
   type SignalSurface,
   type TextColourRule,
   type SignalToken,
@@ -70,9 +72,22 @@ interface Declaration {
   readonly block: number;
 }
 
+/** `parseUncached(css)`, once per stylesheet text: the cascade checks resolve thousands of elements
+ * against the same `styles.css`, and parsing it each time took the focus-ring test past its budget on
+ * macOS CI. Callers only read the result. */
+const PARSED = new Map<string, { declarations: Declaration[]; blocks: string[][] }>();
+function parse(css: string): { declarations: Declaration[]; blocks: string[][] } {
+  let parsed = PARSED.get(css);
+  if (parsed === undefined) {
+    parsed = parseUncached(css);
+    PARSED.set(css, parsed);
+  }
+  return parsed;
+}
+
 /** The declarations of `css`, each with its context, and the context of every block. (The
  * renderer's CSS has no braces or semicolons inside strings, so a brace walk is enough.) */
-function parse(css: string): { declarations: Declaration[]; blocks: string[][] } {
+function parseUncached(css: string): { declarations: Declaration[]; blocks: string[][] } {
   const declarations: Declaration[] = [];
   const blocks: string[][] = [];
   const stack: string[] = [];
@@ -246,6 +261,8 @@ test('removed-legacy-tokens-are-gone', () => {
   expect(REMOVED).toEqual(expect.arrayContaining(['--settings-switch-off']));
   // And the SEO sidebar's frame (its skeleton's names; the panels still read the other --seo-* names).
   expect(REMOVED).toEqual(expect.arrayContaining(['--seo-skeleton', '--seo-skeleton-shine']));
+  // And Content's (its result preview's retired --serp-* names; --serp-card and --serp-text are aliases).
+  expect(REMOVED).toEqual(expect.arrayContaining(['--serp-title', '--serp-path', '--serp-glyph', '--serp-glyph-mark']));
   for (const name of REMOVED) {
     expect(LIGHT.has(name), `${name} (light)`).toBe(false);
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
@@ -428,6 +445,25 @@ function specificity(raw: string): number {
   return classes * 1000 + types;
 }
 
+/** `css`'s declarations by each selector of their rule's list (normalized), with their source order and
+ * the at-rules around the rule: built once per stylesheet text, for `resolveOnElement`. */
+const SELECTOR_INDEX = new Map<string, Map<string, { order: number; outer: string[]; property: string; value: string }[]>>();
+function selectorIndex(css: string): Map<string, { order: number; outer: string[]; property: string; value: string }[]> {
+  let index = SELECTOR_INDEX.get(css);
+  if (index === undefined) {
+    const built = new Map<string, { order: number; outer: string[]; property: string; value: string }[]>();
+    parse(css).declarations.forEach((d, order) => {
+      const entry = { order, outer: d.context.slice(0, -1), property: d.property, value: d.value };
+      for (const selector of new Set(splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim()))) {
+        built.set(selector, [...(built.get(selector) ?? []), entry]);
+      }
+    });
+    index = built;
+    SELECTOR_INDEX.set(css, index);
+  }
+  return index;
+}
+
 /**
  * The value `property` resolves to for an element matching exactly the selectors `element` in `css`:
  * rules whose selector list holds one of them (top level, or in the dark media block for dark),
@@ -436,17 +472,20 @@ function specificity(raw: string): number {
  */
 function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark', options: { readonly forced?: boolean } = {}): string {
   const wanted = new Set(element.map((s) => s.replace(/\s+/g, ' ').trim()));
-  const matched: { order: number; spec: number; property: string; value: string }[] = [];
-  parse(css).declarations.forEach((d, order) => {
-    const outer = d.context.slice(0, -1);
-    // Top level; the dark block in dark; and with `forced`, the forced-colours block (forced colours on).
-    const applies = (level: string) => (theme === 'dark' && level === DARK) || (options.forced === true && FORCED_COLOURS_MEDIA.test(level));
-    if (!(outer.length === 0 || (outer.length === 1 && applies(outer[0]!)))) return;
-    const selectors = splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim());
-    const hits = selectors.filter((s) => wanted.has(s));
-    if (hits.length === 0) return;
-    matched.push({ order, spec: Math.max(...hits.map(specificity)), property: d.property, value: d.value });
-  });
+  // Top level; the dark block in dark; and with `forced`, the forced-colours block (forced colours on).
+  const applies = (level: string) => (theme === 'dark' && level === DARK) || (options.forced === true && FORCED_COLOURS_MEDIA.test(level));
+  // Each declaration once, at the highest specificity among the wanted selectors of its list.
+  const byOrder = new Map<number, { order: number; spec: number; property: string; value: string }>();
+  const index = selectorIndex(css);
+  for (const selector of wanted) {
+    for (const d of index.get(selector) ?? []) {
+      if (!(d.outer.length === 0 || (d.outer.length === 1 && applies(d.outer[0]!)))) continue;
+      const spec = specificity(selector);
+      const seen = byOrder.get(d.order);
+      if (seen === undefined || spec > seen.spec) byOrder.set(d.order, { order: d.order, spec, property: d.property, value: d.value });
+    }
+  }
+  const matched = [...byOrder.values()];
   matched.sort((a, b) => a.spec - b.spec || a.order - b.order);
   const own = new Map<string, string>();
   for (const m of matched) {
@@ -724,6 +763,34 @@ test('pressed-controls-draw-an-edge', () => {
     expect(edgeProblems(css, entry.element, entry.edge), entry.why).toEqual([]);
     for (const fill of entry.fills) {
       expect(
+        pairs.some((p) => p.fg === entry.edge && p.bg === fill.bg && p.over === fill.over && p.min >= 3),
+        `${entry.edge} on ${fill.bg}${fill.over ? ` over ${fill.over}` : ''} is a CONTRAST_PAIRS pair at 3:1 or more`,
+      ).toBe(true);
+    }
+  }
+});
+
+test('state-edges-draw-their-shape', () => {
+  // The resolver reads the style and width from the shorthand and the longhands alike.
+  const term = ['.t', ".t[data-on='true']"];
+  const sample = ".t { border: 1px dashed var(--faint); } .t[data-on='true'] { border-style: solid; border-color: var(--ok); }";
+  expect(resolveOnElement(sample, term, 'border-style', 'light')).toBe('solid');
+  expect(resolveOnElement(sample, ['.t'], 'border-style', 'light')).toBe('dashed');
+  expect(resolveOnElement(sample, term, 'border-width', 'dark')).toBe('1px');
+
+  const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
+  const entries: readonly StateEdge[] = STATE_EDGES;
+  for (const entry of entries) {
+    const css = read(entry.stylesheet);
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
+    expect.soft(edgeProblems(css, entry.element, entry.edge), entry.why).toEqual([]);
+    for (const theme of THEME_NAMES) {
+      expect.soft(resolveOnElement(css, entry.element, 'border-style', theme), `${entry.why}: style (${theme})`).toBe(entry.style);
+      expect.soft(resolveOnElement(css, entry.element, 'border-width', theme), `${entry.why}: width (${theme})`).toBe(entry.width);
+    }
+    for (const fill of entry.fills) {
+      expect.soft(
         pairs.some((p) => p.fg === entry.edge && p.bg === fill.bg && p.over === fill.over && p.min >= 3),
         `${entry.edge} on ${fill.bg}${fill.over ? ` over ${fill.over}` : ''} is a CONTRAST_PAIRS pair at 3:1 or more`,
       ).toBe(true);

@@ -308,12 +308,13 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--render-accent', kind: 'retire', signal: '--accent', was: '#7a4fe0', note: 'one accent: no second hue', removed: true },
   { legacy: '--render-soft', kind: 'retire', signal: '--accent-soft', was: '.13 violet', note: '', removed: true },
   { legacy: '--render-edge', kind: 'retire', signal: '--accent', was: '.55 violet', note: '', removed: true },
+  // Content's result preview (--serp-*): its surface PR moved every rule onto Signal and dropped the retired names.
   { legacy: '--serp-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
-  { legacy: '--serp-title', kind: 'retire', signal: '--accent', was: '#2450c8', note: 'Search preview title' },
+  { legacy: '--serp-title', kind: 'retire', signal: '--accent', was: '#2450c8', note: 'Search preview title', removed: true },
   { legacy: '--serp-text', kind: 'alias', signal: '--text-muted', was: '#474e5c', note: '' },
-  { legacy: '--serp-path', kind: 'retire', signal: '--text-muted', was: '#5d6573', note: 'URL crumbs' },
-  { legacy: '--serp-glyph', kind: 'retire', signal: '--bg-subtle', was: '#e3e8f1', note: '' },
-  { legacy: '--serp-glyph-mark', kind: 'retire', signal: '--text-muted', was: '#6b7a90', note: '' },
+  { legacy: '--serp-path', kind: 'retire', signal: '--text-muted', was: '#5d6573', note: 'URL crumbs', removed: true },
+  { legacy: '--serp-glyph', kind: 'retire', signal: '--bg-subtle', was: '#e3e8f1', note: '', removed: true },
+  { legacy: '--serp-glyph-mark', kind: 'retire', signal: '--text-muted', was: '#6b7a90', note: '', removed: true },
   { legacy: '--jump-tile-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
   { legacy: '--jump-tile-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '', removed: true },
   { legacy: '--jump-monogram-bg', kind: 'retire', signal: '--accent-soft', was: '.12 accent', note: '', removed: true },
@@ -451,6 +452,9 @@ export const FORCED_COLOURS_BUSY = [
     why: 'the editor bar\'s Apply (a primary button) while its profile is invalid, and Reset with nothing to reset',
   },
   { stylesheet: 'styles.css', element: ['.devtools-button', '.devtools-button:disabled'], why: 'a DevTools drawer button with nothing to act on' },
+  // Content: a place an n-gram is not in is its letter dimmed (--text-faint at half strength) where a
+  // place it is in is --accent on --accent-soft; forced colours replace both, so the dimmed one is GrayText.
+  { stylesheet: 'styles.css', element: ['.seo-ngram-place', ".seo-ngram-place[data-present='false']"], why: 'Content: an n-gram\'s place mark (T, H1, D, U) for a place the phrase is not in' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -471,6 +475,7 @@ export const FORCED_COLOURS_PRESSED = [
   // The rest of the browser chrome: a pressed or selected item drawn as the canvas's segmented control's (--bg-surface, --e-raised).
   { stylesheet: 'styles.css', element: ['.find-tool', ".find-case[aria-pressed='true']"], why: 'the find bar\'s Match case, pressed' },
   { stylesheet: 'styles.css', element: ['.devtools-tab', ".devtools-tab[aria-selected='true']"], why: 'the DevTools drawer\'s selected tab' },
+  { stylesheet: 'styles.css', element: ['.seo-ngram-highlight', ".seo-ngram-highlight[aria-pressed='true']"], why: 'Content: an n-gram row\'s highlight button, pressed (the page shows that phrase)' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -797,6 +802,50 @@ export const SIGNAL_SURFACES = [
   { name: 'History sheet', stylesheet: 'styles.css', selectorPrefix: '.history' },
   // The update notice (specs/update-client.feature.md, Chrome), a band.
   { name: 'update notice', stylesheet: 'styles.css', selectorPrefix: '.update' },
+  // Content (specs/seo-content.feature.md, Panel; Result preview facts): the section badges ("info
+  // only"), the snippet editor (its source and variant chips' rows, the desktop and mobile result
+  // previews and the rich variant cards, the width meters, the draft form's fields), the target query
+  // (its clear button and checklist of places and terms), the n-grams (rows, bars, place marks and the
+  // highlight button), readability and the sentences (the score, its scale and tiles, the difficult
+  // sentences and their reason chips), the notes line and the danger toggle ("Delete draft", "Delete
+  // all notes…"). The result preview draws a result as frost imagines one, in the panel's own tokens
+  // (the Migration table's `--serp-*` rows). Not On-Page's `.seo-measured-width` (its section sits
+  // here), the Search Console targets card (`gsc-targets.css`) or the AI checks' Quality row
+  // (`ai-checks.css`).
+  {
+    name: 'SEO panel: Content',
+    stylesheet: 'styles.css',
+    selectorPrefix: '.seo',
+    classes: [
+      '.seo-content-*',
+      '.seo-snippet-*',
+      '.seo-serp-*',
+      '.seo-width-*',
+      '.seo-field-*',
+      '.seo-query-*',
+      '.seo-ngrams',
+      '.seo-ngram-*',
+      '.seo-readability-*',
+      '.seo-sentences',
+      '.seo-difficult-*',
+      '.seo-notes-line',
+      '.seo-toggle-danger',
+    ],
+  },
+  // JavaScript (specs/seo-javascript.feature.md, Panel): the state card's verdict colour (the card
+  // itself, its signals and pills are Indexability's `.seo-verdict-*`, `.seo-signal-*` and
+  // `.seo-pill`), the notes, the compared fields with their served and rendered sides, and the lists
+  // of what JavaScript added or removed.
+  { name: 'SEO panel: JavaScript', stylesheet: 'styles.css', selectorPrefix: '.seo', classes: ['.seo-js-*'] },
+  // SERP (specs/serp-panels.feature.md): every `.serp-*` rule: the search parameters, the search tools
+  // (Edit search, Track this search…, "Open in"), the intent chip (Visibility's query box and
+  // Overview's Page card draw it too), the composition bar and counts, the tables (Visibility's probe
+  // table is one), the results, the selector pack line and the states that are not a reading.
+  { name: 'SEO panel: SERP', stylesheet: 'styles.css', selectorPrefix: '.serp' },
+  // Visibility (specs/serp-panels.feature.md, specs/visibility-probes.feature.md): the probe table's
+  // own rules (its sticky fact column, a differing agent and cell), the disclosure, the robots.txt
+  // notes and the query box. Its AI-readiness section is `ai-readiness.css`'s.
+  { name: 'SEO panel: Visibility', stylesheet: 'styles.css', selectorPrefix: '.visibility' },
 ] as const satisfies readonly SignalSurface[];
 
 /**
@@ -805,7 +854,7 @@ export const SIGNAL_SURFACES = [
  * raise it. Counted when every `:root` token moved into `tokens.css`. It counts hex only: a colour
  * written as `rgb()`, `hsl()` or a keyword is for review to catch.
  */
-export const HEX_COLOUR_RATCHET = 30;
+export const HEX_COLOUR_RATCHET = 26;
 
 /**
  * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
@@ -1008,6 +1057,22 @@ export const CONTRAST_PAIRS = [
   { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: Images' "Alt" badge in a row hovered or open` },
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: Images' "Missing alt" badge and loading flags, and an entity's warning count, in a row hovered or open` },
   { fg: '--danger-ink', bg: '--danger-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: an entity's error count in a row hovered or open` },
+  // The SEO panels' Content, JavaScript, SERP and Visibility (their surface PR). Already covered above:
+  // the result preview on a card (--text, --accent title, --text-muted address and description,
+  // --text-faint placeholder; its monogram, rich badge and video frame --text-muted on --bg-subtle; the
+  // stars --warn), the width meters on a card (--text-muted labels, --ok-ink, --warn-ink and --text-faint
+  // verdicts; --ok, --warn fills), the fields (--text on --bg-surface, the placeholder --text-faint), the
+  // target query's clear button (--text-muted, hovered --text on --bg-hover over a card), its place
+  // marks (--ok, --accent, --text-faint on a card) and terms (--text-muted, a present one --ok-ink on
+  // --ok-soft), the n-gram highlight (--text-muted, hovered --text on --bg-hover, pressed --accent on
+  // --accent-soft with an --accent edge) and place marks (--accent on --accent-soft), the readability
+  // tiles and difficult sentences (--text, --text-muted, --text-faint on --bg-subtle; a reason chip
+  // --text-muted on --bg-surface), JavaScript's notes (--text-muted, a warning --warn-ink) and sides
+  // (--text, --text-muted), the SERP card and tables (--text, --text-muted, --text-faint on a card), the
+  // intent chip (--accent on --accent-soft over the sheet or a card), the state icon (--accent on
+  // --accent-soft, a problem --warn on --warn-soft, over a card) and Visibility's differing cells
+  // (--warn-ink on --warn-soft over a card, --warn edge) and agents (--warn-ink, --warn underline). New with them:
+  { fg: '--danger-ink', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'Content\'s "Delete draft" and "Delete all notes…", hovered: --danger-ink (was --danger) on the toggle\'s --bg-hover over the card (4.5:1)' },
   // The browser chrome's rows (its surface PR). Already covered above: the active tab's label and the
   // address on --bg-surface (--text; the placeholder, the address badge and the active tab's glyph
   // --text-faint and --text-muted), the toolbar's tools, the new-tab button and the status bar on
@@ -1138,8 +1203,8 @@ export const KNOWN_CONTRAST_EXCEPTIONS = [
     fg: '--ok',
     bg: '--bg-surface',
     min: 4.5,
-    rules: 10,
-    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property; the panels\' all-clear line, Images\' alt badge and Schema\'s block status their 3; the DevTools drawer its robots line and 2xx code, 2).',
+    rules: 8,
+    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property; the panels\' all-clear line, Images\' alt badge and Schema\'s block status their 3; the DevTools drawer its robots line and 2xx code, 2; Content its target query\'s present term, now --ok-ink on --ok-soft, and its all-terms mark, an icon now drawn by `stroke`).',
   },
 ] as const satisfies readonly ContrastException[];
 
@@ -1321,6 +1386,43 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'styles.css', element: ['.update-button', '.update-primary', '.update-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the update notice\'s Download or Show file while its step runs' },
   { stylesheet: 'styles.css', element: ['.render-chip', '.render-chip:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the editor bar\'s quick profiles with no tab' },
   { stylesheet: 'styles.css', element: ['.devtools-button', '.devtools-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'a DevTools drawer button with nothing to act on' },
+  // Content, JavaScript, SERP and Visibility (their surface PR): status text takes its -ink, on its
+  // -soft fill where it is a badge; no row in these panels is hoverable, so no badge lies over --bg-hover.
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-query-term', ".seo-query-term[data-present='true']"],
+    color: '--ok-ink',
+    background: '--ok-soft',
+    why: `Content: a target query's term found in a place (11px, was --ok on its 14% tint): ${OK_TINT}`,
+  },
+  { stylesheet: 'styles.css', element: ['.seo-width-meter-text'], color: '--ok-ink', why: 'Content: a width meter\'s "… px: fits" (12px, was the meter\'s --ok: 3.30:1 on a card in light)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-width-meter-text', ".seo-width-meter[data-state='over'] .seo-width-meter-text"],
+    color: '--warn-ink',
+    why: 'Content: a width meter\'s "… px: cut" (12px, was the meter\'s --caution): status text takes its -ink',
+  },
+  {
+    stylesheet: 'styles.css',
+    // The hover selectors are FOCUS_RING_RULES' SEO_TOGGLE_HOVER and SEO_TOGGLE_DANGER_HOVER (declared after this list).
+    element: ['.seo-toggle', ".seo-toggle:hover:where(:not(:disabled, [aria-pressed='true']))", '.seo-toggle-danger', '.seo-toggle-danger:hover:where(:not(:disabled))'],
+    color: '--danger-ink',
+    why: 'Content: "Delete draft" and "Delete all notes…", hovered (was --danger: 4.37:1 on the hovered toggle in light)',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-js-note', ".seo-js-note[data-tone='warn']"], color: '--warn-ink', why: 'JavaScript: the partial-comparison note (12px, was --caution: 3.65:1 on a card in light)' },
+  {
+    stylesheet: 'styles.css',
+    element: [".visibility-table td[data-diff='true']"],
+    color: '--warn-ink',
+    background: '--warn-soft',
+    why: 'Visibility: a cell that differs from the browser (12px, was --caution on its 13% tint); its --warn edge and weight say it without hue',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.serp-table thead th', ".visibility-table thead th[data-differs='true']"],
+    color: '--warn-ink',
+    why: 'Visibility: an agent told something the browser was not (11px caps, was --caution); its --warn underline says it without hue',
+  },
 ] as const satisfies readonly TextColourRule[];
 
 /**
@@ -1342,6 +1444,7 @@ export interface HoverSkipsPressed {
 export const HOVER_OVERLAYS_SKIP_PRESSED = [
   { stylesheet: 'styles.css', control: '.seo-toggle', why: 'a panel toggle (Highlight on page, Broken only), pressed' },
   { stylesheet: 'styles.css', control: '.seo-action', why: 'the Inspector\'s Tree, Rendered and Served buttons (`seo-action inspector-view-button`), the chosen one pressed' },
+  { stylesheet: 'styles.css', control: '.seo-ngram-highlight', why: 'Content: an n-gram row\'s highlight button, pressed while the page shows that phrase' },
 ] as const satisfies readonly HoverSkipsPressed[];
 
 /**
@@ -1387,7 +1490,53 @@ export const PRESSED_EDGES = [
     fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
     why: 'a filter chip, pressed (Images\' filters, Content\'s preview chips): an --accent edge beside its --accent-soft fill',
   },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-ngram-highlight', ".seo-ngram-highlight[aria-pressed='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
+    why: 'Content: an n-gram row\'s highlight button, pressed: an --accent edge beside its --accent-soft fill (it was a 50% --accent edge on a 14% tint)',
+  },
 ] as const satisfies readonly PressedEdge[];
+
+/**
+ * A state shown by an edge's shape as well as its colour (council round 1 on PR #49: Content's query
+ * terms, present or absent, were told apart by a solid transparent edge and a dashed `--track` one,
+ * 1.48:1 on the card, which only forced colours drew). For each entry the cascade over `element` in
+ * `stylesheet` resolves `border-color` to `var(<edge>)`, `border-style` to `style` and `border-width` to
+ * `width`, in light and dark, and for each of `fills` (what the edge sits on) `CONTRAST_PAIRS` holds
+ * `edge` on it at 3:1 or more. Forced colours keep the style, so the shape still says which.
+ */
+export interface StateEdge {
+  readonly stylesheet: string;
+  readonly element: readonly string[];
+  readonly edge: TokenName;
+  readonly style: 'solid' | 'dashed';
+  readonly width: string;
+  readonly fills: readonly { readonly bg: TokenName; readonly over?: TokenName }[];
+  readonly why: string;
+}
+
+export const STATE_EDGES = [
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-query-term', ".seo-query-term[data-present='true']"],
+    edge: '--ok',
+    style: 'solid',
+    width: '1px',
+    fills: [{ bg: '--bg-surface' }],
+    why: 'Content: a target query\'s term found in a place, a solid --ok edge (3.30:1 on the card in light) round its --ok-soft fill',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-query-term'],
+    edge: '--text-faint',
+    style: 'dashed',
+    width: '1px',
+    fills: [{ bg: '--bg-surface' }],
+    why: 'Content: a target query\'s term not found there, a dashed --text-faint edge (5.53:1 light, 5.03:1 dark on the card)',
+  },
+] as const satisfies readonly StateEdge[];
 
 /**
  * A control whose keyboard focus must show `--focus-ring` (and the transparent 2px outline forced colours
@@ -1432,6 +1581,9 @@ const RENDER_FRAME_BUTTON_HOVER = '.render-frame-button:hover:where(:not(:disabl
 const RENDER_FRAME_PRIMARY_HOVER = '.render-frame-primary:hover:where(:not(:disabled))';
 const DEVTOOLS_TAB_HOVER = ".devtools-tab:hover:where(:not([aria-selected='true']))";
 const DEVTOOLS_BUTTON_HOVER = '.devtools-button:hover:where(:not(:disabled))';
+const SEO_TOGGLE_DANGER_HOVER = '.seo-toggle-danger:hover:where(:not(:disabled))';
+const SEO_QUERY_CLEAR_HOVER = '.seo-query-clear:hover';
+const SEO_NGRAM_HIGHLIGHT_HOVER = ".seo-ngram-highlight:hover:where(:not([aria-pressed='true']))";
 
 export const FOCUS_RING_RULES = [
   {
@@ -1616,6 +1768,26 @@ export const FOCUS_RING_RULES = [
   { stylesheet: 'styles.css', element: ['.history-open', '.history-open:focus-visible'], why: 'a History row\'s link, focused' },
   { stylesheet: 'styles.css', element: ['.history-more', '.history-more:hover', '.history-more:focus-visible'], why: 'History\'s Show more, focused and hovered' },
   { stylesheet: 'styles.css', element: ['.history-select', '.history-select:focus-visible'], why: 'History\'s project and range selects, focused' },
+  // Content, JavaScript, SERP and Visibility (their surface PR): the controls of their own (the panels'
+  // toggles, actions, chips, segments, search fields and Settings-style buttons are the shared rules').
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-toggle', SEO_TOGGLE_HOVER, SEO_TOGGLE_DANGER_HOVER, '.seo-toggle:focus-visible'],
+    why: 'Content\'s "Delete draft" and "Delete all notes…", focused and hovered: the danger hover sets its edge and text only',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-field-input', '.seo-field-input:focus-visible'], why: 'Content: a draft\'s title and description and the site-name field, focused: --e-raised gives way to --focus-ring (it was an --accent edge with a halo)' },
+  { stylesheet: 'styles.css', element: ['.seo-query-clear', SEO_QUERY_CLEAR_HOVER, '.seo-query-clear:focus-visible'], why: 'Content: the target query\'s clear button, focused and hovered (it had no focus style of its own)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-ngram-highlight', SEO_NGRAM_HIGHLIGHT_HOVER, '.seo-ngram-highlight:focus-visible'],
+    why: 'Content: an n-gram row\'s highlight button, focused and hovered (it was a 2px --accent outline)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-ngram-highlight', ".seo-ngram-highlight[aria-pressed='true']", '.seo-ngram-highlight:focus-visible'],
+    why: 'Content: an n-gram row\'s highlight button, pressed and focused',
+  },
+  { stylesheet: 'styles.css', element: ['.serp-editor-select', '.serp-editor-select:focus-visible'], why: 'SERP: Edit search\'s and Track this search\'s selects, focused (they had no focus style of their own)' },
 ] as const satisfies readonly FocusRingRule[];
 
 /**

@@ -65,7 +65,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (only the 11px chips moved in the values step; Settings and Help moved their 4, leaving 17;
   Overview its band label and all-clear line, leaving 15; On-Page's "Good length" drew `--ok` through
   the meter's own property, so it never counted; the panels' all-clear line, Images' alt badge and
-  Schema's block status, leaving 12; the DevTools drawer its robots line and 2xx code, leaving 10).
+  Schema's block status, leaving 12; the DevTools drawer its robots line and 2xx code, leaving 10; Content's present query term and all-terms mark, leaving 8).
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
   (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`. The status bar's failed-overrides
@@ -78,7 +78,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the fullscreen notice's two went with the chrome's, so it is 50; Overview's and On-Page's rules held
   none, so it stays 50; Links' kind and rel flags, their dark overrides, the share card's image label
   and Schema's error mark held 17, so it is 33; the render profile's page-area frame held three literal
-  whites, so it is 30).
+  whites, so it is 30; Content's difficult-sentence chips held 4, so it is 26).
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
   official `geist` npm package (`GEIST_PACKAGE`: pinned exactly, SIL Open Font License 1.1, listed in
   `THIRD_PARTY_NOTICES` with the licence text). Only static woff2 files, only the weights the type
@@ -618,6 +618,94 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   button in the drawer's table is a block that ellipsizes its own name, and the cells have `--space-1`
   of block padding, so its `--focus-ring` is drawn whole inside the clipping cell.
 
+- **The SEO panels' Content, JavaScript, SERP and Visibility** (`seo-content.feature.md`,
+  `seo-javascript.feature.md`, `serp-panels.feature.md`, `visibility-probes.feature.md`; what their
+  components render, less the frame's, the shared controls' and Indexability's verdict card, signals
+  and pills, which JavaScript borrows) follow the Migration notes, the token `use` notes and the
+  canvas's component board where they agree; no screen draws these panels. Each has a
+  `SIGNAL_SURFACES` entry: Content and JavaScript list their classes under `.seo`, SERP and Visibility
+  own their `.serp` and `.visibility` prefixes. Text is Geist from the `--text-*` tokens, every space a
+  `--space-*` step, every corner an `--r-*`; a part's own geometry (the 24px and 18px monograms, the
+  96×54 video frame, the 18px term and place marks, the 22px rank column, the probe table's 560px)
+  stays a layout constant. The panels stand their cards `--space-4` apart. **Content's result
+  preview** is frost's drawing of a result, not the app's chrome, but the Migration table already maps
+  its colours onto Signal (`--serp-title` → `--accent`, `--serp-path` → `--text-muted`, `--serp-glyph`
+  → `--bg-subtle`, `--serp-glyph-mark` → `--text-muted`, all four now `removed`): a result card is
+  `--bg-surface` at `--r-md` (`--r-lg` on mobile) with `--e-ring` and a transparent border, its site
+  name `--text-small` in `--text`, its address and date `--text-small` in `--text-muted` (the address
+  wraps, so the page's crumb shows whole), its title
+  Overview's preview title (`--text-heading` at weight 500 in `--accent`), its description
+  `--text-small` in `--text-muted`, a missing value `--text-faint` in italics, the stars `--warn` (a
+  graphic beside the rating's words), the monogram an `--r-pill` disc of `--bg-subtle` with its letter
+  in `--text-micro` and `--text-muted`, a rich card's badge On-Page's tag; it is set in Geist, where it
+  was a literal Arial stack (`SNIPPET_FONT` is only the face the width table was measured in; the
+  previews are not to scale), and the device caption is a `--text-caps` label in `--text-muted`. The
+  **width meters** sit in an `--r-sm` box with `--e-ring` on the card (they were on a translucent
+  `--bg-hover`; `--ok` on `--bg-subtle` is 2.998:1 in light, under 3:1), the label column at least as wide as its
+  longest word (`minmax(min-content, 1fr)`, so at 300px the verdict wraps rather than drawing over it), each verdict "… px: fits"
+  `--ok-ink`, "… px: cut" `--warn-ink` (`--caution`) and "Nothing to measure" `--text-faint`, the bar's
+  fill `--ok`, `--warn` or `--text-faint` on `--track` (the "fits" fill is 2.23:1 on `--track` in light,
+  as On-Page's length meters are: the verdict's word carries the state). A **field** (a draft's title and description,
+  the site name) is Settings' field inside a card: `--h-control` (a textarea from 76px) at `--r-sm` on
+  `--bg-surface` with `--e-raised` and a transparent border, `--text-body`, its placeholder
+  `--text-faint`; focus is `--focus-ring` with a transparent outline, where it was an `--accent` edge
+  with a halo; its label `--text-small` at weight 500 in `--text-muted`, the count `--text-faint`. The
+  **danger toggles** ("Delete draft", "Delete all notes…") are the shared toggle, hovered with a
+  `--danger` edge and `--danger-ink` text (`--danger` is 4.37:1 on the hovered toggle in light). The
+  **target query**: its clear button an `--h-badge` circle in `--text-muted`, `--text` on `--bg-hover`
+  hovered, with its own focus ring (it had none); each place's mark keeps its shape (a ring with a
+  check, a half disc, a dashed ring) in `--ok` (drawn by `stroke`, not `color`), `--accent` and
+  `--text-faint`; a term is an 18px `--r-xs` badge in `--text-micro` (a fixed 18px box, its line centred by
+  `(18px - 2px - 1.3em) / 2` of block padding), absent `--text-muted` with a 1px dashed `--text-faint` edge at weight 400,
+  present `--ok-ink` on `--ok-soft` (was `--ok` on its 14% tint) at weight 600 with a 1px solid `--ok` edge
+  (`STATE_EDGES`: 5.53:1 and 3.30:1 on the card in light; council round 1 on PR #49 found the first
+  edges, a `--track` dash and a transparent solid line, invisible outside forced colours), so absent is
+  dashed and present solid in forced colours too; "exact
+  phrase" `--text-small` in italics. **n-grams:** rows ruled by `--divider`, the phrase `--text-body`,
+  its count `--text-small` at weight 600 in `--text-muted`, the bar `--accent` on `--track` (it was a
+  70% mix); the highlight button an `--h-badge` square at `--r-xs` in `--text-muted`, `--text` on
+  `--bg-hover` hovered (the hover skips a pressed one: `HOVER_OVERLAYS_SKIP_PRESSED`), pressed `--accent`
+  on `--accent-soft` with an `--accent` edge on its transparent border (`PRESSED_EDGES`; it was a 50%
+  `--accent` edge on a 14% tint) and `Highlight` under forced colours (`FORCED_COLOURS_PRESSED`), focus
+  the ring (it was a 2px `--accent` outline); a place mark (T, H1, D, U) an 18px `--r-xs` badge in
+  `--text-micro`, a place the phrase is in `--accent` on `--accent-soft`, one it is not in `--text-faint`
+  at half strength (`DISABLED_INK`) and `GrayText` under forced colours (`FORCED_COLOURS_BUSY`), with a
+  transparent edge forced colours draw. **Readability:** the score `--text-display`, its band
+  `--text-body` at weight 600 in `--text-muted`, the formula and the scale's ends `--text-small` in
+  `--text-faint`, the scale's marker `--accent` on `--track`; its tiles On-Page's stat tiles
+  (`--bg-subtle` at `--r-sm`, the label `--text-small` in `--text-muted`, the value `--text-heading`; they
+  were translucent `--bg-hover`); a difficult sentence an `--r-sm` `--bg-subtle` box, its text
+  `--text-small`, its meta `--text-small` in `--text-faint`, and its reason chip ("Long", "Complex") a
+  neutral 18px badge (the term's fixed box), `--text-muted` on `--bg-surface` with `--e-ring`: it took the page highlight's two
+  hues (`#b45309`, `#be185d`, the hex ratchet's 4), and its word says the reason, as the boxes in the
+  page do. **JavaScript:** its verdict colour (`--verdict`, read by Indexability's card) `--ok`,
+  `--warn` (`--caution`), `--danger` or `--text-faint`; its notes `--text-small` in `--text-muted`, the
+  partial-comparison note `--warn-ink` (`--caution`); fields and items ruled by `--divider`, a field's
+  label `--text-small` at weight 600, its served and rendered labels `--text-caps` in `--text-muted`,
+  counts and details `--text-small` in `--text-faint`. **SERP:** the parameters a card (`--bg-surface`,
+  `--r-md`, `--e-ring`, a transparent border; it was `--seo-card-edge` and `--shadow-card`), each label
+  `--text-caps` in `--text-muted`, each value `--text-small` at weight 500, the four columns at least as
+  wide as their longest word (`minmax(min-content, 1fr)`; a value may break anywhere), so "Language"
+  and "Desktop" fit whole at 300px; the intent chip the canvas's
+  info badge (`--h-badge` pill, `--accent` on `--accent-soft`, `--text-micro`; it was a 14% tint), its
+  confidence `--text-small` in `--text-muted`; the composition bar `--r-pill` on `--track` (its segments
+  and swatches keep `SERP_OUTLINE_STYLES`' colours, SVG attributes, as the outlines in the page), its
+  counts `--text-small`; tables `--text-small` with tabular figures (Visibility's table keeps them), their header cells `--text-small` at weight 600 in
+  `--text-muted` (sentence case: `--text-caps` pushed the ownership table past a 360px panel), rows
+  ruled by `--divider` (`border-spacing: 0`, not `border-collapse`); a result's rank `--text-small` in
+  `--text-faint`, its type `--text-caps` in `--text-muted`, title `--text-body`, domain `--text-small` in
+  `--text-faint` ("No link" keeps its italics); a state that is not a reading a 32px `--r-sm` tile of
+  `--accent-soft` with an `--accent` icon, a problem (unreadable, disabled) `--warn-soft` and `--warn`
+  (`--caution`; they were mixes with `--seo-bg`), its title `--text-body` at weight 600; Edit search and
+  Track this search are cards as the parameters, their labels the parameters' labels, their selects
+  the shared select (`--h-control`, `--r-sm`, `--e-raised`; they were 30px `--radius-field` boxes with a
+  `--border-field` edge) with a focus ring (they had none). **Visibility:** the probe table's fact
+  column sticks on `--bg-surface`; a cell that differs is `--warn-ink` on `--warn-soft` at weight 600 with
+  a 2px `--warn` edge on its left (it was a 13% `--caution` tint and an inset box-shadow, which forced
+  colours drop: the edge is a border they draw), and an agent column that differs heads in `--warn-ink`
+  with a 2px `--warn` underline (it was `--caution` alone); the robots.txt notes `--text-small`. No row
+  in these panels is hoverable, so no tinted badge lies over `--bg-hover`. No markup changed.
+
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
 2. Foundation (done).
@@ -636,7 +724,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    On-Page first (no name retired: later panels read them all), then Links, Images, Social and Schema
    with the panels' shared controls (none retired either), then the rest of the browser chrome
    (`--find-height`, `--bg-prompt`, `--prompt-edge`, `--shadow-prompt`, `--render-accent`, `--render-soft`,
-   `--render-edge`, `--bg-field-hover`, `--shadow-field` and `--panel-art`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
+   `--render-edge`, `--bg-field-hover`, `--shadow-field` and `--panel-art`), then Content, JavaScript, SERP and
+   Visibility (Content's result preview was the last reader of `--serp-title`, `--serp-path`,
+   `--serp-glyph` and `--serp-glyph-mark`, now `removed`; `--serp-card` and `--serp-text` are aliases). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
    from the moment the test starts watching.
 
@@ -687,7 +777,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   chips, select, search field and rows, and Schema's entity rows, references, open-URL button and
   "Show more", and the rest of the chrome's: the error panels' and the bands' buttons, the find bar's
   field and tools, the editor bar's chips and fields, the frame's buttons, the DevTools drawer's tabs,
-  buttons, links and fields, and History's controls), in light and
+  buttons, links and fields, and History's controls, and Content's danger toggles, fields, query clear button and n-gram highlight
+  button, and SERP's editor selects), in light and
   dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
   none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
   `var(--focus-ring)` and `outline` to `2px solid transparent`, and sets no `opacity` under 1: a focused
@@ -698,14 +789,16 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   Settings button, a primary one and Export Diagnostics' Save, each busy and disabled; a disabled
   toolbar tool; the permission prompt's buttons before they arm; Overview's zero-count pill; a disabled
   panel toggle, row action, segment, filter chip and Schema's open-URL button; a disabled error-panel
-  button, primary or not, update notice button, find bar tool, editor bar chip or button), in light and
+  button, primary or not, update notice button, find bar tool, editor bar chip or button; an n-gram's place mark
+  for a place it is not in), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too (a `border` shorthand counting as its colour) resolves `color` and `border-color` to `GrayText`:
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
   over it. Every selector named is one of the stylesheet's.
 - **Scenario: pressed-toggles-show-under-forced-colours** — for each `FORCED_COLOURS_PRESSED` entry (the
   SEO sidebar toggle and the render-profile toggle, pressed; a panel toggle, the chosen segment and a
-  filter chip, pressed; the find bar's Match case, pressed; the DevTools drawer's selected tab), in light
+  filter chip, pressed; the find bar's Match case, pressed; the DevTools drawer's selected tab; an n-gram's highlight button,
+  pressed), in light
   and dark, the cascade over its
   `element` selectors with the `@media (forced-colors: active)` rules read too resolves `border-color` to
   `Highlight`. Every selector named is one of the stylesheet's.
@@ -726,7 +819,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.seo-rail-dot` in `settings.css`, `auto`, a list with one unkept selector, an unkept rule with a
   nested block and a kept mark set to `auto` in a nested block.
 - **Scenario: hover-overlays-skip-pressed-controls** — for each `HOVER_OVERLAYS_SKIP_PRESSED` entry
-  (the panels' toggle and row action), its stylesheet has a hover rule for the control, and every rule
+  (the panels' toggle and row action, Content's n-gram highlight button), its stylesheet has a hover rule for the control, and every rule
   with a compound selector holding the control's class and `:hover` (any order, after any ancestor) that
   sets `box-shadow` or `background` names `[aria-pressed='true']` in a `:not(…)` of that compound. It
   passes `.x:hover:where(:not(:disabled, [aria-pressed='true']))`, catches `.x:hover:where(:not(:disabled))`,
@@ -735,11 +828,17 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: disabled-controls-dim-their-text** — for each `DISABLED_CONTROLS` entry (a disabled
   filter chip and segment), in light and dark, the cascade over its `element` selectors resolves `color`
   to `DISABLED_INK`.
-- **Scenario: pressed-controls-draw-an-edge** — for each `PRESSED_EDGES` entry (a pressed filter chip),
+- **Scenario: pressed-controls-draw-an-edge** — for each `PRESSED_EDGES` entry (a pressed filter chip,
+  a pressed n-gram highlight button),
   in light and dark, the cascade over its `element` selectors resolves `border-color` to `var(<edge>)`
   with a border that draws (non-zero width, a style other than `none` or `hidden`, shorthand included;
   it catches `border: 0 solid transparent` and `border-style: none`), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or more. Every selector named is one
   of the stylesheet's.
+- **Scenario: state-edges-draw-their-shape** — for each `STATE_EDGES` entry (Content's query term,
+  present and absent), in light and dark, the cascade over its `element` selectors resolves
+  `border-color` to `var(<edge>)`, `border-style` to its `style` and `border-width` to its `width` (the
+  shorthand and longhands alike), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or
+  more. Every selector named is one of the stylesheet's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).

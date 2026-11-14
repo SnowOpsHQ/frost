@@ -62,6 +62,11 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `seo-search-console-lower` | seo-search-console | the same at its end: the top queries, the freshness line | |
 | `seo-changes` | seo-changes | Changes: two captures, the diff by region | `changes` capture-first-version, diff-by-region |
 | `seo-changes-lower` | seo-changes | the same at its end: the rest of the diff, Screenshots | |
+| `seo-content` | seo-content | Content: the guide's result preview (its variants disabled), the width meters and tools | `seo-content` |
+| `seo-content-lower` | seo-content | the same at its end: readability, a long difficult sentence, the notes | |
+| `seo-javascript` | seo-javascript | JavaScript: the guide served and rendered alike | `seo-javascript` |
+| `seo-serp` | seo-serp | SERP: the guide is no result page (the bundled selectors) | `serp` serp-not-a-result-page |
+| `seo-visibility` | seo-visibility | Visibility before a run, `.seo-body` at its end: the disclosure, the run button, the query box (AI readiness above) | `visibility` |
 | `devtools-drawer` | devtools-drawer | the SEO devtools drawer on Console | `devtools` |
 | `find-bar` | find-bar | the find bar, "tea", 1 of 3 | `browser-polish` find-counts-steps-and-clears |
 | `command-palette` | command-palette | the palette with "zoom" typed | `command-palette`, `update` |
@@ -77,7 +82,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `agent-empty` | agent-empty | the agent panel open, no chat yet | `agent` `launchWith` |
 | `agent-conversation` | agent-conversation | one scripted turn: a `page_text` tool card, then the answer | `agent` agent-chat-export-and-restore (scripted model seam) |
 
-30 captures, 60 images. No state is skipped. The ChatGPT route's conversation is not captured: the
+35 captures, 70 images. No state is skipped. The ChatGPT route's conversation is not captured: the
 scripted-model turn already shows the same chat surface without a sign-in.
 
 ## What is compared
@@ -197,7 +202,7 @@ included) in both themes; in each capture the media query follows the emulated s
 body's background differs between light and dark, and the stylesheet's marker is in effect; a
 scrolled capture's scroller has something below the fold and reached its offset.
 - **Scenario: new-tab**, **jump-back-in-and-history** (a fresh profile).
-- **Scenario: seo-overview**, **seo-on-page**, **seo-links**, **seo-images**, **seo-social**, **seo-schema**, **seo-page-speed**, **seo-changes**,
+- **Scenario: seo-overview**, **seo-on-page**, **seo-links**, **seo-images**, **seo-social**, **seo-schema**, **seo-page-speed**, **seo-changes**, **seo-content**, **seo-javascript**, **seo-serp**, **seo-visibility**,
   **devtools-drawer**, **find-bar**, **command-palette**, **settings**, **projects**,
   **render-profile**, **permission-bar**, **page-error** (one app; each starts from one tab, everything closed).
 - **Scenario: agent-empty**, **agent-conversation** (the scripted model seam).

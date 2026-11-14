@@ -218,6 +218,11 @@ const CAPTURES = [
   'seo-search-console-lower',
   'seo-changes',
   'seo-changes-lower',
+  'seo-content',
+  'seo-content-lower',
+  'seo-javascript',
+  'seo-serp',
+  'seo-visibility',
   'devtools-drawer',
   'find-bar',
   'command-palette',
@@ -517,6 +522,44 @@ test.describe('page surfaces', () => {
     } finally {
       site.state.version = 1;
     }
+  });
+
+  test('seo-content', async () => {
+    // seo-content.e2e.ts: the guide's result preview, its width meters and tools; then its end
+    // (readability, the difficult sentences, the notes).
+    await audit('/guide');
+    await showPanel('content');
+    await expect(page.getByTestId('seo-serp-desktop')).toBeVisible();
+    await expect(page.getByTestId('seo-readability')).toHaveAttribute('data-status', 'ok');
+    await expect(page.getByTestId('seo-query-input')).toBeEnabled();
+    await capture('seo-content');
+    await capture('seo-content-lower', { scroll: { selector: '.seo-body', to: 'end' } });
+  });
+
+  test('seo-javascript', async () => {
+    // seo-javascript.e2e.ts: the guide served and rendered alike.
+    await audit('/guide');
+    await showPanel('javascript');
+    // The guide's served HTML reads the same as the page: a slow or failed fetch fails here, by name.
+    await expect(page.getByTestId('seo-js-state')).toHaveAttribute('data-state', 'identical', { timeout: AUDIT_WAIT });
+    await capture('seo-javascript');
+  });
+
+  test('seo-serp', async () => {
+    // serp.e2e.ts serp-not-a-result-page: the guide is no result page (the bundled selectors).
+    await audit('/guide');
+    await showPanel('serp');
+    await expect(page.getByTestId('serp-state')).toHaveAttribute('data-state', 'not-serp', { timeout: AUDIT_WAIT });
+    await capture('seo-serp');
+  });
+
+  test('seo-visibility', async () => {
+    // visibility.e2e.ts: before a run, the panel's end (the disclosure, Run visibility probes, the
+    // query box), below the AI-readiness section.
+    await audit('/guide');
+    await showPanel('visibility');
+    await expect(page.getByTestId('visibility-summary')).toHaveAttribute('data-status', 'idle');
+    await capture('seo-visibility', { scroll: { selector: '.seo-body', to: 'end' } });
   });
 
   test('devtools-drawer', async () => {
