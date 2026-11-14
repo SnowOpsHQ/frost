@@ -64,8 +64,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   surface PRs: `--ok` as text (21 rules) is under 4.5:1 in light, and those rules move to `--ok-ink`
   (only the 11px chips moved in the values step; Settings and Help moved their 4, leaving 17;
   Overview its band label and all-clear line, leaving 15; On-Page's "Good length" drew `--ok` through
-  the meter's own property, so it never counted; the DevTools drawer its robots line and 2xx code,
-  leaving 13).
+  the meter's own property, so it never counted; the panels' all-clear line, Images' alt badge and
+  Schema's block status, leaving 12; the DevTools drawer its robots line and 2xx code, leaving 10).
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
   (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`. The status bar's failed-overrides
@@ -76,7 +76,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   no literal hex, their colours were all tokens, so it stayed at 53; the new-tab view's held none
   either, so it stays there, as it does for the SEO sidebar's frame; Settings' switch knob was its one, so it is 52;
   the fullscreen notice's two went with the chrome's, so it is 50; Overview's and On-Page's rules held
-  none, so it stays 50; the render profile's page-area frame held three literal whites, so it is 47).
+  none, so it stays 50; Links' kind and rel flags, their dark overrides, the share card's image label
+  and Schema's error mark held 17, so it is 33; the render profile's page-area frame held three literal
+  whites, so it is 30).
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
   official `geist` npm package (`GEIST_PACKAGE`: pinned exactly, SIL Open Font License 1.1, listed in
   `THIRD_PARTY_NOTICES` with the licence text). Only static woff2 files, only the weights the type
@@ -399,6 +401,110 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--seo-track` (aliases) stay for the panels and bars that still read them. The forced-colours palette
   leaves SVG fills and strokes as they are, so the ring and the meters keep their colours there.
 
+- **The SEO panels' Links, Images, Social and Schema, and the controls the panels share**
+  (`seo-panels.feature.md`, Links, Images and Social; `seo-schema.feature.md`; `seo-checks.feature.md`,
+  the link checks; what their components render, less the frame's and Overview's and On-Page's shared
+  parts) follow the Migration notes, the token `use` notes and the canvas's component board (buttons,
+  field, segmented control, chips and badges, status dots), where they agree; no screen draws these
+  panels. Each panel has a `SIGNAL_SURFACES` entry listing its classes, and so do the controls the
+  panels share, defined beside Links, Images and Social, the first panels that draw them: the tools row
+  and its toggles, the toast, the filters, the table of rows, the rel and loading flags, a row's
+  actions and the all-clear line. They draw in Indexability, Page Speed, Compliance, Content,
+  JavaScript, SERP, Visibility, Search Console and Changes too, and look the same there; those panels'
+  own rules wait for their PRs, and so does `.seo-flag-chip` (the link status chip and its counts, a tone
+  chip of Indexability's). Text is Geist from the `--text-*` tokens, every space a `--space-*` step, every
+  corner an `--r-*`; a part's own geometry (the 18px badges, as On-Page's tag; the 16px and 18px status
+  chips; the label and thumbnail columns; the raw view's 340px) stays a layout constant. The panels stand
+  their cards `--space-4` apart. **Toggles** (highlight, Copy as CSV, Check links, Broken only) and **row
+  actions** are the canvas's secondary button at `--h-chip`: a pill on `--bg-surface` with `--e-raised`
+  and a transparent border, `--text-small` at weight 500 in `--text`, a leading `--icon-sm` icon in
+  `--text-muted` (`--icon`), `--space-3` in before it and `--space-4` after the label (the canvas's 10 and
+  14); a hover lays `--bg-hover` over them (an inset box-shadow, its state checks in `:where()`), a pressed
+  toggle is `--accent` on `--accent-soft` with no shadow (it was a 14% `--accent` tint with an `--accent`
+  edge), and under forced colours, which replace both, its edge is `Highlight` (`FORCED_COLOURS_PRESSED`).
+  Disabled, a toggle or action is the token sheet's disabled control, `--text-faint` on `--bg-subtle` with no
+  shadow, where it faded to half, and `GrayText`, text and edge, under forced colours
+  (`FORCED_COLOURS_BUSY`). The **toast** is `--on-inverse` on `--inverse` at `--r-pill` with `--e-overlay`
+  (it was `--text` on `--bg-chrome` with a literal shadow, darker in dark), fading in `--dur-base`. The
+  **search field** is a field inside a card (`--radius-field`: "--r-sm inside cards", as Settings' fields): `--h-control` tall
+  at `--r-sm` on `--bg-surface` with `--e-raised` and a transparent border, its icon `--text-muted`, its
+  text `--text-body`, its placeholder `--text-faint`; focus (`:focus-within`) is `--focus-ring` where it
+  was an `--accent` edge with a halo. The **rel select** is the same field. The **segmented control** is the
+  canvas's: an `--r-pill` track on `--bg-subtle` with `--space-1` inside and between, its segments
+  `--h-chip` pills in `--text-muted` (`--text` hovered), the chosen one raised (`--bg-surface`, `--e-raised`,
+  `--text`; it was `--seo-card` with a literal shadow), each count `--text-faint`; a disabled segment
+  (Schema's Tree for a block that did not parse) is `--text-faint`, where it faded. **Filter chips** are
+  the canvas's chips: `--h-chip` pills on `--bg-subtle` (they were outlined by `--border-field`) in
+  `--text-muted`, pressed `--accent` on `--accent-soft`. **Rows** (a link, an image) are ruled by
+  `--divider`, each an `--r-sm` button, `--bg-hover` hovered or open, its title `--text-body` at weight
+  500, its URL `--text-mono` or its line `--text-small` in `--text-muted`, a missing title or URL
+  `--text-muted` in italics (`--text-faint` is 4.26:1 on a hovered row in dark), the count above them
+  `--text-small` in `--text-faint`. A broken link's row loses its inset 2px `--danger` edge, which hid
+  the focus ring (a box-shadow at a higher specificity) and was a coloured side bar: its status chip
+  says "Broken". Focus on every control is `--focus-ring` beside a transparent 2px outline
+  (`FOCUS_RING_RULES`), where they had a 2px `--accent` outline. **Badges** (a link's kind, its rel and
+  target flags, Images' loading flags and alt badge, Schema's types) are On-Page's tag: 18px at `--r-xs` in `--text-micro`, on
+  `--bg-subtle` in `--text-muted`, a status one its `-soft` fill with `-ink` text (alt present `--ok`, a
+  missing alt and a loading problem `--warn`), an internal link `--accent` on `--accent-soft`. They were
+  10px bold system monospace, and a link's kind and rel flags took the page highlight's hues (internal
+  `#1f6feb`, external `#d4670c`, nofollow `#c42b5c`, and a violet and a teal; 17 literal hex with their
+  dark overrides): one accent, no second hue, so an external link, "other" and the rel flags are
+  neutral; each says its word, and the highlight in the page (`HIGHLIGHT_STYLES`, painted into the page,
+  not the chrome) keeps its colours and labels. The all-clear line is `--ok-ink`. **Links:** the rel
+  counts `--text-small` at weight 600; the link status notice a `--bg-subtle` note at `--r-sm` in
+  `--text-muted`, its summary `--text-small` in `--text-muted`. **Images:** a row's facts `--text-small`,
+  their labels `--text-caps` in `--text-muted` (`--text-faint` on a hovered row is under 4.5:1 in dark), a
+  missing width and height `--warn-ink` (`--caution`). **Social:** a share card is `--bg-surface` at
+  `--r-md` with `--e-ring` and a transparent border (`--seo-card-edge`, `--bg-field`), its rules
+  `--divider`; its image label `--on-inverse` on `--inverse` in `--text-micro` (a literal translucent
+  navy with white text); its domain `--text-small` in `--text-faint`, title `--text-body` at weight 600,
+  description `--text-small` in `--text-muted`; the headings over the cards `--text-small` at weight 600 in
+  `--text-muted`. **Schema:** the summary's status mark is shaped as the rail's dots (valid a filled `--ok`
+  disc, warnings a 2px `--warn` ring, errors a filled `--danger` square; it was a disc in three hues with a
+  tinted halo) and keeps its colours in forced colours (`FORCED_COLOURS_KEPT`), its verdict `--text-body`
+  at weight 600; a top-level type count is a badge and its count `--text-micro` in `--text-muted`, ringed by
+  `--e-ring` with a transparent border (`--accent` text on an `--accent-soft` tint over `--bg-subtle` is 4.18:1 in dark; the badge text is now `--accent-hover`, 5.47:1 there in dark); a block's
+  status is a frame badge (`--h-badge` pill, `-ink` on `-soft`: valid `--ok`, cut `--warn`, invalid
+  `--danger`), its types `--text-small` in `--text-faint`; counts by severity `--text-small` at weight 600, a
+  zero `--text-faint`, icon and all (it faded), and `GrayText` under forced colours; a node's issue a
+  `-soft` notice at `--r-sm` (error `--danger-soft`, warning `--warn-soft`, notice `--accent-soft`, where
+  they were 8–10% tints; `--info-tone` → `--accent`) with a transparent border, its title `--text-small` at weight 600
+  and its detail in `--text-muted`; the tree's rows `--r-sm`, `--bg-hover` hovered, a name `--text-body` at
+  weight 500, its guide lines `--divider`; a property's name `--text-mono` in `--text-muted`, its count
+  `--text-micro` in `--text-faint`; values `--text-small` (`--text-mono` for a literal or URL), a literal
+  `--accent` (`--info-tone`); the open-URL button an `--h-badge` square at `--r-xs`, its icon
+  `--text-muted` (`--icon`), `--accent` on `--bg-hover` hovered, disabled `--text-faint` at half strength
+  (the chrome's disabled tool) and `GrayText` under forced colours; a reference a dashed `--accent` (40%)
+  edge at `--r-sm`; the raw view `--text-mono` on `--bg-subtle` at `--r-sm` with a transparent border,
+  `--danger` when the block did not parse (`--seo-bg`, `--seo-card-edge`), the error line a
+  `--danger-soft` notice with its position in `--danger-ink`, the error's character `--danger-ink` on
+  `--danger-soft` ringed in `--danger` (it was white on `--danger`) with a transparent outline forced
+  colours draw, an invisible character's code point `--warn-ink` on `--warn-soft` in `--text-micro`;
+  "Show more" `--text-small` at weight 500 in `--accent`, `--bg-hover` hovered. A rule that only set a
+  `line-height` (a flag cut with ellipsis, the link status chip, its counts, a type badge) now centres
+  its text by padding or a fixed height, since a surface rule takes its type from a token. The pending,
+  unavailable and empty states were all the frame's (#37), so nothing there moved. No retired name these
+  panels read is unread elsewhere, so none is `removed`; each later panel PR removes the ones its rules
+  were the last to read. **Council round 1** (PR #46): a tinted badge in a row button lies over
+  `--bg-hover` when the row is hovered or open, and `--accent` on `--accent-soft` there is 3.84:1 in dark,
+  so the badges that drew it in these panels (a link's "int", Schema's type badges, an entity row's
+  notice count, which is the frame's info badge) take `--accent-hover` (6.19 light, 5.03 dark hovered;
+  6.80 and 5.96 at rest); `CONTRAST_PAIRS` composes the tinted badges over the hovered row (`under`), and
+  the `-ink` on `-soft` badges pass there (alt, missing alt, loading flags, an entity's warning and
+  error counts: 5.30 or more); the neutral badges' `--bg-subtle` is opaque. A raised control's hover
+  overlay skips a pressed one (`HOVER_OVERLAYS_SKIP_PRESSED`): the Inspector's Tree, Rendered and Served
+  buttons are `.seo-action`s, and `--accent` on `--bg-hover` over the pressed `--accent-soft` was 3.78:1 in
+  dark. A nameless entity's "No name" is `--text-muted`, as "No anchor text". A pressed filter chip draws
+  an `--accent` edge on its transparent border (`PRESSED_EDGES`; its fill alone is 1.06:1 off an unpressed
+  chip in light), 3:1 or more on its fill and on the card. Three rules of later panels faded a disabled
+  chip by `opacity: 0.5` over the shared rule's `--text-faint` (SERP's snippet sources, Changes' shot
+  kinds, the AI judgment's targets in `ai-checks.css`): those declarations went. **Council round 2**: a
+  disabled chip or segment keeps its fill, so its text is `--text-faint` at half strength
+  (`DISABLED_INK`, as the toolbar's disabled tool and Schema's open-URL button; plain `--text-faint` is
+  1.40:1 off the enabled `--text-muted` in light), pinned by `DISABLED_CONTROLS`; a disabled toggle or row
+  action also loses its fill and shadow and goes from `--text` to `--text-faint`, so it keeps plain
+  `--text-faint`.
+
 - **The rest of the browser chrome** (the bands under the chrome row, the page area's panels, the
   DevTools drawer and the History sheet: `browser-chrome.feature.md`, `browser-polish.feature.md`,
   `render-profile.feature.md`, `devtools.feature.md`, `update-client.feature.md`) follows the
@@ -504,7 +610,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--bg-field-hover`, `--shadow-field` and `--panel-art`. The others they read stay for the panels that
   still do (`--bg-chrome-edge`, `--border-field`, `--radius-control`, `--radius-field`, `--icon`,
   `--caution`). Two rules drew `--ok` as text (the robots line, a 2xx code) and the frame's three literal
-  whites were hex, so the `--ok`-as-text exception is 13 and the hex ratchet 47. The visual baseline
+  whites were hex, so this PR takes 2 off the `--ok`-as-text exception and 3 off the hex ratchet. The visual baseline
   gains `page-error` (a load Chromium refuses: `http://127.0.0.1:9/`, `ERR_UNSAFE_PORT`, so no request is
   made and nothing varies). A disabled button's colours are pinned (`TEXT_COLOUR_RULES` with `unfaded`:
   `--text-faint` on `--bg-subtle` and no `opacity` under 1, for `.panel-button`, primary or not, the update
@@ -527,7 +633,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    `--info-tone` and `--bg-chrome-edge`), then the browser chrome's rows (`--tabstrip-height`,
    `--toolbar-height`, `--status-height`, `--bg-strip` and `--bg-tab-hover`), then the merged 56px row
    (`--h-chrome`; markup and the keyboard contract), then the SEO panels' interiors, Overview and
-   On-Page first (no name retired: later panels read them all), then the rest of the browser chrome
+   On-Page first (no name retired: later panels read them all), then Links, Images, Social and Schema
+   with the panels' shared controls (none retired either), then the rest of the browser chrome
    (`--find-height`, `--bg-prompt`, `--prompt-edge`, `--shadow-prompt`, `--render-accent`, `--render-soft`,
    `--render-edge`, `--bg-field-hover`, `--shadow-field` and `--panel-art`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
@@ -556,8 +663,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`specs/seo-sidebar.spec.ts`).
 - **Scenario: signal-contrast-meets-aa** — every `CONTRAST_PAIRS` pair reaches its minimum WCAG 2.x
   contrast ratio in light and in dark, read from `tokens.css` (`var()` resolved, translucent colours
-  composited, a translucent `over` itself first over its opaque `under`: a tint on a hovered row; an `under`
-  that is translucent, or beside an opaque `over` or none, fails before anything is composited); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
+  composited, a translucent `over` on its opaque `under` first: a tinted badge over a hovered row; a pair
+  whose `under` is translucent or whose `over` is opaque fails before compositing); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
 - **Scenario: known-contrast-exceptions-are-current** — each `KNOWN_CONTRAST_EXCEPTIONS` pair still
   misses its minimum in at least one theme, is not in `CONTRAST_PAIRS`, and exactly `rules`
   declarations in the renderer's stylesheets draw text in its `fg` (so fixing them removes the entry).
@@ -576,9 +683,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   nothing under 1, so a fade put back in place of the colours fails.
 - **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry (Settings' and
   Help's controls, the chrome's tools, tabs, new-tab button, address bar and prompt buttons, an SEO
-  issue's heading row and the panels' link button, and the rest of the chrome's: the error panels' and
-  the bands' buttons, the find bar's field and tools, the editor bar's chips and fields, the frame's
-  buttons, the DevTools drawer's tabs, buttons, links and fields, and History's controls), in light and
+  issue's heading row and the panels' link button, the panels' toggles, row actions, segments,
+  chips, select, search field and rows, and Schema's entity rows, references, open-URL button and
+  "Show more", and the rest of the chrome's: the error panels' and the bands' buttons, the find bar's
+  field and tools, the editor bar's chips and fields, the frame's buttons, the DevTools drawer's tabs,
+  buttons, links and fields, and History's controls), in light and
   dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
   none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
   `var(--focus-ring)` and `outline` to `2px solid transparent`, and sets no `opacity` under 1: a focused
@@ -587,19 +696,22 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.a:hover:where(:not([x], :disabled))` as two classes.
 - **Scenario: busy-buttons-show-under-forced-colours** — for each `FORCED_COLOURS_BUSY` entry (a
   Settings button, a primary one and Export Diagnostics' Save, each busy and disabled; a disabled
-  toolbar tool; the permission prompt's buttons before they arm; Overview's zero-count pill; a disabled error-panel
+  toolbar tool; the permission prompt's buttons before they arm; Overview's zero-count pill; a disabled
+  panel toggle, row action, segment, filter chip and Schema's open-URL button; a disabled error-panel
   button, primary or not, update notice button, find bar tool, editor bar chip or button), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too (a `border` shorthand counting as its colour) resolves `color` and `border-color` to `GrayText`:
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
   over it. Every selector named is one of the stylesheet's.
 - **Scenario: pressed-toggles-show-under-forced-colours** — for each `FORCED_COLOURS_PRESSED` entry (the
-  SEO sidebar toggle and the render-profile toggle, pressed; the find bar's Match case, pressed; the
-  DevTools drawer's selected tab), in light and dark, the cascade over its
+  SEO sidebar toggle and the render-profile toggle, pressed; a panel toggle, the chosen segment and a
+  filter chip, pressed; the find bar's Match case, pressed; the DevTools drawer's selected tab), in light
+  and dark, the cascade over its
   `element` selectors with the `@media (forced-colors: active)` rules read too resolves `border-color` to
   `Highlight`. Every selector named is one of the stylesheet's.
 - **Scenario: status-marks-keep-their-colours-under-forced-colours** — for each `FORCED_COLOURS_KEPT`
-  entry (the SEO rail's dots, Overview's category marks: pass, error, warning and notice), in light and
+  entry (the SEO rail's dots, Overview's category marks: pass, error, warning and notice; Schema's status
+  mark: valid, warnings, errors), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too resolves `forced-color-adjust` to `none`, so a mark whose fill or border colour is its status keeps
   it. Every selector named is one of the stylesheet's.
@@ -613,6 +725,21 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.seo-speed-source` (a panel not yet converted) in `styles.css`, `.seo-overview` and the kept
   `.seo-rail-dot` in `settings.css`, `auto`, a list with one unkept selector, an unkept rule with a
   nested block and a kept mark set to `auto` in a nested block.
+- **Scenario: hover-overlays-skip-pressed-controls** — for each `HOVER_OVERLAYS_SKIP_PRESSED` entry
+  (the panels' toggle and row action), its stylesheet has a hover rule for the control, and every rule
+  with a compound selector holding the control's class and `:hover` (any order, after any ancestor) that
+  sets `box-shadow` or `background` names `[aria-pressed='true']` in a `:not(…)` of that compound. It
+  passes `.x:hover:where(:not(:disabled, [aria-pressed='true']))`, catches `.x:hover:where(:not(:disabled))`,
+  `.x:hover { background }`, `.x.y:hover`, `.x:not(:disabled):hover` and `.tools .x:hover`, and ignores a
+  hover that sets only `color` and `.x-danger:hover`.
+- **Scenario: disabled-controls-dim-their-text** — for each `DISABLED_CONTROLS` entry (a disabled
+  filter chip and segment), in light and dark, the cascade over its `element` selectors resolves `color`
+  to `DISABLED_INK`.
+- **Scenario: pressed-controls-draw-an-edge** — for each `PRESSED_EDGES` entry (a pressed filter chip),
+  in light and dark, the cascade over its `element` selectors resolves `border-color` to `var(<edge>)`
+  with a border that draws (non-zero width, a style other than `none` or `hidden`, shorthand included;
+  it catches `border: 0 solid transparent` and `border-style: none`), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or more. Every selector named is one
+  of the stylesheet's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).

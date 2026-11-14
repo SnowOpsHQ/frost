@@ -207,6 +207,9 @@ const CAPTURES = [
   'history',
   'seo-overview',
   'seo-on-page',
+  'seo-links',
+  'seo-images',
+  'seo-social',
   'seo-schema',
   'seo-page-speed',
   'seo-page-speed-middle',
@@ -430,6 +433,27 @@ test.describe('page surfaces', () => {
     await showPanel('on-page');
     await expect(page.getByTestId('seo-heading')).toHaveCount(5);
     await capture('seo-on-page');
+  });
+
+  test('seo-links', async () => {
+    await audit('/guide');
+    await showPanel('links');
+    await expect(page.getByTestId('seo-link-row')).toHaveCount(2);
+    await capture('seo-links');
+  });
+
+  test('seo-images', async () => {
+    await audit('/guide');
+    await showPanel('images');
+    await expect(page.getByTestId('seo-images-table').locator('.seo-table-row')).toHaveCount(2);
+    await capture('seo-images');
+  });
+
+  test('seo-social', async () => {
+    await audit('/guide');
+    await showPanel('social');
+    await expect(page.getByTestId('seo-social-card-large')).toBeVisible();
+    await capture('seo-social');
   });
 
   test('seo-schema', async () => {
