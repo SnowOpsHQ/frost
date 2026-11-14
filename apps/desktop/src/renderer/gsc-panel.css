@@ -431,7 +431,7 @@
 }
 
 .gsc-queries-table th:first-child {
-  width: 40%;
+  width: 38%;
 }
 
 .gsc-queries-table abbr {
@@ -466,8 +466,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Below a 360px panel the query gives the numbers room: clicks and impressions widest. */
-@container gsc (max-width: 320px) {
+/* Below a 360px panel (where .gsc is 325px wide beside the body's scrollbar) the query gives the
+   numbers room: clicks and impressions widest. */
+@container gsc (max-width: 324px) {
   .gsc-queries-table th:first-child {
     width: 28%;
   }
