@@ -1851,6 +1851,9 @@ export const PRESSED_EDGES = [
 export interface FocusRingRule extends LoadsBefore {
   readonly stylesheet: string;
   readonly element: readonly string[];
+  /** Inset layers the focused element must keep before the ring (a pressed tile's inner edge): its
+   * box-shadow is then exactly `<insetBefore>, var(--focus-ring)`, not the ring alone. */
+  readonly insetBefore?: string;
   readonly why: string;
 }
 
@@ -2083,6 +2086,7 @@ export const FOCUS_RING_RULES = [
   {
     stylesheet: 'gsc-panel.css',
     element: ['.gsc-tile', ".gsc-tile[aria-pressed='true']", '.gsc-tile:focus-visible', ".gsc-tile[aria-pressed='true']:focus-visible"],
+    insetBefore: 'inset 0 0 0 1px var(--accent)',
     why: 'the tile the chart shows, focused: --focus-ring after its pressed inner line, so both its edges stay',
   },
   {

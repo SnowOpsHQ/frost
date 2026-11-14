@@ -584,6 +584,8 @@ test('focus-rings-outlast-hover-and-busy', () => {
     for (const theme of THEME_NAMES) {
       const shadow = resolveOnElement(css, rule.element, 'box-shadow', theme);
       expect(isFocusRing(shadow), `${rule.why}: box-shadow ${shadow} (${theme})`).toBe(true);
+      // ... and an entry that keeps an inner line has it, exactly, before the ring.
+      if (rule.insetBefore !== undefined) expect(shadow, `${rule.why}: its inset line (${theme})`).toBe(`${rule.insetBefore}, var(--focus-ring)`);
       expect(resolveOnElement(css, rule.element, 'outline', theme), `${rule.why}: outline (${theme})`).toBe('2px solid transparent');
       // Nothing fades the ring: an opacity, if the element's rules set one, is 1 (only "no opacity" is swallowed).
       const faded = (() => {

@@ -887,7 +887,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   accessibility rule rows), in light and
   dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
   none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
-  `var(--focus-ring)` (inset layers before it allowed, an outer layer not) and `outline` to `2px solid
+  `var(--focus-ring)` (inset layers before it allowed, an outer layer not; an entry's `insetBefore`, the
+  chosen Search Console tile's inner `--accent` line, required exactly) and `outline` to `2px solid
   transparent`, and sets no `opacity` under 1: a focused
   button keeps its ring, at full strength, when hovered, when busy (`aria-disabled`) and when primary;
   so does a focused switch, and the chosen choice. The resolver itself scores
