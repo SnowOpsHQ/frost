@@ -463,7 +463,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   disc, warnings a 2px `--warn` ring, errors a filled `--danger` square; it was a disc in three hues with a
   tinted halo) and keeps its colours in forced colours (`FORCED_COLOURS_KEPT`), its verdict `--text-body`
   at weight 600; a top-level type count is a badge and its count `--text-micro` in `--text-muted`, ringed by
-  `--e-ring` with a transparent border (an `--accent` badge's `--accent-soft` tint over `--bg-subtle` is 4.18:1 in dark); a block's
+  `--e-ring` with a transparent border (`--accent` text on an `--accent-soft` tint over `--bg-subtle` is 4.18:1 in dark; the badge text is now `--accent-hover`, 5.47:1 there in dark); a block's
   status is a frame badge (`--h-badge` pill, `-ink` on `-soft`: valid `--ok`, cut `--warn`, invalid
   `--danger`), its types `--text-small` in `--text-faint`; counts by severity `--text-small` at weight 600, a
   zero `--text-faint`, icon and all (it faded), and `GrayText` under forced colours; a node's issue a
@@ -498,7 +498,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   an `--accent` edge on its transparent border (`PRESSED_EDGES`; its fill alone is 1.06:1 off an unpressed
   chip in light), 3:1 or more on its fill and on the card. Three rules of later panels faded a disabled
   chip by `opacity: 0.5` over the shared rule's `--text-faint` (SERP's snippet sources, Changes' shot
-  kinds, the AI judgment's targets in `ai-checks.css`): those declarations went.
+  kinds, the AI judgment's targets in `ai-checks.css`): those declarations went. **Council round 2**: a
+  disabled chip or segment keeps its fill, so its text is `--text-faint` at half strength
+  (`DISABLED_INK`, as the toolbar's disabled tool and Schema's open-URL button; plain `--text-faint` is
+  1.40:1 off the enabled `--text-muted` in light), pinned by `DISABLED_CONTROLS`; a disabled toggle or row
+  action also loses its fill and shadow and goes from `--text` to `--text-faint`, so it keeps plain
+  `--text-faint`.
 
 - **The SEO panels' Indexability, Page Speed and Compliance** (`seo-indexability.feature.md`,
   `seo-speed.feature.md` and `seo-compliance.feature.md`, Panel; `seo-checks.feature.md`, the sitemap and
@@ -641,7 +646,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`specs/seo-sidebar.spec.ts`).
 - **Scenario: signal-contrast-meets-aa** — every `CONTRAST_PAIRS` pair reaches its minimum WCAG 2.x
   contrast ratio in light and in dark, read from `tokens.css` (`var()` resolved, translucent colours
-  composited, a translucent `over` on its `under` first: a tinted badge over a hovered row); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
+  composited, a translucent `over` on its opaque `under` first: a tinted badge over a hovered row; a pair
+  whose `under` is translucent or whose `over` is opaque fails before compositing); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
 - **Scenario: known-contrast-exceptions-are-current** — each `KNOWN_CONTRAST_EXCEPTIONS` pair still
   misses its minimum in at least one theme, is not in `CONTRAST_PAIRS`, and exactly `rules`
   declarations in the renderer's stylesheets draw text in its `fg` (so fixing them removes the entry).
@@ -700,13 +706,19 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.seo-rail-dot` in `settings.css`, `auto`, a list with one unkept selector, an unkept rule with a
   nested block and a kept mark set to `auto` in a nested block.
 - **Scenario: hover-overlays-skip-pressed-controls** — for each `HOVER_OVERLAYS_SKIP_PRESSED` entry
-  (the panels' toggle and row action), its stylesheet has a `<control>:hover…` rule, and every such rule
-  that sets `box-shadow` or `background` names `[aria-pressed='true']` in its selector's `:not(…)`. It
-  passes `.x:hover:where(:not(:disabled, [aria-pressed='true']))`, catches `.x:hover:where(:not(:disabled))`
-  and `.x:hover { background }`, and ignores a hover that sets only `color`.
+  (the panels' toggle and row action), its stylesheet has a hover rule for the control, and every rule
+  with a compound selector holding the control's class and `:hover` (any order, after any ancestor) that
+  sets `box-shadow` or `background` names `[aria-pressed='true']` in a `:not(…)` of that compound. It
+  passes `.x:hover:where(:not(:disabled, [aria-pressed='true']))`, catches `.x:hover:where(:not(:disabled))`,
+  `.x:hover { background }`, `.x.y:hover`, `.x:not(:disabled):hover` and `.tools .x:hover`, and ignores a
+  hover that sets only `color` and `.x-danger:hover`.
+- **Scenario: disabled-controls-dim-their-text** — for each `DISABLED_CONTROLS` entry (a disabled
+  filter chip and segment), in light and dark, the cascade over its `element` selectors resolves `color`
+  to `DISABLED_INK`.
 - **Scenario: pressed-controls-draw-an-edge** — for each `PRESSED_EDGES` entry (a pressed filter chip),
-  in light and dark, the cascade over its `element` selectors resolves `border-color` to `var(<edge>)`,
-  and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or more. Every selector named is one
+  in light and dark, the cascade over its `element` selectors resolves `border-color` to `var(<edge>)`
+  with a border that draws (non-zero width, a style other than `none` or `hidden`, shorthand included;
+  it catches `border: 0 solid transparent` and `border-style: none`), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or more. Every selector named is one
   of the stylesheet's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,

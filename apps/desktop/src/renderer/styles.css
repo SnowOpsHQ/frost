@@ -2572,8 +2572,10 @@ input {
   color: var(--text);
 }
 
+/* Disabled on the same track: --text-faint at half strength (DISABLED_INK; plain --text-faint is 1.40:1
+   off the enabled --text-muted), as the toolbar's disabled tool. */
 .seo-segment:disabled {
-  color: var(--text-faint);
+  color: color-mix(in srgb, var(--text-faint) 50%, transparent);
   cursor: default;
 }
 
@@ -2631,8 +2633,9 @@ input {
   color: currentColor;
 }
 
+/* Disabled on the same fill: --text-faint at half strength (DISABLED_INK), as a disabled segment. */
 .seo-chip-button:disabled {
-  color: var(--text-faint);
+  color: color-mix(in srgb, var(--text-faint) 50%, transparent);
   cursor: default;
 }
 
@@ -3020,8 +3023,8 @@ input {
 }
 
 /* A top-level type and its count: a badge and a number in an --e-ring outline (a transparent border
-   for forced colours). On the card, not --bg-subtle: a badge's --accent-soft tint over --bg-subtle is
-   4.18:1 in dark. */
+   for forced colours). On the card, not --bg-subtle: --accent text on an --accent-soft tint over
+   --bg-subtle is 4.18:1 in dark (the badge text is now --accent-hover, 5.47:1 there in dark). */
 .seo-type-count {
   display: inline-flex;
   align-items: center;
