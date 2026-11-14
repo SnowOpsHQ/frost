@@ -8,6 +8,7 @@ import {
   CONTRAST_PAIRS,
   FOCUS_RING_RULES,
   FORCED_COLOURS_BUSY,
+  FORCED_COLOURS_KEPT,
   FORCED_COLOURS_PRESSED,
   FORCED_COLOURS_SYSTEM_COLOURS,
   HEX_COLOUR_RATCHET,
@@ -516,6 +517,24 @@ test('pressed-toggles-show-under-forced-colours', () => {
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
     for (const theme of THEME_NAMES) {
       expect(resolveOnElement(css, entry.element, 'border-color', theme, { forced: true }).toLowerCase(), `${entry.why}: border-color under forced colours (${theme})`).toBe('highlight');
+    }
+  }
+});
+
+test('status-marks-keep-their-colours-under-forced-colours', () => {
+  // The resolver's forced mode reads the forced-colours block for any property.
+  const sample = `.d { background: var(--x); } @media (forced-colors: active) { .d { forced-color-adjust: none; } }`;
+  expect(resolveOnElement(sample, ['.d'], 'forced-color-adjust', 'light', { forced: true })).toBe('none');
+  expect(() => resolveOnElement(sample, ['.d'], 'forced-color-adjust', 'light')).toThrow('no forced-color-adjust');
+
+  const entries: readonly ForcedColoursBusy[] = FORCED_COLOURS_KEPT;
+  expect(entries.length).toBeGreaterThan(0);
+  for (const entry of entries) {
+    const css = read(entry.stylesheet);
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
+    for (const theme of THEME_NAMES) {
+      expect(resolveOnElement(css, entry.element, 'forced-color-adjust', theme, { forced: true }), `${entry.why}: forced-color-adjust (${theme})`).toBe('none');
     }
   }
 });

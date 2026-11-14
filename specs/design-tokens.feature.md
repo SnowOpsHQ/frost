@@ -62,7 +62,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   its place, and forced colours, which drop it, draw the active tab's 1px outline.
 - **Known exceptions.** `KNOWN_CONTRAST_EXCEPTIONS` records what still misses its minimum, for the
   surface PRs: `--ok` as text (21 rules) is under 4.5:1 in light, and those rules move to `--ok-ink`
-  (only the 11px chips moved in the values step; Settings and Help moved their 4, leaving 17).
+  (only the 11px chips moved in the values step; Settings and Help moved their 4, leaving 17;
+  Overview its band label and all-clear line, leaving 15; On-Page's "Good length" drew `--ok` through
+  the meter's own property, so it never counted).
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
   (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`. The status bar's failed-overrides
@@ -72,7 +74,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `HEX_COLOUR_RATCHET`; each surface PR lowers it to its new count (the command palette's rules held
   no literal hex, their colours were all tokens, so it stayed at 53; the new-tab view's held none
   either, so it stays there, as it does for the SEO sidebar's frame; Settings' switch knob was its one, so it is 52;
-  the fullscreen notice's two went with the chrome's, so it is 50).
+  the fullscreen notice's two went with the chrome's, so it is 50; Overview's and On-Page's rules held
+  none, so it stays 50).
 - **Geist, bundled and local.** The type tokens name Geist and Geist Mono; frost ships them from the
   official `geist` npm package (`GEIST_PACKAGE`: pinned exactly, SIL Open Font License 1.1, listed in
   `THIRD_PARTY_NOTICES` with the licence text). Only static woff2 files, only the weights the type
@@ -321,6 +324,73 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.toolbar`. No token was read by the toolbar alone, so nothing more is retired: `--tabstrip-height`
   and `--toolbar-height` were `removed` with the chrome's rows, and `--h-chrome` is now read.
 
+- **The SEO panels' Overview and On-Page** (`seo-sidebar.feature.md`, Sidebar: Overview and On-Page;
+  what their components render, less the frame's shared parts) follow the Migration notes, the token
+  `use` notes and the approved main screen's Overview (its score card, counts, issue list, search
+  preview and checks), where they agree with the sidebar's spec; On-Page has no screen and follows the
+  notes. The `.seo` prefix is the frame's and every panel's, so each panel has a `SIGNAL_SURFACES` entry
+  listing its classes. Some of their parts are other panels' too (an issue row is Links', Images',
+  Social's and Page Speed's; a label and value row Indexability's, Social's, JavaScript's and the Search
+  Console inspection's; a stat tile Links' and Images'; a tag Indexability's, Sitemaps' and Page
+  Speed's; the eyebrow every panel's verdict label; the score ring the AI-readiness tile's and
+  Visibility's): their rules move with these panels and draw the same there. The highlight and Copy as
+  CSV toggles (`.seo-toggle`), `.seo-panel-tools` and `.seo-flash` are shared controls, left to their
+  panels' PRs, and so are the AI-readiness tile, the "Page" card and the AI judgment card (features of
+  their own). Text is Geist from the `--text-*` tokens, every space a `--space-*` step and every corner
+  an `--r-*`; a part's own geometry (the 84px ring, which the frame's skeleton ring matches; the 6px
+  meter; the 18px tag; the outline's 14px indent per level; the label columns) stays a layout constant.
+  The panels stand their cards `--space-4` apart (the body's padding and the skeleton's gap; the
+  screen's 16px is the workspace PR's, with the body's). **Score card:** `--space-5` in and between,
+  as on the screen; the ring's arc is its band's graphics colour (`--ok`, `--warn` for "Needs work" where
+  it was `--caution`, `--danger`) on a `--track` circle (`--seo-track`), easing in `--dur-slow`; the
+  value `--text-display` in `--text`; the eyebrow ("Health score") `--text-micro` in `--text-muted`, in
+  sentence case, as on the screen (it was 10.5px uppercase `--text-faint`, and every panel's eyebrow
+  follows it); the band's label `--text-heading` in `--text`, as on the screen: the ring carries the
+  band's colour and the word its name (it was 19px in the band's colour, and `--ok` text is 3.30:1);
+  the summary `--text-small` in `--text-muted`, a noindexed page's reasons in `--danger-ink`. The
+  partial note is a `--warn-soft` notice at `--r-md` (`--caution` at 12%), its text `--text-muted`, a
+  transparent border kept for forced colours. **Counts:** the screen's pills, where they were three
+  bordered tiles: `--h-chip` pills on `--bg-subtle`, the severity's icon, the number at weight 600 and
+  its word in `--text-small`; a zero count is `--text-faint`, icon and all (it faded to 0.6).
+  **Issues:** they stay rows in the one `.seo-issues` card the frame drew, ruled by `--divider`
+  (`--seo-card-edge`), where the screen draws each as its own card: that card is the frame's, and the
+  other panels' issue lists share it. A row is `--r-sm`, `--bg-hover` under the pointer, its title
+  `--text-body` at its emphasis weight, its category and lead value `--text-small` in `--text-muted`
+  (the screen's; it was 11.5px `--text-faint`), its chevron `--text-muted` at `--icon-sm`, turning in
+  `--dur-fast`; focus is `--focus-ring` beside a transparent outline, drawn above the next row (it was
+  an inset 2px `--accent` outline). An open issue's labels are `--text-caps` in `--text-faint`, its why
+  and fix `--text-small` in `--text-muted`, its facts and samples on `--bg-subtle` (they lay
+  `--bg-hover` over the card) at `--r-sm`, opening with `prompt-in` in `--dur-base`. The all-clear line
+  is `--ok-ink` with an `--ok` icon. **Search preview:** the screen's: crumbs `--text-small` in
+  `--text-muted`, the title `--text-heading` at weight 500 in `--accent` (it mixed in 12% `--text`), the
+  description `--text-small` in `--text-muted`. **Checks by category:** `--text-small` rows `--space-1`
+  by `--space-4` apart, as on the screen, the count `--text-muted`; the status mark is 8px and differs
+  by shape, as the rail's dots do: a filled `--ok` disc for a pass (the screen's check glyph needs
+  markup), a filled `--danger` square for an error, a `--warn` ring (a 2px border) for a warning (it was
+  a `--caution` disc), a hollow `--accent` diamond for a notice (an `--info-tone` disc; the screen draws
+  it a ring like the warning's, in another hue only). The marks keep their colours in forced colours
+  (`forced-color-adjust: none`, `FORCED_COLOURS_KEPT`), where a fill would turn to the canvas and every
+  status look the same. **The audit's render profile** (above Overview) is an `--accent-soft` notice at
+  `--r-md` (`--render-soft`; its `--render-edge` border is a transparent one for forced colours), its
+  summary `--text-small` at weight 600. **On-Page:** the measured title and description are
+  `--text-body`, their sections ruled by `--divider`; a length meter is a 6px `--r-pill` bar, its track
+  `--track` with the recommended range `--ok` mixed 22% into it, its fill the verdict's graphics colour
+  (`--ok`, `--warn` for short and long where it was `--caution`, `--danger`), its line `--text-small` in
+  `--text-faint` with the count `--text-muted` at weight 600 and the verdict in its -ink (`--ok-ink`,
+  `--warn-ink`, `--danger-ink`: it drew `--ok` through the meter's property, 3.30:1); the measured width
+  `--text-faint`, `--warn-ink` when a result cuts it. Label and value rows are `--text-small` (label
+  `--text-muted`), `--space-3` apart. The heading counts are `--text-small` at weight 600, an empty
+  level `--text-faint` at 400; a tag is `--text-micro` in `--text-muted` on `--bg-subtle` at `--r-xs` (it
+  was 10px bold system monospace on `--bg-hover`), an H1's `--accent` on `--accent-soft` (an `--accent`
+  16% mix). The outline's rows are `--text-small`, `--space-1` above and below, their guide lines
+  `--divider` (`--seo-card-edge`), each level's offset a component property set on every row (it was a
+  `var()` fallback). Stat tiles are `--bg-subtle` at `--r-sm` (`--bg-hover`), the number `--text-title`,
+  a warning count `--warn-ink` (`--caution`), the label `--text-small` in `--text-muted`. No retired name
+  these panels read is unread elsewhere, so none is `removed`: `--seo-card-edge`, `--caution`,
+  `--shadow-card`, `--info-tone`, `--render-edge` and `--render-soft` (retired) and `--seo-card` and
+  `--seo-track` (aliases) stay for the panels and bars that still read them. The forced-colours palette
+  leaves SVG fills and strokes as they are, so the ring and the meters keep their colours there.
+
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
 2. Foundation (done).
@@ -335,7 +405,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    (`--seo-skeleton` and `--seo-skeleton-shine`; the panels still read `--seo-card-edge`, `--caution`,
    `--info-tone` and `--bg-chrome-edge`), then the browser chrome's rows (`--tabstrip-height`,
    `--toolbar-height`, `--status-height`, `--bg-strip` and `--bg-tab-hover`), then the merged 56px row
-   (`--h-chrome`; markup and the keyboard contract). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
+   (`--h-chrome`; markup and the keyboard contract), then the SEO panels' interiors, Overview and
+   On-Page first (no name retired: later panels read them all). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
    from the moment the test starts watching.
 
@@ -379,7 +450,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `background` to `var(<background>)` where the entry names one), and that pair is in
   `CONTRAST_PAIRS`.
 - **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry (Settings' and
-  Help's controls, and the chrome's tools, tabs, new-tab button, address bar and prompt buttons), in light and
+  Help's controls, the chrome's tools, tabs, new-tab button, address bar and prompt buttons, and an SEO
+  issue's heading row and the panels' link button), in light and
   dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
   none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
   `var(--focus-ring)` and `outline` to `2px solid transparent`, and sets no `opacity` under 1: a focused
@@ -397,6 +469,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   SEO sidebar toggle and the render-profile toggle, pressed), in light and dark, the cascade over its
   `element` selectors with the `@media (forced-colors: active)` rules read too resolves `border-color` to
   `Highlight`. Every selector named is one of the stylesheet's.
+- **Scenario: status-marks-keep-their-colours-under-forced-colours** — for each `FORCED_COLOURS_KEPT`
+  entry (the SEO rail's dots, Overview's category marks: pass, error, warning and notice), in light and
+  dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
+  too resolves `forced-color-adjust` to `none`, so a mark whose fill or border colour is its status keeps
+  it. Every selector named is one of the stylesheet's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).

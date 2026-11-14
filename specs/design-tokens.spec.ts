@@ -22,7 +22,8 @@
  *    the SEO sidebar's frame and shared parts, whose retired `--seo-skeleton` and
  *    `--seo-skeleton-shine` are `removed`, and the browser chrome's rows, which retired the rows'
  *    heights, `--bg-strip` and `--bg-tab-hover`, then merged the tab row and the toolbar into one
- *    `--h-chrome` row).
+ *    `--h-chrome` row; then the SEO panels' interiors, Overview and On-Page first, which retired
+ *    nothing: every retired name they read, later panels still read).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -441,6 +442,37 @@ export const FORCED_COLOURS_PRESSED = [
   { stylesheet: 'styles.css', element: ['.tool', ".render-toggle[aria-pressed='true']"], why: 'the render-profile toggle, pressed (its editor bar open)' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
+/**
+ * Status marks drawn in a fill or a border colour, whose shape and colour together are the status (a
+ * filled square, a ring, a disc, a hollow diamond). Forced colours would repaint every one the same
+ * (a fill becomes the canvas, so a filled mark vanishes), so for each entry the cascade over its
+ * `element` selectors in `stylesheet`, with the rules inside `@media (forced-colors: active)` read too,
+ * resolves `forced-color-adjust` to `none` in light and dark: the mark keeps its own colours there, as
+ * the SEO rail's dots do. (The score ring and the length meters are SVG strokes and fills, which
+ * Chromium's forced colours leave as they are; their state is also in words beside them.)
+ */
+export const FORCED_COLOURS_KEPT = [
+  { stylesheet: 'styles.css', element: ['.seo-rail-dot'], why: 'an SEO rail dot (a pass disc)' },
+  { stylesheet: 'styles.css', element: ['.seo-rail-dot', ".seo-rail-dot[data-status='warn']"], why: 'an SEO rail dot, warning (a ring)' },
+  { stylesheet: 'styles.css', element: ['.seo-rail-dot', ".seo-rail-dot[data-status='error']"], why: 'an SEO rail dot, error (a square)' },
+  { stylesheet: 'styles.css', element: ['.seo-category-dot'], why: 'Overview\'s checks by category: a category that passed (a disc)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-category-dot', ".seo-category[data-status='error'] .seo-category-dot"],
+    why: 'Overview\'s checks by category: its worst finding an error (a square)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-category-dot', ".seo-category[data-status='warning'] .seo-category-dot"],
+    why: 'Overview\'s checks by category: its worst finding a warning (a ring)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-category-dot', ".seo-category[data-status='info'] .seo-category-dot"],
+    why: 'Overview\'s checks by category: its worst finding a notice (a hollow diamond)',
+  },
+] as const satisfies readonly ForcedColoursBusy[];
+
 export const SIGNAL_SURFACES = [
   // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).
   { name: 'command palette', stylesheet: 'styles.css', selectorPrefix: '.palette' },
@@ -554,6 +586,77 @@ export const SIGNAL_SURFACES = [
       '.connection-*',
     ],
     keyframes: ['tab-spin', 'progress-slide', 'prompt-in'],
+  },
+  // The SEO panels' interiors, one entry per panel, under the `.seo` prefix the frame and every panel
+  // share, so each lists its classes. Overview (specs/seo-sidebar.feature.md, Sidebar: Overview): the
+  // score card's interior (ring, value, eyebrow, band, summary, the not-indexable reasons), the partial
+  // note, the counts by severity, the ranked issues (`Issue`, which Links, Images, Social and Page Speed
+  // render too, collapsed and expanded: why, fix, facts, samples), the all-clear line, the search
+  // preview, the checks by category, and the audit's render profile above it ("The audit's profile
+  // (Overview)", in the render-profiles section). `.seo-eyebrow` is every panel's verdict label and the
+  // ring is the AI-readiness tile's and Visibility's too: their rules move here, and look the same there.
+  // Not the AI-readiness tile, the "Page" card or the AI judgment card (`.ai-*`, `.page-type-*`,
+  // `.page-intent-*`), nor `.seo-panel-tools`, `.seo-toggle` and `.seo-flash` (shared controls,
+  // their panels' PRs), nor `.seo-all-clear-line` (the panels' issue lists) or `.seo-preview-note`.
+  {
+    name: 'SEO panel: Overview',
+    stylesheet: 'styles.css',
+    selectorPrefix: '.seo',
+    classes: [
+      '.seo-overview',
+      // The score card's interior
+      '.seo-ring-*',
+      '.seo-score-text',
+      '.seo-eyebrow',
+      '.seo-band',
+      '.seo-score-summary',
+      '.seo-not-indexable',
+      '.seo-partial',
+      // Counts, issues, all clear
+      '.seo-counts',
+      '.seo-count-*',
+      '.seo-issue-*',
+      '.seo-chevron',
+      '.seo-facts',
+      '.seo-fact',
+      '.seo-samples-*',
+      '.seo-all-clear',
+      // Search preview, checks by category
+      '.seo-preview',
+      '.seo-preview-url',
+      '.seo-preview-title',
+      '.seo-preview-description',
+      '.seo-categories',
+      '.seo-category-*',
+      // The audit's render profile, drawn above Overview
+      '.seo-audit-profile-*',
+    ],
+  },
+  // On-Page (specs/seo-sidebar.feature.md, Sidebar: On-Page): the measured title and description with
+  // their length meters (`LengthMeter`) and widths, the label and value rows (`FactRow`, which Indexability,
+  // Social, JavaScript and the Search Console inspection render too), the heading counts and outline
+  // with their tags (`.seo-tag`, Indexability's, Sitemaps' and Page Speed's too), and the stat tiles
+  // (Links' and Images' too). Not `.seo-row-actions` (Links) or `.seo-stats-2`/`-3` of their own.
+  {
+    name: 'SEO panel: On-Page',
+    stylesheet: 'styles.css',
+    selectorPrefix: '.seo',
+    classes: [
+      '.seo-onpage',
+      '.seo-measured-*',
+      '.seo-meter-*',
+      '.seo-rows',
+      '.seo-row',
+      '.seo-row-label',
+      '.seo-row-value',
+      '.seo-heading-counts',
+      '.seo-heading-count',
+      '.seo-tag',
+      '.seo-outline-*',
+      '.seo-stats',
+      '.seo-stats-1',
+      '.seo-stat-*',
+    ],
   },
 ] as const satisfies readonly SignalSurface[];
 
@@ -716,6 +819,23 @@ export const CONTRAST_PAIRS = [
   { fg: '--text-muted', bg: '--bg-active', over: '--bg-sheet', min: 4.5, why: 'a pressed SEO rail item: its icon on --bg-active over the sheet (4.5:1)' },
   { fg: '--text-muted', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'a hovered "More panels" item: its icon (--text-muted) on --bg-hover over the menu\'s --bg-surface (4.5:1)' },
   { fg: '--accent', bg: '--accent-soft', over: '--bg-window', min: 3, why: 'the toolbar\'s SEO sidebar toggle, pressed: its --accent icon on --accent-soft over the toolbar (--bg-chrome → --bg-window) (graphics, 3:1)' },
+  // The SEO panels' Overview and On-Page (their surface PR). Already covered above: the score card's
+  // value, band and summary on --bg-surface (--text, --text-muted), its ring (--ok, --warn, --danger on
+  // --bg-surface), the eyebrow (--text-muted), the not-indexable reasons (--danger-ink), the partial note
+  // (--text-muted on --warn-soft over the sheet), a count pill's number and word (--text, a zero
+  // --text-faint, on --bg-subtle), an issue row and its meta and chevron, hovered too (--text and
+  // --text-muted on --bg-hover over --bg-surface), its labels (--text-faint on a card), facts and samples
+  // (--text, --text-muted and --text-faint on --bg-subtle), the all-clear line (--ok-ink, its icon --ok),
+  // the preview (--accent and --text-muted on a card), the category dots (--ok, --warn, --danger,
+  // --accent on a card), the render profile (--text and --text-muted on --accent-soft over the sheet),
+  // a meter's verdict (--ok-ink, --warn-ink, --danger-ink on a card), a stat tile (--text, --text-muted
+  // and --warn-ink on --bg-subtle) and an H1 tag (--accent on --accent-soft over a card). New with them:
+  { fg: '--danger', bg: '--bg-subtle', min: 3, why: 'Overview\'s count pills: the errors pill\'s icon (--danger) on its --bg-subtle fill (graphics, 3:1)' },
+  { fg: '--warn', bg: '--bg-subtle', min: 3, why: `${WARN}: Overview's warnings pill's icon on its --bg-subtle fill` },
+  { fg: '--accent', bg: '--bg-subtle', min: 3, why: 'Overview\'s count pills: the notices pill\'s icon (--accent) on its --bg-subtle fill (graphics, 3:1)' },
+  { fg: '--danger', bg: '--bg-hover', over: '--bg-surface', min: 3, why: 'an issue row, hovered: an error\'s icon (--danger) on --bg-hover over the card (graphics, 3:1)' },
+  { fg: '--warn', bg: '--bg-hover', over: '--bg-surface', min: 3, why: `${WARN}: an issue row, hovered: a warning's icon on --bg-hover over the card` },
+  { fg: '--accent', bg: '--bg-hover', over: '--bg-surface', min: 3, why: 'an issue row, hovered: a notice\'s icon (--accent) on --bg-hover over the card (graphics, 3:1)' },
   // The browser chrome's rows (its surface PR). Already covered above: the active tab's label and the
   // address on --bg-surface (--text; the placeholder, the address badge and the active tab's glyph
   // --text-faint and --text-muted), the toolbar's tools, the new-tab button and the status bar on
@@ -802,8 +922,8 @@ export const KNOWN_CONTRAST_EXCEPTIONS = [
     fg: '--ok',
     bg: '--bg-surface',
     min: 4.5,
-    rules: 17,
-    why: '--ok as body text ("Good length", passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4).',
+    rules: 15,
+    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property).',
   },
 ] as const satisfies readonly ContrastException[];
 
@@ -867,6 +987,29 @@ export const TEXT_COLOUR_RULES = [
     why: DANGER_TINT,
   },
   { stylesheet: 'styles.css', element: ['.changes-segment', ".changes-segment[data-op='del']"], color: '--danger-ink', why: DANGER_TINT },
+  // Overview and On-Page (their surface PR): status text on a card takes its -ink; the --ok, --warn and
+  // --danger graphics (the meter's fill, the all-clear icon) keep the tone.
+  { stylesheet: 'styles.css', element: ['.seo-all-clear'], color: '--ok-ink', why: 'Overview\'s "Every on-page check passed." (13px, was --ok: 3.30:1 on a card in light)' },
+  { stylesheet: 'styles.css', element: ['.seo-meter-verdict'], color: '--ok-ink', why: 'On-Page\'s "Good length" (12px, was the meter\'s --ok: 3.30:1 on a card in light)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-meter-verdict', ".seo-meter[data-indicator='long'] .seo-meter-verdict"],
+    color: '--warn-ink',
+    why: 'On-Page\'s "Too long" (12px, was the meter\'s --caution): status text takes its -ink',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-meter-verdict', ".seo-meter[data-indicator='short'] .seo-meter-verdict"],
+    color: '--warn-ink',
+    why: 'On-Page\'s "Too short" (12px, was the meter\'s --caution): status text takes its -ink',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-meter-verdict', ".seo-meter[data-indicator='missing'] .seo-meter-verdict"],
+    color: '--danger-ink',
+    why: 'On-Page\'s "Missing" (12px, was the meter\'s --danger, 4.83:1 on a card in light): status text takes its -ink',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-not-indexable'], color: '--danger-ink', why: 'Overview\'s not-indexable reasons (12px, was --danger): status text takes its -ink' },
 ] as const satisfies readonly TextColourRule[];
 
 /**
@@ -895,6 +1038,7 @@ const TAB_HOVER = ".tab:hover:where(:not([data-active='true']))";
 const TAB_FOCUS = '.tab:has(.tab-main:focus-visible)';
 const PROMPT_BUTTON_HOVER = '.prompt-button:hover:where(:not(:disabled))';
 const PROMPT_DISMISS_HOVER = '.prompt-dismiss:hover:where(:not(:disabled))';
+const SEO_ISSUE_HOVER = '.seo-issue-head:hover';
 
 export const FOCUS_RING_RULES = [
   {
@@ -972,6 +1116,12 @@ export const FOCUS_RING_RULES = [
   { stylesheet: 'styles.css', element: ['.address', '.address:focus-within'], why: 'the address bar, focused (:focus-within): its --e-raised edge gives way to --focus-ring' },
   { stylesheet: 'styles.css', element: ['.prompt-button', PROMPT_BUTTON_HOVER, '.prompt-button:focus-visible'], why: 'the permission prompt\'s Allow or Block, focused and hovered' },
   { stylesheet: 'styles.css', element: ['.prompt-dismiss', PROMPT_DISMISS_HOVER, '.prompt-dismiss:focus-visible'], why: 'the permission prompt\'s dismiss button, focused and hovered' },
+  // Overview and On-Page (their surface PR): the focusable controls inside them that are their own. An
+  // issue's heading row (Overview's, and the Links, Images, Social and Page Speed issue lists') and the
+  // link button under a list ("Show all", the frame's shared part). Their highlight and Copy as CSV
+  // toggles are `.seo-toggle`, a later panel's control.
+  { stylesheet: 'styles.css', element: ['.seo-issue-head', SEO_ISSUE_HOVER, '.seo-issue-head:focus-visible'], why: 'an issue\'s heading row, focused (it expands the issue) and hovered: its --bg-hover fill keeps the ring' },
+  { stylesheet: 'styles.css', element: ['.seo-link-button', '.seo-link-button:hover', '.seo-link-button:focus-visible'], why: 'Overview\'s "Show all" link button, focused and hovered' },
 ] as const satisfies readonly FocusRingRule[];
 
 /**
