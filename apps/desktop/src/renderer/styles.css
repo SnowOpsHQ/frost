@@ -5803,11 +5803,12 @@ input {
   white-space: nowrap;
 }
 
-/* Outlined, not filled: a white 18% fill left its 11px text at 3.5:1 in light. */
+/* Outlined, not filled: a white 18% fill left its 11px text at 3.5:1 in light. The edge is all that
+   groups it: at 62% it is 3.41:1 on the header in light, 3.42:1 in dark. */
 .render-frame-tag {
   flex: none;
   padding: 0 calc(var(--space-2) - 1px);
-  border: 1px solid color-mix(in srgb, var(--on-accent) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--on-accent) 62%, transparent);
   border-radius: var(--r-pill);
   font: var(--text-micro);
   letter-spacing: 0.01em;
@@ -7205,9 +7206,10 @@ input {
   white-space: nowrap;
 }
 
+/* --space-1 of block padding: room for a focused row button's 4px ring inside the clipping cell. */
 .devtools-table td {
   max-width: 320px;
-  padding: 3px var(--space-3);
+  padding: var(--space-1) var(--space-3);
   overflow: hidden;
   border-bottom: 1px solid var(--divider);
   text-overflow: ellipsis;
@@ -7237,6 +7239,14 @@ input {
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+/* A row's name: the button ellipsizes it within the cell, so the cell's clip never cuts its focus ring. */
+.devtools-row-button {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .devtools-link {
@@ -7889,7 +7899,7 @@ input {
 
 .history-row {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) auto auto;
+  grid-template-columns: 64px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-1);
   min-height: var(--h-field);
@@ -7910,11 +7920,13 @@ input {
   opacity: 1;
 }
 
-/* The time and host: --text-muted (--text-faint is 4.2:1 on a hovered row in dark). */
+/* The time and host: --text-muted (--text-faint is 4.2:1 on a hovered row in dark). The time keeps to
+   one line ("01:36 PM" in Geist needs more than 56px). */
 .history-time {
   color: var(--text-muted);
   font: var(--text-small);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .history-open {
@@ -7930,6 +7942,7 @@ input {
   text-align: start;
 }
 
+/* --accent-hover: on a hovered row the tint lies over --bg-hover (--accent is 3.84:1 there in dark). */
 .history-monogram {
   display: grid;
   place-items: center;
@@ -7938,7 +7951,7 @@ input {
   height: var(--h-badge);
   border-radius: var(--r-xs);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-hover);
   font: var(--text-micro);
   letter-spacing: 0.01em;
 }
@@ -7997,7 +8010,7 @@ input {
   }
 
   .history-row {
-    grid-template-columns: 52px minmax(0, 1fr) auto auto;
+    grid-template-columns: 60px minmax(0, 1fr) auto auto;
   }
 }
 
@@ -8054,7 +8067,8 @@ input {
   box-shadow: var(--focus-ring);
 }
 
-/* A row's change count (frost's own captures of the page). */
+/* A row's change count (frost's own captures of the page). On a hovered row its tint lies over --bg-hover,
+   where --accent is 3.84:1 in dark: --accent-hover keeps 4.5:1 (as the monogram). */
 .history-changes {
   display: inline-flex;
   align-items: center;
@@ -8063,7 +8077,7 @@ input {
   padding: 0 var(--space-3);
   border-radius: var(--r-pill);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-hover);
   font: var(--text-micro);
   letter-spacing: 0.01em;
   white-space: nowrap;
