@@ -41,6 +41,18 @@
   box-shadow: var(--focus-ring);
 }
 
+/* In a narrow sheet (the Projects sheet's container query, styles.css) the four tabs fit a 288px column;
+   narrower still, they wrap rather than widen it. */
+@container (max-width: 640px) {
+  .projects-views {
+    flex-wrap: wrap;
+  }
+
+  .projects-view-tab {
+    padding: 0 var(--space-3);
+  }
+}
+
 .projects-view-panel {
   display: flex;
   flex-direction: column;
@@ -558,6 +570,8 @@
   padding: var(--space-2) var(--space-3) var(--space-3);
   border: 1px solid var(--divider);
   border-radius: var(--r-sm);
+  /* A fieldset keeps its min-content width by default, which widened the form past a narrow sheet. */
+  min-inline-size: 0;
 }
 
 .projects-bulk-group legend {
@@ -570,6 +584,8 @@
   display: flex;
   align-items: end;
   gap: var(--space-2);
+  /* … and so does a locale's row, whose two fields' inputs would otherwise hold it at about 400px. */
+  min-width: 0;
 }
 
 .projects-bulk-outcomes {

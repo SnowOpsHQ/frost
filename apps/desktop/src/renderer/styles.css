@@ -9484,6 +9484,8 @@ input {
   background: var(--bg-surface);
   outline: none;
   font: var(--text-body);
+  /* The sheet sits in the page column, whatever the window: the columns stack by its own width (below). */
+  container-type: inline-size;
 }
 
 .projects-sheet[data-running='true'] {
@@ -10085,9 +10087,16 @@ input {
   }
 }
 
-@media (max-width: 640px) {
+/* A narrow sheet (a tiled window, or the sidebar and the agent panel open beside it): the list above the
+   project, which scrolls in the height left (the body scrolls too if the list alone is taller). It is the
+   sheet's width that counts, not the window's: a viewport query never fired for a 327px sheet in a 776px
+   window, which left the project a 29px column. */
+@container (max-width: 640px) {
   .projects-body {
     grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 }
 
