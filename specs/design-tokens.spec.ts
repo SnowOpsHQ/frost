@@ -23,7 +23,8 @@
  *    `--seo-skeleton-shine` are `removed`, and the browser chrome's rows, which retired the rows'
  *    heights, `--bg-strip` and `--bg-tab-hover`, then merged the tab row and the toolbar into one
  *    `--h-chrome` row; then the SEO panels' interiors, Overview and On-Page first, which retired
- *    nothing: every retired name they read, later panels still read).
+ *    nothing: every retired name they read, later panels still read; and so on, panel by panel, to the
+ *    Changes panel, Projects, Rankings, Inspector and the screenshot editor, which retired nothing either).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -451,6 +452,13 @@ export const FORCED_COLOURS_BUSY = [
     why: 'the editor bar\'s Apply (a primary button) while its profile is invalid, and Reset with nothing to reset',
   },
   { stylesheet: 'styles.css', element: ['.devtools-button', '.devtools-button:disabled'], why: 'a DevTools drawer button with nothing to act on' },
+  // Projects (the Changes panel's surface PR): a sheet button is --text-faint on --bg-subtle with no shadow when disabled (it faded).
+  { stylesheet: 'styles.css', element: ['.projects-small-button', '.projects-small-button:disabled'], why: 'a Projects sheet button, disabled (Add the current page with no page, Save while tags save)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.projects-small-button', '.projects-danger', '.projects-small-button:disabled'],
+    why: 'Delete project while the sheet is busy (its --danger-ink must give way)',
+  },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -471,6 +479,23 @@ export const FORCED_COLOURS_PRESSED = [
   // The rest of the browser chrome: a pressed or selected item drawn as the canvas's segmented control's (--bg-surface, --e-raised).
   { stylesheet: 'styles.css', element: ['.find-tool', ".find-case[aria-pressed='true']"], why: 'the find bar\'s Match case, pressed' },
   { stylesheet: 'styles.css', element: ['.devtools-tab', ".devtools-tab[aria-selected='true']"], why: 'the DevTools drawer\'s selected tab' },
+  // The Changes panel, Projects, Rankings, Inspector and the screenshot editor (their surface PR): a chosen
+  // item drawn by its fill and an --accent edge (PRESSED_EDGES), or by an --accent line, which forced colours replace.
+  { stylesheet: 'styles.css', element: ['.changes-version', ".changes-version[aria-pressed='true']"], why: 'the Changes panel\'s chosen version (the one the diff shows)' },
+  { stylesheet: 'styles.css', element: ['.projects-item', ".projects-item[data-selected='true']"], why: 'the Projects sheet\'s chosen project' },
+  { stylesheet: 'styles.css', element: ['.inspector-row', ".inspector-row[data-selected='true']"], why: 'the Inspector\'s selected node' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-action', ".inspector-view-button[aria-pressed='true']"],
+    why: 'the Inspector\'s chosen view (Tree, Rendered or Served)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.inspector-source-row', ".inspector-source-row[data-match='true']", ".inspector-source-row[aria-current='true']"],
+    why: 'the source\'s current match (its --accent line; the other matches are CanvasText)',
+  },
+  { stylesheet: 'styles.css', element: ['.shot-editor-swatch', ".shot-editor-swatch[aria-pressed='true']"], why: 'the screenshot editor\'s chosen colour (its --accent ring)' },
+  { stylesheet: 'rankings.css', element: ['.projects-view-tab', ".projects-view-tab[aria-selected='true']"], why: 'the Projects sheet\'s chosen view (its --accent underline)' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -797,6 +822,25 @@ export const SIGNAL_SURFACES = [
   { name: 'History sheet', stylesheet: 'styles.css', selectorPrefix: '.history' },
   // The update notice (specs/update-client.feature.md, Chrome), a band.
   { name: 'update notice', stylesheet: 'styles.css', selectorPrefix: '.update' },
+  // The Changes panel, Projects, Rankings, Inspector and the screenshot editor (what the components in
+  // `components/changes/` render): one entry per prefix and stylesheet. The Changes panel
+  // (specs/changes-panel.feature.md, changes-capture.feature.md; its screenshots, screenshot.feature.md):
+  // Capture now and its project picker, the history of versions, the diff by region and the
+  // screenshot controls and gallery; `.changes-shot-selecting` is the Inspector's pick hint too.
+  { name: 'Changes panel', stylesheet: 'styles.css', selectorPrefix: '.changes' },
+  // The Inspector (specs/inspector.feature.md): the tree, Pick element, the details, the search and the sources.
+  { name: 'Inspector', stylesheet: 'styles.css', selectorPrefix: '.inspector' },
+  // The screenshot editor (specs/screenshot.feature.md, Editing): a sheet over the page column.
+  { name: 'screenshot editor', stylesheet: 'styles.css', selectorPrefix: '.shot-editor' },
+  // The Projects sheet (specs/projects.feature.md) and a project's retention and disk usage
+  // (specs/retention.feature.md); in rankings.css its views, star, tags, Settings (`.project-settings`,
+  // no prefix of its own beside `.projects`), Bulk add and blocked runs.
+  { name: 'Projects', stylesheet: 'styles.css', selectorPrefix: '.projects' },
+  { name: 'Projects: retention', stylesheet: 'styles.css', selectorPrefix: '.retention' },
+  { name: 'Projects: views, star, tags, Settings and Bulk add', stylesheet: 'rankings.css', classes: ['.projects-*', '.project-settings-*'] },
+  // Rankings and Compare (specs/rankings.feature.md, The views): every other rule of rankings.css.
+  { name: 'Rankings', stylesheet: 'rankings.css', selectorPrefix: '.rankings' },
+  { name: 'Rankings: Compare', stylesheet: 'rankings.css', selectorPrefix: '.compare' },
 ] as const satisfies readonly SignalSurface[];
 
 /**
@@ -1116,6 +1160,50 @@ export const CONTRAST_PAIRS = [
   { fg: '--ok-ink', bg: '--bg-hover', over: '--bg-sheet', min: 4.5, why: 'the DevTools drawer: a request robots.txt allows, in a hovered row (4.5:1)' },
   { fg: '--ok-ink', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'the DevTools drawer: a request robots.txt allows, in the selected row (4.5:1)' },
   { fg: '--text-muted', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'a History row, hovered: its time and host (12px, --text-muted: --text-faint is 4.2:1 on --bg-hover in dark), and a hovered .panel-button\'s icon (4.5:1)' },
+  // The Changes panel, Projects, Rankings, Inspector and the screenshot editor (their surface PR). Already
+  // covered above: their text on the panel's cards and the sheets (--text, --text-muted, --text-faint on
+  // --bg-surface and --bg-sheet), status words (--ok-ink, --warn-ink, --danger-ink on a card or the sheet),
+  // a change's kind and the diff's edits (-ink on -soft over a card), a version row hovered or chosen (--text
+  // and --text-muted on --bg-hover or --accent-soft over a card, its --accent edge), the Inspector's tree (its
+  // --accent tag on a hovered or selected row), the notices and the pick hint (--text on --accent-soft over a
+  // card or the sheet), a disabled sheet button (--text-faint on --bg-subtle) and a swatch's outline
+  // (--switch-off on --bg-surface). New with them:
+  { fg: '--ok-ink', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'Rankings: a search that rose or is new ("+3", "New"; 12px, was --ok) in the selected row, and a domain that rose in Compare\'s row for your site (4.5:1)' },
+  { fg: '--danger-ink', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'Rankings: a search that fell or was lost (12px, was --danger) in the selected row, and in Compare\'s row for your site (4.5:1)' },
+  { fg: '--warn-ink', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'Rankings: the capped mark ("*", was --warn) in the selected row (4.5:1)' },
+  {
+    fg: '--text',
+    bg: '--accent-soft',
+    over: '--bg-hover',
+    under: '--bg-surface',
+    min: 4.5,
+    why: 'Projects: a project\'s "Due" badge (11px, --text on --accent-soft) in a hovered row (--bg-hover over the sheet) (4.5:1)',
+  },
+  // The chosen project's name lays no hover over its row (--text-muted, Unfiled's, would be 4.30:1 there in dark).
+  {
+    fg: '--text-muted',
+    bg: '--bg-hover',
+    over: '--accent-soft',
+    under: '--bg-surface',
+    min: 3,
+    why: 'Projects: the chosen project\'s star and Rename and Add here icons (--text-muted), hovered (--bg-hover over its --accent-soft row) (graphics, 3:1)',
+  },
+  {
+    fg: '--accent',
+    bg: '--bg-hover',
+    over: '--accent-soft',
+    under: '--bg-surface',
+    min: 3,
+    why: 'Projects: the chosen project\'s star, a favourite (--accent, filled), hovered (graphics, 3:1)',
+  },
+  {
+    fg: '--text',
+    bg: '--accent-soft',
+    over: '--accent-soft',
+    under: '--bg-surface',
+    min: 4.5,
+    why: 'Compare: the "Your site" badge (11px, --accent-soft) on the row for your site (--accent-soft too) (4.5:1)',
+  },
 ] as const satisfies readonly ContrastPair[];
 
 /**
@@ -1138,8 +1226,8 @@ export const KNOWN_CONTRAST_EXCEPTIONS = [
     fg: '--ok',
     bg: '--bg-surface',
     min: 4.5,
-    rules: 10,
-    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property; the panels\' all-clear line, Images\' alt badge and Schema\'s block status their 3; the DevTools drawer its robots line and 2xx code, 2).',
+    rules: 5,
+    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property; the panels\' all-clear line, Images\' alt badge and Schema\'s block status their 3; the DevTools drawer its robots line and 2xx code, 2; the Changes panel its capture and screenshot statuses and the diff\'s added words, Projects a captured target and Rankings a rise, 5).',
   },
 ] as const satisfies readonly ContrastException[];
 
@@ -1219,7 +1307,9 @@ export const TEXT_COLOUR_RULES = [
     color: '--danger-ink',
     why: DANGER_TINT,
   },
-  { stylesheet: 'styles.css', element: ['.changes-segment', ".changes-segment[data-op='del']"], color: '--danger-ink', why: DANGER_TINT },
+  // The Changes panel's surface PR put the diff's edits on the -soft fills, so the pair is -ink on -soft (the
+  // removed words' entry gained its fill on purpose: it was --danger-ink on a 14% --danger tint).
+  { stylesheet: 'styles.css', element: ['.changes-segment', ".changes-segment[data-op='del']"], color: '--danger-ink', background: '--danger-soft', why: DANGER_TINT },
   // Overview and On-Page (their surface PR): status text on a card takes its -ink; the --ok, --warn and
   // --danger graphics (the meter's fill, the all-clear icon) keep the tone.
   { stylesheet: 'styles.css', element: ['.seo-all-clear'], color: '--ok-ink', why: 'Overview\'s "Every on-page check passed." (13px, was --ok: 3.30:1 on a card in light)' },
@@ -1321,6 +1411,71 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'styles.css', element: ['.update-button', '.update-primary', '.update-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the update notice\'s Download or Show file while its step runs' },
   { stylesheet: 'styles.css', element: ['.render-chip', '.render-chip:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the editor bar\'s quick profiles with no tab' },
   { stylesheet: 'styles.css', element: ['.devtools-button', '.devtools-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'a DevTools drawer button with nothing to act on' },
+  // The Changes panel, Projects, Rankings, Inspector and the screenshot editor (their surface PR). Capture now
+  // and Pick element faded their disabled .panel-button by `opacity` on top of its disabled colours: they are
+  // the colours alone now (`:disabled` is listed, so a fade put back on it fails).
+  {
+    stylesheet: 'styles.css',
+    element: ['.panel-button', '.panel-button-primary', '.changes-capture', '.panel-button:disabled', '.changes-capture:disabled'],
+    color: '--text-faint',
+    background: '--bg-subtle',
+    unfaded: true,
+    why: 'the Changes panel\'s Capture now, disabled (no page) or busy',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.panel-button', '.panel-button-primary', '.inspector-pick', '.panel-button:disabled', '.inspector-pick:disabled'],
+    color: '--text-faint',
+    background: '--bg-subtle',
+    unfaded: true,
+    why: 'the Inspector\'s Pick element, disabled (picking, or no tree yet)',
+  },
+  { stylesheet: 'styles.css', element: ['.projects-small-button', '.projects-small-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'a disabled Projects sheet button (it faded to half)' },
+  // Status text takes its -ink (it drew --ok, --caution, --warn or --danger); each says its state in words.
+  { stylesheet: 'styles.css', element: ['.changes-note', ".changes-note[data-tone='warn']"], color: '--warn-ink', why: 'a Changes or Inspector note that warns ("Cut short", "Partial"; 12px, was --caution: 3.0:1 on a card in light)' },
+  { stylesheet: 'styles.css', element: ['.changes-status', ".changes-status[data-outcome='refused']"], color: '--warn-ink', why: 'Capture now refused (12px, was --caution)' },
+  { stylesheet: 'styles.css', element: ['.changes-status', ".changes-status[data-outcome='failed']"], color: '--warn-ink', why: 'Capture now failed (12px, was --caution)' },
+  { stylesheet: 'styles.css', element: ['.changes-status', ".changes-status[data-outcome='first']"], color: '--ok-ink', why: 'the first version captured (12px, was --ok: 3.30:1 on a card in light)' },
+  { stylesheet: 'styles.css', element: ['.changes-status', ".changes-status[data-outcome='new']"], color: '--ok-ink', why: 'a new version captured (12px, was --ok)' },
+  { stylesheet: 'styles.css', element: ['.changes-status', ".changes-status[data-outcome='saved']"], color: '--ok-ink', why: 'a screenshot saved (12px, was --ok)' },
+  // A change's kind: its word and mark (+, −, ~) on its -soft fill, -ink text (it was the tone on its own 14% tint).
+  { stylesheet: 'styles.css', element: ['.changes-kind'], color: '--warn-ink', background: '--warn-soft', why: 'a change\'s kind, "Changed" (11px, was --caution on its 14% tint)' },
+  { stylesheet: 'styles.css', element: ['.changes-kind', ".changes-kind[data-kind='added']"], color: '--ok-ink', background: '--ok-soft', why: `a change's kind, "Added": ${OK_TINT}` },
+  { stylesheet: 'styles.css', element: ['.changes-kind', ".changes-kind[data-kind='removed']"], color: '--danger-ink', background: '--danger-soft', why: `a change's kind, "Removed": ${DANGER_TINT}` },
+  { stylesheet: 'styles.css', element: ['.changes-segment', ".changes-segment[data-op='ins']"], color: '--ok-ink', background: '--ok-soft', why: `the diff's added words, underlined (was --ok on its 14% tint): ${OK_TINT}` },
+  // In a row that can be hovered (--bg-hover over a card), --text-faint is 4.26:1 in dark: --text-muted.
+  { stylesheet: 'styles.css', element: ['.changes-version-count'], color: '--text-muted', why: 'a version\'s change count, in its row (hovered or chosen)' },
+  { stylesheet: 'styles.css', element: ['.changes-version-summary', ".changes-version-summary[data-first='true']"], color: '--text-muted', why: 'a first version\'s "First capture", in its row (hovered or chosen)' },
+  { stylesheet: 'styles.css', element: ['.inspector-shadow'], color: '--text-muted', why: 'the Inspector\'s "#shadow-root" in a tree row (hovered or selected)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-action', '.inspector-view-button', ".inspector-view-button[aria-pressed='true']"],
+    color: '--accent',
+    background: '--accent-soft',
+    why: 'the Inspector\'s chosen view (Tree, Rendered or Served), with an --accent edge (PRESSED_EDGES)',
+  },
+  { stylesheet: 'styles.css', element: ['.projects-small-button', '.projects-danger'], color: '--danger-ink', why: 'Delete project and Purge now (was --danger) on their buttons' },
+  { stylesheet: 'styles.css', element: ['.projects-run-outcome', ".projects-run-target[data-outcome='captured'] .projects-run-outcome"], color: '--ok-ink', why: 'a capture run\'s target, "Captured" (12px, was --ok)' },
+  { stylesheet: 'styles.css', element: ['.projects-run-outcome', ".projects-run-target[data-outcome='failed'] .projects-run-outcome"], color: '--danger-ink', why: 'a capture run\'s target, "Failed" (12px, was --danger)' },
+  { stylesheet: 'styles.css', element: ['.projects-run-outcome', ".projects-run-target[data-outcome='timed-out'] .projects-run-outcome"], color: '--danger-ink', why: 'a capture run\'s target, "Timed out" (12px, was --danger)' },
+  { stylesheet: 'rankings.css', element: [".projects-run-target[data-outcome='blocked'] .projects-run-outcome"], color: '--warn-ink', why: 'a capture run\'s target, "Blocked" (12px, was --warn)' },
+  { stylesheet: 'rankings.css', element: ['.projects-run-blocked-reason'], color: '--warn-ink', why: 'a blocked run\'s reason (13px, was --warn)' },
+  {
+    stylesheet: 'rankings.css',
+    element: [".projects-bulk-outcome[data-outcome='invalid'] .projects-bulk-outcome-text"],
+    color: '--danger-ink',
+    why: 'Bulk add: a line that is not a search, "Invalid" (12px, was --danger)',
+  },
+  { stylesheet: 'rankings.css', element: [".projects-bulk-outcome[data-outcome='limit'] .projects-bulk-outcome-text"], color: '--danger-ink', why: 'Bulk add: a line over the plan\'s limit (12px, was --danger)' },
+  { stylesheet: 'rankings.css', element: ['.rankings-number', '.rankings-change', ".rankings-change[data-direction='up']"], color: '--ok-ink', why: 'Rankings: a search that rose, "+3" (12px, was --ok)' },
+  { stylesheet: 'rankings.css', element: ['.rankings-number', '.rankings-change', ".rankings-change[data-direction='new']"], color: '--ok-ink', why: 'Rankings: a search new to the results, "New" (12px, was --ok)' },
+  { stylesheet: 'rankings.css', element: ['.rankings-number', '.rankings-change', ".rankings-change[data-direction='down']"], color: '--danger-ink', why: 'Rankings: a search that fell, "−2" (12px, was --danger)' },
+  { stylesheet: 'rankings.css', element: ['.rankings-number', '.rankings-change', ".rankings-change[data-direction='lost']"], color: '--danger-ink', why: 'Rankings: a search out of the results, "Lost" (12px, was --danger)' },
+  { stylesheet: 'rankings.css', element: ['.compare-movement', ".compare-movement[data-movement='up']"], color: '--ok-ink', why: 'Compare: a domain that rose, "Up 2" (12px, was --ok)' },
+  { stylesheet: 'rankings.css', element: ['.compare-movement', ".compare-movement[data-movement='new']"], color: '--ok-ink', why: 'Compare: a domain new on the later date, "New" (12px, was --ok)' },
+  { stylesheet: 'rankings.css', element: ['.compare-movement', ".compare-movement[data-movement='down']"], color: '--danger-ink', why: 'Compare: a domain that fell, "Down 2" (12px, was --danger)' },
+  { stylesheet: 'rankings.css', element: ['.compare-movement', ".compare-movement[data-movement='gone']"], color: '--danger-ink', why: 'Compare: a domain gone on the later date, "Gone" (12px, was --danger)' },
+  { stylesheet: 'rankings.css', element: ['.rankings-capped'], color: '--warn-ink', why: 'Rankings: the capped mark beside a trend ("*", was --warn)' },
 ] as const satisfies readonly TextColourRule[];
 
 /**
@@ -1342,6 +1497,7 @@ export interface HoverSkipsPressed {
 export const HOVER_OVERLAYS_SKIP_PRESSED = [
   { stylesheet: 'styles.css', control: '.seo-toggle', why: 'a panel toggle (Highlight on page, Broken only), pressed' },
   { stylesheet: 'styles.css', control: '.seo-action', why: 'the Inspector\'s Tree, Rendered and Served buttons (`seo-action inspector-view-button`), the chosen one pressed' },
+  { stylesheet: 'styles.css', control: '.changes-version', why: 'a version in the Changes panel\'s history, the chosen one pressed (its --accent-soft fill and edge stay under the pointer)' },
 ] as const satisfies readonly HoverSkipsPressed[];
 
 /**
@@ -1377,6 +1533,11 @@ export const DISABLED_INK = 'color-mix(in srgb, var(--text-faint) 50%, transpare
 export const DISABLED_CONTROLS = [
   { stylesheet: 'styles.css', element: ['.seo-chip-button', '.seo-chip-button:disabled'], why: 'a filter chip, disabled (Changes\' screenshot kinds with no page, SERP\'s snippet sources, the AI card\'s targets)' },
   { stylesheet: 'styles.css', element: ['.seo-segment', '.seo-segment:disabled'], why: 'a segment, disabled (Schema\'s Tree for a block that did not parse)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-segment', '.seo-segment:disabled', '.changes-shot-kind-button:disabled'],
+    why: 'the Changes panel\'s screenshot kinds, disabled (no page, or a screenshot under way)',
+  },
 ] as const satisfies readonly { readonly stylesheet: string; readonly element: readonly string[]; readonly why: string }[];
 
 export const PRESSED_EDGES = [
@@ -1386,6 +1547,43 @@ export const PRESSED_EDGES = [
     edge: '--accent',
     fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
     why: 'a filter chip, pressed (Images\' filters, Content\'s preview chips): an --accent edge beside its --accent-soft fill',
+  },
+  // The Changes panel, Projects, Inspector and the screenshot editor (their surface PR): a chosen item whose
+  // --accent-soft fill alone would say it (or, for a swatch, nothing would).
+  {
+    stylesheet: 'styles.css',
+    element: ['.changes-version', ".changes-version[aria-pressed='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
+    why: 'the Changes panel\'s chosen version: an --accent edge beside its --accent-soft fill (it was a 40% --accent edge)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.projects-item', ".projects-item[data-selected='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
+    why: 'the Projects sheet\'s chosen project: an --accent edge beside its --accent-soft fill (it was the fill alone)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.inspector-row', ".inspector-row[data-selected='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
+    why: 'the Inspector\'s selected node: an --accent edge beside its --accent-soft fill (it was the fill alone)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-action', ".inspector-view-button[aria-pressed='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-sheet' }, { bg: '--bg-sheet' }],
+    why: 'the Inspector\'s chosen view: an --accent edge beside its --accent-soft fill, on the sheet',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.shot-editor-swatch', ".shot-editor-swatch[aria-pressed='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--bg-surface' }],
+    why: 'the screenshot editor\'s chosen colour: a 2px --accent ring on the editor\'s sheet',
   },
 ] as const satisfies readonly PressedEdge[];
 
@@ -1432,6 +1630,10 @@ const RENDER_FRAME_BUTTON_HOVER = '.render-frame-button:hover:where(:not(:disabl
 const RENDER_FRAME_PRIMARY_HOVER = '.render-frame-primary:hover:where(:not(:disabled))';
 const DEVTOOLS_TAB_HOVER = ".devtools-tab:hover:where(:not([aria-selected='true']))";
 const DEVTOOLS_BUTTON_HOVER = '.devtools-button:hover:where(:not(:disabled))';
+const CHANGES_VERSION_HOVER = ".changes-version:hover:where(:not([aria-pressed='true']))";
+const PROJECTS_BUTTON_HOVER = '.projects-small-button:hover:where(:not(:disabled))';
+/** A project's row under the pointer: the chosen one lays no hover over its --accent-soft. */
+const PROJECTS_ITEM_HOVER = ".projects-item:where(:not([data-selected='true'])) .projects-item-open:hover";
 
 export const FOCUS_RING_RULES = [
   {
@@ -1616,6 +1818,64 @@ export const FOCUS_RING_RULES = [
   { stylesheet: 'styles.css', element: ['.history-open', '.history-open:focus-visible'], why: 'a History row\'s link, focused' },
   { stylesheet: 'styles.css', element: ['.history-more', '.history-more:hover', '.history-more:focus-visible'], why: 'History\'s Show more, focused and hovered' },
   { stylesheet: 'styles.css', element: ['.history-select', '.history-select:focus-visible'], why: 'History\'s project and range selects, focused' },
+  // The Changes panel, Projects, Rankings, Inspector and the screenshot editor (their surface PR): every
+  // control of their own (their .panel-button, .seo-action, .seo-segment and .seo-select are the shared ones'),
+  // in each state it can be focused in. A row's ring is drawn above its neighbours, inside its box's padding.
+  {
+    stylesheet: 'styles.css',
+    element: ['.changes-version', CHANGES_VERSION_HOVER, '.changes-version:focus-visible'],
+    why: 'a version in the Changes panel\'s history, focused (it chooses the diff) and hovered',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.changes-version', ".changes-version[aria-pressed='true']", '.changes-version:focus-visible'],
+    why: 'the chosen version, focused: its --accent edge is a border, so the ring stays',
+  },
+  { stylesheet: 'styles.css', element: ['.changes-project-select', '.changes-project-select:focus-visible'], why: 'the Changes panel\'s project picker, focused' },
+  { stylesheet: 'styles.css', element: ['.projects-close', '.projects-close:hover', '.projects-close:focus-visible'], why: 'the Projects sheet\'s Close, focused and hovered' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.projects-icon-button', '.projects-icon-button:hover', '.projects-icon-button:focus-visible'],
+    why: 'a project\'s star and a page\'s or search\'s Remove, focused and hovered',
+  },
+  { stylesheet: 'styles.css', element: ['.projects-item-open', PROJECTS_ITEM_HOVER, '.projects-item-open:focus-visible'], why: 'a project in the list, focused (it opens the project) and hovered' },
+  { stylesheet: 'styles.css', element: ['.projects-input', '.projects-input:focus-visible'], why: 'a Projects field (and the Inspector\'s search and find), focused: its --e-raised edge gives way to --focus-ring' },
+  { stylesheet: 'styles.css', element: ['.projects-select', '.projects-select:focus-visible'], why: 'a Projects menu (and the Inspector\'s search mode), focused' },
+  { stylesheet: 'styles.css', element: ['.projects-small-button', PROJECTS_BUTTON_HOVER, '.projects-small-button:focus-visible'], why: 'a Projects sheet button, focused and hovered: its hover lays --bg-hover in a box-shadow' },
+  { stylesheet: 'styles.css', element: ['.projects-entry-open', '.projects-entry-open:focus-visible'], why: 'a page or search in a project, focused (it opens it)' },
+  {
+    stylesheet: 'rankings.css',
+    element: ['.projects-view-tab', '.projects-view-tab:hover', ".projects-view-tab[aria-selected='true']", '.projects-view-tab:focus-visible'],
+    why: 'the Projects sheet\'s chosen view, focused and hovered: its --accent underline is a border, so the ring stays',
+  },
+  { stylesheet: 'rankings.css', element: ['.projects-link-button', '.projects-link-button:hover', '.projects-link-button:focus-visible'], why: 'a page\'s Edit tags link button, focused and hovered' },
+  { stylesheet: 'rankings.css', element: ['.rankings-row-open', '.rankings-row-open:focus-visible'], why: 'a search in the rank table, focused (it opens its history; under the pointer only its text turns --accent)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.inspector-row', '.inspector-row:hover', '.inspector-item:focus-visible > .inspector-row'],
+    why: 'a node in the Inspector\'s tree, focused (the tree\'s roving focus is on its item) and hovered',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.inspector-row', ".inspector-row[data-selected='true']", '.inspector-item:focus-visible > .inspector-row'],
+    why: 'the selected node, focused: its --accent edge is a border, so the ring stays',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.inspector-row', '.inspector-match', '.inspector-row:hover', '.inspector-match:focus-visible'],
+    why: 'a search match in the Inspector, focused and hovered (it was an inset --accent line)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-action', SEO_ACTION_HOVER, ".inspector-view-button[aria-pressed='true']", '.seo-action:focus-visible'],
+    why: 'the Inspector\'s chosen view, focused: its pressed rule sets no box-shadow, so the shared ring stays',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.shot-editor-swatch', ".shot-editor-swatch[aria-pressed='true']", '.shot-editor-swatch:focus-visible'],
+    why: 'the screenshot editor\'s chosen colour, focused (it had the browser\'s default outline)',
+  },
+  { stylesheet: 'styles.css', element: ['.shot-editor-text', '.shot-editor-text:focus-visible'], why: 'the screenshot editor\'s text field, focused' },
 ] as const satisfies readonly FocusRingRule[];
 
 /**

@@ -62,6 +62,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `seo-search-console-lower` | seo-search-console | the same at its end: the top queries, the freshness line | |
 | `seo-changes` | seo-changes | Changes: two captures, the diff by region | `changes` capture-first-version, diff-by-region |
 | `seo-changes-lower` | seo-changes | the same at its end: the rest of the diff, Screenshots | |
+| `seo-inspector` | seo-inspector | the Inspector on the guide: the DOM tree, its root open (head and body) | `inspector` inspector-tree-expands-to-h1 |
 | `devtools-drawer` | devtools-drawer | the SEO devtools drawer on Console | `devtools` |
 | `find-bar` | find-bar | the find bar, "tea", 1 of 3 | `browser-polish` find-counts-steps-and-clears |
 | `command-palette` | command-palette | the palette with "zoom" typed | `command-palette`, `update` |
@@ -70,6 +71,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `help-shortcuts` | help-shortcuts | Help › Keyboard Shortcuts over the guide page | `browser-polish` help-shortcuts-sheet |
 | `projects` | projects | the Projects sheet: a project with two pages | `projects` projects-create-and-add-pages |
 | `projects-lower` | projects | the same, `.projects-main` at its end: search queries, Retention and disk usage, Purge log | |
+| `projects-rankings` | projects | the same project's Rankings view: no site and no reading yet: its toolbar and two notices | `rankings` |
 | `render-profile` | render-profile | phone + mobile UA applied and reloaded, the editor bar open | `render-profile` mobile-preset-viewport-and-ua |
 | `permission-bar` | permission-bar | the notification prompt bar, armed | `permissions` allow-grants-and-is-remembered-e2e |
 | `page-error` | page-error | a load Chromium refuses (port 9, `ERR_UNSAFE_PORT`: no request, so nothing varies), the error panel with Try again | `browse-guard` connection-refused-shows-error-panel-e2e |
@@ -77,7 +79,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `agent-empty` | agent-empty | the agent panel open, no chat yet | `agent` `launchWith` |
 | `agent-conversation` | agent-conversation | one scripted turn: a `page_text` tool card, then the answer | `agent` agent-chat-export-and-restore (scripted model seam) |
 
-30 captures, 60 images. No state is skipped. The ChatGPT route's conversation is not captured: the
+32 captures, 64 images. No state is skipped. The ChatGPT route's conversation is not captured: the
 scripted-model turn already shows the same chat surface without a sign-in.
 
 ## What is compared
@@ -197,7 +199,7 @@ included) in both themes; in each capture the media query follows the emulated s
 body's background differs between light and dark, and the stylesheet's marker is in effect; a
 scrolled capture's scroller has something below the fold and reached its offset.
 - **Scenario: new-tab**, **jump-back-in-and-history** (a fresh profile).
-- **Scenario: seo-overview**, **seo-on-page**, **seo-links**, **seo-images**, **seo-social**, **seo-schema**, **seo-page-speed**, **seo-changes**,
+- **Scenario: seo-overview**, **seo-on-page**, **seo-links**, **seo-images**, **seo-social**, **seo-schema**, **seo-page-speed**, **seo-changes**, **seo-inspector**,
   **devtools-drawer**, **find-bar**, **command-palette**, **settings**, **projects**,
   **render-profile**, **permission-bar**, **page-error** (one app; each starts from one tab, everything closed).
 - **Scenario: agent-empty**, **agent-conversation** (the scripted model seam).
