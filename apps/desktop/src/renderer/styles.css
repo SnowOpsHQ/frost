@@ -1524,19 +1524,22 @@ input {
 
 /* ---- Overview ------------------------------------------------------------------------------ */
 
+/* Overview and On-Page on Signal (design-tokens.feature.md, The SEO panels' Overview and On-Page):
+   cards --space-4 apart, text from the --text-* tokens, status text in its -ink. */
 .seo-overview {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
 .seo-score-card {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 16px;
+  gap: var(--space-5);
+  padding: var(--space-5);
 }
 
+/* The ring's arc is its band's graphics colour on a --track circle; the band's word beside it names it. */
 .seo-ring {
   --ring: var(--ok);
   position: relative;
@@ -1546,7 +1549,7 @@ input {
 }
 
 .seo-ring[data-band='fair'] {
-  --ring: var(--caution);
+  --ring: var(--warn);
 }
 
 .seo-ring[data-band='poor'] {
@@ -1566,13 +1569,13 @@ input {
 }
 
 .seo-ring-track {
-  stroke: var(--seo-track);
+  stroke: var(--track);
 }
 
 .seo-ring-arc {
   stroke: var(--ring);
   stroke-linecap: round;
-  transition: stroke-dasharray 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition: stroke-dasharray var(--dur-slow) var(--ease-out);
 }
 
 .seo-ring-value {
@@ -1581,134 +1584,135 @@ input {
   display: grid;
   place-items: center;
   color: var(--text);
-  font-size: 26px;
-  font-weight: 650;
-  letter-spacing: -0.03em;
+  font: var(--text-display);
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 
 .seo-score-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
+/* A verdict's label: "Health score" here, and every panel's eyebrow. */
 .seo-eyebrow {
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  color: var(--text-muted);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 .seo-band {
-  color: var(--ok);
-  font-size: 19px;
-  font-weight: 650;
-  letter-spacing: -0.015em;
-  line-height: 1.25;
-}
-
-.seo-band[data-band='fair'] {
-  color: var(--caution);
-}
-
-.seo-band[data-band='poor'] {
-  color: var(--danger);
+  color: var(--text);
+  font: var(--text-heading);
 }
 
 .seo-score-summary {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .seo-not-indexable {
-  color: var(--danger);
+  color: var(--danger-ink);
   font-weight: 500;
 }
 
+/* A notice on the sheet; the transparent border is the edge forced colours draw. */
 .seo-partial {
   margin: 0;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--caution) 12%, transparent);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--warn-soft);
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.45;
+  font: var(--text-small);
 }
 
+/* Counts by severity: pills on --bg-subtle, the severity's icon, the number and its word. */
 .seo-counts {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .seo-count {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: inline-flex;
   align-items: center;
-  column-gap: 7px;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 8px 10px 7px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 10px;
-  background: var(--seo-card);
-  box-shadow: var(--shadow-card);
+  height: var(--h-chip);
+  padding: 0 var(--space-4) 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
+  color: var(--text);
+  font: var(--text-small);
 }
 
 .seo-count-value {
-  font-size: 16px;
-  line-height: 1.2;
-  font-weight: 650;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .seo-count-label {
-  grid-column: 1 / -1;
   overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.seo-count[data-count='0'] {
-  opacity: 0.6;
+.seo-count[data-count='0'],
+.seo-count[data-count='0'] .seo-severity {
+  color: var(--text-faint);
 }
 
+/* Forced colours repaint --text-faint like any text: an empty count is GrayText, text, icon and edge. */
+@media (forced-colors: active) {
+  .seo-count[data-count='0'],
+  .seo-count[data-count='0'] .seo-severity {
+    border-color: GrayText;
+    color: GrayText;
+  }
+}
+
+/* The ranked issues: rows in the issues card, ruled by --divider. */
 .seo-issue-list {
   display: flex;
   flex-direction: column;
-  margin: 0 -6px;
+  margin: 0 calc(-1 * var(--space-2));
   padding: 0;
   list-style: none;
 }
 
 .seo-issue + .seo-issue {
-  border-top: 1px solid var(--seo-card-edge);
+  border-top: 1px solid var(--divider);
 }
 
 .seo-issue-head {
+  position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-3);
   width: 100%;
-  padding: 9px 6px;
+  padding: var(--space-3) var(--space-2);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
+  color: var(--text);
   text-align: left;
-  transition: background-color 120ms ease;
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 
 .seo-issue-head:hover {
   background: var(--bg-hover);
 }
 
+/* Focus: the ring, drawn above the next row. */
 .seo-issue-head:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  z-index: 1;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .seo-issue-head .seo-severity {
@@ -1723,75 +1727,73 @@ input {
 }
 
 .seo-issue-title {
-  font-size: 13px;
-  font-weight: 550;
-  line-height: 1.35;
+  font: var(--text-body);
+  font-weight: 500;
 }
 
 .seo-issue-meta {
   display: flex;
   gap: 0;
   min-width: 0;
-  color: var(--text-faint);
-  font-size: 11.5px;
+  color: var(--text-muted);
+  font: var(--text-small);
   white-space: nowrap;
 }
 
 .seo-issue-lead {
   flex: 1;
-  margin-left: 4px;
+  margin-left: var(--space-1);
 }
 
 .seo-chevron {
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   margin-top: 1px;
-  color: var(--text-faint);
+  color: var(--text-muted);
   transform: rotate(-90deg);
-  transition: transform 140ms ease;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .seo-issue[data-open='true'] .seo-chevron {
   transform: none;
 }
 
+/* An open issue, under its title: the severity icon's width and the row's gap in from the row's edge. */
 .seo-issue-body {
-  margin: 0 6px 10px 32px;
-  animation: prompt-in 160ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  margin: 0 var(--space-2) var(--space-4) calc(var(--space-2) + var(--icon-sm) + var(--space-3));
+  animation: prompt-in var(--dur-base) var(--ease-out) both;
 }
 
 .seo-issue-label {
-  margin: 4px 0 2px;
+  margin: var(--space-1) 0;
   color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 600;
+  font: var(--text-caps);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .seo-issue-copy {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-3);
   color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font: var(--text-small);
   text-wrap: pretty;
 }
 
 .seo-facts {
   display: grid;
-  gap: 4px;
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--bg-hover);
+  gap: var(--space-1);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
 }
 
 .seo-fact {
   display: grid;
   grid-template-columns: 88px minmax(0, 1fr);
-  gap: 8px;
-  font-size: 12px;
+  gap: var(--space-3);
+  font: var(--text-small);
 }
 
 .seo-fact dt {
@@ -1807,33 +1809,39 @@ input {
 .seo-samples {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin: 8px 0 0;
+  gap: var(--space-1);
+  margin: var(--space-3) 0 0;
   padding: 0;
   list-style: none;
 }
 
 .seo-samples li {
   min-width: 0;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: var(--bg-hover);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
   color: var(--text-muted);
 }
 
 .seo-samples .seo-samples-more {
   background: transparent;
   color: var(--text-faint);
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
+/* No finding: the line in --ok-ink, its icon the --ok graphic. */
 .seo-all-clear {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--ok);
-  font-size: 13px;
+  gap: var(--space-3);
+  color: var(--ok-ink);
+  font: var(--text-body);
   font-weight: 500;
+}
+
+/* The icon's stroke, not its text colour: a graphic (3:1). */
+.seo-all-clear .icon {
+  stroke: var(--ok);
 }
 
 /* A search result as frost draws it from the page's text: URL crumbs, title, description. */
@@ -1843,28 +1851,31 @@ input {
 
 .seo-preview-url {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .seo-preview-title {
-  margin: 2px 0 3px;
-  color: color-mix(in srgb, var(--accent) 88%, var(--text));
-  font-size: 15.5px;
+  margin: var(--space-1) 0;
+  color: var(--accent);
+  font: var(--text-heading);
   font-weight: 500;
-  line-height: 1.3;
 }
 
 .seo-preview-description {
   display: block;
   color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font: var(--text-small);
+}
+
+/* The font shorthand resets font-style: a missing description keeps the frame's italic. */
+.seo-preview-description.seo-missing {
+  font-style: italic;
 }
 
 .seo-categories {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 2px 12px;
+  gap: var(--space-1) var(--space-4);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1873,30 +1884,40 @@ input {
 .seo-category {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 4px 0;
-  font-size: 12.5px;
+  padding: var(--space-1) 0;
+  font: var(--text-small);
 }
 
+/* Status by shape, not hue alone, as the rail's dots: a pass a filled --ok disc, an error a filled
+   --danger square, a warning a --warn ring (a border), a notice a hollow --accent diamond. They keep
+   their colours in forced colours, where a fill would turn to the canvas. */
 .seo-category-dot {
   flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
   background: var(--ok);
+  forced-color-adjust: none;
 }
 
 .seo-category[data-status='error'] .seo-category-dot {
+  border-radius: calc(var(--r-xs) / 2);
   background: var(--danger);
 }
 
 .seo-category[data-status='warning'] .seo-category-dot {
-  background: var(--caution);
+  border: 2px solid var(--warn);
+  background: transparent;
 }
 
 .seo-category[data-status='info'] .seo-category-dot {
-  background: var(--info-tone);
+  border: 2px solid var(--accent);
+  border-radius: calc(var(--r-xs) / 4);
+  background: transparent;
+  transform: rotate(45deg);
 }
 
 .seo-category-name {
@@ -1910,8 +1931,6 @@ input {
 .seo-category-state {
   flex: none;
   color: var(--text-muted);
-  font-size: 11.5px;
-  font-weight: 500;
 }
 
 /* ---- On-Page ------------------------------------------------------------------------------- */
@@ -1919,38 +1938,43 @@ input {
 .seo-onpage {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
 .seo-measured + .seo-measured {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--seo-card-edge);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--divider);
 }
 
 .seo-measured-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 3px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
 }
 
 .seo-measured-value {
-  font-size: 13px;
-  line-height: 1.45;
+  font: var(--text-body);
 }
 
+/* "Missing" or "Empty" keeps the frame's italic (the shorthand above resets font-style). */
+.seo-measured-value.seo-missing {
+  font-style: italic;
+}
+
+/* A length against its range: the fill in the verdict's graphics colour, the verdict in its -ink. */
 .seo-meter {
   --meter: var(--ok);
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 7px;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
 }
 
 .seo-meter[data-indicator='short'],
 .seo-meter[data-indicator='long'] {
-  --meter: var(--caution);
+  --meter: var(--warn);
 }
 
 .seo-meter[data-indicator='missing'] {
@@ -1962,15 +1986,15 @@ input {
   width: 100%;
   height: 6px;
   overflow: hidden;
-  border-radius: 3px;
+  border-radius: var(--r-pill);
 }
 
 .seo-meter-track {
-  fill: var(--seo-track);
+  fill: var(--track);
 }
 
 .seo-meter-range {
-  fill: color-mix(in srgb, var(--ok) 22%, var(--seo-track));
+  fill: color-mix(in srgb, var(--ok) 22%, var(--track));
 }
 
 .seo-meter-fill {
@@ -1979,7 +2003,7 @@ input {
 
 .seo-meter-text {
   color: var(--text-faint);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1989,13 +2013,23 @@ input {
 }
 
 .seo-meter-verdict {
-  color: var(--meter);
+  color: var(--ok-ink);
   font-weight: 600;
 }
 
+.seo-meter[data-indicator='short'] .seo-meter-verdict,
+.seo-meter[data-indicator='long'] .seo-meter-verdict {
+  color: var(--warn-ink);
+}
+
+.seo-meter[data-indicator='missing'] .seo-meter-verdict {
+  color: var(--danger-ink);
+}
+
+/* Label and value rows (On-Page's, and every panel's FactRow). */
 .seo-rows {
   display: grid;
-  gap: 7px;
+  gap: var(--space-3);
   margin: 0;
 }
 
@@ -2003,33 +2037,33 @@ input {
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr);
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .seo-row-label {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .seo-row-value {
   min-width: 0;
   margin: 0;
-  font-size: 12.5px;
+  font: var(--text-small);
 }
 
 .seo-heading-counts {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .seo-heading-count {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
   color: var(--text);
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -2039,28 +2073,29 @@ input {
   font-weight: 400;
 }
 
+/* A heading level (H1…H6), a directive's user agent or a resource type: a small --bg-subtle tag. */
 .seo-tag {
   display: inline-grid;
   place-items: center;
   flex: none;
   min-width: 24px;
   height: 18px;
-  padding: 0 4px;
-  border-radius: 5px;
-  background: var(--bg-hover);
+  padding: 0 var(--space-1);
+  border-radius: var(--r-xs);
+  background: var(--bg-subtle);
   color: var(--text-muted);
-  font: 600 10px/1 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 .seo-tag[data-level='1'] {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
 .seo-outline {
   display: flex;
   flex-direction: column;
-  gap: 2px;
   max-height: 320px;
   margin: 0;
   padding: 0;
@@ -2069,14 +2104,16 @@ input {
   scrollbar-width: thin;
 }
 
+/* Each level is 14px further in; --guide is where its guide line runs. */
 .seo-outline-item {
+  --guide: 0px;
   position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 3px 0;
-  font-size: 12.5px;
+  padding: var(--space-1) 0;
+  font: var(--text-small);
 }
 
 .seo-outline-level-2 {
@@ -2105,13 +2142,9 @@ input {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: calc(var(--guide, 0px) + 5px);
+  left: calc(var(--guide) + 5px);
   width: 1px;
-  background: var(--seo-card-edge);
-}
-
-.seo-outline-level-2 {
-  --guide: 0px;
+  background: var(--divider);
 }
 
 .seo-outline-level-3 {
@@ -2130,10 +2163,11 @@ input {
   --guide: 56px;
 }
 
+/* Stat tiles (On-Page's, Links' and Images'): a number on --bg-subtle and its label. */
 .seo-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .seo-stats:has(> :nth-child(2):last-child) {
@@ -2147,29 +2181,27 @@ input {
 .seo-stat {
   display: flex;
   flex-direction: column;
-  gap: 1px;
   min-width: 0;
-  padding: 8px 10px;
-  border-radius: 9px;
-  background: var(--bg-hover);
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
 }
 
 .seo-stat-value {
   color: var(--text);
-  font-size: 17px;
-  font-weight: 650;
+  font: var(--text-title);
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
 
 .seo-stat[data-tone='warn'] .seo-stat-value {
-  color: var(--caution);
+  color: var(--warn-ink);
 }
 
 .seo-stat-label {
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 11px;
+  font: var(--text-small);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4664,6 +4696,13 @@ input {
   margin: 2px 2px -4px;
 }
 
+/* It heads the metric tiles, so it reads as a section head, not as a verdict's eyebrow. */
+.seo-speed-since .seo-eyebrow {
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .seo-speed-soft {
   margin: 0;
 }
@@ -5894,25 +5933,24 @@ input {
 .seo-audit-profile {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--render-edge);
-  border-radius: 10px;
-  background: var(--render-soft);
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
 }
 
 .seo-audit-profile-summary {
   color: var(--text);
+  font: var(--text-small);
   font-weight: 600;
-  font-size: 12.5px;
 }
 
 .seo-audit-profile-note {
   margin: 0;
   color: var(--text-muted);
-  font-size: 11.5px;
-  line-height: 1.4;
+  font: var(--text-small);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6298,12 +6336,12 @@ input {
 }
 
 .seo-measured-width {
-  margin-top: 4px;
+  margin-top: var(--space-1);
   font-variant-numeric: tabular-nums;
 }
 
 .seo-measured-width[data-truncated='true'] {
-  color: var(--caution);
+  color: var(--warn-ink);
 }
 
 /* Target query */
