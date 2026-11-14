@@ -837,7 +837,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: state-edges-draw-their-shape** — for each `STATE_EDGES` entry (Content's query term,
   present and absent), in light and dark, the cascade over its `element` selectors resolves
   `border-color` to `var(<edge>)`, `border-style` to its `style` and `border-width` to its `width` (the
-  shorthand and longhands alike), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or
+  shorthand and longhands alike; style and width also with the `@media (forced-colors: active)` rules
+  read, where the shape is all that tells the states apart), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or
   more. Every selector named is one of the stylesheet's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,

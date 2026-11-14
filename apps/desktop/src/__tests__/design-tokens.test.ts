@@ -777,6 +777,9 @@ test('state-edges-draw-their-shape', () => {
   expect(resolveOnElement(sample, term, 'border-style', 'light')).toBe('solid');
   expect(resolveOnElement(sample, ['.t'], 'border-style', 'light')).toBe('dashed');
   expect(resolveOnElement(sample, term, 'border-width', 'dark')).toBe('1px');
+  // A forced-colours rule that changes the style is read in forced mode.
+  const forcedSample = `${sample} @media (forced-colors: active) { .t { border-style: solid; } }`;
+  expect(resolveOnElement(forcedSample, ['.t'], 'border-style', 'light', { forced: true })).toBe('solid');
 
   const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
   const entries: readonly StateEdge[] = STATE_EDGES;
@@ -788,6 +791,9 @@ test('state-edges-draw-their-shape', () => {
     for (const theme of THEME_NAMES) {
       expect.soft(resolveOnElement(css, entry.element, 'border-style', theme), `${entry.why}: style (${theme})`).toBe(entry.style);
       expect.soft(resolveOnElement(css, entry.element, 'border-width', theme), `${entry.why}: width (${theme})`).toBe(entry.width);
+      // ... and under forced colours too (their rules read), where the style is all that says it.
+      expect.soft(resolveOnElement(css, entry.element, 'border-style', theme, { forced: true }), `${entry.why}: style under forced colours (${theme})`).toBe(entry.style);
+      expect.soft(resolveOnElement(css, entry.element, 'border-width', theme, { forced: true }), `${entry.why}: width under forced colours (${theme})`).toBe(entry.width);
     }
     for (const fill of entry.fills) {
       expect.soft(

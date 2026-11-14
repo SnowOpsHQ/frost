@@ -1504,7 +1504,7 @@ export const PRESSED_EDGES = [
  * terms, present or absent, were told apart by a solid transparent edge and a dashed `--track` one,
  * 1.48:1 on the card, which only forced colours drew). For each entry the cascade over `element` in
  * `stylesheet` resolves `border-color` to `var(<edge>)`, `border-style` to `style` and `border-width` to
- * `width`, in light and dark, and for each of `fills` (what the edge sits on) `CONTRAST_PAIRS` holds
+ * `width`, in light and dark and with the `@media (forced-colors: active)` rules read too, and for each of `fills` (what the edge sits on) `CONTRAST_PAIRS` holds
  * `edge` on it at 3:1 or more. Forced colours keep the style, so the shape still says which.
  */
 export interface StateEdge {
