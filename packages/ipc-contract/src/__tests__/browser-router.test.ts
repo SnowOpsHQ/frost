@@ -197,8 +197,10 @@ describe('browser router', () => {
       { tabId: 1, extra: true },
       { id: 1 },
     ];
-    for (const name of ['closeTab', 'activateTab']) {
-      for (const input of malformed) {
+    // keepFocus is closeTab's only, and only `true` (the tablist's Delete).
+    const keepFocus = { closeTab: [{ tabId: 1, keepFocus: false }, { tabId: 1, keepFocus: 'yes' }, { tabId: 1, keepFocus: 1 }], activateTab: [{ tabId: 1, keepFocus: true }] };
+    for (const name of ['closeTab', 'activateTab'] as const) {
+      for (const input of [...malformed, ...keepFocus[name]]) {
         const { service } = fakeService();
         const error = await errorOf(procedure(ctxFor(service), name)(input));
         expect(error.code, `${name} ${String(JSON.stringify(input))}`).toBe('BAD_REQUEST');
@@ -215,13 +217,17 @@ describe('browser router', () => {
     service.newTab.mockReturnValueOnce(null);
     await expect(procedure(ctx, 'newTab')()).resolves.toBeNull();
 
-    for (const name of ['closeTab', 'activateTab'] as const) {
-      await expect(procedure(ctx, name)({ tabId: 1 }), name).resolves.toBe(true);
-      expect(service[name]).toHaveBeenLastCalledWith(1);
-      // An id that names no open tab is the service's no-op: `false`, not an error.
-      await expect(procedure(ctx, name)({ tabId: 99 }), name).resolves.toBe(false);
-      expect(service[name]).toHaveBeenLastCalledWith(99);
-    }
+    await expect(procedure(ctx, 'activateTab')({ tabId: 1 })).resolves.toBe(true);
+    expect(service.activateTab).toHaveBeenLastCalledWith(1);
+    await expect(procedure(ctx, 'closeTab')({ tabId: 1 })).resolves.toBe(true);
+    expect(service.closeTab).toHaveBeenLastCalledWith(1, false);
+    await expect(procedure(ctx, 'closeTab')({ tabId: 1, keepFocus: true })).resolves.toBe(true);
+    expect(service.closeTab).toHaveBeenLastCalledWith(1, true);
+    // An id that names no open tab is the service's no-op: `false`, not an error.
+    await expect(procedure(ctx, 'activateTab')({ tabId: 99 })).resolves.toBe(false);
+    expect(service.activateTab).toHaveBeenLastCalledWith(99);
+    await expect(procedure(ctx, 'closeTab')({ tabId: 99 })).resolves.toBe(false);
+    expect(service.closeTab).toHaveBeenLastCalledWith(99, false);
   });
 
   test('open-background-tab-calls-service', async () => {

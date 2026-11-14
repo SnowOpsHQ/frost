@@ -616,19 +616,111 @@ test('arrow-focus-brings-the-whole-tab-in', async () => {
       await expect(strip().nth(i)).toBeFocused();
       await expect.poll(focusedPillInside, `ArrowLeft to tab ${i}`).toBe(true);
     }
-    // Delete on the last tab in view: focus goes to its right neighbour, out of view until now.
-    const lastInView = await tablist().evaluate((list) => {
-      const box = list.getBoundingClientRect();
-      const tabs = [...list.querySelectorAll('.tab')].map((t) => t.getBoundingClientRect());
-      return tabs.findLastIndex((r) => r.right <= box.right + 0.5);
-    });
-    expect(lastInView).toBeLessThan(18);
-    for (let i = 0; i < lastInView; i++) await page.keyboard.press('ArrowRight');
-    await expect(strip().nth(lastInView)).toBeFocused();
+  });
+});
+
+/** Runs `body` with the row forced `width` wide (test-only: a tiled window can be narrower than its minimum). */
+async function withRowWidth(width: number, body: () => Promise<void>): Promise<void> {
+  await row().evaluate((el, w) => el.style.setProperty('width', `${w}px`), width);
+  try {
+    await body();
+  } finally {
+    await row().evaluate((el) => el.style.removeProperty('width'));
+  }
+}
+
+/** Focus has stayed on `tab` a moment after an action (nothing asynchronous took it). */
+async function focusStaysOn(tab: Locator): Promise<void> {
+  await expect(tab).toBeFocused();
+  // Main's state change and the chrome's effects arrive asynchronously: give them time to act.
+  await chromeSettled();
+  await expect(tab).toBeFocused();
+}
+
+/** Two state round trips: whatever main sent for the last action has been rendered. */
+async function chromeSettled(): Promise<void> {
+  for (let i = 0; i < 2; i++) await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 150))));
+}
+
+test('delete-keeps-focus-on-the-neighbour-tab', async () => {
+  // An empty neighbour: [A, B (active), empty]; Delete on B.
+  await go(`${site.origin}/a`);
+  await page.getByTestId('new-tab').click();
+  await go(`${site.origin}/b`);
+  await expect(activeTab()).toHaveAttribute('title', 'Page B');
+  await openTabs(3);
+  await strip().nth(1).click();
+  await expect(strip().nth(1)).toHaveAttribute('aria-selected', 'true');
+  await activeTab().focus();
+  await page.keyboard.press('Delete');
+  await expect(strip()).toHaveCount(2);
+  await expect(strip().nth(1)).toHaveAttribute('aria-selected', 'true');
+  await focusStaysOn(strip().nth(1));
+  await expect(address()).not.toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(strip().nth(0)).toBeFocused();
+
+  // A page neighbour: [A, C (active), D]; Delete on C.
+  await strip().nth(1).click();
+  await go(`${site.origin}/c`);
+  await openTabs(3);
+  await go(`${site.origin}/d`);
+  const d = await contentsIdAt(`${site.origin}/d`);
+  await strip().nth(1).click();
+  await expect(activeTab()).toHaveAttribute('title', 'Page C');
+  await activeTab().focus();
+  await page.keyboard.press('Delete');
+  await expect(strip()).toHaveCount(2);
+  await expect(activeTab()).toHaveAttribute('title', 'Page D');
+  await focusStaysOn(strip().nth(1));
+  expect(await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.isFocused(), d)).toBe(false);
+  await page.keyboard.press('ArrowLeft');
+  await expect(strip().nth(0)).toBeFocused();
+});
+
+test('delete-at-the-minimum-keeps-the-survivor-whole', async () => {
+  await withRowWidth(CHROME_MIN_CONTENT_WIDTH_PX, async () => {
+    await openTabs(20);
+    await strip().nth(0).click();
+    await expect(strip().nth(0)).toHaveAttribute('aria-selected', 'true');
+    await expect(address()).toBeFocused();
+    await activeTab().focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(strip().nth(1)).toBeFocused();
     await page.keyboard.press('Delete');
     await expect(strip()).toHaveCount(19);
-    await expect(strip().nth(lastInView)).toBeFocused();
-    await expect.poll(focusedPillInside, 'Delete\'s neighbour').toBe(true);
+    await expect(strip().nth(1)).toBeFocused();
+    await expect.poll(focusedPillInside, "Delete's survivor").toBe(true);
+    await chromeSettled();
+    expect(await focusedPillInside()).toBe(true);
+  });
+});
+
+test('tab-into-a-half-visible-active-tab', async () => {
+  await openTabs(20);
+  await strip().nth(0).click();
+  await expect(strip().nth(0)).toHaveAttribute('aria-selected', 'true');
+  await expect(address()).toBeFocused();
+  // Half of the active (first) tab scrolled out past the tablist's left edge.
+  await tablist().evaluate((list) => {
+    list.scrollLeft = 60;
+  });
+  expect(await tablist().evaluate((list) => list.scrollLeft)).toBeCloseTo(60, 0);
+  await page.keyboard.press('Shift+Tab');
+  await expect(activeTab()).toBeFocused();
+  await expect.poll(focusedPillInside).toBe(true);
+});
+
+test('below-the-minimum-the-address-bar-gives-way', async () => {
+  await openTabs(4);
+  await withRowWidth(480, async () => {
+    const facts = await rowFacts();
+    expect(facts.inside).toBe(true);
+    for (const tool of facts.tools) expect([tool.width, tool.height], tool.id).toEqual([34, 34]);
+    expect(facts.listWidth).toBeGreaterThanOrEqual(TAB_MIN_WIDTH_PX + 8 - 0.5);
+    expect(facts.address).toBeLessThan(ADDRESS_MIN_WIDTH_PX);
+    await activeTab().focus();
+    await expect.poll(focusedPillInside).toBe(true);
   });
 });
 

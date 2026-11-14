@@ -5,7 +5,11 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
-import { ADDRESS_BASIS_PX, ADDRESS_MIN_WIDTH_PX, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
+import { ADDRESS_BASIS_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
+
+/** The row's tools (`CHROME_ROW` but the tablist and the address bar) and its gaps (between its items and inside the navigation group: one fewer than its controls). */
+const ROW_TOOLS = CHROME_ROW.filter((id) => id !== 'tab-strip' && id !== 'address').length;
+const ROW_GAPS = CHROME_ROW.length - 1;
 
 const RENDERER = fileURLToPath(new URL('../renderer/', import.meta.url));
 const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8');
@@ -67,13 +71,19 @@ test('chrome-row-is-one-fixed-track', () => {
   // one tab is left beside it, and never goes under its minimum.
   expect(row).toMatch(new RegExp(`--tab-min:\\s*${TAB_MIN_WIDTH_PX}px;`));
   expect(row).toMatch(new RegExp(`--address-basis:\\s*${ADDRESS_BASIS_PX}px;`));
-  expect(row).toMatch(new RegExp(`--address-min:\\s*${ADDRESS_MIN_WIDTH_PX}px;`));
   expect(rule('styles.css', '.tab')).toMatch(/min-width:\s*var\(--tab-min\);/);
   const address = rule('styles.css', '.address');
   expect(address).toMatch(/flex:\s*1 1 var\(--address-basis\);/);
-  expect(address).toMatch(/min-width:\s*clamp\(var\(--address-min\),\s*var\(--row-free\) - var\(--one-tab\),\s*var\(--address-basis\)\);/);
-  // The room for the tablist and the address bar: the window less the row's padding, its six tools and seven gaps.
-  expect(row).toMatch(/--row-free:\s*calc\(100vw - 2 \* var\(--space-4\) - 6 \* var\(--h-control\) - 7 \* var\(--space-1\)\);/);
+  // The basis, or the room left beside one tab, whichever is less: below the window's minimum (a tiled
+  // window) the address bar gives way before the tools.
+  expect(address).toMatch(/min-width:\s*min\(var\(--address-basis\),\s*max\(0px,\s*var\(--row-free\) - var\(--one-tab\)\)\);/);
+  // The room for the tablist and the address bar: the row's own content width (an inline-size
+  // container) less its tools and gaps, counted from CHROME_ROW, so a new tool can't go uncounted.
+  expect([ROW_TOOLS, ROW_GAPS]).toEqual([6, 7]);
+  expect(row).toMatch(/container-type:\s*inline-size;/);
+  const free = row.match(/--row-free:\s*calc\(100cqw - (\d+) \* var\(--h-control\) - (\d+) \* var\(--space-1\)\);/);
+  expect(free, '--row-free').not.toBeNull();
+  expect([Number(free![1]), Number(free![2])]).toEqual([ROW_TOOLS, ROW_GAPS]);
   expect(row).toMatch(/--one-tab:\s*calc\(var\(--tab-min\) \+ 2 \* var\(--space-1\)\);/);
   const tablist = rule('styles.css', '.tabs');
   expect(tablist).toMatch(/overflow-x:\s*auto;/);

@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test, vi } from 'vitest';
 import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
-import { ADDRESS_MIN_WIDTH_PX, CHROME_MIN_CONTENT_WIDTH_PX, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
+import { ADDRESS_MIN_WIDTH_PX, CHROME_MIN_CONTENT_WIDTH_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
 import { HARDENED_WEB_PREFERENCES } from '@app/specs/window-hardening.spec';
 import type { FakeBrowserWindow } from '../../test/electron-fake';
 import { createMainWindow, loadRenderer } from '../window';
@@ -53,7 +53,10 @@ describe('main window', () => {
     const px = (name: string) => Number(tokens.match(new RegExp(`${name}:\\s*(\\d+)px;`))![1]);
     const [space1, space4, control] = [px('--space-1'), px('--space-4'), px('--h-control')];
     expect([space1, space4, control]).toEqual([4, 12, 34]);
-    const row = 2 * space4 + 6 * control + 7 * space1 + (TAB_MIN_WIDTH_PX + 2 * space1) + ADDRESS_MIN_WIDTH_PX;
+    // Tools and gaps counted from CHROME_ROW: a new tool raises the minimum, or this goes red.
+    const tools = CHROME_ROW.filter((id) => id !== 'tab-strip' && id !== 'address').length;
+    const gaps = CHROME_ROW.length - 1;
+    const row = 2 * space4 + tools * control + gaps * space1 + (TAB_MIN_WIDTH_PX + 2 * space1) + ADDRESS_MIN_WIDTH_PX;
     expect(row).toBe(CHROME_MIN_CONTENT_WIDTH_PX);
     expect(CHROME_MIN_CONTENT_WIDTH_PX).toBe(588);
     // The minimum counts the frame (the fake's is 16px wide): the content's minimum plus it; the height is kept.

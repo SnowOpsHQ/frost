@@ -92,9 +92,10 @@ export const CHROME_ROW_HEIGHT_PX = 56;
 export const TAB_MIN_WIDTH_PX = 84;
 
 /**
- * Narrowest the address bar gets, however many tabs are open (CSS px): the canvas's minimum for the
- * active tab's address slot, room for a host and the start of its path beside the security badge.
- * The tablist gives way first: it shrinks, then scrolls.
+ * Narrowest the address bar gets at or above the window's minimum, however many tabs are open (CSS
+ * px): the canvas's minimum for the active tab's address slot, room for a host and the start of its
+ * path beside the security badge. The tablist gives way first: it shrinks, then scrolls. Below the
+ * window's minimum (a tiled window) the address bar gives way before the tools and the one tab.
  */
 export const ADDRESS_MIN_WIDTH_PX = 240;
 
@@ -105,7 +106,8 @@ export const ADDRESS_MIN_WIDTH_PX = 240;
 export const ADDRESS_BASIS_PX = 360;
 
 /**
- * The window's minimum content width (CSS px; the window's minimum size adds its frame): what the chrome row
+ * The window's minimum content width (CSS px; the window's minimum size adds its frame, and tiling
+ * window managers may ignore it): what the chrome row
  * needs to fit whole, from the tokens: its padding (2 × `--space-4` = 24), six `--h-control` tools
  * (Back, Forward, Reload, New tab, the SEO and render-profile toggles: 204), seven `--space-1` gaps
  * (28), one tab with its ring room (`TAB_MIN_WIDTH_PX` + 2 × `--space-1` = 92) and
