@@ -230,11 +230,12 @@ export interface LegacyTokenMigration {
  */
 export const LEGACY_TOKEN_MIGRATION = [
   // Chrome sizes: the chrome's surface PR sized its rows from --h-control, --h-field and --h-status and
-  // dropped the three heights; the merged row's PR made the tab row and the toolbar one --h-chrome row.
+  // dropped the three heights; the merged row's PR made the tab row and the toolbar one --h-chrome row;
+  // the rest of the chrome's PR made the find bar a band (--find-height).
   { legacy: '--tabstrip-height', kind: 'retire', signal: '--h-chrome', was: '40px', note: 'with --toolbar-height: one 56px row', removed: true },
   { legacy: '--toolbar-height', kind: 'retire', signal: '--h-chrome', was: '50px', note: 'buttons join the tab row', removed: true },
   { legacy: '--status-height', kind: 'retire', signal: '--h-status', was: '26px', note: '28px', removed: true },
-  { legacy: '--find-height', kind: 'retire', signal: null, was: '40px', note: 'band slot: find is a band (≥ 44px)' },
+  { legacy: '--find-height', kind: 'retire', signal: null, was: '40px', note: 'band slot: find is a band (≥ 44px)', removed: true },
   { legacy: '--radius-control', kind: 'retire', signal: '--r-pill', was: '9px', note: '' },
   { legacy: '--radius-field', kind: 'retire', signal: '--r-pill', was: '11px', note: '--r-sm inside cards' },
   { legacy: '--seo-panel-width', kind: 'alias', signal: '--w-panel', was: '360px', note: '' },
@@ -255,23 +256,23 @@ export const LEGACY_TOKEN_MIGRATION = [
   // Type and icons
   { legacy: '--font-ui', kind: 'retire', signal: '--text-*', was: 'system stack', note: 'Geist, system-ui; Geist Mono' },
   { legacy: '--icon', kind: 'retire', signal: '--text-muted', was: 'icon colour', note: 'name now means size: --icon-size' },
-  { legacy: '--panel-art', kind: 'retire', signal: '--text-faint', was: '#6b7a90', note: '' },
+  { legacy: '--panel-art', kind: 'retire', signal: '--text-faint', was: '#6b7a90', note: '', removed: true },
   // Surfaces and edges
   { legacy: '--bg-chrome', kind: 'alias', signal: '--bg-window', was: '#f3f5f8', note: '' },
   { legacy: '--bg-strip', kind: 'retire', signal: '--bg-window', was: '#e4e8ee', note: 'no separate strip', removed: true },
   { legacy: '--bg-chrome-edge', kind: 'retire', signal: '--divider', was: '#e2e6ec', note: '' },
   { legacy: '--bg-page', kind: 'alias', signal: '--bg-surface', was: '#fbfcfd', note: 'the page card' },
   { legacy: '--bg-field', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
-  { legacy: '--bg-field-hover', kind: 'retire', signal: '--bg-hover', was: '#ffffff', note: 'over --bg-surface' },
+  { legacy: '--bg-field-hover', kind: 'retire', signal: '--bg-hover', was: '#ffffff', note: 'over --bg-surface', removed: true },
   { legacy: '--border-field', kind: 'retire', signal: '--e-raised', was: '#d7dce4', note: 'field outlines (ring shadow, no border); --track for scrollbar thumbs; --divider or --e-ring for other borders' },
-  { legacy: '--shadow-field', kind: 'retire', signal: '--e-raised', was: 'shadow', note: '' },
+  { legacy: '--shadow-field', kind: 'retire', signal: '--e-raised', was: 'shadow', note: '', removed: true },
   { legacy: '--shadow-card', kind: 'retire', signal: '--e-ring', was: 'shadow', note: '' },
   { legacy: '--bg-hover', kind: 'alias', signal: '--bg-hover', was: 'overlay', note: 'Signal value' },
   { legacy: '--bg-active', kind: 'alias', signal: '--bg-active', was: 'overlay', note: 'Signal value' },
   { legacy: '--bg-tab-hover', kind: 'retire', signal: '--bg-hover', was: 'overlay', note: '', removed: true },
-  { legacy: '--bg-prompt', kind: 'retire', signal: '--accent-soft', was: '#ffffff', note: 'band slot fill' },
-  { legacy: '--prompt-edge', kind: 'retire', signal: null, was: '#dfe4eb', note: 'none: bands have no edge' },
-  { legacy: '--shadow-prompt', kind: 'retire', signal: null, was: 'shadow', note: 'none' },
+  { legacy: '--bg-prompt', kind: 'retire', signal: '--accent-soft', was: '#ffffff', note: 'band slot fill', removed: true },
+  { legacy: '--prompt-edge', kind: 'retire', signal: null, was: '#dfe4eb', note: 'none: bands have no edge', removed: true },
+  { legacy: '--shadow-prompt', kind: 'retire', signal: null, was: 'shadow', note: 'none', removed: true },
   // Text, accent, status
   { legacy: '--text', kind: 'alias', signal: '--text', was: '#1b2230', note: '' },
   { legacy: '--text-muted', kind: 'alias', signal: '--text-muted', was: '#5f6b7d', note: '' },
@@ -303,10 +304,10 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--palette-hit', kind: 'retire', signal: '--accent-soft', was: '.16 accent', note: 'match highlight, --r-xs; --bg-surface on the selected row', removed: true },
   { legacy: '--palette-kbd-bg', kind: 'retire', signal: '--bg-surface', was: '#f1f3f7', note: 'key hint, --h-badge', removed: true },
   { legacy: '--palette-kbd-edge', kind: 'retire', signal: '--e-ring', was: '#d7dce4', note: '', removed: true },
-  // Feature colours
-  { legacy: '--render-accent', kind: 'retire', signal: '--accent', was: '#7a4fe0', note: 'one accent: no second hue' },
-  { legacy: '--render-soft', kind: 'retire', signal: '--accent-soft', was: '.13 violet', note: '' },
-  { legacy: '--render-edge', kind: 'retire', signal: '--accent', was: '.55 violet', note: '' },
+  // Feature colours: the rest of the chrome's PR moved the render profile onto the one accent (--render-*).
+  { legacy: '--render-accent', kind: 'retire', signal: '--accent', was: '#7a4fe0', note: 'one accent: no second hue', removed: true },
+  { legacy: '--render-soft', kind: 'retire', signal: '--accent-soft', was: '.13 violet', note: '', removed: true },
+  { legacy: '--render-edge', kind: 'retire', signal: '--accent', was: '.55 violet', note: '', removed: true },
   { legacy: '--serp-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
   { legacy: '--serp-title', kind: 'retire', signal: '--accent', was: '#2450c8', note: 'Search preview title' },
   { legacy: '--serp-text', kind: 'alias', signal: '--text-muted', was: '#474e5c', note: '' },
@@ -430,6 +431,19 @@ export const FORCED_COLOURS_BUSY = [
   { stylesheet: 'styles.css', element: ['.prompt-button', '.prompt-button:disabled'], why: 'the permission prompt\'s Allow and Block before they arm, and once answered' },
   // Overview: a severity with no finding is a dimmed pill (--text-faint, where it faded); forced colours mark it GrayText, text and edge.
   { stylesheet: 'styles.css', element: ['.seo-count', ".seo-count[data-count='0']"], why: 'Overview\'s count pill for a severity with no finding ("0 errors")' },
+  // The rest of the browser chrome: a disabled button is --text-faint on --bg-subtle with no shadow (it faded).
+  { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button:disabled'], why: 'an error panel\'s button (and every panel\'s .panel-button), disabled or busy (Try again while it reloads)' },
+  { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button-primary', '.panel-button:disabled'], why: 'a primary .panel-button, disabled or busy (its --accent fill must give way)' },
+  { stylesheet: 'styles.css', element: ['.update-button', '.update-button:disabled'], why: 'the update notice\'s Skip this version while its step runs' },
+  { stylesheet: 'styles.css', element: ['.update-button', '.update-primary', '.update-button:disabled'], why: 'the update notice\'s Download or Show file while its step runs' },
+  { stylesheet: 'styles.css', element: ['.find-tool', '.find-tool:disabled'], why: 'the find bar\'s Previous and Next with no match' },
+  { stylesheet: 'styles.css', element: ['.render-chip', '.render-chip:disabled'], why: 'the editor bar\'s quick profiles with no tab' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.render-frame-button', '.render-bar .render-frame-button', '.render-bar .render-frame-primary', '.render-bar .render-frame-button:disabled'],
+    why: 'the editor bar\'s Apply (a primary button) while its profile is invalid, and Reset with nothing to reset',
+  },
+  { stylesheet: 'styles.css', element: ['.devtools-button', '.devtools-button:disabled'], why: 'a DevTools drawer button with nothing to act on' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -442,6 +456,9 @@ export const FORCED_COLOURS_BUSY = [
 export const FORCED_COLOURS_PRESSED = [
   { stylesheet: 'styles.css', element: ['.tool', ".sidebar-toggle[aria-pressed='true']"], why: 'the SEO sidebar toggle, pressed (the sidebar open)' },
   { stylesheet: 'styles.css', element: ['.tool', ".render-toggle[aria-pressed='true']"], why: 'the render-profile toggle, pressed (its editor bar open)' },
+  // The rest of the browser chrome: a pressed or selected item drawn as the canvas's segmented control's (--bg-surface, --e-raised).
+  { stylesheet: 'styles.css', element: ['.find-tool', ".find-case[aria-pressed='true']"], why: 'the find bar\'s Match case, pressed' },
+  { stylesheet: 'styles.css', element: ['.devtools-tab', ".devtools-tab[aria-selected='true']"], why: 'the DevTools drawer\'s selected tab' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -561,6 +578,7 @@ export const SIGNAL_SURFACES = [
       '.chrome',
       '.workspace-stack',
       '.workspace',
+      '.page-column',
       '.page-area',
       // The chrome row (the merged tab row and toolbar): its tablist, then the toolbar's parts
       '.chrome-row',
@@ -664,6 +682,26 @@ export const SIGNAL_SURFACES = [
       '.seo-stat-*',
     ],
   },
+  // The rest of the browser chrome (specs/design-tokens.feature.md, The rest of the browser chrome).
+  // The error and crash panels (specs/browser-chrome.feature.md, PagePanels.tsx); .panel-button is
+  // every panel's secondary button too (Changes, Projects, Crawl, AI answers, SERP, …).
+  { name: 'page panels: error and crash', stylesheet: 'styles.css', selectorPrefix: '.panel' },
+  // The render profile (specs/render-profile.feature.md): the toolbar toggle's states, the editor bar (a
+  // band), the page-area frame, the tab badge and the status bar's chips. Not "The audit's profile
+  // (Overview)" (`.seo-audit-profile-*`, Overview's entry).
+  {
+    name: 'render profile',
+    stylesheet: 'styles.css',
+    classes: ['.render-*', '.tab-profile-*', '.status-render-profile-*', '.status-tab-overrides'],
+  },
+  // The SEO devtools drawer (specs/devtools.feature.md, components/devtools/).
+  { name: 'DevTools drawer', stylesheet: 'styles.css', selectorPrefix: '.devtools' },
+  // The find bar (specs/browser-polish.feature.md), a band.
+  { name: 'find bar', stylesheet: 'styles.css', selectorPrefix: '.find' },
+  // The History sheet (specs/browser-polish.feature.md).
+  { name: 'History sheet', stylesheet: 'styles.css', selectorPrefix: '.history' },
+  // The update notice (specs/update-client.feature.md, Chrome), a band.
+  { name: 'update notice', stylesheet: 'styles.css', selectorPrefix: '.update' },
 ] as const satisfies readonly SignalSurface[];
 
 /**
@@ -672,7 +710,7 @@ export const SIGNAL_SURFACES = [
  * raise it. Counted when every `:root` token moved into `tokens.css`. It counts hex only: a colour
  * written as `rgb()`, `hsl()` or a keyword is for review to catch.
  */
-export const HEX_COLOUR_RATCHET = 50;
+export const HEX_COLOUR_RATCHET = 47;
 
 /**
  * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
@@ -896,16 +934,47 @@ export const CONTRAST_PAIRS = [
   { fg: '--danger', bg: '--bg-sheet', min: 3, why: RING },
   // Rules the values step pinned (TEXT_COLOUR_RULES)
   { fg: '--warn-ink', bg: '--bg-chrome', min: 4.5, why: 'the status bar\'s notice (.status-notice) on --bg-chrome (4.5:1)' },
-  {
-    fg: '--accent-hover',
-    bg: '--bg-field-hover',
-    min: 4.5,
-    why: 'the update bar\'s primary button, hovered (.update-primary on --bg-field-hover) (4.5:1)',
-  },
   { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
   { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
   { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-surface', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
   { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: '11px chips: text on its tone\'s 14% tint (.seo-pill; .seo-flag-chip\'s 13% tint is lighter in light, darker in dark, so it passes wherever 14% does; .agent-chip moved to -ink on -soft) (4.5:1)' },
+  // The rest of the browser chrome (its surface PR). Already covered above: text and icons on the
+  // bands (--text, --text-muted, --accent on --accent-soft over --bg-window), the band buttons and the
+  // .panel-button (--text on --bg-surface, hovered over --bg-hover; the primary --on-accent on --accent and
+  // --accent-hover; disabled --text-faint on --bg-subtle), the drawer's text on --bg-sheet (--text,
+  // --text-muted, --text-faint, --accent links, a selected row's --text on --accent-soft), History's on
+  // --bg-surface, the status chips' failed state (--danger-ink on --danger-soft over --bg-chrome). New with it:
+  { fg: '--danger-ink', bg: '--accent-soft', over: '--bg-window', min: 4.5, why: `the find bar's "no matches" count and the editor bar's errors (12px, were --danger) on a band (the canvas's band slot: --accent-soft over --bg-window) (4.5:1)` },
+  { fg: '--text', bg: '--danger-soft', over: '--bg-window', min: 4.5, why: 'a failed update: the notice\'s headline on its --danger-soft band (4.5:1)' },
+  { fg: '--text-muted', bg: '--danger-soft', over: '--bg-window', min: 4.5, why: 'a failed update: the notice\'s text on its --danger-soft band (4.5:1)' },
+  { fg: '--danger', bg: '--danger-soft', over: '--bg-window', min: 3, why: 'a failed update: the notice\'s alert icon (--danger) on its band (graphics, 3:1)' },
+  { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-window', min: 4.5, why: `${INK}: the editor bar's notes (11.5px, were --text-muted on a 10% --caution tint) inside the band` },
+  { fg: '--accent', bg: '--accent-soft', over: '--bg-window', min: 4.5, why: 'the status bar\'s render-profile chip (--render-accent on --render-soft → --accent on --accent-soft, 12px) (4.5:1)' },
+  { fg: '--on-accent', bg: '--danger', min: 4.5, why: 'the page-area frame\'s "Profile failed" tag (--danger, its text the header\'s --on-accent) (4.5:1)' },
+  { fg: '--accent', bg: '--on-accent', min: 4.5, why: 'the page-area frame\'s Reload to apply (a white button with --render-accent text → --on-accent with --accent) (4.5:1)' },
+  {
+    fg: '--accent',
+    bg: '--bg-hover',
+    over: '--on-accent',
+    min: 4.5,
+    why: 'the page-area frame\'s Reload to apply, hovered (--bg-hover laid over its --on-accent fill) (4.5:1)',
+  },
+  { fg: '--text-faint', bg: '--text-faint', alpha: 0.1, over: '--bg-surface', min: 3, why: 'an error panel\'s art (--panel-art → --text-faint) on its badge, its tone at 10% over the page (graphics, 3:1)' },
+  { fg: '--danger', bg: '--danger', alpha: 0.1, over: '--bg-surface', min: 3, why: 'a certificate error\'s art (--danger) on its badge (graphics, 3:1)' },
+  { fg: '--warn', bg: '--warn', alpha: 0.1, over: '--bg-surface', min: 3, why: `${WARN}: a crashed page's art on its badge` },
+  { fg: '--warn-ink', bg: '--bg-sheet', min: 4.5, why: 'the DevTools drawer\'s notices (12px, were --caution) on the drawer (4.5:1)' },
+  { fg: '--ok-ink', bg: '--bg-subtle', min: 4.5, why: 'the DevTools drawer\'s 2xx status code (11px, was --ok) on its --bg-subtle pill (4.5:1)' },
+  { fg: '--warn-ink', bg: '--bg-subtle', min: 4.5, why: 'the DevTools drawer\'s 3xx status code (11px, was --caution) on its --bg-subtle pill (4.5:1)' },
+  { fg: '--danger-ink', bg: '--bg-subtle', min: 4.5, why: 'the DevTools drawer\'s 4xx and 5xx status codes (11px, were --danger) on their --bg-subtle pill (4.5:1)' },
+  { fg: '--danger-ink', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'the DevTools drawer: a failed request\'s row, selected (--accent-soft) (4.5:1)' },
+  { fg: '--danger-ink', bg: '--bg-hover', over: '--bg-sheet', min: 4.5, why: 'the DevTools drawer: a failed request\'s row, hovered (4.5:1)' },
+  { fg: '--accent', bg: '--accent-soft', over: '--bg-sheet', min: 3, why: 'the DevTools drawer: the resize edge under the pointer, focused --accent beside its --accent-soft (graphics, 3:1)' },
+  { fg: '--text', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: 'the DevTools console: a warning\'s message on its row (--warn-soft, was a literal 8% tint) (4.5:1)' },
+  { fg: '--text', bg: '--danger-soft', over: '--bg-sheet', min: 4.5, why: 'the DevTools console: an error\'s message on its row (--danger-soft, was a literal 8% tint) (4.5:1)' },
+  { fg: '--text-muted', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: 'the DevTools console: a warning\'s source (12px, --text-muted) on its row (4.5:1)' },
+  { fg: '--text-muted', bg: '--danger-soft', over: '--bg-sheet', min: 4.5, why: 'the DevTools console: an error\'s source (12px; --text-faint is 4.45:1 on --danger-soft in light) on its row (4.5:1)' },
+  { fg: '--danger-ink', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'History\'s Clear button and the drawer\'s Clear site data (--danger-ink on --bg-surface), hovered (4.5:1)' },
+  { fg: '--text-muted', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'a History row, hovered: its time and host (12px, --text-muted: --text-faint is 4.2:1 on --bg-hover in dark), and a hovered .panel-button\'s icon (4.5:1)' },
 ] as const satisfies readonly ContrastPair[];
 
 /**
@@ -928,7 +997,7 @@ export const KNOWN_CONTRAST_EXCEPTIONS = [
     fg: '--ok',
     bg: '--bg-surface',
     min: 4.5,
-    rules: 15,
+    rules: 13,
     why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property).',
   },
 ] as const satisfies readonly ContrastException[];
@@ -949,6 +1018,9 @@ export interface TextColourRule {
   readonly why: string;
 }
 
+/** The update notice's buttons under the pointer (TEXT_COLOUR_RULES and FOCUS_RING_RULES). */
+const UPDATE_BUTTON_HOVER = '.update-button:hover:where(:not(:disabled))';
+const UPDATE_PRIMARY_HOVER = '.update-primary:hover:where(:not(:disabled))';
 const OK_TINT = '--ok as text on its own 14% tint is 2.82:1 in light (11px chips)';
 const DANGER_TINT = '--danger as text on its own 14% tint is 3.88:1 in light (11px chips)';
 
@@ -959,11 +1031,22 @@ export const TEXT_COLOUR_RULES = [
     color: '--warn-ink',
     why: '--warn on --bg-chrome is 4.26:1 in light; the notice is 11.5px text',
   },
+  // The update notice's Download and Show file: the canvas's primary band button (--on-accent on --accent,
+  // --accent-hover hovered), where they were outlined --accent text whose hover (--bg-field-hover, removed)
+  // left --accent at 4.23:1 in dark (then pinned to --accent-hover).
   {
     stylesheet: 'styles.css',
-    element: ['.update-button', '.update-button:hover:not(:disabled)', '.update-button.update-primary', '.update-button.update-primary:hover:not(:disabled)'],
-    color: '--accent-hover',
-    why: '--accent on the hovered button (--bg-field-hover) is 4.23:1 in dark',
+    element: ['.update-button', '.update-primary'],
+    color: '--on-accent',
+    background: '--accent',
+    why: 'the update notice\'s primary button: --on-accent on --accent',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.update-button', UPDATE_BUTTON_HOVER, '.update-primary', UPDATE_PRIMARY_HOVER],
+    color: '--on-accent',
+    background: '--accent-hover',
+    why: 'the update notice\'s primary button, hovered: --on-accent on --accent-hover (the secondary hover\'s overlay must not win)',
   },
   // 11px chips on their tone's tint: --ok text is 2.82:1 on its 14% tint and --danger 3.88:1 (light).
   // The tint and .seo-signal's dot keep the tone; .seo-signal draws no tone text, so it has no entry.
@@ -1017,6 +1100,28 @@ export const TEXT_COLOUR_RULES = [
   },
   // The reasons are a summary line too (`.seo-score-summary.seo-not-indexable`): the summary's own colour must not win.
   { stylesheet: 'styles.css', element: ['.seo-score-summary', '.seo-not-indexable'], color: '--danger-ink', why: 'Overview\'s not-indexable reasons (12px, was --danger): status text takes its -ink' },
+  // The rest of the browser chrome (its surface PR): status text takes its -ink.
+  { stylesheet: 'styles.css', element: ['.find-count', ".find-count[data-empty='true']"], color: '--danger-ink', why: 'the find bar\'s count with no match (12px, was --danger) on its band' },
+  { stylesheet: 'styles.css', element: ['.render-bar-error'], color: '--danger-ink', why: 'the editor bar\'s errors (12px, were --danger) on its band' },
+  { stylesheet: 'styles.css', element: ['.render-bar-note'], color: '--warn-ink', background: '--warn-soft', why: 'the editor bar\'s notes: -ink on -soft (they were --text-muted on a 10% --caution tint)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.render-bar-note', '.render-overrides-failed'],
+    color: '--danger-ink',
+    background: '--danger-soft',
+    why: 'the editor bar\'s "could not apply" note: -ink on -soft (it was --text on a 12% --danger tint); the note\'s own colours must not win',
+  },
+  { stylesheet: 'styles.css', element: ['.devtools-notice'], color: '--warn-ink', why: 'the DevTools drawer\'s notice (was --caution, 3.0:1 on the drawer in light)' },
+  { stylesheet: 'styles.css', element: ['.devtools-notice-inline'], color: '--warn-ink', why: 'the DevTools drawer\'s inline notice (was --caution)' },
+  { stylesheet: 'styles.css', element: ['.devtools-table td', '.devtools-row-failed td'], color: '--danger-ink', why: 'a failed request\'s row (was --danger)' },
+  { stylesheet: 'styles.css', element: ['.devtools-robots-blocked'], color: '--danger-ink', why: 'a request robots.txt blocks (was --danger)' },
+  { stylesheet: 'styles.css', element: ['.devtools-robots-allowed'], color: '--ok-ink', why: 'a request robots.txt allows (was --ok, 3.2:1 on the drawer in light)' },
+  { stylesheet: 'styles.css', element: ['.devtools-status', '.devtools-status-2xx'], color: '--ok-ink', background: '--bg-subtle', why: 'a 2xx status code (was --ok on --bg-hover)' },
+  { stylesheet: 'styles.css', element: ['.devtools-status', '.devtools-status-3xx'], color: '--warn-ink', background: '--bg-subtle', why: 'a 3xx status code (was --caution on --bg-hover)' },
+  { stylesheet: 'styles.css', element: ['.devtools-status', '.devtools-status-4xx'], color: '--danger-ink', background: '--bg-subtle', why: 'a 4xx status code (was --danger on --bg-hover)' },
+  { stylesheet: 'styles.css', element: ['.devtools-status', '.devtools-status-5xx'], color: '--danger-ink', background: '--bg-subtle', why: 'a 5xx status code (was --danger on --bg-hover)' },
+  { stylesheet: 'styles.css', element: ['.devtools-button', '.devtools-danger'], color: '--danger-ink', why: 'the drawer\'s Clear site data (was --danger) on its button' },
+  { stylesheet: 'styles.css', element: ['.history-clear'], color: '--danger-ink', why: 'History\'s Clear (was --danger) on its button' },
 ] as const satisfies readonly TextColourRule[];
 
 /**
@@ -1046,6 +1151,18 @@ const TAB_FOCUS = '.tab:has(.tab-main:focus-visible)';
 const PROMPT_BUTTON_HOVER = '.prompt-button:hover:where(:not(:disabled))';
 const PROMPT_DISMISS_HOVER = '.prompt-dismiss:hover:where(:not(:disabled))';
 const SEO_ISSUE_HOVER = '.seo-issue-head:hover';
+const PANEL_BUTTON_HOVER = '.panel-button:hover:where(:not(:disabled))';
+const PANEL_PRIMARY_HOVER = '.panel-button-primary:hover:where(:not(:disabled))';
+const UPDATE_QUIET_HOVER = '.update-quiet:hover:where(:not(:disabled))';
+const FIND_TOOL_HOVER = '.find-tool:hover:where(:not(:disabled))';
+const RENDER_CHIP_HOVER = '.render-chip:hover:where(:not(:disabled))';
+const RENDER_BAR_BUTTON = '.render-bar .render-frame-button';
+const RENDER_BAR_BUTTON_HOVER = '.render-bar .render-frame-button:hover:where(:not(:disabled))';
+const RENDER_BAR_PRIMARY_HOVER = '.render-bar .render-frame-primary:hover:where(:not(:disabled))';
+const RENDER_FRAME_BUTTON_HOVER = '.render-frame-button:hover:where(:not(:disabled))';
+const RENDER_FRAME_PRIMARY_HOVER = '.render-frame-primary:hover:where(:not(:disabled))';
+const DEVTOOLS_TAB_HOVER = ".devtools-tab:hover:where(:not([aria-selected='true']))";
+const DEVTOOLS_BUTTON_HOVER = '.devtools-button:hover:where(:not(:disabled))';
 
 export const FOCUS_RING_RULES = [
   {
@@ -1129,6 +1246,80 @@ export const FOCUS_RING_RULES = [
   // toggles are `.seo-toggle`, a later panel's control.
   { stylesheet: 'styles.css', element: ['.seo-issue-head', SEO_ISSUE_HOVER, '.seo-issue-head:focus-visible'], why: 'an issue\'s heading row, focused (it expands the issue) and hovered: its --bg-hover fill keeps the ring' },
   { stylesheet: 'styles.css', element: ['.seo-link-button', '.seo-link-button:hover', '.seo-link-button:focus-visible'], why: 'Overview\'s "Show all" link button, focused and hovered' },
+  // The rest of the browser chrome (its surface PR).
+  { stylesheet: 'styles.css', element: ['.panel-button', PANEL_BUTTON_HOVER, '.panel-button:focus-visible'], why: 'an error panel\'s button (every panel\'s .panel-button), focused and hovered: its hover lays --bg-hover in a box-shadow' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.panel-button', PANEL_BUTTON_HOVER, '.panel-button-primary', PANEL_PRIMARY_HOVER, '.panel-button:focus-visible'],
+    why: 'a primary .panel-button (Try again, Reload), focused and hovered: its hover sets box-shadow: none',
+  },
+  { stylesheet: 'styles.css', element: ['.update-button', UPDATE_BUTTON_HOVER, '.update-button:focus-visible'], why: 'the update notice\'s Skip this version, focused and hovered' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.update-button', UPDATE_BUTTON_HOVER, '.update-primary', UPDATE_PRIMARY_HOVER, '.update-button:focus-visible'],
+    why: 'the update notice\'s Download or Show file, focused and hovered',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.update-button', UPDATE_BUTTON_HOVER, '.update-quiet', UPDATE_QUIET_HOVER, '.update-button:focus-visible'],
+    why: 'the update notice\'s Release notes or Later, focused and hovered',
+  },
+  { stylesheet: 'styles.css', element: ['.update-dismiss', '.update-dismiss:hover', '.update-dismiss:focus-visible'], why: 'the update notice\'s Dismiss, focused and hovered' },
+  { stylesheet: 'styles.css', element: ['.find-input', '.find-input:focus-visible'], why: 'the find bar\'s field, focused: its --e-raised edge gives way to --focus-ring' },
+  { stylesheet: 'styles.css', element: ['.find-tool', FIND_TOOL_HOVER, '.find-tool:focus-visible'], why: 'a find bar tool, focused and hovered' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.find-tool', FIND_TOOL_HOVER, ".find-case[aria-pressed='true']", '.find-tool:focus-visible'],
+    why: 'the find bar\'s Match case, pressed (--e-raised), focused and hovered',
+  },
+  { stylesheet: 'styles.css', element: ['.render-chip', RENDER_CHIP_HOVER, '.render-chip:focus-visible'], why: 'a quick profile in the editor bar, focused and hovered' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.render-frame-button', RENDER_BAR_BUTTON, RENDER_FRAME_BUTTON_HOVER, RENDER_BAR_BUTTON_HOVER, '.render-frame-button:focus-visible', '.render-bar .render-frame-button:focus-visible'],
+    why: 'the editor bar\'s Reset, focused and hovered',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: [
+      '.render-frame-button',
+      RENDER_BAR_BUTTON,
+      RENDER_FRAME_BUTTON_HOVER,
+      RENDER_BAR_BUTTON_HOVER,
+      '.render-frame-primary',
+      '.render-bar .render-frame-primary',
+      RENDER_FRAME_PRIMARY_HOVER,
+      RENDER_BAR_PRIMARY_HOVER,
+      '.render-frame-button:focus-visible',
+      '.render-bar .render-frame-button:focus-visible',
+    ],
+    why: 'the editor bar\'s Apply (primary), focused and hovered',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.render-frame-button', RENDER_FRAME_BUTTON_HOVER, '.render-frame-primary', RENDER_FRAME_PRIMARY_HOVER, '.render-frame-button:focus-visible'],
+    why: 'the page-area frame\'s Reload to apply (primary), Edit and Reset, focused and hovered',
+  },
+  { stylesheet: 'styles.css', element: ['.render-field select', '.render-field select:focus-visible'], why: 'the editor bar\'s selects, focused' },
+  { stylesheet: 'styles.css', element: ['.render-custom-ua', '.render-custom-ua:focus-visible'], why: 'the editor bar\'s user agent and location fields, focused' },
+  { stylesheet: 'styles.css', element: ['.devtools-tab', DEVTOOLS_TAB_HOVER, '.devtools-tab:focus-visible'], why: 'a DevTools drawer tab, focused and hovered' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.devtools-tab', ".devtools-tab[aria-selected='true']", '.devtools-tab:focus-visible'],
+    why: 'the selected DevTools drawer tab, focused: its --e-raised edge gives way to --focus-ring',
+  },
+  { stylesheet: 'styles.css', element: ['.devtools-button', DEVTOOLS_BUTTON_HOVER, '.devtools-button:focus-visible'], why: 'a DevTools drawer button, focused and hovered' },
+  { stylesheet: 'styles.css', element: ['.devtools-link', '.devtools-link:focus-visible'], why: 'a DevTools drawer link (a URL, a hop), focused' },
+  { stylesheet: 'styles.css', element: ['.devtools-sort', '.devtools-sort:focus-visible'], why: 'a DevTools drawer column\'s sort button, focused' },
+  { stylesheet: 'styles.css', element: ['.devtools-row-button', '.devtools-row-button:focus-visible'], why: 'a DevTools drawer row\'s button, focused' },
+  { stylesheet: 'styles.css', element: ['.devtools-search', '.devtools-search:focus-visible'], why: 'the DevTools drawer\'s search, focused' },
+  { stylesheet: 'styles.css', element: ['.devtools-toolbar select', '.devtools-toolbar select:focus-visible'], why: 'the DevTools drawer\'s filters, focused' },
+  { stylesheet: 'styles.css', element: ['.history-search', '.history-search:focus-within'], why: 'History\'s search, focused (:focus-within): its --e-raised edge gives way to --focus-ring' },
+  { stylesheet: 'styles.css', element: ['.history-clear', '.history-clear:hover', '.history-clear:focus-visible'], why: 'History\'s Clear, focused and hovered' },
+  { stylesheet: 'styles.css', element: ['.history-close', '.history-close:hover', '.history-close:focus-visible'], why: 'History\'s Close, focused and hovered' },
+  { stylesheet: 'styles.css', element: ['.history-action', '.history-action:hover', '.history-action:focus-visible'], why: 'a History row\'s action, focused and hovered' },
+  { stylesheet: 'styles.css', element: ['.history-open', '.history-open:focus-visible'], why: 'a History row\'s link, focused' },
+  { stylesheet: 'styles.css', element: ['.history-more', '.history-more:hover', '.history-more:focus-visible'], why: 'History\'s Show more, focused and hovered' },
+  { stylesheet: 'styles.css', element: ['.history-select', '.history-select:focus-visible'], why: 'History\'s project and range selects, focused' },
 ] as const satisfies readonly FocusRingRule[];
 
 /**
