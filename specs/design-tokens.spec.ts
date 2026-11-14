@@ -775,7 +775,8 @@ export const HEX_COLOUR_RATCHET = 33;
  * translucent `bg` (`--accent-soft`, a dark `-soft` fill) sits on, so the pair is composited first; a
  * translucent `fg` is composited over the (composited) `bg`. `alpha` makes `bg` a tint: the token at
  * that opacity, as `color-mix(in srgb, <bg> <alpha × 100>%, transparent)` draws it (then `over` is
- * needed). `under` is the opaque surface under a translucent `over`: a tinted badge in a hovered row
+ * needed). `under` is the opaque surface under a translucent `over` (both checked before compositing:
+ * `under` opaque, `over` translucent, or the two layers swapped would pass unseen): a tinted badge in a hovered row
  * is `bg` over `--bg-hover` (`over`) over the card (`under`), composited in that order. `why` cites the sheet.
  */
 export interface ContrastPair {
@@ -1197,8 +1198,10 @@ export const TEXT_COLOUR_RULES = [
  * pressed (`aria-pressed`, on an `--accent-soft` fill): the hover must skip a pressed one, since
  * `--accent` text on `--bg-hover` over `--accent-soft` is 3.78:1 in dark (council round 1 on PR #46: the
  * Inspector's Tree, Rendered and Served buttons are `.seo-action`s). Every rule of `stylesheet` with a
- * selector `<control>:hover…` that sets `box-shadow` or `background` names `[aria-pressed='true']` in
- * that selector's `:not(…)`.
+ * compound selector holding both `<control>` (on a class boundary) and `:hover`, in any order and after
+ * any ancestor (`.seo-action.inspector-view-button:hover`, `.seo-action:not(:disabled):hover`,
+ * `.seo-panel-tools .seo-toggle:hover`), that sets `box-shadow` or `background` names
+ * `[aria-pressed='true']` in a `:not(…)` of that same compound.
  */
 export interface HoverSkipsPressed {
   readonly stylesheet: string;
@@ -1215,7 +1218,9 @@ export const HOVER_OVERLAYS_SKIP_PRESSED = [
  * A pressed control whose fill alone would say it (council round 1 on PR #46: a pressed filter chip's
  * `--accent-soft` is 1.06:1 off an unpressed chip's `--bg-subtle` in light): it also draws an `edge` on its
  * transparent border, not a box-shadow (which the focus ring replaces). For each entry the cascade over
- * `element` in `stylesheet` resolves `border-color` to `var(<edge>)` in light and dark, and for each of
+ * `element` in `stylesheet` resolves `border-color` to `var(<edge>)` in light and dark, with a border that
+ * draws (a non-zero `border-width` and a `border-style` other than `none` or `hidden`, from the
+ * longhands or the `border` shorthand), and for each of
  * `fills` (the pressed fill, the card around it) `CONTRAST_PAIRS` holds `edge` on it at 3:1 or more.
  */
 export interface PressedEdge {
@@ -1225,6 +1230,24 @@ export interface PressedEdge {
   readonly fills: readonly { readonly bg: TokenName; readonly over?: TokenName }[];
   readonly why: string;
 }
+
+/**
+ * The colour a disabled control's text takes when only its text says it is disabled (its fill is the
+ * same as when enabled): `--text-faint` at half strength, as the toolbar's disabled tool. Plain
+ * `--text-faint` is 1.40:1 off the enabled `--text-muted` in light (1.32 in dark), too close to tell
+ * (council round 2 on PR #46).
+ */
+export const DISABLED_INK = 'color-mix(in srgb, var(--text-faint) 50%, transparent)';
+
+/**
+ * Disabled controls on the same fill as their enabled selves (a filter chip on `--bg-subtle`, a segment
+ * on its track): for each entry the cascade over `element` in `stylesheet` resolves `color` to
+ * `DISABLED_INK` in light and dark. (`GrayText` marks them under forced colours: `FORCED_COLOURS_BUSY`.)
+ */
+export const DISABLED_CONTROLS = [
+  { stylesheet: 'styles.css', element: ['.seo-chip-button', '.seo-chip-button:disabled'], why: 'a filter chip, disabled (Changes\' screenshot kinds with no page, SERP\'s snippet sources, the AI card\'s targets)' },
+  { stylesheet: 'styles.css', element: ['.seo-segment', '.seo-segment:disabled'], why: 'a segment, disabled (Schema\'s Tree for a block that did not parse)' },
+] as const satisfies readonly { readonly stylesheet: string; readonly element: readonly string[]; readonly why: string }[];
 
 export const PRESSED_EDGES = [
   {
