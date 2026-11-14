@@ -74,11 +74,12 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `projects-lower` | projects | the same, `.projects-main` at its end: search queries, Retention and disk usage, Purge log | |
 | `render-profile` | render-profile | phone + mobile UA applied and reloaded, the editor bar open | `render-profile` mobile-preset-viewport-and-ua |
 | `permission-bar` | permission-bar | the notification prompt bar, armed | `permissions` allow-grants-and-is-remembered-e2e |
+| `page-error` | page-error | a load Chromium refuses (port 9, `ERR_UNSAFE_PORT`: no request, so nothing varies), the error panel with Try again | `browse-guard` connection-refused-shows-error-panel-e2e |
 | `update-bar` | update-bar | the update bar offering 99.0.0 (signed fake feed over TLS) | `update` update-available-download-verify-show |
 | `agent-empty` | agent-empty | the agent panel open, no chat yet | `agent` `launchWith` |
 | `agent-conversation` | agent-conversation | one scripted turn: a `page_text` tool card, then the answer | `agent` agent-chat-export-and-restore (scripted model seam) |
 
-31 captures, 62 images. No state is skipped. The ChatGPT route's conversation is not captured: the
+32 captures, 64 images. No state is skipped. The ChatGPT route's conversation is not captured: the
 scripted-model turn already shows the same chat surface without a sign-in.
 
 ## What is compared
@@ -200,7 +201,7 @@ scrolled capture's scroller has something below the fold and reached its offset.
 - **Scenario: new-tab**, **jump-back-in-and-history** (a fresh profile).
 - **Scenario: seo-overview**, **seo-on-page**, **seo-links**, **seo-images**, **seo-social**, **seo-schema**, **seo-indexability**, **seo-page-speed**, **seo-compliance**, **seo-changes**,
   **devtools-drawer**, **find-bar**, **command-palette**, **settings**, **projects**,
-  **render-profile**, **permission-bar** (one app; each starts from one tab, everything closed).
+  **render-profile**, **permission-bar**, **page-error** (one app; each starts from one tab, everything closed).
 - **Scenario: agent-empty**, **agent-conversation** (the scripted model seam).
 - **Scenario: seo-search-console** (fake backend and Google).
 - **Scenario: update-bar** (fake feed).
