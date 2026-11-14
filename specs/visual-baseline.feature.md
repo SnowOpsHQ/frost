@@ -71,7 +71,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `help-shortcuts` | help-shortcuts | Help › Keyboard Shortcuts over the guide page | `browser-polish` help-shortcuts-sheet |
 | `projects` | projects | the Projects sheet: a project with two pages | `projects` projects-create-and-add-pages |
 | `projects-lower` | projects | the same, `.projects-main` at its end: search queries, Retention and disk usage, Purge log | |
-| `projects-rankings` | projects | the same project's Rankings view: no site and no reading yet (its notices), the export buttons disabled | `rankings` |
+| `projects-rankings` | projects | the same project's Rankings view: no site and no reading yet: its toolbar and two notices | `rankings` |
 | `render-profile` | render-profile | phone + mobile UA applied and reloaded, the editor bar open | `render-profile` mobile-preset-viewport-and-ua |
 | `permission-bar` | permission-bar | the notification prompt bar, armed | `permissions` allow-grants-and-is-remembered-e2e |
 | `page-error` | page-error | a load Chromium refuses (port 9, `ERR_UNSAFE_PORT`: no request, so nothing varies), the error panel with Try again | `browse-guard` connection-refused-shows-error-panel-e2e |

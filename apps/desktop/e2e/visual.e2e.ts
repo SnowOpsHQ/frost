@@ -618,13 +618,13 @@ test.describe('page surfaces', () => {
     await capture('projects');
     // Search queries and Retention and disk usage (the database file's size hidden by visual.css).
     await capture('projects-lower', { scroll: { selector: '.projects-main', to: 'end' } });
-    // The project's Rankings view before it has a site or a reading: its toolbar (the export buttons
-    // disabled) and its notices (rankings.e2e.ts reaches the rows).
+    // The project's Rankings view before it has a site or a reading: its toolbar and its two notices
+    // (rankings.e2e.ts reaches the rows).
     await page.locator('.projects-main').evaluate((el) => el.scrollTo({ top: 0, behavior: 'instant' }));
     await page.getByTestId('projects-view-rankings').click();
     await expect(page.getByTestId('projects-detail')).toHaveAttribute('data-view', 'rankings');
     await expect(page.getByTestId('rankings-no-site')).toBeVisible();
-    await expect(page.getByTestId('rankings-copy-csv')).toBeDisabled();
+    await expect(page.getByTestId('rankings-no-readings')).toBeVisible();
     await capture('projects-rankings');
     await page.getByTestId('projects-close').click();
     await expect(sheet).toHaveCount(0);
