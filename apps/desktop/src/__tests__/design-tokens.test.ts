@@ -246,6 +246,8 @@ test('removed-legacy-tokens-are-gone', () => {
   expect(REMOVED).toEqual(expect.arrayContaining(['--settings-switch-off']));
   // And the SEO sidebar's frame (its skeleton's names; the panels still read the other --seo-* names).
   expect(REMOVED).toEqual(expect.arrayContaining(['--seo-skeleton', '--seo-skeleton-shine']));
+  // And Content's (its result preview's retired --serp-* names; --serp-card and --serp-text are aliases).
+  expect(REMOVED).toEqual(expect.arrayContaining(['--serp-title', '--serp-path', '--serp-glyph', '--serp-glyph-mark']));
   for (const name of REMOVED) {
     expect(LIGHT.has(name), `${name} (light)`).toBe(false);
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
