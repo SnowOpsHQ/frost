@@ -2,7 +2,7 @@
 
 Spec: `specs/tabs.spec.ts` (`MAX_TABS`, `NEW_TAB_LABEL`, `NOTICE_MESSAGES`, `NOTICE_DISPLAY_MS`,
 `TAB_SHORTCUT_COUNT`, `RESERVED_TAB_SHORTCUTS`, `CHROME_ROW`, `CHROME_ROW_HEIGHT_PX`, `TAB_MIN_WIDTH_PX`,
-`ADDRESS_MIN_WIDTH_PX`; Zod-free so the chrome can import it) and `specs/browser.spec.ts`
+`ADDRESS_BASIS_PX`, `ADDRESS_MIN_WIDTH_PX`, `CHROME_MIN_CONTENT_WIDTH_PX`; Zod-free so the chrome can import it) and `specs/browser.spec.ts`
 (`TabIdInputSchema`, `BrowserStateSchema.focusAddressBarSeq` / `.notice`, `NoticeSchema`).
 Builds on `browser-chrome.feature.md` (one tab, its view, the controller).
 Phase 1 Task 2. Each scenario maps to one named test.
@@ -24,12 +24,23 @@ Phase 1 Task 2. Each scenario maps to one named test.
   a `tablist` holds only `tab`s), the new-tab button, the SEO sidebar toggle and the render-profile
   toggle; the loading line runs along the row's foot. The permission prompt, the render-profile editor
   bar, the find bar and the update notice stay bands under the row.
-  - **Width:** the tablist is as wide as its tabs and gives way first. Tabs shrink to
-    `TAB_MIN_WIDTH_PX`, then the tablist scrolls sideways (no scrollbar; the active tab, or the
-    focused one, is scrolled into view), while the address bar keeps at least
-    `ADDRESS_MIN_WIDTH_PX`. With room to spare the address bar takes it. No tab is squeezed under its
-    minimum: the tablist's ends clip the tabs scrolled past them. Scrolling a tab into view (the
-    active one, or keyboard focus) brings in the whole pill, its × included.
+  - **Width, in this order:** the tools never shrink (each stays an `--h-control` circle). With room to
+    spare the address bar takes it. As tabs are added or the window narrows:
+    1. the tabs shrink, down to `TAB_MIN_WIDTH_PX`, while the address bar keeps `ADDRESS_BASIS_PX`;
+    2. then the tablist scrolls sideways (no scrollbar), the address bar still at `ADDRESS_BASIS_PX`;
+    3. only once the tablist is down to one whole tab (`TAB_MIN_WIDTH_PX` and its focus-ring padding),
+       which happens only in a narrow window, does the address bar give way, down to
+       `ADDRESS_MIN_WIDTH_PX`.
+    No tab is squeezed under its minimum: the tablist's ends clip the tabs scrolled past them. Any
+    tab that takes focus (the active one, or one reached with the tablist's keys, Delete's neighbour
+    included) is scrolled into view whole, its × included.
+  - **Never scrolled itself:** the row clips what does not fit (`overflow: clip`), so focusing a
+    control cannot scroll the row and move Back off the window's edge.
+  - **Minimum window width:** the window's content is at least `CHROME_MIN_CONTENT_WIDTH_PX` wide
+    (`minWidth` with `useContentSize`, so it counts the page and not the frame): exactly the row's
+    padding, its tools, one whole tab with its ring room and `ADDRESS_MIN_WIDTH_PX`, so the row
+    always fits whole and always shows a tab. frost saves no window size, so nothing restores a
+    smaller one; a request for less is clamped to it.
   - **Focus ring:** the tablist keeps `--space-1` of room around its tabs, also as scroll padding, so a
     focused tab's `--focus-ring` (4px) is drawn whole inside the scrolling tablist, at either end too.
   - **Window controls and dragging** stay the OS's: the window keeps its native frame and title bar on
@@ -208,6 +219,11 @@ Phase 1 Task 2. Each scenario maps to one named test.
 ## Window (`apps/desktop/src/main/__tests__/boot.test.ts`)
 - **Scenario: menu-bar-auto-hides-off-macos** — `createMainWindow()` sets `autoHideMenuBar: true`
   on Linux/Windows and `false` on macOS; the webPreferences are unchanged.
+- **Scenario: window-has-a-minimum-content-width** — `createMainWindow()` sets `useContentSize: true`
+  and `minWidth: CHROME_MIN_CONTENT_WIDTH_PX`, which equals, from `tokens.css`, `2 × --space-4` (the
+  row's padding) + `6 × --h-control` (Back, Forward, Reload, New tab and the two toggles) +
+  `7 × --space-1` (the gaps) + `TAB_MIN_WIDTH_PX + 2 × --space-1` (one tab, ring room) +
+  `ADDRESS_MIN_WIDTH_PX`: 588.
 - **Scenario: window-keeps-native-controls** — on macOS, Linux and Windows `createMainWindow()` sets
   none of `frame`, `titleBarStyle`, `titleBarOverlay` and `trafficLightPosition` (the OS draws the
   title bar, its controls and its drag area); no renderer stylesheet sets `-webkit-app-region` or
@@ -215,10 +231,13 @@ Phase 1 Task 2. Each scenario maps to one named test.
 
 ## Chrome row styles (`apps/desktop/src/__tests__/chrome-grid-styles.test.ts`)
 - **Scenario: chrome-row-is-one-fixed-track** — the chrome grid's first track is `var(--h-chrome)`
-  and its first slot (`App.tsx`) is the chrome row; the row does not wrap; the tablist and the address
-  bar set the minimums `TAB_MIN_WIDTH_PX` (on `.tab`) and `ADDRESS_MIN_WIDTH_PX` (on `.address`); the
-  tablist scrolls sideways with `--space-1` of padding and of scroll padding; no rule of the chrome
-  names the retired `.tabstrip` or `.toolbar`.
+  and its first slot (`App.tsx`) is the chrome row; the row does not wrap and clips
+  (`overflow: clip`, never a scroll container); its navigation group, the tools and New tab are
+  `flex: none`; `.tab` keeps `TAB_MIN_WIDTH_PX`; the tablist holds at least one such tab and its
+  `--space-1` padding, and scrolls sideways with `--space-1` of padding and of scroll padding; the
+  address bar's basis is `ADDRESS_BASIS_PX` and its minimum stays `ADDRESS_BASIS_PX` until the room
+  left beside one tab is less, never under `ADDRESS_MIN_WIDTH_PX`; no rule of the chrome names the
+  retired `.tabstrip` or `.toolbar`.
 
 ## End to end (`apps/desktop/e2e/tabs.e2e.ts`, real Electron, loopback pages)
 - **Scenario: new-tab-button-opens-empty-tab** — "+" adds a tab at the end labelled `New Tab`,
@@ -260,8 +279,24 @@ Phase 1 Task 2. Each scenario maps to one named test.
   tablist's keys still work from the tab Tab lands on.
 - **Scenario: narrow-tabs-scroll-and-address-keeps-its-width** — in an 800px wide window with many
   tabs, every tab is at least `TAB_MIN_WIDTH_PX` wide and the tablist scrolls (its scroll width over
-  its client width) while the address bar is at least `ADDRESS_MIN_WIDTH_PX`; the row stays
+  its client width) while the address bar is at least `ADDRESS_BASIS_PX`; the row stays
   `CHROME_ROW_HEIGHT_PX` high; the active tab is in view.
+- **Scenario: tabs-give-way-before-the-address-bar** — in a 1280px wide window: with 6 tabs the tabs
+  are narrower than 224px and the address bar is at least `ADDRESS_BASIS_PX`; with 20 tabs every tab
+  is exactly `TAB_MIN_WIDTH_PX`, the tablist scrolls, and the address bar is still at least
+  `ADDRESS_BASIS_PX`; every tool (`CHROME_ROW` but the tablist and the address bar) stays
+  `--h-control` square (34×34) throughout.
+- **Scenario: narrowest-window-keeps-the-row-whole** — asked for a 400px wide content area, the window
+  gives `CHROME_MIN_CONTENT_WIDTH_PX`; with several tabs the row holds every `CHROME_ROW` control inside
+  its box, the tablist shows one whole tab (at least `TAB_MIN_WIDTH_PX`), the address bar is
+  `ADDRESS_MIN_WIDTH_PX` wide and every tool 34×34.
+- **Scenario: focus-never-scrolls-the-row** — with the row made narrower than its contents (a test-only
+  width on it), focusing the clipped render-profile toggle leaves the row's `scrollLeft` at 0 and Back
+  at the row's left padding.
+- **Scenario: arrow-focus-brings-the-whole-tab-in** — in a 1280px window with 20 tabs and the first
+  active, ArrowRight from tab to tab past the tablist's visible edge, then ArrowLeft back, and Delete
+  on a tab at the edge: after each move the focused tab's whole pill (× included) is inside the
+  tablist's box.
 - **Scenario: focused-tab-ring-shows-in-scrolled-tablist** — in that window, keyboard focus moved
   to the first and to the last tab (Home, End) scrolls it into view with its ring's 4px all round
   inside the tablist's box.

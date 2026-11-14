@@ -1,8 +1,8 @@
-// Spec: specs/tabs.spec.ts (MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, RESERVED_TAB_SHORTCUTS, CHROME_ROW, CHROME_ROW_HEIGHT_PX, TAB_MIN_WIDTH_PX, ADDRESS_MIN_WIDTH_PX) · Acceptance: specs/tabs.feature.md (End to end)
+// Spec: specs/tabs.spec.ts (MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, RESERVED_TAB_SHORTCUTS, CHROME_ROW, CHROME_ROW_HEIGHT_PX, TAB_MIN_WIDTH_PX, ADDRESS_BASIS_PX, ADDRESS_MIN_WIDTH_PX, CHROME_MIN_CONTENT_WIDTH_PX) · Acceptance: specs/tabs.feature.md (End to end)
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
-import { ADDRESS_MIN_WIDTH_PX, CHROME_ROW, CHROME_ROW_HEIGHT_PX, MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, TAB_MIN_WIDTH_PX } from '@app/specs/browser.spec';
+import { ADDRESS_BASIS_PX, ADDRESS_MIN_WIDTH_PX, CHROME_MIN_CONTENT_WIDTH_PX, CHROME_ROW, CHROME_ROW_HEIGHT_PX, MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, TAB_MIN_WIDTH_PX } from '@app/specs/browser.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -451,19 +451,61 @@ test('chrome-row-tab-order', async () => {
   await expect(address()).toBeFocused();
 });
 
-/** Opens enough tabs to overflow the tablist in an 800px wide window; restores the window after. */
-async function withNarrowWindowAndManyTabs(body: () => Promise<void>): Promise<void> {
+/** Runs `body` with the window's content `width` wide (`expected`: what the window gives); restores it after. */
+async function withContentWidth(width: number, body: () => Promise<void>, expected = width): Promise<void> {
   const original = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentSize());
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(800, 700));
+  await app.evaluate(({ BrowserWindow }, w) => BrowserWindow.getAllWindows()[0]!.setContentSize(w, 700), width);
   try {
-    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(800);
-    for (let i = 0; i < 11; i++) await menu('new-tab');
-    await expect(strip()).toHaveCount(12);
+    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(expected);
     await body();
   } finally {
     await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0]!.setContentSize(w!, h!), original);
   }
 }
+
+/** Opens tabs until the strip holds `count`. */
+async function openTabs(count: number): Promise<void> {
+  const have = await strip().count();
+  for (let i = have; i < count; i++) await menu('new-tab');
+  await expect(strip()).toHaveCount(count);
+}
+
+/** Opens enough tabs to overflow the tablist in an 800px wide window; restores the window after. */
+async function withNarrowWindowAndManyTabs(body: () => Promise<void>): Promise<void> {
+  await withContentWidth(800, async () => {
+    await openTabs(12);
+    await body();
+  });
+}
+
+/** The row's measurements: each tab's width, the address bar's, each tool's box, and whether anything left the row. */
+const rowFacts = () =>
+  row().evaluate((el, ids) => {
+    const box = el.getBoundingClientRect();
+    const list = el.querySelector('[role="tablist"]')!;
+    const tools = ids.filter((id) => id !== 'tab-strip' && id !== 'address').map((id) => {
+      const r = el.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect();
+      return { id, width: r.width, height: r.height };
+    });
+    const parts = [...el.children].filter((c) => !c.classList.contains('progress')).map((c) => c.getBoundingClientRect());
+    return {
+      tabWidths: [...list.querySelectorAll('.tab')].map((t) => t.getBoundingClientRect().width),
+      scrolls: list.scrollWidth > list.clientWidth,
+      listWidth: list.getBoundingClientRect().width,
+      address: el.querySelector('[data-testid="address"]')!.closest('.address')!.getBoundingClientRect().width,
+      tools,
+      inside: parts.every((r) => r.left >= box.left - 0.5 && r.right <= box.right + 0.5),
+      scrollLeft: el.scrollLeft,
+    };
+  }, [...CHROME_ROW]);
+
+/** The focused tab's whole pill (its × too) is inside the tablist's box. */
+const focusedPillInside = () =>
+  tablist().evaluate((list) => {
+    const pill = document.activeElement?.closest('.tab')?.getBoundingClientRect();
+    const box = list.getBoundingClientRect();
+    return pill !== undefined && pill.left >= box.left - 0.5 && pill.right <= box.right + 0.5;
+  });
 
 test('narrow-tabs-scroll-and-address-keeps-its-width', async () => {
   await withNarrowWindowAndManyTabs(async () => {
@@ -489,7 +531,93 @@ test('narrow-tabs-scroll-and-address-keeps-its-width', async () => {
     expect(facts.height).toBe(CHROME_ROW_HEIGHT_PX);
     for (const width of facts.tabWidths) expect(width).toBeGreaterThanOrEqual(TAB_MIN_WIDTH_PX - 0.5);
     expect(facts.scrolls).toBe(true);
-    expect(facts.address).toBeGreaterThanOrEqual(ADDRESS_MIN_WIDTH_PX - 0.5);
+    expect(facts.address).toBeGreaterThanOrEqual(ADDRESS_BASIS_PX - 0.5);
+  });
+});
+
+test('tabs-give-way-before-the-address-bar', async () => {
+  await withContentWidth(1280, async () => {
+    await openTabs(6);
+    let facts = await rowFacts();
+    expect(Math.max(...facts.tabWidths)).toBeLessThan(224);
+    expect(facts.address).toBeGreaterThanOrEqual(ADDRESS_BASIS_PX - 0.5);
+    for (const tool of facts.tools) expect([tool.width, tool.height], tool.id).toEqual([34, 34]);
+    await openTabs(20);
+    facts = await rowFacts();
+    for (const width of facts.tabWidths) expect(width).toBeCloseTo(TAB_MIN_WIDTH_PX, 1);
+    expect(facts.scrolls).toBe(true);
+    expect(facts.address).toBeGreaterThanOrEqual(ADDRESS_BASIS_PX - 0.5);
+    for (const tool of facts.tools) expect([tool.width, tool.height], tool.id).toEqual([34, 34]);
+    expect(facts.inside).toBe(true);
+  });
+});
+
+test('narrowest-window-keeps-the-row-whole', async () => {
+  await withContentWidth(
+    400,
+    async () => {
+      await openTabs(4);
+      const facts = await rowFacts();
+      expect(facts.inside).toBe(true);
+      expect(facts.scrolls).toBe(true);
+      // One whole tab and its ring room.
+      expect(facts.listWidth).toBeGreaterThanOrEqual(TAB_MIN_WIDTH_PX + 8 - 0.5);
+      await expect.poll(async () => (await activeTab().locator('xpath=..').boundingBox())!.width).toBeGreaterThanOrEqual(TAB_MIN_WIDTH_PX - 0.5);
+      await activeTab().focus();
+      await expect.poll(focusedPillInside).toBe(true);
+      expect(facts.address).toBeCloseTo(ADDRESS_MIN_WIDTH_PX, 0);
+      for (const tool of facts.tools) expect([tool.width, tool.height], tool.id).toEqual([34, 34]);
+    },
+    CHROME_MIN_CONTENT_WIDTH_PX,
+  );
+});
+
+test('focus-never-scrolls-the-row', async () => {
+  await openTabs(3);
+  // A test-only width, narrower than the row's contents (the window's minimum keeps a real one whole).
+  await row().evaluate((el) => el.style.setProperty('width', '300px'));
+  try {
+    await page.getByTestId('render-profile-toggle').focus();
+    await expect(page.getByTestId('render-profile-toggle')).toBeFocused();
+    const facts = await row().evaluate((el) => ({
+      scrollLeft: el.scrollLeft,
+      back: el.querySelector('[data-testid="back"]')!.getBoundingClientRect().left - el.getBoundingClientRect().left,
+    }));
+    expect(facts).toEqual({ scrollLeft: 0, back: 12 });
+  } finally {
+    await row().evaluate((el) => el.style.removeProperty('width'));
+  }
+});
+
+test('arrow-focus-brings-the-whole-tab-in', async () => {
+  await withContentWidth(1280, async () => {
+    await openTabs(20);
+    await strip().nth(0).click();
+    await expect(strip().nth(0)).toHaveAttribute('aria-selected', 'true');
+    await activeTab().focus();
+    for (let i = 1; i < 20; i++) {
+      await page.keyboard.press('ArrowRight');
+      await expect(strip().nth(i)).toBeFocused();
+      await expect.poll(focusedPillInside, `ArrowRight to tab ${i}`).toBe(true);
+    }
+    for (let i = 18; i >= 0; i--) {
+      await page.keyboard.press('ArrowLeft');
+      await expect(strip().nth(i)).toBeFocused();
+      await expect.poll(focusedPillInside, `ArrowLeft to tab ${i}`).toBe(true);
+    }
+    // Delete on the last tab in view: focus goes to its right neighbour, out of view until now.
+    const lastInView = await tablist().evaluate((list) => {
+      const box = list.getBoundingClientRect();
+      const tabs = [...list.querySelectorAll('.tab')].map((t) => t.getBoundingClientRect());
+      return tabs.findLastIndex((r) => r.right <= box.right + 0.5);
+    });
+    expect(lastInView).toBeLessThan(18);
+    for (let i = 0; i < lastInView; i++) await page.keyboard.press('ArrowRight');
+    await expect(strip().nth(lastInView)).toBeFocused();
+    await page.keyboard.press('Delete');
+    await expect(strip()).toHaveCount(19);
+    await expect(strip().nth(lastInView)).toBeFocused();
+    await expect.poll(focusedPillInside, 'Delete\'s neighbour').toBe(true);
   });
 });
 

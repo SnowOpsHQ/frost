@@ -304,14 +304,16 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (42px: `--h-control` with `--space-1` above and below) and the toolbar (50px: `--h-field` with
   `--space-2` above and below) became the canvas's one `--h-chrome` row, 56px, the chrome grid's first
   track, so the page area and the tab's view move up 36px. The row (`.chrome-row`, which takes the
-  place of `.tabstrip` and `.toolbar`; the tablist keeps `.tabs`) is on `--bg-window`, `--space-3` in
+  place of `.tabstrip` and `.toolbar`; the tablist keeps `.tabs`) is on `--bg-window`, `--space-4` in
   from the window's edges, its parts `--space-1` apart as the canvas's are; the canvas's order with the
   address bar as the tablist's next sibling. The canvas lays the address input over the active tab's
   slot only while editing (the active tab is the address "in place"); frost keeps its address bar
   always shown, an `--h-field` pill beside the tablist, so the "+" follows it, as the canvas's DOM order
   has it. The tablist scrolls with `--space-1` of padding and scroll padding, the room a focused tab's
   4px ring needs at either end (the reason the tab row was 42px). The loading line runs along the row's
-  foot. No colour, type or state of a tab, tool or the address changed, so `TAB_STRIP`,
+  foot. The tools are `flex: none`, the row clips (`overflow: clip`, never scrolled by focus), and the
+  widths give way in `tabs.feature.md`'s order: the tabs to 84px, then the tablist scrolls, and only in a
+  narrow window the address bar from 360px to 240px; the window's content is at least 588px wide. No colour, type or state of a tab, tool or the address changed, so `TAB_STRIP`,
   `FOCUS_RING_RULES`, `FORCED_COLOURS_BUSY`, `FORCED_COLOURS_PRESSED` and `CONTRAST_PAIRS` keep their
   values; the chrome's `SIGNAL_SURFACES` entry lists `.chrome-row` where it listed `.tabstrip` and
   `.toolbar`. No token was read by the toolbar alone, so nothing more is retired: `--tabstrip-height`

@@ -97,3 +97,18 @@ export const TAB_MIN_WIDTH_PX = 84;
  * The tablist gives way first: it shrinks, then scrolls.
  */
 export const ADDRESS_MIN_WIDTH_PX = 240;
+
+/**
+ * The address bar's preferred width (CSS px): it keeps this while the tabs shrink and then scroll, and
+ * gives way (down to `ADDRESS_MIN_WIDTH_PX`) only once the tablist is down to one whole tab.
+ */
+export const ADDRESS_BASIS_PX = 360;
+
+/**
+ * The window's minimum content width (CSS px; `minWidth` with `useContentSize`): what the chrome row
+ * needs to fit whole, from the tokens: its padding (2 × `--space-4` = 24), six `--h-control` tools
+ * (Back, Forward, Reload, New tab, the SEO and render-profile toggles: 204), seven `--space-1` gaps
+ * (28), one tab with its ring room (`TAB_MIN_WIDTH_PX` + 2 × `--space-1` = 92) and
+ * `ADDRESS_MIN_WIDTH_PX` (240).
+ */
+export const CHROME_MIN_CONTENT_WIDTH_PX = 588;

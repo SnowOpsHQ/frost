@@ -5,7 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
-import { ADDRESS_MIN_WIDTH_PX, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
+import { ADDRESS_BASIS_PX, ADDRESS_MIN_WIDTH_PX, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
 
 const RENDERER = fileURLToPath(new URL('../renderer/', import.meta.url));
 const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8');
@@ -58,13 +58,26 @@ test('chrome-row-is-one-fixed-track', () => {
   const row = rule('styles.css', '.chrome-row');
   expect(row).toMatch(/display:\s*flex;/);
   expect(row).not.toMatch(/flex-wrap:\s*wrap/);
-  expect(row).toMatch(/overflow:\s*hidden;/);
-  // Tabs shrink to their minimum, then the tablist scrolls; the address bar keeps its own minimum.
-  expect(rule('styles.css', '.tab')).toMatch(new RegExp(`min-width:\\s*${TAB_MIN_WIDTH_PX}px;`));
-  expect(rule('styles.css', '.address')).toMatch(new RegExp(`min-width:\\s*${ADDRESS_MIN_WIDTH_PX}px;`));
+  // It clips: never a scroll container that focus could scroll.
+  expect(row).toMatch(/overflow:\s*clip;/);
+  expect(row).not.toMatch(/overflow(-x)?:\s*(hidden|auto|scroll);/);
+  // The tools never shrink.
+  for (const fixed of ['.nav-buttons', '.tool', '.new-tab']) expect(rule('styles.css', fixed), fixed).toMatch(/flex:\s*none;/);
+  // Tabs shrink to their minimum, then the tablist scrolls; the address bar keeps its basis until only
+  // one tab is left beside it, and never goes under its minimum.
+  expect(row).toMatch(new RegExp(`--tab-min:\\s*${TAB_MIN_WIDTH_PX}px;`));
+  expect(row).toMatch(new RegExp(`--address-basis:\\s*${ADDRESS_BASIS_PX}px;`));
+  expect(row).toMatch(new RegExp(`--address-min:\\s*${ADDRESS_MIN_WIDTH_PX}px;`));
+  expect(rule('styles.css', '.tab')).toMatch(/min-width:\s*var\(--tab-min\);/);
+  const address = rule('styles.css', '.address');
+  expect(address).toMatch(/flex:\s*1 1 var\(--address-basis\);/);
+  expect(address).toMatch(/min-width:\s*clamp\(var\(--address-min\),\s*var\(--row-free\) - var\(--one-tab\),\s*var\(--address-basis\)\);/);
+  // The room for the tablist and the address bar: the window less the row's padding, its six tools and seven gaps.
+  expect(row).toMatch(/--row-free:\s*calc\(100vw - 2 \* var\(--space-4\) - 6 \* var\(--h-control\) - 7 \* var\(--space-1\)\);/);
+  expect(row).toMatch(/--one-tab:\s*calc\(var\(--tab-min\) \+ 2 \* var\(--space-1\)\);/);
   const tablist = rule('styles.css', '.tabs');
   expect(tablist).toMatch(/overflow-x:\s*auto;/);
-  expect(tablist).toMatch(/min-width:\s*0;/);
+  expect(tablist).toMatch(/min-width:\s*var\(--one-tab\);/);
   // Room for a focused tab's 4px ring, also when focus scrolls a tab into view at either end.
   expect(tablist).toMatch(/padding:\s*var\(--space-1\);/);
   expect(tablist).toMatch(/scroll-padding-inline:\s*var\(--space-1\);/);
