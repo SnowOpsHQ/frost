@@ -1,4 +1,4 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, DISABLED_CONTROLS)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -6,14 +6,18 @@ import { expect, test } from 'vitest';
 import {
   BUNDLED_FONTS,
   CONTRAST_PAIRS,
+  DISABLED_CONTROLS,
+  DISABLED_INK,
   FOCUS_RING_RULES,
   FORCED_COLOURS_BUSY,
   FORCED_COLOURS_KEPT,
   FORCED_COLOURS_PRESSED,
   FORCED_COLOURS_SYSTEM_COLOURS,
+  HOVER_OVERLAYS_SKIP_PRESSED,
   HEX_COLOUR_RATCHET,
   KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
+  PRESSED_EDGES,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
   SIGNAL_SURFACES,
   SIGNAL_TOKENS,
@@ -25,7 +29,9 @@ import {
   type ContrastPair,
   type FocusRingRule,
   type ForcedColoursBusy,
+  type HoverSkipsPressed,
   type LegacyTokenMigration,
+  type PressedEdge,
   type SignalSurface,
   type TextColourRule,
   type SignalToken,
@@ -281,18 +287,27 @@ test('signal-contrast-meets-aa', () => {
   // A tint (color-mix with transparent) composites like the token at that opacity.
   expect(composite([0, 0, 0, 0.14], parseColour('#ffffff'))[0]).toBeCloseTo(219.3, 5);
 
+  // The layers: a hovered row's translucent --bg-hover (`over`) on the opaque card (`under`); swapped, they fail.
+  const hovered = { fg: '--accent-hover', bg: '--accent-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: 'fixture' } as const;
+  for (const theme of THEME_NAMES) {
+    expect(layerProblems(hovered, theme), `the hovered-row stack (${theme})`).toEqual([]);
+    expect(layerProblems({ ...hovered, over: '--bg-surface', under: '--bg-hover' }, theme), `over and under swapped (${theme})`).not.toEqual([]);
+    expect(layerProblems({ ...hovered, over: '--bg-surface', under: '--bg-sheet' }, theme), `an opaque over hides its under (${theme})`).not.toEqual([]);
+  }
+
   const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
   expect(pairs.length).toBeGreaterThan(0);
   for (const theme of THEME_NAMES) {
     const colour = (name: string) => colourIn(theme, name);
     for (const pair of pairs) {
-      const label = `${pair.fg} on ${pair.bg}${pair.over ? ` over ${pair.over}` : ''} (${theme})`;
+      const label = `${pair.fg} on ${pair.bg}${pair.over ? ` over ${pair.over}` : ''}${pair.under ? ` over ${pair.under}` : ''} (${theme})`;
+      expect(layerProblems(pair, theme), label).toEqual([]);
       let bg = colour(pair.bg);
       if (pair.alpha !== undefined) bg = [bg[0], bg[1], bg[2], bg[3] * pair.alpha];
       if (bg[3] < 1) {
-        expect(pair.over, `${label}: a translucent background needs \`over\``).toBeDefined();
-        const surface = colour(pair.over ?? pair.bg);
-        expect(surface[3], `${label}: \`over\` must be opaque`).toBe(1);
+        let surface = colour(pair.over ?? pair.bg);
+        // A translucent `over` (a hovered row's --bg-hover) lies on its opaque `under` first.
+        if (pair.under !== undefined) surface = composite(surface, colour(pair.under));
         bg = composite(bg, surface);
       }
       const fg = composite(colour(pair.fg), bg);
@@ -300,6 +315,25 @@ test('signal-contrast-meets-aa', () => {
     }
   }
 });
+
+/** What is wrong with `pair`'s layers in `theme`, before any compositing. */
+function layerProblems(pair: ContrastPair, theme: (typeof THEME_NAMES)[number]): string[] {
+  const colour = (name: string) => colourIn(theme, name);
+  const problems: string[] = [];
+  let bg = colour(pair.bg);
+  if (pair.alpha !== undefined) bg = [bg[0], bg[1], bg[2], bg[3] * pair.alpha];
+  if (bg[3] < 1 && pair.over === undefined) problems.push('a translucent background needs `over`');
+  if (pair.under !== undefined) {
+    // Checked before compositing (which always returns an opaque colour): `under` is opaque and `over`
+    // translucent, or an opaque `over` would hide `under` and the stack would pass at its resting ratio.
+    if (pair.over === undefined) problems.push('`under` needs `over`');
+    if (colour(pair.under)[3] !== 1) problems.push('`under` must be opaque');
+    if (pair.over !== undefined && colour(pair.over)[3] === 1) problems.push('`over` must be translucent when it has an `under`');
+  } else if (bg[3] < 1 && pair.over !== undefined && colour(pair.over)[3] !== 1) {
+    problems.push('`over` must be opaque (or translucent on an opaque `under`)');
+  }
+  return problems;
+}
 
 test('known-contrast-exceptions-are-current', () => {
   const pairs: readonly { fg: string; bg: string; min: number }[] = CONTRAST_PAIRS;
@@ -417,8 +451,14 @@ function resolveOnElement(css: string, element: readonly string[], property: str
   const own = new Map<string, string>();
   for (const m of matched) {
     own.set(m.property, m.value);
-    // A `border` shorthand sets `border-color` too (its colour is its last word here: `1px solid transparent`).
-    if (m.property === 'border') own.set('border-color', m.value.split(' ').at(-1) ?? '');
+    // A `border` shorthand sets `border-color` too (its colour is its last word here: `1px solid transparent`),
+    // and its width and style (the words that are a length or a style keyword; unset ones reset to 0 / none).
+    if (m.property === 'border') {
+      const words = m.value.split(' ');
+      own.set('border-color', words.at(-1) ?? '');
+      own.set('border-width', words.find((w) => /^-?\d*\.?\d+(?:px|em|rem)?$/.test(w)) ?? '0');
+      own.set('border-style', words.find((w) => /^(?:none|hidden|solid|dashed|dotted|double|groove|ridge|inset|outset)$/.test(w)) ?? 'none');
+    }
   }
   let value = own.get(property);
   if (value === undefined) throw new Error(`${element.join(' + ')}: no ${property} (${theme})`);
@@ -558,6 +598,124 @@ test('only-kept-marks-opt-out-of-forced-colours', () => {
   for (const [name, [css, stylesheet]] of Object.entries(caught)) expect(check(css, stylesheet), name).not.toEqual([]);
   // Every renderer stylesheet, whole.
   for (const name of STYLESHEETS) expect(check(read(name), name), name).toEqual([]);
+});
+
+/** A selector's compounds: split at the combinators (space, >, +, ~) outside parentheses and brackets. */
+function compounds(selector: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of selector) {
+    if (ch === '(' || ch === '[') depth += 1;
+    else if (ch === ')' || ch === ']') depth -= 1;
+    if (depth === 0 && /[\s>+~]/.test(ch)) {
+      if (current !== '') parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  return current === '' ? parts : [...parts, current];
+}
+
+/** Whether `compound` names the class `name` (with its dot) outside its parentheses, on a class boundary. */
+function classIn(compound: string, name: string): boolean {
+  let top = '';
+  let depth = 0;
+  for (const ch of compound) {
+    if (ch === '(') depth += 1;
+    if (depth === 0) top += ch;
+    if (ch === ')') depth -= 1;
+  }
+  return new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(top);
+}
+
+test('hover-overlays-skip-pressed-controls', () => {
+  // A hover rule of `control` that lays a fill must exclude [aria-pressed='true'] in its own :not(…).
+  const problemsIn = (css: string, control: string) => {
+    const problems: string[] = [];
+    let rules = 0;
+    for (const d of parse(css).declarations) {
+      if (d.property !== 'box-shadow' && !d.property.startsWith('background')) continue;
+      for (const selector of splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())) {
+        // Every compound (between combinators) holding the class, on a class boundary, and :hover.
+        for (const compound of compounds(selector)) {
+          if (!classIn(compound, control) || !/:hover(?![\w-])/.test(compound)) continue;
+          rules += 1;
+          const excluded = /:not\([^)]*\[aria-pressed='true'\]/.test(compound);
+          if (!excluded) problems.push(`${selector} { ${d.property} } also lays its hover over a pressed ${control}`);
+        }
+      }
+    }
+    return { problems, rules };
+  };
+  expect(problemsIn(".x:hover:where(:not(:disabled, [aria-pressed='true'])) { box-shadow: var(--a); }", '.x')).toEqual({ problems: [], rules: 1 });
+  expect(problemsIn('.x:hover:where(:not(:disabled)) { box-shadow: var(--a); }', '.x').problems).toHaveLength(1);
+  expect(problemsIn('.x:hover { background: var(--a); }', '.x').problems).toHaveLength(1);
+  expect(problemsIn('.x:hover { color: var(--a); }', '.x').rules).toBe(0);
+  // Any compound holding the class and :hover, in any order, after any ancestor (council round 2).
+  expect(problemsIn('.x.y:hover { box-shadow: var(--a); }', '.x').problems, 'a compound with another class').toHaveLength(1);
+  expect(problemsIn('.x:not(:disabled):hover { box-shadow: var(--a); }', '.x').problems, ':hover after a :not()').toHaveLength(1);
+  expect(problemsIn('.tools .x:hover { background: var(--a); }', '.x').problems, 'after an ancestor').toHaveLength(1);
+  expect(problemsIn(".tools .x:not(:disabled, [aria-pressed='true']):hover { background: var(--a); }", '.x')).toEqual({ problems: [], rules: 1 });
+  expect(problemsIn('.x-danger:hover { box-shadow: var(--a); }', '.x').rules, 'another class with the same stem').toBe(0);
+  expect(problemsIn(".x:hover .y:not([aria-pressed='true']) { box-shadow: var(--a); }", '.x').problems, 'the exclusion on another compound').toHaveLength(1);
+
+  const entries: readonly HoverSkipsPressed[] = HOVER_OVERLAYS_SKIP_PRESSED;
+  for (const entry of entries) {
+    const { problems, rules } = problemsIn(read(entry.stylesheet), entry.control);
+    expect(rules, `${entry.stylesheet} has a hover rule for ${entry.control}`).toBeGreaterThan(0);
+    expect(problems, entry.why).toEqual([]);
+  }
+});
+
+/** What keeps `element`'s pressed edge in `css` from being `var(<edge>)` drawn on a visible border. */
+function edgeProblems(css: string, element: readonly string[], edge: string): string[] {
+  const problems: string[] = [];
+  for (const theme of THEME_NAMES) {
+    const colour = resolveOnElement(css, element, 'border-color', theme);
+    if (colour !== `var(${edge})`) problems.push(`border-color ${colour} (${theme})`);
+    // ... on a border that draws: a non-zero width and a visible style (the shorthand counts).
+    const width = resolveOnElement(css, element, 'border-width', theme);
+    if (!(Number.parseFloat(width) > 0)) problems.push(`border-width ${width} (${theme})`);
+    const style = resolveOnElement(css, element, 'border-style', theme);
+    if (style === 'none' || style === 'hidden') problems.push(`border-style ${style} (${theme})`);
+  }
+  return problems;
+}
+
+test('disabled-controls-dim-their-text', () => {
+  for (const entry of DISABLED_CONTROLS) {
+    const css = read(entry.stylesheet);
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
+    for (const theme of THEME_NAMES) expect(resolveOnElement(css, entry.element, 'color', theme), `${entry.why} (${theme})`).toBe(DISABLED_INK);
+  }
+});
+
+test('pressed-controls-draw-an-edge', () => {
+  const chip = ['.c', ".c[aria-pressed='true']"];
+  expect(edgeProblems(".c { border: 1px solid transparent; } .c[aria-pressed='true'] { border-color: var(--accent); }", chip, '--accent')).toEqual([]);
+  expect(edgeProblems(".c { border: 1px solid transparent; } .c[aria-pressed='true'] { border-color: var(--other); }", chip, '--accent')).not.toEqual([]);
+  // ... and a border that draws (council round 2): width and style, shorthand included.
+  expect(edgeProblems(".c { border: 0 solid transparent; } .c[aria-pressed='true'] { border-color: var(--accent); }", chip, '--accent'), 'a zero-width border').not.toEqual([]);
+  expect(edgeProblems(".c { border: 1px solid transparent; } .c[aria-pressed='true'] { border-style: none; border-color: var(--accent); }", chip, '--accent'), 'border-style: none').not.toEqual([]);
+  expect(edgeProblems(".c { border: 1px hidden transparent; } .c[aria-pressed='true'] { border-color: var(--accent); }", chip, '--accent'), 'a hidden border').not.toEqual([]);
+
+  const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
+  const entries: readonly PressedEdge[] = PRESSED_EDGES;
+  for (const entry of entries) {
+    const css = read(entry.stylesheet);
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
+    expect(edgeProblems(css, entry.element, entry.edge), entry.why).toEqual([]);
+    for (const fill of entry.fills) {
+      expect(
+        pairs.some((p) => p.fg === entry.edge && p.bg === fill.bg && p.over === fill.over && p.min >= 3),
+        `${entry.edge} on ${fill.bg}${fill.over ? ` over ${fill.over}` : ''} is a CONTRAST_PAIRS pair at 3:1 or more`,
+      ).toBe(true);
+    }
+  }
 });
 
 test('no-other-stylesheet-declares-root-tokens', () => {

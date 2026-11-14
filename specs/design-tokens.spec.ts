@@ -430,6 +430,13 @@ export const FORCED_COLOURS_BUSY = [
   { stylesheet: 'styles.css', element: ['.prompt-button', '.prompt-button:disabled'], why: 'the permission prompt\'s Allow and Block before they arm, and once answered' },
   // Overview: a severity with no finding is a dimmed pill (--text-faint, where it faded); forced colours mark it GrayText, text and edge.
   { stylesheet: 'styles.css', element: ['.seo-count', ".seo-count[data-count='0']"], why: 'Overview\'s count pill for a severity with no finding ("0 errors")' },
+  // The panels' shared controls (Links, Images, Social and Schema's PR): disabled, they are --text-faint
+  // on --bg-subtle with no shadow (the token sheet's disabled control), where they faded.
+  { stylesheet: 'styles.css', element: ['.seo-toggle', '.seo-toggle:disabled'], why: 'a panel toggle, disabled (Copy as CSV with no row, Broken only with nothing broken)' },
+  { stylesheet: 'styles.css', element: ['.seo-action', '.seo-action:disabled'], why: 'a row action, disabled (Open in new tab for a mailto: link, Copy URL with no URL)' },
+  { stylesheet: 'styles.css', element: ['.seo-segment', '.seo-segment:disabled'], why: 'a segment, disabled (Schema\'s Tree view of a block that did not parse)' },
+  { stylesheet: 'styles.css', element: ['.seo-chip-button', '.seo-chip-button:disabled'], why: 'a filter chip, disabled' },
+  { stylesheet: 'styles.css', element: ['.seo-icon-action', '.seo-icon-action:disabled'], why: 'Schema\'s open-URL icon button, disabled (a value that is not an http(s) URL)' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -442,6 +449,11 @@ export const FORCED_COLOURS_BUSY = [
 export const FORCED_COLOURS_PRESSED = [
   { stylesheet: 'styles.css', element: ['.tool', ".sidebar-toggle[aria-pressed='true']"], why: 'the SEO sidebar toggle, pressed (the sidebar open)' },
   { stylesheet: 'styles.css', element: ['.tool', ".render-toggle[aria-pressed='true']"], why: 'the render-profile toggle, pressed (its editor bar open)' },
+  // The panels' shared controls (Links, Images, Social and Schema's PR): pressed is a fill (--accent-soft,
+  // or the chosen segment's raised --bg-surface), which forced colours replace.
+  { stylesheet: 'styles.css', element: ['.seo-toggle', ".seo-toggle[aria-pressed='true']"], why: 'a panel toggle, pressed (Highlight on page, Broken only)' },
+  { stylesheet: 'styles.css', element: ['.seo-segment', ".seo-segment[aria-pressed='true']"], why: 'the chosen segment (Links\' type filter, Schema\'s Tree or Raw)' },
+  { stylesheet: 'styles.css', element: ['.seo-chip-button', ".seo-chip-button[aria-pressed='true']"], why: 'a filter chip, pressed (Images\' filters)' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -477,6 +489,10 @@ export const FORCED_COLOURS_KEPT = [
     element: ['.seo-category-dot', ".seo-category[data-status='info'] .seo-category-dot"],
     why: 'Overview\'s checks by category: its worst finding a notice (a hollow diamond)',
   },
+  // Schema's summary mark, beside its verdict, shaped as the rail's dots.
+  { stylesheet: 'styles.css', element: ['.seo-status-dot'], why: 'Schema\'s status mark: valid (a disc)' },
+  { stylesheet: 'styles.css', element: ['.seo-status-dot', ".seo-status-dot[data-status='warn']"], why: 'Schema\'s status mark: warnings (a ring)' },
+  { stylesheet: 'styles.css', element: ['.seo-status-dot', ".seo-status-dot[data-status='error']"], why: 'Schema\'s status mark: errors (a square)' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 export const SIGNAL_SURFACES = [
@@ -664,6 +680,85 @@ export const SIGNAL_SURFACES = [
       '.seo-stat-*',
     ],
   },
+  // The controls the panels share, defined beside Links, Images and Social (the first panels that draw
+  // them; specs/seo-panels.feature.md): the tools row and its pill toggles (highlight, Copy as CSV),
+  // the action toast, the filters (search field, segmented control, select, filter chips), the table of
+  // rows (a link, an image), the small rel and loading flags, a row's actions and the all-clear line.
+  // They also draw in Indexability, Page Speed, Compliance, Content, JavaScript, SERP, Visibility, Search
+  // Console and Changes, whose own rules wait for their PRs. Not `.seo-flag-chip` (the link status chip
+  // and its counts: a tone chip defined with Indexability's pills and signals, its PR's).
+  {
+    name: 'SEO panels: shared controls',
+    stylesheet: 'styles.css',
+    selectorPrefix: '.seo',
+    classes: [
+      '.seo-panel-tools',
+      '.seo-toggle',
+      '.seo-flash',
+      '.seo-filters',
+      '.seo-search-*',
+      '.seo-segmented',
+      '.seo-segment-*',
+      '.seo-select',
+      '.seo-chips',
+      '.seo-chip-button',
+      '.seo-table-*',
+      '.seo-flag',
+      '.seo-row-actions',
+      '.seo-action',
+      '.seo-all-clear-line',
+    ],
+  },
+  // Links (specs/seo-panels.feature.md, Links; seo-checks.feature.md, the link checks): the counts by rel,
+  // a link's kind, and the link status section's notice, summary and counts (the notice and summary are
+  // the sitemap checks' too, in Indexability). Its issue list, stat tiles and rows are the shared parts'.
+  {
+    name: 'SEO panel: Links',
+    stylesheet: 'styles.css',
+    selectorPrefix: '.seo',
+    classes: ['.seo-links', '.seo-stats-3', '.seo-rel-*', '.seo-kind', '.seo-checks-notice', '.seo-checks-summary', '.seo-checks-counts', '.seo-checks-count', '.seo-link-status'],
+  },
+  // Images (seo-panels.feature.md, Images): its two-column stat tiles, an image's alt badge and facts.
+  {
+    name: 'SEO panel: Images',
+    stylesheet: 'styles.css',
+    selectorPrefix: '.seo',
+    classes: ['.seo-images', '.seo-stats-2', '.seo-alt', '.seo-image-*'],
+  },
+  // Social (seo-panels.feature.md, Social): the share cards drawn from the tags, their placeholder art
+  // and image facts. Its label and value rows are On-Page's.
+  {
+    name: 'SEO panel: Social',
+    stylesheet: 'styles.css',
+    selectorPrefix: '.seo',
+    classes: ['.seo-social', '.seo-social-field', '.seo-preview-note', '.seo-card-*', '.seo-placeholder-*'],
+  },
+  // Schema (specs/seo-schema.feature.md): the summary (its status mark, verdict, top-level types and
+  // counts by severity), each block's status, view switch and tree (entities, properties, values,
+  // references, a node's issues), the raw view with its error mark and invisible-character markers,
+  // and "Show more". `.seo-raw` is also Indexability's robots.txt.
+  {
+    name: 'SEO panel: Schema',
+    stylesheet: 'styles.css',
+    selectorPrefix: '.seo',
+    classes: [
+      '.seo-schema-*',
+      '.seo-status-dot',
+      '.seo-type-*',
+      '.seo-block-*',
+      '.seo-view-switch',
+      '.seo-node-issues',
+      '.seo-node-issue-*',
+      '.seo-entity-*',
+      '.seo-props',
+      '.seo-prop-*',
+      '.seo-value-*',
+      '.seo-icon-action',
+      '.seo-ref-*',
+      '.seo-raw-*',
+      '.seo-show-more',
+    ],
+  },
 ] as const satisfies readonly SignalSurface[];
 
 /**
@@ -672,7 +767,7 @@ export const SIGNAL_SURFACES = [
  * raise it. Counted when every `:root` token moved into `tokens.css`. It counts hex only: a colour
  * written as `rgb()`, `hsl()` or a keyword is for review to catch.
  */
-export const HEX_COLOUR_RATCHET = 50;
+export const HEX_COLOUR_RATCHET = 33;
 
 /**
  * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
@@ -680,13 +775,16 @@ export const HEX_COLOUR_RATCHET = 50;
  * translucent `bg` (`--accent-soft`, a dark `-soft` fill) sits on, so the pair is composited first; a
  * translucent `fg` is composited over the (composited) `bg`. `alpha` makes `bg` a tint: the token at
  * that opacity, as `color-mix(in srgb, <bg> <alpha × 100>%, transparent)` draws it (then `over` is
- * needed). `why` cites the sheet.
+ * needed). `under` is the opaque surface under a translucent `over` (both checked before compositing:
+ * `under` opaque, `over` translucent, or the two layers swapped would pass unseen): a tinted badge in a hovered row
+ * is `bg` over `--bg-hover` (`over`) over the card (`under`), composited in that order. `why` cites the sheet.
  */
 export interface ContrastPair {
   readonly fg: TokenName;
   readonly bg: TokenName;
   readonly min: 4.5 | 3;
   readonly over?: TokenName;
+  readonly under?: TokenName;
   readonly alpha?: number;
   readonly why: string;
 }
@@ -842,6 +940,36 @@ export const CONTRAST_PAIRS = [
   { fg: '--danger', bg: '--bg-hover', over: '--bg-surface', min: 3, why: 'an issue row, hovered: an error\'s icon (--danger) on --bg-hover over the card (graphics, 3:1)' },
   { fg: '--warn', bg: '--bg-hover', over: '--bg-surface', min: 3, why: `${WARN}: an issue row, hovered: a warning's icon on --bg-hover over the card` },
   { fg: '--accent', bg: '--bg-hover', over: '--bg-surface', min: 3, why: 'an issue row, hovered: a notice\'s icon (--accent) on --bg-hover over the card (graphics, 3:1)' },
+  // The SEO panels' Links, Images, Social and Schema and their shared controls (their surface PR). Already
+  // covered above: a toggle, a row action and a search field (--text on --bg-surface, hovered over
+  // --bg-hover; --text-muted icons), a pressed toggle or chip (--accent on --accent-soft over a card), a
+  // segmented control and a chip (--text-muted and --text on --bg-subtle, the chosen segment --text on
+  // --bg-surface, its count --text-faint), a disabled control (--text-faint on --bg-subtle), the toast and
+  // a card image's label (--on-inverse on --inverse), a row hovered or open (--text and --text-muted on
+  // --bg-hover over a card), the badges (--text-muted on --bg-subtle, -ink on -soft and --accent on
+  // --accent-soft over a card), the all-clear line (--ok-ink), the link status notice (--text-muted on
+  // --bg-subtle), the share cards (--text, --text-muted, --text-faint on a card), Schema's status mark
+  // (--ok, --warn, --danger on a card), a literal value and a URL (--accent on a card), the raw view
+  // (--text on --bg-subtle), a node's warning and notice (--text and --text-muted on --warn-soft and
+  // --accent-soft over a card, the notice's icon --accent on --accent-soft) and the error position
+  // (--danger-ink on --danger-soft over a card). New with them:
+  { fg: '--text', bg: '--danger-soft', over: '--bg-surface', min: 4.5, why: 'Schema: a node\'s error (its title) and the raw view\'s error line, on --danger-soft (a 9% --danger tint) inside a card (4.5:1)' },
+  { fg: '--text-muted', bg: '--danger-soft', over: '--bg-surface', min: 4.5, why: 'Schema: a node\'s error, its detail (12px, --text-muted) on --danger-soft inside a card (4.5:1)' },
+  { fg: '--danger', bg: '--danger-soft', over: '--bg-surface', min: 3, why: 'Schema: a node\'s error, its icon (--danger) on --danger-soft inside a card (graphics, 3:1)' },
+  { fg: '--warn', bg: '--warn-soft', over: '--bg-surface', min: 3, why: `${WARN}: Schema: a node's warning, its icon on --warn-soft inside a card` },
+  { fg: '--danger-ink', bg: '--danger-soft', over: '--bg-subtle', min: 4.5, why: `${INK}: Schema's raw view: the character where parsing failed (--danger-ink on --danger-soft, was white on --danger) on the view's --bg-subtle` },
+  { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-subtle', min: 4.5, why: `${INK}: Schema's raw view: an invisible character's code point (11px, was --caution on its 14% tint) on the view's --bg-subtle` },
+  { fg: '--accent', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'Schema\'s "Show more", hovered: its --accent text (12px) on --bg-hover over the card (4.5:1)' },
+  { fg: '--warn-ink', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'Images: a missing width and height (--warn-ink, was --caution) in a row hovered or open (--bg-hover over the card) (4.5:1)' },
+  // Council round 1 on PR #46: a tinted badge inside a row button lies over --bg-hover when the row is
+  // hovered or open, so each pair is also checked composed over the hovered row. --accent on
+  // --accent-soft there is 3.84:1 in dark, so the badges that drew it (a link's kind, Schema's types and
+  // an entity's notice count) take --accent-hover: 6.19 light, 5.03 dark hovered; 6.80 and 5.96 at rest.
+  { fg: '--accent-hover', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'an internal link\'s "int" badge, a Schema type badge and an entity\'s notice count (11px, --accent-hover on --accent-soft) in a row at rest (4.5:1)' },
+  { fg: '--accent-hover', bg: '--accent-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: 'the same badges in a row hovered or open (--accent-soft over --bg-hover over the card) (4.5:1)' },
+  { fg: '--ok-ink', bg: '--ok-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: Images' "Alt" badge in a row hovered or open` },
+  { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: Images' "Missing alt" badge and loading flags, and an entity's warning count, in a row hovered or open` },
+  { fg: '--danger-ink', bg: '--danger-soft', over: '--bg-hover', under: '--bg-surface', min: 4.5, why: `${INK}: an entity's error count in a row hovered or open` },
   // The browser chrome's rows (its surface PR). Already covered above: the active tab's label and the
   // address on --bg-surface (--text; the placeholder, the address badge and the active tab's glyph
   // --text-faint and --text-muted), the toolbar's tools, the new-tab button and the status bar on
@@ -928,8 +1056,8 @@ export const KNOWN_CONTRAST_EXCEPTIONS = [
     fg: '--ok',
     bg: '--bg-surface',
     min: 4.5,
-    rules: 15,
-    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property).',
+    rules: 12,
+    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property; the panels\' all-clear line, Images\' alt badge and Schema\'s block status their 3).',
   },
 ] as const satisfies readonly ContrastException[];
 
@@ -985,7 +1113,8 @@ export const TEXT_COLOUR_RULES = [
     why: 'the status bar\'s failed-overrides chip: --danger on its 14% tint over --bg-chrome is 3.33:1 (light); -ink on -soft is 5.30',
   },
   { stylesheet: 'styles.css', element: ['.seo-badge', ".seo-badge[data-severity='error']"], color: '--danger-ink', why: DANGER_TINT },
-  { stylesheet: 'styles.css', element: ['.seo-block-status', ".seo-block-status[data-status='invalid']"], color: '--danger-ink', why: DANGER_TINT },
+  // Schema's PR put the block status on the sheet's -soft fills (a badge), so the pair is -ink on -soft.
+  { stylesheet: 'styles.css', element: ['.seo-block-status', ".seo-block-status[data-status='invalid']"], color: '--danger-ink', background: '--danger-soft', why: DANGER_TINT },
   {
     stylesheet: 'styles.css',
     element: ['.seo-hreflang-code', ".seo-hreflang-row[data-valid='false'] .seo-hreflang-code"],
@@ -1017,7 +1146,118 @@ export const TEXT_COLOUR_RULES = [
   },
   // The reasons are a summary line too (`.seo-score-summary.seo-not-indexable`): the summary's own colour must not win.
   { stylesheet: 'styles.css', element: ['.seo-score-summary', '.seo-not-indexable'], color: '--danger-ink', why: 'Overview\'s not-indexable reasons (12px, was --danger): status text takes its -ink' },
+  // Links, Images, Social and Schema (their surface PR): status text takes its -ink, on its -soft fill
+  // where it is a badge; a missing value in a row takes --text-muted, since --text-faint on a hovered
+  // or open row (--bg-hover over a card) is 4.26:1 in dark.
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-empty-line', '.seo-all-clear-line'],
+    color: '--ok-ink',
+    why: 'every panel\'s "No … issues found." (12px, was --ok: 3.30:1 on a card in light; Links, Images, Social, Page Speed, Compliance, JavaScript)',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-block-status'], color: '--ok-ink', background: '--ok-soft', why: `Schema: a block that parsed, "Valid" (11px, was --ok on its 14% tint): ${OK_TINT}` },
+  { stylesheet: 'styles.css', element: ['.seo-block-status', ".seo-block-status[data-status='cut']"], color: '--warn-ink', background: '--warn-soft', why: 'Schema: a block cut short, "Cut" (11px, was --caution on its 16% tint)' },
+  { stylesheet: 'styles.css', element: ['.seo-alt', ".seo-alt[data-alt='present']"], color: '--ok-ink', background: '--ok-soft', why: `Images: an alt text that is present, "alt" (11px, was --ok on its 14% tint): ${OK_TINT}` },
+  { stylesheet: 'styles.css', element: ['.seo-alt', ".seo-alt[data-alt='missing']"], color: '--warn-ink', background: '--warn-soft', why: 'Images: no alt attribute, "no alt" (11px, was --caution on its 16% tint)' },
+  { stylesheet: 'styles.css', element: ['.seo-flag', ".seo-flag[data-flag='warn']"], color: '--warn-ink', background: '--warn-soft', why: 'Images: a loading problem ("oversized", "lazy, first screen"; 11px, was --caution on its 16% tint)' },
+  { stylesheet: 'styles.css', element: ['.seo-image-fact', ".seo-image-fact[data-missing='true']"], color: '--warn-ink', why: 'Images: an image with no width and height, its "Attrs" fact (12px, was --caution: 3.65:1 on a card in light)' },
+  { stylesheet: 'styles.css', element: ['.seo-raw-error-at'], color: '--danger-ink', why: 'Schema: where a block stopped parsing, "Line 3, column 31" (12px, was --danger) on --danger-soft' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-missing', '.seo-table-title', '.seo-table-title.seo-missing'],
+    color: '--text-muted',
+    why: 'Links: "No anchor text" in a row, which is --bg-hover when hovered or open (--text-faint there is 4.26:1 in dark)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-missing', '.seo-table-sub', '.seo-table-sub.seo-missing'],
+    color: '--text-muted',
+    why: 'Links and Images: "No usable URL", "No source" in a row, hovered or open (--text-faint is 4.26:1 there in dark)',
+  },
+  // Council round 1 on PR #46: --accent text on --accent-soft is 3.84:1 in dark when its row is hovered
+  // or open (the tint over --bg-hover); these badges sit in row buttons, so they take --accent-hover.
+  { stylesheet: 'styles.css', element: ['.seo-kind', ".seo-kind[data-kind='internal']"], color: '--accent-hover', background: '--accent-soft', why: 'Links: an internal link\'s "int" badge, in a row that can be hovered or open' },
+  { stylesheet: 'styles.css', element: ['.seo-page-text', '.seo-ellipsis', '.seo-type-badge'], color: '--accent-hover', background: '--accent-soft', why: 'Schema: a node\'s type badge, in an entity row that can be hovered' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-badge', ".seo-badge[data-severity='info']", ".seo-entity-head .seo-badge[data-severity='info']"],
+    color: '--accent-hover',
+    background: '--accent-soft',
+    why: 'Schema: an entity\'s issue count when its worst is a notice, in an entity row that can be hovered (the frame\'s info badge keeps --accent elsewhere)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-missing', '.seo-entity-name', '.seo-entity-name.seo-missing'],
+    color: '--text-muted',
+    why: 'Schema: a nameless entity\'s "No name", in a row that can be hovered (--text-faint there is 4.26:1 in dark)',
+  },
 ] as const satisfies readonly TextColourRule[];
+
+/**
+ * A raised control whose hover lays `--bg-hover` over it (an inset box-shadow) and which can also be
+ * pressed (`aria-pressed`, on an `--accent-soft` fill): the hover must skip a pressed one, since
+ * `--accent` text on `--bg-hover` over `--accent-soft` is 3.78:1 in dark (council round 1 on PR #46: the
+ * Inspector's Tree, Rendered and Served buttons are `.seo-action`s). Every rule of `stylesheet` with a
+ * compound selector holding both `<control>` (on a class boundary) and `:hover`, in any order and after
+ * any ancestor (`.seo-action.inspector-view-button:hover`, `.seo-action:not(:disabled):hover`,
+ * `.seo-panel-tools .seo-toggle:hover`), that sets `box-shadow` or `background` names
+ * `[aria-pressed='true']` in a `:not(…)` of that same compound.
+ */
+export interface HoverSkipsPressed {
+  readonly stylesheet: string;
+  readonly control: string;
+  readonly why: string;
+}
+
+export const HOVER_OVERLAYS_SKIP_PRESSED = [
+  { stylesheet: 'styles.css', control: '.seo-toggle', why: 'a panel toggle (Highlight on page, Broken only), pressed' },
+  { stylesheet: 'styles.css', control: '.seo-action', why: 'the Inspector\'s Tree, Rendered and Served buttons (`seo-action inspector-view-button`), the chosen one pressed' },
+] as const satisfies readonly HoverSkipsPressed[];
+
+/**
+ * A pressed control whose fill alone would say it (council round 1 on PR #46: a pressed filter chip's
+ * `--accent-soft` is 1.06:1 off an unpressed chip's `--bg-subtle` in light): it also draws an `edge` on its
+ * transparent border, not a box-shadow (which the focus ring replaces). For each entry the cascade over
+ * `element` in `stylesheet` resolves `border-color` to `var(<edge>)` in light and dark, with a border that
+ * draws (a non-zero `border-width` and a `border-style` other than `none` or `hidden`, from the
+ * longhands or the `border` shorthand), and for each of
+ * `fills` (the pressed fill, the card around it) `CONTRAST_PAIRS` holds `edge` on it at 3:1 or more.
+ */
+export interface PressedEdge {
+  readonly stylesheet: string;
+  readonly element: readonly string[];
+  readonly edge: TokenName;
+  readonly fills: readonly { readonly bg: TokenName; readonly over?: TokenName }[];
+  readonly why: string;
+}
+
+/**
+ * The colour a disabled control's text takes when only its text says it is disabled (its fill is the
+ * same as when enabled): `--text-faint` at half strength, as the toolbar's disabled tool. Plain
+ * `--text-faint` is 1.40:1 off the enabled `--text-muted` in light (1.32 in dark), too close to tell
+ * (council round 2 on PR #46).
+ */
+export const DISABLED_INK = 'color-mix(in srgb, var(--text-faint) 50%, transparent)';
+
+/**
+ * Disabled controls on the same fill as their enabled selves (a filter chip on `--bg-subtle`, a segment
+ * on its track): for each entry the cascade over `element` in `stylesheet` resolves `color` to
+ * `DISABLED_INK` in light and dark. (`GrayText` marks them under forced colours: `FORCED_COLOURS_BUSY`.)
+ */
+export const DISABLED_CONTROLS = [
+  { stylesheet: 'styles.css', element: ['.seo-chip-button', '.seo-chip-button:disabled'], why: 'a filter chip, disabled (Changes\' screenshot kinds with no page, SERP\'s snippet sources, the AI card\'s targets)' },
+  { stylesheet: 'styles.css', element: ['.seo-segment', '.seo-segment:disabled'], why: 'a segment, disabled (Schema\'s Tree for a block that did not parse)' },
+] as const satisfies readonly { readonly stylesheet: string; readonly element: readonly string[]; readonly why: string }[];
+
+export const PRESSED_EDGES = [
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-chip-button', ".seo-chip-button[aria-pressed='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
+    why: 'a filter chip, pressed (Images\' filters, Content\'s preview chips): an --accent edge beside its --accent-soft fill',
+  },
+] as const satisfies readonly PressedEdge[];
 
 /**
  * A control whose keyboard focus must show `--focus-ring` (and the transparent 2px outline forced colours
@@ -1046,6 +1286,10 @@ const TAB_FOCUS = '.tab:has(.tab-main:focus-visible)';
 const PROMPT_BUTTON_HOVER = '.prompt-button:hover:where(:not(:disabled))';
 const PROMPT_DISMISS_HOVER = '.prompt-dismiss:hover:where(:not(:disabled))';
 const SEO_ISSUE_HOVER = '.seo-issue-head:hover';
+const SEO_TOGGLE_HOVER = ".seo-toggle:hover:where(:not(:disabled, [aria-pressed='true']))";
+const SEO_ACTION_HOVER = ".seo-action:hover:where(:not(:disabled, [aria-pressed='true']))";
+const SEO_REF_HOVER = '.seo-ref-head:hover:where(:not(:disabled))';
+const SEO_ICON_ACTION_HOVER = '.seo-icon-action:hover:where(:not(:disabled))';
 
 export const FOCUS_RING_RULES = [
   {
@@ -1129,6 +1373,33 @@ export const FOCUS_RING_RULES = [
   // toggles are `.seo-toggle`, a later panel's control.
   { stylesheet: 'styles.css', element: ['.seo-issue-head', SEO_ISSUE_HOVER, '.seo-issue-head:focus-visible'], why: 'an issue\'s heading row, focused (it expands the issue) and hovered: its --bg-hover fill keeps the ring' },
   { stylesheet: 'styles.css', element: ['.seo-link-button', '.seo-link-button:hover', '.seo-link-button:focus-visible'], why: 'Overview\'s "Show all" link button, focused and hovered' },
+  // Links, Images, Social and Schema and the panels' shared controls (their surface PR): every control
+  // they draw, in each state it can be focused in. A hover lays --bg-hover over a raised control by a
+  // box-shadow, in `:where()`, so the plain `:focus-visible` rule after it wins.
+  { stylesheet: 'styles.css', element: ['.seo-toggle', SEO_TOGGLE_HOVER, '.seo-toggle:focus-visible'], why: 'a panel toggle (Highlight on page, Copy as CSV, Check links), focused and hovered' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-toggle', ".seo-toggle[aria-pressed='true']", '.seo-toggle:focus-visible'],
+    why: 'a panel toggle, pressed (its --accent-soft fill, no --e-raised), focused: the pressed rule sets box-shadow too',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-action', SEO_ACTION_HOVER, '.seo-action:focus-visible'], why: 'a row action (Open in new tab, Copy URL), focused and hovered' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-segment', ".seo-segment[aria-pressed='true']", '.seo-segment:focus-visible'],
+    why: 'the chosen segment, focused: its --e-raised edge gives way to --focus-ring',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-chip-button', ".seo-chip-button[aria-pressed='true']", '.seo-chip-button:focus-visible'], why: 'a filter chip, pressed and focused' },
+  { stylesheet: 'styles.css', element: ['.seo-select', '.seo-select:focus-visible'], why: 'the rel filter, focused: its --e-raised edge gives way to --focus-ring' },
+  { stylesheet: 'styles.css', element: ['.seo-search', '.seo-search:focus-within'], why: 'the search field, focused (:focus-within): its --e-raised edge gives way to --focus-ring' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-table-main', '.seo-table-main:hover', ".seo-table-row[data-open='true'] .seo-table-main", '.seo-table-main:focus-visible'],
+    why: 'a link or image row, open, hovered and focused (it opens the row)',
+  },
+  { stylesheet: 'styles.css', element: ['.seo-entity-head', '.seo-entity-head:hover', '.seo-entity-head:focus-visible'], why: 'Schema: an entity\'s heading row, focused (it opens the entity) and hovered' },
+  { stylesheet: 'styles.css', element: ['.seo-ref-head', SEO_REF_HOVER, '.seo-ref-head:focus-visible'], why: 'Schema: a reference by @id, focused (it opens the node) and hovered' },
+  { stylesheet: 'styles.css', element: ['.seo-icon-action', SEO_ICON_ACTION_HOVER, '.seo-icon-action:focus-visible'], why: 'Schema: a URL value\'s open-in-tab button, focused and hovered' },
+  { stylesheet: 'styles.css', element: ['.seo-show-more', '.seo-show-more:hover', '.seo-show-more:focus-visible'], why: 'Schema: "Show more" under a long list, focused and hovered' },
 ] as const satisfies readonly FocusRingRule[];
 
 /**
