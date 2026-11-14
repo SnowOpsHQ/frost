@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AgentPanel } from './components/agent/AgentPanel';
+import { ChromeRow } from './components/ChromeRow';
 import { CommandPalette } from './components/CommandPalette';
 import { DevtoolsDrawer } from './components/devtools/DevtoolsDrawer';
 import { FindBar } from './components/FindBar';
@@ -10,8 +11,6 @@ import { PromptBar } from './components/PermissionBar';
 import { RenderProfileBar } from './components/RenderProfile';
 import { SeoSidebar } from './components/SeoSidebar';
 import { StatusBar } from './components/StatusBar';
-import { TabStrip } from './components/TabStrip';
-import { Toolbar } from './components/Toolbar';
 import { UpdateBar } from './components/UpdateBar';
 import { useBrowserState } from './hooks/useBrowserState';
 import { useHistoryView } from './hooks/useHistoryView';
@@ -31,7 +30,9 @@ import { CrawlSheet } from './components/crawl/CrawlSheet';
 import { AiAnswersSheet } from './components/ai-answers/AiAnswers';
 
 // The browser chrome (spec `browser-chrome.feature.md`, Layout; `tabs.feature.md`). Its rows: the
-// tab strip, the toolbar, the permission prompt bar, the render-profile editor bar while open
+// chrome row (the navigation tools, the tab strip, the address bar and the toolbar's toggles, one
+// `--h-chrome` row: `tabs.feature.md`, The chrome row), the permission prompt bar, the render-profile
+// editor bar while open
 // (`render-profile.feature.md`), the find bar while the active tab's is open
 // (`browser-polish.feature.md`), the update notice while it has something to show
 // (`update-client.feature.md`), the workspace (the page column, with the command palette's sheet
@@ -55,7 +56,7 @@ export function App() {
   const audit = useSeoAudit(tab);
   // The command palette's panel jumps (`command-palette.feature.md`): the sidebar opens on that panel.
   const [panelJump, setPanelJump] = useState<PanelJump | null>(null);
-  // The render-profile editor bar (`render-profile.feature.md`): open per window, under the toolbar.
+  // The render-profile editor bar (`render-profile.feature.md`): open per window, under the chrome row.
   const [profileOpen, setProfileOpen] = useState(false);
   // Browser polish (`browser-polish.feature.md`): the History sheet (per window) and the active tab's find bar.
   const [historyOpen, closeHistory] = useHistoryView(state?.historyViewSeq, tab);
@@ -63,8 +64,7 @@ export function App() {
   const [projectsOpen, closeProjects] = useProjectsSheet(historyOpen, closeHistory);
   return (
     <div className="chrome">
-      <TabStrip state={state} />
-      <Toolbar tab={tab} focusSeq={state?.focusAddressBarSeq} sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} profileOpen={profileOpen} onToggleProfile={() => setProfileOpen((open) => !open)} />
+      <ChromeRow state={state} tab={tab} sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} profileOpen={profileOpen} onToggleProfile={() => setProfileOpen((open) => !open)} />
       {/* Always present (empty without a prompt), so the grid rows stay put; polite, not focus-taking. */}
       <div className="prompt-slot" aria-live="polite">
         {tab?.permissionPrompt ? <PromptBar key={`${tab.id} ${tab.permissionPrompt.id}`} prompt={tab.permissionPrompt} covered={tab.fullscreen !== null} /> : null}

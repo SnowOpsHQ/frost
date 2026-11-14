@@ -58,9 +58,10 @@ export interface BrowserService {
   /**
    * Closes the tab (its view detached, its WebContents closed); the right neighbour, else the left
    * one, becomes active, and closing the last tab leaves one fresh empty tab. `false` (a no-op)
-   * for an id that names no open tab.
+   * for an id that names no open tab. With `keepFocus` (the tablist's Delete), closing the active tab
+   * leaves focus where it is instead of focusing the new active tab's page or the address bar.
    */
-  closeTab(tabId: number): boolean;
+  closeTab(tabId: number, keepFocus?: boolean): boolean;
   /** Shows the tab (only the active tab's view is attached). `false` for an id that names no open tab. */
   activateTab(tabId: number): boolean;
   /**

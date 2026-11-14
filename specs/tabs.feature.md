@@ -1,14 +1,16 @@
 # Feature: tabs
 
 Spec: `specs/tabs.spec.ts` (`MAX_TABS`, `NEW_TAB_LABEL`, `NOTICE_MESSAGES`, `NOTICE_DISPLAY_MS`,
-`TAB_SHORTCUT_COUNT`, `RESERVED_TAB_SHORTCUTS`; Zod-free so the chrome can import it) and `specs/browser.spec.ts`
+`TAB_SHORTCUT_COUNT`, `RESERVED_TAB_SHORTCUTS`, `CHROME_ROW`, `CHROME_ROW_HEIGHT_PX`, `TAB_MIN_WIDTH_PX`,
+`ADDRESS_BASIS_PX`, `ADDRESS_MIN_WIDTH_PX`, `CHROME_MIN_CONTENT_WIDTH_PX`; Zod-free so the chrome can import it) and `specs/browser.spec.ts`
 (`TabIdInputSchema`, `BrowserStateSchema.focusAddressBarSeq` / `.notice`, `NoticeSchema`).
 Builds on `browser-chrome.feature.md` (one tab, its view, the controller).
 Phase 1 Task 2. Each scenario maps to one named test.
 
 ## Behaviour
-- The **tab strip** is a row above the toolbar: one tab per open tab, in order, then a "+" (new
-  tab) button. Each tab shows a glyph or the loading indicator, its label and a × (close) button.
+- The **tab strip** is the tablist in the chrome row (below): one tab per open tab, in order. Each
+  tab shows a glyph or the loading indicator, its label and a × (close) button. The "+" (new tab)
+  button follows the address bar.
 - **Accessible structure:** a `tablist` of `tab` elements (roving tabindex: only the active tab is
   in the Tab order). Each tab's × is a sibling of the `tab` element, never inside it (a `tab`'s
   children are presentational), and is a mouse affordance only (`aria-hidden`, never focused); the
@@ -16,6 +18,68 @@ Phase 1 Task 2. Each scenario maps to one named test.
   Left/Right move focus to the previous/next tab (wrapping), Home/End to the first/last; Enter or
   Space activates the focused tab.
 - **Middle-click** on a tab closes it.
+- **The chrome row** (`CHROME_ROW`): the tab strip and the toolbar are one row, `CHROME_ROW_HEIGHT_PX`
+  (Signal's `--h-chrome`) high, that never wraps or grows. In DOM order: the navigation tools (Back,
+  Forward, Reload ⇄ Stop), the tablist, the address bar (the tablist's next sibling, never inside it:
+  a `tablist` holds only `tab`s), the new-tab button, the SEO sidebar toggle and the render-profile
+  toggle; the loading line runs along the row's foot. The permission prompt, the render-profile editor
+  bar, the find bar and the update notice stay bands under the row.
+  - **Width, in this order** (measured on the row's own width, so a window narrower than it asked
+    for gets the same order): the tools never shrink (each stays an `--h-control` circle). With room
+    to spare the address bar takes it. As tabs are added or the row narrows:
+    1. the tabs shrink, down to `TAB_MIN_WIDTH_PX`, while the address bar keeps `ADDRESS_BASIS_PX`;
+    2. then the tablist scrolls sideways (no scrollbar), the address bar still at `ADDRESS_BASIS_PX`;
+    3. only once the tablist is down to one whole tab (`TAB_MIN_WIDTH_PX` and its focus-ring padding),
+       in a narrow window, does the address bar give way: to `ADDRESS_MIN_WIDTH_PX` at the window's
+       minimum (`CHROME_MIN_CONTENT_WIDTH_PX`), and below that minimum, which a tiling window manager
+       may impose (see Minimum window width), on down to its own padding and border (24px), so the tools and one whole tab
+       stay whole down to `CHROME_MIN_CONTENT_WIDTH_PX − ADDRESS_MIN_WIDTH_PX` + 24 (372px). Narrower still, the
+       row clips from its right end (the render-profile toggle first).
+    No tab is squeezed under its minimum: the tablist's ends clip the tabs scrolled past them.
+  - **A focused tab is shown whole:** whenever a tab takes focus (the tablist's keys, Tab or Shift+Tab,
+    a click, Delete's neighbour), and again once a Delete's closed tab is gone from the strip, the
+    focused tab's whole pill, its × included, is scrolled into view with the tablist's
+    scroll padding; so is the active tab whenever it changes. A tab opened or closed in the
+    background leaves the strip where the user scrolled it.
+  - **Never scrolled itself:** the row clips what does not fit (`overflow: clip`), so focusing a
+    control cannot scroll the row and move Back off the window's edge.
+  - **Minimum window width:** the window asks for content at least `CHROME_MIN_CONTENT_WIDTH_PX` wide
+    (its minimum size is that plus the frame's width, so it counts the page and not the frame): exactly
+    the row's padding, its tools, one whole tab with its ring room and `ADDRESS_MIN_WIDTH_PX`, so at or
+    above it the row fits whole and shows a tab. It is a hint: a floating window's manager keeps a
+    user's resize at or above it, but tiling window managers (Hyprland, sway, i3) ignore it for tiled
+    windows, and Electron does not clamp a program's own `setContentSize`; below it the address bar
+    gives way first (Width, step 3). frost saves and restores no window size and never sizes its
+    window below the minimum.
+  - **Focus ring:** the tablist keeps `--space-1` of room around its tabs, also as scroll padding, so a
+    focused tab's `--focus-ring` (4px) is drawn whole inside the scrolling tablist, at either end too.
+  - **Window controls and dragging** stay the OS's: the window keeps its native frame and title bar on
+    macOS, Windows and Linux (no `frame: false`, `titleBarStyle` or `titleBarOverlay`), so the traffic
+    lights or the minimise, maximise and close buttons and the drag area are where the OS puts them, and
+    no chrome rule sets `-webkit-app-region`.
+- **Keyboard contract of the chrome row.** Nothing a keyboard user could do with two rows is lost:
+  - **Tab order** follows `CHROME_ROW`: Back, Forward, Reload (each only while enabled), the active
+    tab (the tablist's one Tab stop), the address bar, New tab, the SEO sidebar toggle, the
+    render-profile toggle; Shift+Tab walks it back (from the address bar to the active tab). With two
+    rows the tab strip came first and the address bar after the navigation tools.
+  - **In the tablist** (as above): Left/Right to the previous/next tab, wrapping; Home/End to the
+    first/last; Enter or Space activates the focused tab (moving focus never activates); Delete closes
+    the focused tab and focus stays in the strip, on the neighbour that remains (right, else left),
+    even when the closed tab was the active one: the chrome asks main to keep focus where it is
+    (`browser.closeTab`'s `keepFocus`), so neither the neighbour's page nor the address bar takes it,
+    and the next arrow key still moves within the strip. Mod+W, the × and middle-click close as
+    before: the new active tab's page, or the address bar for an empty tab, takes focus. The × stays
+    a mouse affordance.
+  - **Address bar:** unchanged (`address-bar.feature.md`, `browser-chrome.feature.md`): focus selects
+    everything; Enter navigates and moves focus to the page; Escape reverts the draft and keeps focus
+    with the text selected; blur reverts.
+  - **Shortcuts:** every reserved shortcut keeps working from the chrome and from the page
+    (`RESERVED_TAB_SHORTCUTS`, `page-commands.feature.md`): Mod+L focuses the address bar, Mod+T opens a
+    tab, Mod+W closes the active one, Mod+1…8 and Mod+9 select, Ctrl+Tab / Ctrl+Shift+Tab (and
+    Cmd+Shift+] / Cmd+Shift+[ on macOS) step, Mod+Shift+T reopens; Mod+Shift+S toggles the SEO sidebar.
+  - **Not added:** the canvas's further keys (Enter on the active tab or a click on it opening the
+    address in its place, Escape returning focus to the tab, a "More tabs" menu) are new behaviour, not
+    part of merging the rows.
 - **Labels:** `tabLabel(tab)` (`renderer/tab-label.ts`): the page title, else the URL's host,
   else `NEW_TAB_LABEL`. Long labels are truncated by CSS (ellipsis); the full label is the tab's
   tooltip (`title`).
@@ -56,9 +120,15 @@ Phase 1 Task 2. Each scenario maps to one named test.
   `NOTICE_DISPLAY_MS`.
 - **Closed tabs stay closed:** late or pending events from a closed tab's WebContents never change
   any tab's state (nor bump the version).
-- **Malformed input:** `browser.closeTab` / `browser.activateTab` take `{ tabId }` validated by
-  `TabIdInputSchema`; a malformed id is rejected `BAD_REQUEST`, an id naming no open tab is a no-op
-  answering `false`. Nothing crashes.
+- **Malformed input:** `browser.activateTab` takes `{ tabId }` validated by `TabIdInputSchema`, and
+  `browser.closeTab` `{ tabId, keepFocus? }` validated by `CloseTabInputSchema` (`keepFocus` only
+  `true`: the tablist's Delete); a malformed input is rejected `BAD_REQUEST`, an id naming no open tab
+  is a no-op answering `false`. Nothing crashes.
+- **Keeping focus on a close:** `closeTab(id, keepFocus)` with `keepFocus` closes as usual but, when
+  the closed tab was active, does not focus the new active tab's page nor request the address bar's
+  focus (`focusAddressBarSeq` unchanged); closing the last tab still requests it (the fresh empty tab
+  has nothing else to focus). The chrome's empty-tab rule (an empty tab puts the caret in the address
+  bar) never takes focus from a focused `role="tab"`.
 - `browser.navigate`, `back`, `forward`, `reload`, `stop` keep acting on the **active** tab.
 
 ## Controller (`apps/desktop/src/main/browser/__tests__/controller.test.ts`, "tabs")
@@ -73,6 +143,10 @@ Phase 1 Task 2. Each scenario maps to one named test.
   the newly active tab's view is attached.
 - **Scenario: close-inactive-tab-keeps-active** — closing a tab that is not active keeps
   `activeTabId` and the attached view.
+- **Scenario: keyboard-close-keeps-focus** — `closeTab(activeId, true)` with a page neighbour does
+  not focus that page's WebContents, and with an empty neighbour neither focuses the chrome nor bumps
+  `focusAddressBarSeq`; `closeTab(activeId)` (no `keepFocus`) still does both; `closeTab(onlyId, true)`
+  still requests address-bar focus for the fresh empty tab.
 - **Scenario: close-last-tab-leaves-fresh-empty-tab** — closing the only tab leaves exactly one
   empty tab with a new id, active, and requests address-bar focus; no view is attached.
 - **Scenario: only-active-view-is-attached** — across new tab / navigate / activate / close, the
@@ -130,11 +204,12 @@ Phase 1 Task 2. Each scenario maps to one named test.
 ## Router (`packages/ipc-contract/src/__tests__/browser-router.test.ts`)
 - **Scenario: tab-procedures-validate-tab-id** — `browser.closeTab` / `browser.activateTab` reject
   a missing, zero, negative, fractional, string, unsafe-integer id or an extra key with
-  `BAD_REQUEST`; the service is never called. (They are also covered by
+  `BAD_REQUEST`; `closeTab` also a `keepFocus` other than `true`, and `activateTab` any `keepFocus`;
+  the service is never called. (They are also covered by
   `browser-procedures-reject-foreign-sender-first`.)
 - **Scenario: tab-procedures-call-service** — `browser.newTab` answers the new tab's id (or `null`
   at the limit), `browser.closeTab` / `browser.activateTab` call the service with the id and
-  answer its boolean.
+  answer its boolean; `closeTab` passes `keepFocus` (`false` when absent).
 
 ## Menu (`apps/desktop/src/main/__tests__/menu.test.ts`)
 - **Scenario: menu-accelerators-call-controller** — New Tab `CmdOrCtrl+T` → `newTab()`, Close Tab
@@ -169,6 +244,29 @@ Phase 1 Task 2. Each scenario maps to one named test.
 ## Window (`apps/desktop/src/main/__tests__/boot.test.ts`)
 - **Scenario: menu-bar-auto-hides-off-macos** — `createMainWindow()` sets `autoHideMenuBar: true`
   on Linux/Windows and `false` on macOS; the webPreferences are unchanged.
+- **Scenario: window-has-a-minimum-content-width** — `createMainWindow()` sets the window's minimum
+  width to `CHROME_MIN_CONTENT_WIDTH_PX` plus the frame's width (its size less its content size; the
+  minimum height is kept), and `CHROME_MIN_CONTENT_WIDTH_PX` equals, from `tokens.css` and `CHROME_ROW`,
+  `2 × --space-4` (the row's padding) + one `--h-control` per tool (`CHROME_ROW` but the tablist and the
+  address bar: 6) + one `--space-1` per gap (between the row's items and inside the navigation group:
+  `CHROME_ROW`'s length less one, 7) + `TAB_MIN_WIDTH_PX + 2 × --space-1` (one tab, ring room) +
+  `ADDRESS_MIN_WIDTH_PX`: 588.
+- **Scenario: window-keeps-native-controls** — on macOS, Linux and Windows `createMainWindow()` sets
+  none of `frame`, `titleBarStyle`, `titleBarOverlay` and `trafficLightPosition` (the OS draws the
+  title bar, its controls and its drag area); no renderer stylesheet sets `-webkit-app-region` or
+  `app-region`.
+
+## Chrome row styles (`apps/desktop/src/__tests__/chrome-grid-styles.test.ts`)
+- **Scenario: chrome-row-is-one-fixed-track** — the chrome grid's first track is `var(--h-chrome)`
+  and its first slot (`App.tsx`) is the chrome row; the row does not wrap and clips
+  (`overflow: clip`, never a scroll container); it is an inline-size container, and the room it leaves
+  the tablist and the address bar (`--row-free`) is its own width (`100cqw`) less one `--h-control` per
+  tool and one `--space-1` per gap, both counted from `CHROME_ROW`; its navigation group, the tools and
+  New tab are `flex: none`; `.tab` keeps `TAB_MIN_WIDTH_PX`; the tablist holds at least one such tab and
+  its `--space-1` padding, and scrolls sideways with `--space-1` of padding and of scroll padding; the
+  address bar's basis is `ADDRESS_BASIS_PX` and its minimum is `ADDRESS_BASIS_PX` or the room left
+  beside one tab, whichever is less, and never negative; no rule of the chrome names the retired
+  `.tabstrip` or `.toolbar`.
 
 ## End to end (`apps/desktop/e2e/tabs.e2e.ts`, real Electron, loopback pages)
 - **Scenario: new-tab-button-opens-empty-tab** — "+" adds a tab at the end labelled `New Tab`,
@@ -197,7 +295,54 @@ Phase 1 Task 2. Each scenario maps to one named test.
   WebContents released); the active tab stays.
 - **Scenario: tablist-keyboard-navigation** — with a tab focused, ArrowRight / ArrowLeft / End /
   Home move focus between tabs (only the active tab is in the Tab order), Enter activates the
-  focused tab and Delete closes it; no `button` is inside any `role="tab"` element.
+  focused tab and Delete closes it, focus going to the neighbour that remains; no `button` is inside
+  any `role="tab"` element.
+- **Scenario: chrome-row-holds-tabs-address-and-tools** — one `CHROME_ROW_HEIGHT_PX` row holds every
+  `CHROME_ROW` control in that DOM order, each centred in it; the address bar is the tablist's next
+  sibling (not inside it) and the tablist holds only tabs; the bands (the permission prompt's, the
+  find bar's) and the page area come after the row, and the tab's view starts at the page area's top.
+- **Scenario: chrome-row-tab-order** — with a page loaded in a background tab and the active one
+  (Back enabled), Tab from Back walks Forward when enabled, Reload, the active tab, the address bar,
+  New tab, the SEO sidebar toggle and the render-profile toggle, in that order, and Shift+Tab walks
+  back; Mod+L (via the menu, as its accelerator does) focuses the address bar from the page, and the
+  tablist's keys still work from the tab Tab lands on.
+- **Scenario: narrow-tabs-scroll-and-address-keeps-its-width** — in an 800px wide window with many
+  tabs, every tab is at least `TAB_MIN_WIDTH_PX` wide and the tablist scrolls (its scroll width over
+  its client width) while the address bar is at least `ADDRESS_BASIS_PX`; the row stays
+  `CHROME_ROW_HEIGHT_PX` high; the active tab is in view.
+- **Scenario: tabs-give-way-before-the-address-bar** — in a 1280px wide window: with 6 tabs the tabs
+  are narrower than 224px and the address bar is at least `ADDRESS_BASIS_PX`; with 20 tabs every tab
+  is exactly `TAB_MIN_WIDTH_PX`, the tablist scrolls, and the address bar is still at least
+  `ADDRESS_BASIS_PX`; every tool (`CHROME_ROW` but the tablist and the address bar) stays
+  `--h-control` square (34×34) throughout.
+- **Scenario: narrowest-window-keeps-the-row-whole** — the window's minimum width less its frame's is
+  `CHROME_MIN_CONTENT_WIDTH_PX` (a pixel more at a fractional display scale); with its content exactly that wide and several tabs, the row holds every `CHROME_ROW` control inside
+  its box, the tablist shows one whole tab (at least `TAB_MIN_WIDTH_PX`), the address bar is
+  `ADDRESS_MIN_WIDTH_PX` wide and every tool 34×34.
+- **Scenario: focus-never-scrolls-the-row** — with the row made narrower than its contents (a test-only
+  width on it), focusing the clipped render-profile toggle leaves the row's `scrollLeft` at 0 and Back
+  at the row's left padding.
+- **Scenario: arrow-focus-brings-the-whole-tab-in** — in a 1280px window with 20 tabs and the first
+  active, ArrowRight from tab to tab past the tablist's visible edge, then ArrowLeft back: after each
+  move the focused tab's whole pill (× included) is inside the tablist's box.
+- **Scenario: delete-keeps-focus-on-the-neighbour-tab** — Delete on the active tab whose right
+  neighbour is an empty tab, and again on one whose right neighbour shows a page: focus stays on the
+  neighbour's `role="tab"` (neither the address bar nor that page's WebContents takes it), and
+  ArrowLeft then moves focus within the strip.
+- **Scenario: delete-at-the-minimum-keeps-the-survivor-whole** — with the row at
+  `CHROME_MIN_CONTENT_WIDTH_PX` (a test-only width, as a tiled window may have) and 20 tabs, the first
+  active: ArrowRight, then Delete; the focused survivor's whole pill (× included) is inside the
+  tablist.
+- **Scenario: tab-into-a-half-visible-active-tab** — with the tablist scrolled so the active tab is
+  half out of it, Shift+Tab from the address bar into the active tab brings its whole pill (×
+  included) inside the tablist.
+- **Scenario: below-the-minimum-the-address-bar-gives-way** — with the row 480px wide (a test-only
+  width, as a tiling window manager may impose), every tool is 34×34 and inside the row, the tablist
+  shows one whole tab (at least `TAB_MIN_WIDTH_PX`), and the address bar is narrower than
+  `ADDRESS_MIN_WIDTH_PX`.
+- **Scenario: focused-tab-ring-shows-in-scrolled-tablist** — in that window, keyboard focus moved
+  to the first and to the last tab (Home, End) scrolls it into view with its ring's 4px all round
+  inside the tablist's box.
 - **Scenario: background-page-close-closes-tab-e2e** — a background tab whose page calls
   `window.close()` disappears from the strip; the active tab and its view stay.
 - **Scenario: max-tabs-shows-notice** — at `MAX_TABS` tabs one more new tab is refused and the

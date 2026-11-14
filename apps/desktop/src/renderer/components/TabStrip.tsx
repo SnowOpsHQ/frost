@@ -1,14 +1,30 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
-import { AlertIcon, CloseIcon, FrostMark, GlobeIcon, PlusIcon } from '../icons';
+import { AlertIcon, CloseIcon, FrostMark, GlobeIcon } from '../icons';
 import { actions } from '../ipc';
 import { TabProfileBadge } from './RenderProfile';
 import { tabLabel } from '../tab-label';
 import { locationBadge } from '../location-view';
 import { tablistFocusTarget } from '../tablist-keys';
 
-// The tab strip of the browser chrome (spec `tabs.feature.md`). Styling is the bundled styles.css
+// The tab strip of the browser chrome's row (spec `tabs.feature.md`). Styling is the bundled styles.css
 // only (strict CSP).
+
+/**
+ * Scrolls a tab's whole pill (its × too) into view, with the tablist's scroll padding (the focus
+ * ring's room): focus alone would leave a half-visible tab where it is, its ring cut off
+ * (`tabs.feature.md`, A focused tab is shown whole).
+ */
+function showWhole(tab: Element | null | undefined): void {
+  tab?.closest('.tab')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+/**
+ * Set by Delete, read once by the strip's next re-render: only a Delete brings the focused tab back
+ * after the tabs change, so a tab opened or closed in the background (a capture run, a page's
+ * `window.open`) never snaps a strip the user scrolled away.
+ */
+let showFocusedAfterDelete = false;
 
 /**
  * One tab in the strip: the `role="tab"` element (glyph or loading indicator, label; tooltip: the
@@ -22,7 +38,7 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
   // Phase 12 Task 10b: a location tab always shows where it browses from.
   const location = locationBadge(tab);
   useEffect(() => {
-    if (active) ref.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (active) showWhole(ref.current);
   }, [active]);
   const activate = () => void actions.activateTab(tab.id);
   const close = () => void actions.closeTab(tab.id);
@@ -51,6 +67,7 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
         aria-keyshortcuts="Delete"
         tabIndex={active ? 0 : -1}
         title={label}
+        onFocus={(event) => showWhole(event.currentTarget)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
@@ -61,7 +78,9 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
             const items = [...(event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
             const index = items.indexOf(event.currentTarget);
             (items[index + 1] ?? items[index - 1])?.focus();
-            close();
+            showFocusedAfterDelete = true;
+            // Main leaves focus here, on the neighbour, even when this was the active tab.
+            void actions.closeTab(tab.id, true);
           }
         }}
       >
@@ -116,31 +135,41 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
 }
 
 /**
- * The tab strip above the toolbar; it scrolls sideways when the tabs no longer fit. Roving tabindex:
- * only the active tab is in the Tab order; Left/Right/Home/End move focus inside the tablist.
+ * The tab strip: the chrome row's tablist (`ChromeRow.tsx`; spec `tabs.feature.md`, The chrome row). It
+ * holds only tabs and scrolls sideways once they reach their minimum width; the address bar is its
+ * next sibling and the new-tab button follows that. Roving tabindex: only the active tab is in the
+ * Tab order; Left/Right/Home/End move focus inside the tablist.
  */
 export function TabStrip({ state }: { readonly state: BrowserState | null }) {
+  const list = useRef<HTMLDivElement>(null);
+  const tabIds = state?.tabs.map((tab) => tab.id).join(' ');
+  // After a Delete the closed tab goes and the neighbour that took focus may slide out of view (it was
+  // scrolled in before the closed tab went): bring its whole pill back. Other tab changes leave the
+  // strip where the user scrolled it.
+  useLayoutEffect(() => {
+    if (!showFocusedAfterDelete) return;
+    showFocusedAfterDelete = false;
+    const focused = document.activeElement;
+    if (focused?.getAttribute('role') === 'tab' && list.current?.contains(focused)) showWhole(focused);
+  }, [tabIds]);
   return (
-    <div className="tabstrip" data-testid="tab-strip">
-      <div
-        className="tabs"
-        role="tablist"
-        aria-label="Tabs"
-        onKeyDown={(event) => {
-          const target = event.target as HTMLElement;
-          if (target.getAttribute('role') !== 'tab') return;
-          const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')];
-          const next = tablistFocusTarget(event.key, items.indexOf(target), items.length);
-          if (next === null) return;
-          event.preventDefault();
-          items[next]?.focus();
-        }}
-      >
-        {state?.tabs.map((tab) => <Tab key={tab.id} tab={tab} active={tab.id === state.activeTabId} />)}
-      </div>
-      <button type="button" className="new-tab" data-testid="new-tab" aria-label="New tab" title="New tab" onClick={() => void actions.newTab()}>
-        <PlusIcon />
-      </button>
+    <div
+      ref={list}
+      className="tabs"
+      role="tablist"
+      aria-label="Tabs"
+      data-testid="tab-strip"
+      onKeyDown={(event) => {
+        const target = event.target as HTMLElement;
+        if (target.getAttribute('role') !== 'tab') return;
+        const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')];
+        const next = tablistFocusTarget(event.key, items.indexOf(target), items.length);
+        if (next === null) return;
+        event.preventDefault();
+        items[next]?.focus();
+      }}
+    >
+      {state?.tabs.map((tab) => <Tab key={tab.id} tab={tab} active={tab.id === state.activeTabId} />)}
     </div>
   );
 }

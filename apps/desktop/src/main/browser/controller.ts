@@ -711,8 +711,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return true;
   };
 
-  /** Closes the tab (no window check: also for a page that closed itself). */
-  function removeTab(tabId: number): boolean {
+  /**
+   * Closes the tab (no window check: also for a page that closed itself). With `keepFocus` (the
+   * tablist's Delete, `tabs.feature.md`) a new active tab takes no focus: the chrome keeps it on the
+   * neighbour tab. The last tab's fresh empty tab still asks for the address bar.
+   */
+  function removeTab(tabId: number, keepFocus = false): boolean {
     const index = strip.tabs.findIndex((t) => t.id === tabId);
     const tab = strip.tabs[index];
     if (!tab) return false;
@@ -730,14 +734,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       const next = strip.tabs[index] ?? strip.tabs[index - 1];
       strip.activeTabId = next ? next.id : null;
       syncAttached();
-      focusActive();
+      if (!keepFocus) focusActive();
       if (next) audits.activated(next);
     }
     changed();
     return true;
   }
 
-  const closeTab = (tabId: number): boolean => hasWindow() && removeTab(tabId);
+  const closeTab = (tabId: number, keepFocus = false): boolean => hasWindow() && removeTab(tabId, keepFocus);
 
   const newTab = (): number | null => {
     if (!hasWindow()) {

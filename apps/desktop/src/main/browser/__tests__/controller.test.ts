@@ -420,6 +420,46 @@ describe('tabs', () => {
     expect(win.title).toBe('https://a.test/ — frost');
   });
 
+  test('keyboard-close-keeps-focus', () => {
+    const a = loadFirst('https://a.test/');
+    const b = openPage('https://b.test/');
+    const c = openPage('https://c.test/');
+    // A page neighbour: the tablist's Delete keeps focus where it is (in the chrome), Mod+W doesn't.
+    controller.activateTab(a.id);
+    b.view.webContents.focus.mockClear();
+    controller.closeTab(a.id, true);
+    expect(active()).toBe(b.id);
+    expect(attached()).toEqual([b.view]);
+    expect(b.view.webContents.focus).not.toHaveBeenCalled();
+    c.view.webContents.focus.mockClear();
+    controller.closeTab(b.id);
+    expect(active()).toBe(c.id);
+    expect(c.view.webContents.focus).toHaveBeenCalledTimes(1);
+
+    // An empty neighbour: no address-bar request, no chrome focus, with keepFocus; both without.
+    const empty = controller.newTab()!;
+    const other = controller.newTab()!;
+    controller.activateTab(empty);
+    controller.activateTab(c.id);
+    win.webContents.focus.mockClear();
+    let { focusAddressBarSeq } = controller.getState();
+    controller.closeTab(c.id, true);
+    expect(active()).toBe(empty);
+    expect(win.webContents.focus).not.toHaveBeenCalled();
+    expect(controller.getState().focusAddressBarSeq).toBe(focusAddressBarSeq);
+    ({ focusAddressBarSeq } = controller.getState());
+    controller.closeTab(empty);
+    expect(active()).toBe(other);
+    expect(win.webContents.focus).toHaveBeenCalledTimes(1);
+    expect(controller.getState().focusAddressBarSeq).toBe(focusAddressBarSeq + 1);
+
+    // The last tab: the fresh empty tab still asks for the address bar.
+    ({ focusAddressBarSeq } = controller.getState());
+    controller.closeTab(other, true);
+    expect(ids()).toHaveLength(1);
+    expect(controller.getState().focusAddressBarSeq).toBe(focusAddressBarSeq + 1);
+  });
+
   test('close-inactive-tab-keeps-active', () => {
     const a = loadFirst('https://a.test/');
     const b = openPage('https://b.test/');

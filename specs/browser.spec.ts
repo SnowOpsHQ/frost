@@ -352,6 +352,15 @@ export type BrowserState = z.infer<typeof BrowserStateSchema>;
 export const TabIdInputSchema = z.strictObject({ tabId: z.int().positive() });
 export type TabIdInput = z.infer<typeof TabIdInputSchema>;
 
+/**
+ * `browser.closeTab` input: the tab's id, and `keepFocus: true` when the close comes from the
+ * tablist's Delete (`tabs.feature.md`, Keeping focus on a close): main then leaves focus where it is
+ * (on the neighbour tab in the chrome) instead of focusing the new active tab's page or the address
+ * bar. Absent for every other close (Mod+W, the ×, middle-click).
+ */
+export const CloseTabInputSchema = z.strictObject({ tabId: z.int().positive(), keepFocus: z.literal(true).optional() });
+export type CloseTabInput = z.infer<typeof CloseTabInputSchema>;
+
 
 /**
  * `browser.setPageBounds` input: the chrome's page area in window content (CSS = DIP) pixels.

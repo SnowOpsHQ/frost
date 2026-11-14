@@ -51,7 +51,7 @@ import {
 } from '../render-profile-view';
 
 // The chrome's side of per-tab render profiles (spec `render-profile.feature.md`, Visible state): the
-// toolbar toggle, the editor bar (under the toolbar, so the page area makes room for it: nothing is
+// toolbar toggle, the editor bar (under the chrome row, so the page area makes room for it: nothing is
 // drawn over the tab's view), the tab badge, the status-bar chip and the page-area frame. Every value
 // comes from the tab's state; every change goes through `browser.setRenderProfile` /
 // `browser.clearRenderProfile`. Styling is the bundled styles.css only (strict CSP: SVG attributes,
@@ -209,7 +209,7 @@ function Frame({ tab, state, onEdit }: { readonly tab: TabState; readonly state:
   );
 }
 
-/** The editor bar under the toolbar: quick profiles, the form, Apply / Reset, and the crawler caveat. */
+/** The editor bar under the chrome row: quick profiles, the form, Apply / Reset, and the crawler caveat. */
 export function RenderProfileBar({ tab, onClose }: { readonly tab: TabState | undefined; readonly onClose: () => void }) {
   const state = tab?.renderProfile ?? null;
   const [draft, setDraft] = useState<ProfileDraft>(() => draftOf(state));

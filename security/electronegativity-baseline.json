@@ -4,7 +4,7 @@
     {
       "id": "AUXCLICK_JS_CHECK",
       "file": "apps/desktop/src/main/window.ts",
-      "source": "return new BrowserWindow({",
+      "source": "const win = new BrowserWindow({",
       "rationale": "Middle-click opens reach the app-wide setWindowOpenHandler, which always denies the window and opens externally only allowlisted URLs on a trusted gesture (verified with a real middle-click: no window, no in-window navigation); disabling Auxclick adds nothing."
     },
     {

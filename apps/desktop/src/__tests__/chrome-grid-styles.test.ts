@@ -5,6 +5,11 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
+import { ADDRESS_BASIS_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
+
+/** The row's tools (`CHROME_ROW` but the tablist and the address bar) and its gaps (between its items and inside the navigation group: one fewer than its controls). */
+const ROW_TOOLS = CHROME_ROW.filter((id) => id !== 'tab-strip' && id !== 'address').length;
+const ROW_GAPS = CHROME_ROW.length - 1;
 
 const RENDERER = fileURLToPath(new URL('../renderer/', import.meta.url));
 const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8');
@@ -44,6 +49,55 @@ test('chrome-grid-has-a-row-per-slot', () => {
   // The workspace and the status bar are pinned to the last two rows, counted from the end.
   expect(rule('styles.css', '.chrome > .workspace-stack')).toMatch(/grid-row:\s*-3;/);
   expect(rule('styles.css', '.chrome > .status-bar')).toMatch(/grid-row:\s*-2;/);
+});
+
+test('chrome-row-is-one-fixed-track', () => {
+  // specs/tabs.feature.md (The chrome row): the tab row and the toolbar are one --h-chrome row, the grid's first track.
+  const tracks = rule('styles.css', '.chrome').match(/grid-template-rows:\s*([^;]+);/)![1]!.trim();
+  expect(tracks.split(/\s+/)[0]).toBe('var(--h-chrome)');
+  const app = read('App.tsx');
+  const body = app.slice(app.indexOf('<div className="chrome">'));
+  const first = body.split('\n').find((line) => /^ {6}<[A-Za-z]/.test(line));
+  expect(first).toMatch(/^ {6}<ChromeRow\b/);
+  const row = rule('styles.css', '.chrome-row');
+  expect(row).toMatch(/display:\s*flex;/);
+  expect(row).not.toMatch(/flex-wrap:\s*wrap/);
+  // It clips: never a scroll container that focus could scroll.
+  expect(row).toMatch(/overflow:\s*clip;/);
+  expect(row).not.toMatch(/overflow(-x)?:\s*(hidden|auto|scroll);/);
+  // The tools never shrink.
+  for (const fixed of ['.nav-buttons', '.tool', '.new-tab']) expect(rule('styles.css', fixed), fixed).toMatch(/flex:\s*none;/);
+  // Tabs shrink to their minimum, then the tablist scrolls; the address bar keeps its basis until only
+  // one tab is left beside it, and never goes under its minimum.
+  expect(row).toMatch(new RegExp(`--tab-min:\\s*${TAB_MIN_WIDTH_PX}px;`));
+  expect(row).toMatch(new RegExp(`--address-basis:\\s*${ADDRESS_BASIS_PX}px;`));
+  expect(rule('styles.css', '.tab')).toMatch(/min-width:\s*var\(--tab-min\);/);
+  const address = rule('styles.css', '.address');
+  expect(address).toMatch(/flex:\s*1 1 var\(--address-basis\);/);
+  // The basis, or the room left beside one tab, whichever is less: below the window's minimum (a tiled
+  // window) the address bar gives way before the tools.
+  expect(address).toMatch(/min-width:\s*min\(var\(--address-basis\),\s*max\(0px,\s*var\(--row-free\) - var\(--one-tab\)\)\);/);
+  // The room for the tablist and the address bar: the row's own content width (an inline-size
+  // container) less its tools and gaps, counted from CHROME_ROW, so a new tool can't go uncounted.
+  expect([ROW_TOOLS, ROW_GAPS]).toEqual([6, 7]);
+  expect(row).toMatch(/container-type:\s*inline-size;/);
+  const free = row.match(/--row-free:\s*calc\(100cqw - (\d+) \* var\(--h-control\) - (\d+) \* var\(--space-1\)\);/);
+  expect(free, '--row-free').not.toBeNull();
+  expect([Number(free![1]), Number(free![2])]).toEqual([ROW_TOOLS, ROW_GAPS]);
+  expect(row).toMatch(/--one-tab:\s*calc\(var\(--tab-min\) \+ 2 \* var\(--space-1\)\);/);
+  const tablist = rule('styles.css', '.tabs');
+  expect(tablist).toMatch(/overflow-x:\s*auto;/);
+  expect(tablist).toMatch(/min-width:\s*var\(--one-tab\);/);
+  // Room for a focused tab's 4px ring, also when focus scrolls a tab into view at either end.
+  expect(tablist).toMatch(/padding:\s*var\(--space-1\);/);
+  expect(tablist).toMatch(/scroll-padding-inline:\s*var\(--space-1\);/);
+  // The two rows' classes are gone from every stylesheet.
+  const stale = CSS_FILES.flatMap((file) =>
+    rules(read(file))
+      .filter(({ selector }) => /\.(tabstrip|toolbar)(?![\w-])/.test(selector))
+      .map(({ selector }) => `${file}: ${selector}`),
+  );
+  expect(stale).toEqual([]);
 });
 
 test('no-style-drops-a-chrome-slot', () => {
