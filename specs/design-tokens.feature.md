@@ -523,7 +523,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `-soft` fill (indexable, secure and good `--ok`, canonicalised, attention and needs improvement
   `--warn` where it was `--caution`, not indexable, insecure and poor `--danger`, pending and local
   `--accent` where it was `--info-tone`, a measurement with no band `--text-faint` on `--bg-subtle`); a
-  panel that sets only `--verdict` (JavaScript, until its PR) gets a 14% tint of it. The label is
+  panel that sets only `--verdict` (JavaScript, until its PR) gets a 14% tint of it (left to JavaScript's PR: its passing icon is 2.82:1 on that tint in light, 2.75:1 on main). The label is
   `--text-title` in `--text`, as Overview's band, the icon and the word carrying the verdict (it was
   18px in the verdict's colour, `--ok` text 3.30:1); the summary `--text-small` in `--text-muted`, the
   reasons `--text-small` at weight 500 beside a 6px bullet in the verdict's colour. The **signals** under
@@ -562,15 +562,21 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   names it) in place of a rule of its own that repeated it. A metric tile is a card (`--r-md`,
   `--e-ring`) without its 3px top edge in the band's colour; its short name `--text-caps` in
   `--text-muted`, its band a badge (`-ink` on `-soft`: good `--ok`, needs improvement `--warn`, poor
-  `--danger`; it was the band's colour as 11px text, `--ok` 3.30:1), its value `--text-display` in
+  `--danger`; it was the band's colour as 11px text, `--ok` 3.30:1; the head wraps, and so does the
+  badge's text, so "Needs improvement" stays inside a half-width tile at the 300px panel), its value `--text-display` in
   `--text` (it was 22px in the band's colour), its hint `--text-small` in `--text-faint` with an `--accent`
   icon, its name `--text-small` in `--text-faint`; the meter's zones mix the band's graphics colour 55%
   into `--track` (`--seo-track`, `--caution` → `--warn`), its marker `--text`. The timing and totals tiles
   are `--bg-subtle` at `--r-sm` (`--bg-hover`), their labels `--text-small` in `--text-faint`, their values
   `--text-body` at weight 600. **One accent, no second hue:** the navigation timing's six phases were six
   hues and the requests by type seven (26 literal hex with their dark overrides): the phases are now
-  steps of `--accent` mixed into `--track` in time order (redirect 25%, then 40, 55, 70 and 85%, the
-  response `--accent`), their legend's swatches the same steps and kept in
+  steps of `--accent` mixed into `--track` in time order (redirect 55%, then 64, 73, 82 and 91%, the
+  response `--accent`). Neighbouring steps are only about 1.1:1 apart, so every segment is outlined by a
+  1px `--bg-surface` stroke that keeps its width at any scale (`vector-effect: non-scaling-stroke`): a
+  boundary at least 3:1 off both segments it divides (the steps start at 55% for that: 3.18:1 light,
+  3.35:1 dark at the palest; the stroke's colour is pinned, its contrast with a mixed step measured, not
+  pinned), and a segment at its 0.8% minimum (2–2.5px) keeps more than 1px of fill. The legend's
+  swatches are the same steps with a 1px `--text-faint` edge (`PRESSED_EDGES`'s shape), kept in
   forced colours (the bars are SVG fills, which forced colours leave as they are); every type's bar is
   `--accent` on `--track`, its row's label naming it; the load and DOM-ready marks are `--text` and
   `--text-muted` (load was `--danger`, which is no error). A type with no request is `--text-faint`
@@ -578,7 +584,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--warn-ink` on `--warn-soft` (`--caution` on its tint), "Live" `--ok-ink` on `--ok-soft` (it drew `--ok`
   text, one of the `--ok`-as-text exceptions), the others `--text-muted` on `--bg-subtle`. A largest
   request's open button is the chrome's tool at `--h-chip`. **Compliance:** a header's name `--text-mono`
-  (600 11.5px system monospace), `--text-muted` when unknown or not applicable; a mixed resource's
+  (600 11.5px system monospace), wrapping at its hyphens rather than cut short (12px Geist Mono beside
+  "Not applicable" no longer fits), `--text-muted` when unknown or not applicable; a mixed resource's
   element `--text-mono` in `--text-faint`. The accessibility check's intro is an `--accent-soft` notice at
   `--r-md` (a dashed 30% `--accent` edge on a 5% tint), its art an `--accent` glyph on a `--bg-surface`
   tile; its hint `--text-small` in `--text-faint`; its progress an `--accent` bar on `--track`, easing in

@@ -1358,6 +1358,18 @@ export const TEXT_COLOUR_RULES = [
     background: '--bg-subtle',
     why: 'Compliance: an impact with no violated rule, its count dimmed by colour (GrayText under forced colours, FORCED_COLOURS_BUSY)',
   },
+  // Council round 1 on PR #48: colours chosen for contrast that no entry pinned. A verdict's label is
+  // --text (the icon carries the verdict's colour: --ok text is 3.30:1 on a card in light); a rule row's
+  // id and count line is --text-muted (--text-faint is 4.26:1 on the hovered row in dark).
+  { stylesheet: 'styles.css', element: ['.seo-verdict-label'], color: '--text', why: 'Indexability\'s, Compliance\'s and JavaScript\'s verdict label (18px; it was the verdict\'s colour, --ok 3.30:1 in light)' },
+  { stylesheet: 'styles.css', element: ['.seo-speed-verdict-label'], color: '--text', why: 'Page Speed\'s lab verdict label (18px; it was the band\'s colour, --ok 3.30:1 in light)' },
+  { stylesheet: 'styles.css', element: ['.seo-a11y-rule-meta'], color: '--text-muted', why: 'Compliance: a rule row\'s id and element count (12px) in a row button that can be hovered (--text-faint there is 4.26:1 in dark)' },
+  // The navigation timing's segments are steps of --accent in --track, too close to one another to tell
+  // apart (1.2:1 between neighbours): each is outlined by a 1px --bg-surface stroke (currentColor, set
+  // through `color`), so a boundary separates every two. The steps start at 55% of --accent so the stroke
+  // is at least 3:1 off each (3.18:1 at 55% in light, 3.35:1 in dark; measured, not pinned: a step is a
+  // color-mix, not a token); against the darkest, --accent itself, --bg-surface is the pair below.
+  { stylesheet: 'styles.css', element: ['.seo-speed-phase'], color: '--bg-surface', why: 'Page Speed\'s navigation timing: the 1px boundary stroke around every phase\'s segment' },
 ] as const satisfies readonly TextColourRule[];
 
 /**
@@ -1423,6 +1435,15 @@ export const PRESSED_EDGES = [
     edge: '--accent',
     fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
     why: 'a filter chip, pressed (Images\' filters, Content\'s preview chips): an --accent edge beside its --accent-soft fill',
+  },
+  // Council round 1 on PR #48: not a pressed control, but the same shape of guard: a phase's legend swatch
+  // (the pale steps are near the card's colour) draws a 1px --text-faint edge, at least 3:1 on the card.
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-speed-swatch'],
+    edge: '--text-faint',
+    fills: [{ bg: '--bg-surface' }],
+    why: 'Page Speed\'s navigation timing legend: a phase\'s swatch, its edge on the card',
   },
 ] as const satisfies readonly PressedEdge[];
 
