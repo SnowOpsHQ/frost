@@ -463,11 +463,12 @@ async function withContentWidth(width: number, body: () => Promise<void>, expect
   }
 }
 
-/** Opens tabs until the strip holds `count`. */
+/** Opens tabs until the strip holds `count`; each new tab focuses the address bar, which is waited for. */
 async function openTabs(count: number): Promise<void> {
   const have = await strip().count();
   for (let i = have; i < count; i++) await menu('new-tab');
   await expect(strip()).toHaveCount(count);
+  if (count > have) await expect(address()).toBeFocused();
 }
 
 /** Opens enough tabs to overflow the tablist in an 800px wide window; restores the window after. */
@@ -602,6 +603,8 @@ test('arrow-focus-brings-the-whole-tab-in', async () => {
     await openTabs(20);
     await strip().nth(0).click();
     await expect(strip().nth(0)).toHaveAttribute('aria-selected', 'true');
+    // Switching to an empty tab focuses the address bar (asynchronously): let it, then take focus back.
+    await expect(address()).toBeFocused();
     await activeTab().focus();
     for (let i = 1; i < 20; i++) {
       await page.keyboard.press('ArrowRight');
