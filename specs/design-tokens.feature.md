@@ -655,8 +655,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   **target query**: its clear button an `--h-badge` circle in `--text-muted`, `--text` on `--bg-hover`
   hovered, with its own focus ring (it had none); each place's mark keeps its shape (a ring with a
   check, a half disc, a dashed ring) in `--ok` (drawn by `stroke`, not `color`), `--accent` and
-  `--text-faint`; a term is an 18px `--r-xs` badge in `--text-micro` (its block padding makes the 18px:
-  `(18px - 2px - 1.3em) / 2`), absent `--text-muted` with a 1px dashed `--text-faint` edge at weight 400,
+  `--text-faint`; a term is an 18px `--r-xs` badge in `--text-micro` (a fixed 18px box, its line centred by
+  `(18px - 2px - 1.3em) / 2` of block padding), absent `--text-muted` with a 1px dashed `--text-faint` edge at weight 400,
   present `--ok-ink` on `--ok-soft` (was `--ok` on its 14% tint) at weight 600 with a 1px solid `--ok` edge
   (`STATE_EDGES`: 5.53:1 and 3.30:1 on the card in light; council round 1 on PR #49 found the first
   edges, a `--track` dash and a transparent solid line, invisible outside forced colours), so absent is
@@ -676,7 +676,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`--bg-subtle` at `--r-sm`, the label `--text-small` in `--text-muted`, the value `--text-heading`; they
   were translucent `--bg-hover`); a difficult sentence an `--r-sm` `--bg-subtle` box, its text
   `--text-small`, its meta `--text-small` in `--text-faint`, and its reason chip ("Long", "Complex") a
-  neutral 18px badge (the term's block padding), `--text-muted` on `--bg-surface` with `--e-ring`: it took the page highlight's two
+  neutral 18px badge (the term's fixed box), `--text-muted` on `--bg-surface` with `--e-ring`: it took the page highlight's two
   hues (`#b45309`, `#be185d`, the hex ratchet's 4), and its word says the reason, as the boxes in the
   page do. **JavaScript:** its verdict colour (`--verdict`, read by Indexability's card) `--ok`,
   `--warn` (`--caution`), `--danger` or `--text-faint`; its notes `--text-small` in `--text-muted`, the

@@ -540,7 +540,8 @@ test.describe('page surfaces', () => {
     // seo-javascript.e2e.ts: the guide served and rendered alike.
     await audit('/guide');
     await showPanel('javascript');
-    await expect(page.getByTestId('seo-js-state')).not.toHaveAttribute('data-state', 'pending', { timeout: AUDIT_WAIT });
+    // The guide's served HTML reads the same as the page: a slow or failed fetch fails here, by name.
+    await expect(page.getByTestId('seo-js-state')).toHaveAttribute('data-state', 'identical', { timeout: AUDIT_WAIT });
     await capture('seo-javascript');
   });
 

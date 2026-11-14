@@ -6210,12 +6210,10 @@ input {
   white-space: nowrap;
 }
 
+/* The trail wraps (the card breaks anywhere), so its last crumb, the page's, shows whole. */
 .seo-serp-path {
-  overflow: hidden;
   color: var(--text-muted);
   font: var(--text-small);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* The title reads as a link, as Overview's preview: --accent. */
@@ -6351,7 +6349,8 @@ input {
 .seo-width-meter {
   --meter: var(--ok);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  /* The label keeps its longest word; at 300px the verdict wraps rather than drawing over it. */
+  grid-template-columns: minmax(min-content, 1fr) auto;
   align-items: center;
   gap: var(--space-1) var(--space-3);
 }
@@ -6584,13 +6583,16 @@ input {
   min-width: 0;
 }
 
-/* A term: an 18px badge, a dashed --track edge while absent, --ok-ink on --ok-soft (a solid edge) once
-   present; forced colours draw both edges, so the shape still says which. */
+/* A term: an 18px badge, a dashed --text-faint edge while absent, --ok-ink on --ok-soft in a solid --ok
+   edge once present (STATE_EDGES); forced colours keep both styles, so the shape still says which. */
 .seo-query-term {
   max-width: 100%;
-  padding: 1px var(--space-2);
+  /* 18px tall (a fixed box), its line (1.3em) centred by the block padding between the 1px edges. */
+  box-sizing: border-box;
+  height: 18px;
+  padding: calc((18px - 2px - 1.3em) / 2) var(--space-2);
   overflow: hidden;
-  border: 1px dashed var(--track);
+  border: 1px dashed var(--text-faint);
   border-radius: var(--r-xs);
   color: var(--text-muted);
   font: var(--text-micro);
@@ -6601,7 +6603,8 @@ input {
 }
 
 .seo-query-term[data-present='true'] {
-  border: 1px solid transparent;
+  border-style: solid;
+  border-color: var(--ok);
   background: var(--ok-soft);
   color: var(--ok-ink);
   font-weight: 600;
@@ -6899,7 +6902,9 @@ input {
 
 /* The reason ("Long", "Complex"): a neutral badge; its word says it, as the page's boxes do. */
 .seo-difficult-chip {
-  padding: 1px var(--space-2);
+  box-sizing: border-box;
+  height: 18px;
+  padding: calc((18px - 2px - 1.3em) / 2) var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--r-xs);
   background: var(--bg-surface);
@@ -8563,8 +8568,9 @@ input {
    the edge forced colours draw) holding a compact grid of label / value pairs. */
 .serp-params {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-3) var(--space-4);
+  /* Each column at least its longest word ("Language", "Desktop" whole at 300px); a value breaks anywhere. */
+  grid-template-columns: repeat(4, minmax(min-content, 1fr));
+  gap: var(--space-3);
   margin: 0;
   padding: var(--space-4) calc(var(--space-2) + var(--space-3));
   border: 1px solid transparent;
@@ -8592,8 +8598,9 @@ input {
 .serp-param-value {
   margin: 0;
   color: var(--text);
-  font: var(--text-body);
+  font: var(--text-small);
   font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 /* The query's intent: a chip (the canvas's info badge), its confidence, or the classifier's state. */
@@ -8843,7 +8850,6 @@ input {
 /* The probe table: one column per agent; a cell that differs from the browser is marked. */
 .visibility-table {
   min-width: 560px;
-  font: var(--text-small);
 }
 
 /* The fact column stays in view while the agents scroll sideways. */
