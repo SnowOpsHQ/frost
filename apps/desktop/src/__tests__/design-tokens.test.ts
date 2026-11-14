@@ -70,9 +70,22 @@ interface Declaration {
   readonly block: number;
 }
 
+/** `parseUncached(css)`, once per stylesheet text: the cascade checks resolve thousands of elements
+ * against the same `styles.css`, and parsing it each time took the focus-ring test past its budget on
+ * macOS CI. Callers only read the result. */
+const PARSED = new Map<string, { declarations: Declaration[]; blocks: string[][] }>();
+function parse(css: string): { declarations: Declaration[]; blocks: string[][] } {
+  let parsed = PARSED.get(css);
+  if (parsed === undefined) {
+    parsed = parseUncached(css);
+    PARSED.set(css, parsed);
+  }
+  return parsed;
+}
+
 /** The declarations of `css`, each with its context, and the context of every block. (The
  * renderer's CSS has no braces or semicolons inside strings, so a brace walk is enough.) */
-function parse(css: string): { declarations: Declaration[]; blocks: string[][] } {
+function parseUncached(css: string): { declarations: Declaration[]; blocks: string[][] } {
   const declarations: Declaration[] = [];
   const blocks: string[][] = [];
   const stack: string[] = [];
@@ -430,6 +443,25 @@ function specificity(raw: string): number {
   return classes * 1000 + types;
 }
 
+/** `css`'s declarations by each selector of their rule's list (normalized), with their source order and
+ * the at-rules around the rule: built once per stylesheet text, for `resolveOnElement`. */
+const SELECTOR_INDEX = new Map<string, Map<string, { order: number; outer: string[]; property: string; value: string }[]>>();
+function selectorIndex(css: string): Map<string, { order: number; outer: string[]; property: string; value: string }[]> {
+  let index = SELECTOR_INDEX.get(css);
+  if (index === undefined) {
+    const built = new Map<string, { order: number; outer: string[]; property: string; value: string }[]>();
+    parse(css).declarations.forEach((d, order) => {
+      const entry = { order, outer: d.context.slice(0, -1), property: d.property, value: d.value };
+      for (const selector of new Set(splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim()))) {
+        built.set(selector, [...(built.get(selector) ?? []), entry]);
+      }
+    });
+    index = built;
+    SELECTOR_INDEX.set(css, index);
+  }
+  return index;
+}
+
 /**
  * The value `property` resolves to for an element matching exactly the selectors `element` in `css`:
  * rules whose selector list holds one of them (top level, or in the dark media block for dark),
@@ -438,17 +470,20 @@ function specificity(raw: string): number {
  */
 function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark', options: { readonly forced?: boolean } = {}): string {
   const wanted = new Set(element.map((s) => s.replace(/\s+/g, ' ').trim()));
-  const matched: { order: number; spec: number; property: string; value: string }[] = [];
-  parse(css).declarations.forEach((d, order) => {
-    const outer = d.context.slice(0, -1);
-    // Top level; the dark block in dark; and with `forced`, the forced-colours block (forced colours on).
-    const applies = (level: string) => (theme === 'dark' && level === DARK) || (options.forced === true && FORCED_COLOURS_MEDIA.test(level));
-    if (!(outer.length === 0 || (outer.length === 1 && applies(outer[0]!)))) return;
-    const selectors = splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim());
-    const hits = selectors.filter((s) => wanted.has(s));
-    if (hits.length === 0) return;
-    matched.push({ order, spec: Math.max(...hits.map(specificity)), property: d.property, value: d.value });
-  });
+  // Top level; the dark block in dark; and with `forced`, the forced-colours block (forced colours on).
+  const applies = (level: string) => (theme === 'dark' && level === DARK) || (options.forced === true && FORCED_COLOURS_MEDIA.test(level));
+  // Each declaration once, at the highest specificity among the wanted selectors of its list.
+  const byOrder = new Map<number, { order: number; spec: number; property: string; value: string }>();
+  const index = selectorIndex(css);
+  for (const selector of wanted) {
+    for (const d of index.get(selector) ?? []) {
+      if (!(d.outer.length === 0 || (d.outer.length === 1 && applies(d.outer[0]!)))) continue;
+      const spec = specificity(selector);
+      const seen = byOrder.get(d.order);
+      if (seen === undefined || spec > seen.spec) byOrder.set(d.order, { order: d.order, spec, property: d.property, value: d.value });
+    }
+  }
+  const matched = [...byOrder.values()];
   matched.sort((a, b) => a.spec - b.spec || a.order - b.order);
   const own = new Map<string, string>();
   for (const m of matched) {
