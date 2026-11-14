@@ -291,8 +291,10 @@ test('signal-contrast-meets-aa', () => {
       if (pair.alpha !== undefined) bg = [bg[0], bg[1], bg[2], bg[3] * pair.alpha];
       if (bg[3] < 1) {
         expect(pair.over, `${label}: a translucent background needs \`over\``).toBeDefined();
-        const surface = colour(pair.over ?? pair.bg);
-        expect(surface[3], `${label}: \`over\` must be opaque`).toBe(1);
+        let surface = colour(pair.over ?? pair.bg);
+        // A translucent `over` (a hovered row's --bg-hover) lies on its opaque `under` first.
+        if (pair.under !== undefined) surface = composite(surface, colour(pair.under));
+        expect(surface[3], `${label}: \`over\` must be opaque, or lie on an opaque \`under\``).toBe(1);
         bg = composite(bg, surface);
       }
       const fg = composite(colour(pair.fg), bg);
@@ -448,6 +450,11 @@ test('text-colour-rules-resolve', () => {
       expect(resolveOnElement(css, rule.element, 'color', theme), `${rule.element.at(-1)} (${theme})`).toBe(`var(${rule.color})`);
       if (rule.background !== undefined) {
         expect(resolveOnElement(css, rule.element, 'background', theme), `${rule.element.at(-1)} background (${theme})`).toBe(`var(${rule.background})`);
+      }
+      // A disabled button shown by its colours is never faded as well (or instead).
+      if (rule.unfaded) {
+        const opacity = resolveOnElement(css, rule.element, 'opacity', theme);
+        expect(opacity === undefined || Number(opacity) >= 1, `${rule.element.at(-1)} opacity ${opacity} (${theme})`).toBe(true);
       }
     }
     expect(

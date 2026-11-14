@@ -715,7 +715,8 @@ export const HEX_COLOUR_RATCHET = 47;
 /**
  * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
  * of `min` (4.5 for text, 3 for UI and graphics), in light and in dark. `over` is the opaque surface a
- * translucent `bg` (`--accent-soft`, a dark `-soft` fill) sits on, so the pair is composited first; a
+ * translucent `bg` (`--accent-soft`, a dark `-soft` fill) sits on, so the pair is composited first (a
+ * translucent `over`, a hovered row's `--bg-hover`, is itself composited over the opaque `under` first); a
  * translucent `fg` is composited over the (composited) `bg`. `alpha` makes `bg` a tint: the token at
  * that opacity, as `color-mix(in srgb, <bg> <alpha × 100>%, transparent)` draws it (then `over` is
  * needed). `why` cites the sheet.
@@ -725,6 +726,8 @@ export interface ContrastPair {
   readonly bg: TokenName;
   readonly min: 4.5 | 3;
   readonly over?: TokenName;
+  /** The opaque surface under a translucent `over` (a tint on a hovered row: `--bg-hover` over `--bg-surface`). */
+  readonly under?: TokenName;
   readonly alpha?: number;
   readonly why: string;
 }
@@ -974,6 +977,17 @@ export const CONTRAST_PAIRS = [
   { fg: '--text-muted', bg: '--warn-soft', over: '--bg-sheet', min: 4.5, why: 'the DevTools console: a warning\'s source (12px, --text-muted) on its row (4.5:1)' },
   { fg: '--text-muted', bg: '--danger-soft', over: '--bg-sheet', min: 4.5, why: 'the DevTools console: an error\'s source (12px; --text-faint is 4.45:1 on --danger-soft in light) on its row (4.5:1)' },
   { fg: '--danger-ink', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'History\'s Clear button and the drawer\'s Clear site data (--danger-ink on --bg-surface), hovered (4.5:1)' },
+  { fg: '--accent-hover', bg: '--accent-soft', over: '--bg-surface', min: 4.5, why: 'a History row\'s monogram and change count (11px, --accent-hover on --accent-soft) (4.5:1)' },
+  {
+    fg: '--accent-hover',
+    bg: '--accent-soft',
+    over: '--bg-hover',
+    under: '--bg-surface',
+    min: 4.5,
+    why: 'a History row\'s monogram and change count on a hovered row (--accent-soft over --bg-hover over the sheet; --accent is 3.84:1 there in dark) (4.5:1)',
+  },
+  { fg: '--ok-ink', bg: '--bg-hover', over: '--bg-sheet', min: 4.5, why: 'the DevTools drawer: a request robots.txt allows, in a hovered row (4.5:1)' },
+  { fg: '--ok-ink', bg: '--accent-soft', over: '--bg-sheet', min: 4.5, why: 'the DevTools drawer: a request robots.txt allows, in the selected row (4.5:1)' },
   { fg: '--text-muted', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'a History row, hovered: its time and host (12px, --text-muted: --text-faint is 4.2:1 on --bg-hover in dark), and a hovered .panel-button\'s icon (4.5:1)' },
 ] as const satisfies readonly ContrastPair[];
 
@@ -1015,6 +1029,8 @@ export interface TextColourRule {
   readonly color: TokenName;
   /** The fill the text sits on, when the rule pins that too (resolved the same way). */
   readonly background?: TokenName;
+  /** A disabled button shown by its colours: the cascade also gives no `opacity` under 1 (a fade would replace them). */
+  readonly unfaded?: true;
   readonly why: string;
 }
 
@@ -1122,6 +1138,16 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'styles.css', element: ['.devtools-status', '.devtools-status-5xx'], color: '--danger-ink', background: '--bg-subtle', why: 'a 5xx status code (was --danger on --bg-hover)' },
   { stylesheet: 'styles.css', element: ['.devtools-button', '.devtools-danger'], color: '--danger-ink', why: 'the drawer\'s Clear site data (was --danger) on its button' },
   { stylesheet: 'styles.css', element: ['.history-clear'], color: '--danger-ink', why: 'History\'s Clear (was --danger) on its button' },
+  // A History row's monogram and change count lie over --bg-hover on a hovered row: --accent-hover keeps 4.5:1 there.
+  { stylesheet: 'styles.css', element: ['.history-monogram'], color: '--accent-hover', background: '--accent-soft', why: 'a History row\'s monogram (11px; --accent is 3.84:1 on a hovered row in dark)' },
+  { stylesheet: 'styles.css', element: ['.history-changes'], color: '--accent-hover', background: '--accent-soft', why: 'a History row\'s change count (11px; --accent is 3.84:1 on a hovered row in dark)' },
+  // Disabled is a colour, not a fade (the token sheet's "--text-faint on --bg-subtle, no shadow"): with a fade put back these fail.
+  { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'a disabled .panel-button' },
+  { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button-primary', '.panel-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'a disabled primary .panel-button' },
+  { stylesheet: 'styles.css', element: ['.update-button', '.update-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the update notice\'s Skip this version while its step runs' },
+  { stylesheet: 'styles.css', element: ['.update-button', '.update-primary', '.update-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the update notice\'s Download or Show file while its step runs' },
+  { stylesheet: 'styles.css', element: ['.render-chip', '.render-chip:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the editor bar\'s quick profiles with no tab' },
+  { stylesheet: 'styles.css', element: ['.devtools-button', '.devtools-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'a DevTools drawer button with nothing to act on' },
 ] as const satisfies readonly TextColourRule[];
 
 /**

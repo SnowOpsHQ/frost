@@ -446,8 +446,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   no second hue (`--render-accent`, `--render-soft`, `--render-edge` → `--accent`, `--accent-soft`,
   `--accent`, all three `removed`): the 4px edge and the device's outline `--accent`, the 30px header
   `--accent` with `--on-accent` text (`RENDER_FRAME` keeps its 30px header and 4px inset, so the view
-  doesn't move), its tags outlined in `--on-accent` at 45% (a white 18% fill left their 11px text at
-  3.5:1 in light), the failed tag `--danger` with `--on-accent`; its buttons `--h-badge` pills outlined
+  doesn't move), its tags outlined in `--on-accent` at 62% (a white 18% fill left their 11px text at
+  3.5:1 in light; the edge, the one thing that groups a tag, is 3.41:1 on the header in light and 3.42:1 in
+  dark, where 45% was 2.48 and 2.38), the failed tag `--danger` with `--on-accent`; its buttons `--h-badge` pills outlined
   the same way, hovered `--accent-hover`, the primary one (Reload to apply) `--on-accent` with `--accent`
   text (its two literal whites and the bar's third went). **Tab badge and status chip:** the badge is an
   `--icon-size` square at `--r-xs` on `--accent-soft` with an `--accent` icon, edged `--accent` (a border,
@@ -489,17 +490,25 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   within (`:focus-within`; it was an `--accent` border and halo); Clear a secondary button in
   `--danger-ink` (it was `--danger`), More a secondary button, the selects `--h-control` at `--r-sm` with
   `--e-raised` (Settings'); rows `--h-field` at `--r-sm`, `--bg-hover` hovered, the time and host
-  `--text-small` in `--text-faint`, the label `--text-body`; the close and row actions `--h-control` and
+  `--text-small` in `--text-muted` (`--text-faint` is 4.26:1 on a hovered row in dark), the time on one line
+  in a 64px column (60px in a narrow column; "01:36 PM" wrapped in Geist at 56px), the label `--text-body`; the close and row actions `--h-control` and
   `--h-chip` circles in `--text-muted` (`--icon`); the monogram an `--h-badge` square at `--r-xs` on
-  `--accent-soft`, its letter `--accent` at `--text-micro` (it was 700, which Geist isn't bundled in);
-  a row's change count an `--h-badge` pill in `--text-micro`, `--accent` on `--accent-soft`. Retired
+  `--accent-soft`, its letter `--accent-hover` at `--text-micro` (it was 700, which Geist isn't bundled in);
+  a row's change count an `--h-badge` pill in `--text-micro`, `--accent-hover` on `--accent-soft` (both lie
+  over `--bg-hover` on a hovered row, where `--accent` is 3.84:1 in dark; `--accent-hover` is 5.03 there
+  and 6.19 in light). Retired
   names these pieces were the last to read are `removed`: `--find-height`, `--bg-prompt`,
   `--prompt-edge`, `--shadow-prompt`, `--render-accent`, `--render-soft`, `--render-edge`,
   `--bg-field-hover`, `--shadow-field` and `--panel-art`. The others they read stay for the panels that
   still do (`--bg-chrome-edge`, `--border-field`, `--radius-control`, `--radius-field`, `--icon`,
   `--caution`). Two rules drew `--ok` as text (the robots line, a 2xx code) and the frame's three literal
   whites were hex, so the `--ok`-as-text exception is 13 and the hex ratchet 47. The visual baseline
-  gains `page-error` (a refused connection, on the fixture server's host with a closed port).
+  gains `page-error` (a load Chromium refuses: `http://127.0.0.1:9/`, `ERR_UNSAFE_PORT`, so no request is
+  made and nothing varies). A disabled button's colours are pinned (`TEXT_COLOUR_RULES` with `unfaded`:
+  `--text-faint` on `--bg-subtle` and no `opacity` under 1, for `.panel-button`, primary or not, the update
+  notice's buttons, the quick profiles and the drawer's buttons), so a fade put back fails. A row
+  button in the drawer's table is a block that ellipsizes its own name, and the cells have `--space-1`
+  of block padding, so its `--focus-ring` is drawn whole inside the clipping cell.
 
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
@@ -545,7 +554,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`specs/seo-sidebar.spec.ts`).
 - **Scenario: signal-contrast-meets-aa** — every `CONTRAST_PAIRS` pair reaches its minimum WCAG 2.x
   contrast ratio in light and in dark, read from `tokens.css` (`var()` resolved, translucent colours
-  composited); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
+  composited, a translucent `over` itself first over its opaque `under`: a tint on a hovered row); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
 - **Scenario: known-contrast-exceptions-are-current** — each `KNOWN_CONTRAST_EXCEPTIONS` pair still
   misses its minimum in at least one theme, is not in `CONTRAST_PAIRS`, and exactly `rules`
   declarations in the renderer's stylesheets draw text in its `fg` (so fixing them removes the entry).
@@ -560,7 +569,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
   the cascade over its `element` selectors in its stylesheet resolves `color` to `var(<color>)` (and
   `background` to `var(<background>)` where the entry names one), and that pair is in
-  `CONTRAST_PAIRS`.
+  `CONTRAST_PAIRS`; for an `unfaded` entry (a disabled button shown by its colours), `opacity` resolves to
+  nothing under 1, so a fade put back in place of the colours fails.
 - **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry (Settings' and
   Help's controls, the chrome's tools, tabs, new-tab button, address bar and prompt buttons, an SEO
   issue's heading row and the panels' link button, and the rest of the chrome's: the error panels' and
