@@ -78,7 +78,6 @@
 
   /* ---- Search Console panel (was in gsc-panel.css) */
   --gsc-line: var(--accent);
-  --gsc-grid: #e7ebf1;
   --gsc-axis: var(--text-faint);
 
   /* ---- Agent panel (was in components/agent/agent.css) */
@@ -106,9 +105,6 @@
     --serp-path: #9aa3b2;
     --serp-glyph: #2c3139;
     --serp-glyph-mark: #a3acba;
-
-    /* ---- Search Console panel (was in gsc-panel.css) */
-    --gsc-grid: #30353e;
   }
 }
 

@@ -1,7 +1,10 @@
 /* The AI answers sheet (Phase 12 Task 9, specs/ai-answers.feature.md, Renderer). A Help sheet's frame
    (help.css lays the page area out zero-high while it shows), a little wider for the answer beside its
-   list. Bundled and served from app:// (CSP style-src 'self'): no inline styles, existing tokens only.
-   An engine's text wraps, never widens the sheet. */
+   list. Bundled and served from app:// (CSP style-src 'self'): no inline styles. An engine's text wraps,
+   never widens the sheet. Signal (specs/design-tokens.feature.md, The panel stylesheets): the sheet sets
+   --text-body on its root (Help's frame sets no font); fields are the field inside a card, an answer a
+   card, the chosen answer and the watched domain --accent-soft with an --accent edge. This sheet loads
+   before styles.css, so a rule that changes .panel-button names its class too. */
 
 .help:has(> .help-body > .ai-answers) {
   width: min(1040px, 100%);
@@ -10,9 +13,9 @@
 .ai-answers {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-5);
   min-width: 0;
-  font-size: 13px;
+  font: var(--text-body);
 }
 
 .ai-answers-status:empty {
@@ -21,28 +24,27 @@
 
 .ai-answers-status {
   margin: 0;
-  padding: 8px 12px;
-  border-radius: var(--radius-field);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
   background: var(--accent-soft);
 }
 
 .ai-answers-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .ai-answers-section-title {
   margin: 0;
-  font-size: 15px;
-  font-weight: 600;
+  font: var(--text-heading);
 }
 
 .ai-answers-note {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
   overflow-wrap: anywhere;
 }
 
@@ -53,16 +55,16 @@
 .ai-answers-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 280px);
-  gap: 10px 12px;
+  gap: var(--space-3) var(--space-4);
 }
 
 .ai-answers-field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   min-width: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 /* The Engine select's caveat ("… may differ from the ChatGPT app."), under the select in its column. */
@@ -73,33 +75,33 @@
 .ai-answers-field-inline {
   flex-direction: row;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
+/* A field inside a card: --h-control at --r-sm on --bg-surface with --e-raised and a transparent border
+   (the edge forced colours draw); focus is --focus-ring, where it was an --accent border and halo. */
 .ai-answers-input,
 .ai-answers-select {
   min-width: 0;
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-field);
-  background: var(--bg-field);
+  height: var(--h-control);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
-  font: inherit;
+  font: var(--text-body);
 }
 
-.ai-answers-input:focus,
-.ai-answers-select:focus {
-  border-color: var(--accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--accent-soft);
+.ai-answers-input::placeholder {
+  color: var(--text-faint);
 }
 
 .ai-answers-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .ai-answers-row-spread {
@@ -110,48 +112,57 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .ai-answers-confirm-box {
-  padding: 8px 12px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-field);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  box-shadow: var(--e-ring);
 }
 
-.ai-answers-danger {
-  color: var(--danger);
+/* A destructive confirmation (Delete, Delete all, a shorter retention): --danger-ink. It names
+   .panel-button too, which would otherwise win with its --text (styles.css loads after this sheet). */
+.panel-button.ai-answers-danger {
+  color: var(--danger-ink);
 }
 
 .ai-answers-split {
   display: grid;
   grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--space-4);
   align-items: start;
 }
 
 .ai-answers-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* An answer in the list: a row at --r-sm, --bg-hover hovered; the one shown --accent-soft with an
+   --accent edge (PRESSED_EDGES). */
 .ai-answers-pick {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
   width: 100%;
-  padding: 6px 8px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
-  border-radius: var(--radius-field);
+  border-radius: var(--r-sm);
   background: none;
   color: var(--text);
-  font: inherit;
+  font: var(--text-body);
   text-align: start;
   cursor: pointer;
+}
+
+.ai-answers-pick:hover:where(:not([aria-pressed='true'])) {
+  background: var(--bg-hover);
 }
 
 .ai-answers-pick[aria-pressed='true'] {
@@ -172,7 +183,7 @@
 .ai-answers-engines {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -184,23 +195,24 @@
   display: grid;
   grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
   align-items: end;
-  gap: 4px 12px;
+  gap: var(--space-1) var(--space-4);
 }
 
+/* An answer: a card on the page card. */
 .ai-answer {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
   min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--bg-chrome-edge);
-  border-radius: var(--radius-field);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  box-shadow: var(--e-ring);
 }
 
 .ai-answer-query {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font: var(--text-heading);
   overflow-wrap: anywhere;
 }
 
@@ -210,29 +222,32 @@
 }
 
 .ai-answer-text p {
-  margin: 0 0 6px;
+  margin: 0 0 var(--space-2);
 }
 
 .ai-answer-subtitle {
-  margin: 4px 0 0;
-  font-size: 12px;
+  margin: var(--space-1) 0 0;
+  font: var(--text-small);
   font-weight: 600;
 }
 
 .ai-answer-domains {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* A cited domain: a --bg-subtle pill; the watched one --accent-soft with an --accent edge. */
 .ai-answer-domain {
-  padding: 2px 8px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-control);
+  padding: calc(var(--space-1) / 2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
   color: var(--text-muted);
+  font: var(--text-small);
 }
 
 .ai-answer-domain[data-watched='true'],
@@ -245,19 +260,19 @@
 .ai-answer-citations {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   margin: 0;
-  padding: 0 0 0 20px;
+  padding: 0 0 0 var(--space-6);
 }
 
 .ai-answer-citation {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 4px 6px;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
   border: 1px solid transparent;
-  border-radius: var(--radius-field);
+  border-radius: var(--r-sm);
 }
 
 .ai-answer-citation-text {
@@ -272,8 +287,26 @@
 
 .ai-answer-citation-url {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
   overflow-wrap: anywhere;
+}
+
+/* Focus: the ring, after the hover and the pressed rule. */
+.ai-answers-input:focus-visible,
+.ai-answers-select:focus-visible,
+.ai-answers-pick:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* Forced colours replace the fill and the edge that say chosen and watched (FORCED_COLOURS_PRESSED). */
+@media (forced-colors: active) {
+  .ai-answers-pick[aria-pressed='true'],
+  .ai-answer-domain[data-watched='true'],
+  .ai-answer-citation[data-watched='true'] {
+    border-color: Highlight;
+  }
 }
 
 @media (max-width: 760px) {
