@@ -11,6 +11,16 @@ import { tablistFocusTarget } from '../tablist-keys';
 // only (strict CSP).
 
 /**
+ * Focuses a tab and scrolls its whole pill (its × too) into view, with the tablist's scroll padding:
+ * focus alone would leave a half-visible tab where it is, its ring cut off (`tabs.feature.md`).
+ */
+function focusWhole(tab: HTMLElement | undefined): void {
+  if (!tab) return;
+  tab.focus({ preventScroll: true });
+  tab.parentElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+/**
  * One tab in the strip: the `role="tab"` element (glyph or loading indicator, label; tooltip: the
  * full label) and, as its sibling, the close button. A tab's children are presentational, so the ×
  * is a mouse affordance outside it (`aria-hidden`, never focused); the keyboard closes the focused
@@ -61,7 +71,7 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
             // Keep keyboard focus in the strip: on the neighbour that remains.
             const items = [...(event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
             const index = items.indexOf(event.currentTarget);
-            (items[index + 1] ?? items[index - 1])?.focus();
+            focusWhole(items[index + 1] ?? items[index - 1]);
             close();
           }
         }}
@@ -136,7 +146,7 @@ export function TabStrip({ state }: { readonly state: BrowserState | null }) {
         const next = tablistFocusTarget(event.key, items.indexOf(target), items.length);
         if (next === null) return;
         event.preventDefault();
-        items[next]?.focus();
+        focusWhole(items[next]);
       }}
     >
       {state?.tabs.map((tab) => <Tab key={tab.id} tab={tab} active={tab.id === state.activeTabId} />)}

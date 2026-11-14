@@ -2,6 +2,7 @@ import path from 'node:path';
 import { BrowserWindow, WebContentsView } from 'electron';
 import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
+import { CHROME_MIN_CONTENT_WIDTH_PX } from '@app/specs/tabs.spec';
 import { isLocationPartition, LOCATION_WEBRTC_POLICY } from '@app/specs/location-profiles.spec';
 
 /**
@@ -13,7 +14,7 @@ import { isLocationPartition, LOCATION_WEBRTC_POLICY } from '@app/specs/location
  * `ci-gates.feature.md`). `boot.test.ts` keeps them equal to `HARDENED_WEB_PREFERENCES`.
  */
 export function createMainWindow(): BrowserWindow {
-  return new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1280,
     height: 800,
     title: 'frost',
@@ -29,6 +30,21 @@ export function createMainWindow(): BrowserWindow {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
+  keepChromeRowWhole(win);
+  return win;
+}
+
+/**
+ * Keeps the window's content at least `CHROME_MIN_CONTENT_WIDTH_PX` wide, what the chrome row needs to
+ * fit whole (`tabs.feature.md`, The chrome row): the minimum size counts the frame, so it is that plus
+ * the frame's width (size less content size); the minimum height stays as it is. (A `minWidth` with
+ * `useContentSize` would be a content constraint Electron neither reports nor lets a test read.)
+ */
+function keepChromeRowWhole(win: BrowserWindow): void {
+  const [outer = 0] = win.getSize();
+  const [inner = 0] = win.getContentSize();
+  const [, minHeight = 0] = win.getMinimumSize();
+  win.setMinimumSize(CHROME_MIN_CONTENT_WIDTH_PX + Math.max(0, outer - inner), minHeight);
 }
 
 /**

@@ -83,10 +83,22 @@ input {
 
 /* The tab row and the toolbar as one --h-chrome row on --bg-window (specs/tabs.feature.md, The chrome
    row): the navigation tools, the tablist, the address bar, New tab and the toggles, --space-1 apart
-   and --space-4 in from the window's edges. It never wraps; the tablist gives way first (its tabs
-   shrink, then it scrolls) and the address bar keeps its minimum. The loading line runs along its
-   foot. */
+   and --space-4 in from the window's edges. It never wraps, and it clips rather than scrolls (focus
+   must never scroll Back off the edge). The tools never shrink. The tablist gives way first: its
+   tabs shrink to --tab-min, then it scrolls, while the address bar keeps --address-basis; only once
+   the tablist is down to one whole tab (a narrow window) does the address bar give way, to
+   --address-min. The window's minimum content width (CHROME_MIN_CONTENT_WIDTH_PX) is exactly the
+   row with one tab and that minimum. The loading line runs along its foot. */
 .chrome-row {
+  /* TAB_MIN_WIDTH_PX, ADDRESS_BASIS_PX and ADDRESS_MIN_WIDTH_PX (specs/tabs.spec.ts). */
+  --tab-min: 84px;
+  --address-basis: 360px;
+  --address-min: 240px;
+  /* One whole tab with its ring room: the least the tablist shows. */
+  --one-tab: calc(var(--tab-min) + 2 * var(--space-1));
+  /* The room for the tablist and the address bar: the window less the row's padding, its six tools
+     (Back, Forward, Reload, New tab and the two toggles) and its seven gaps. */
+  --row-free: calc(100vw - 2 * var(--space-4) - 6 * var(--h-control) - 7 * var(--space-1));
   position: relative;
   display: flex;
   align-items: center;
@@ -94,7 +106,7 @@ input {
   min-width: 0;
   height: var(--h-chrome);
   padding: 0 var(--space-4);
-  overflow: hidden;
+  overflow: clip;
   background: var(--bg-window);
   font: var(--text-body);
 }
@@ -106,7 +118,7 @@ input {
   align-items: center;
   gap: var(--space-1);
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: var(--one-tab);
   height: 100%;
   /* Room for a focused tab's ring (--focus-ring reaches 4px out) inside the scrolling tablist, and as
      much again where a tab scrolled into view (focus, the active tab) stops at either end. */
@@ -131,7 +143,7 @@ input {
      favicon tells one narrow tab from another. */
   flex: 0 1 224px;
   width: 224px;
-  min-width: 84px;
+  min-width: var(--tab-min);
   height: var(--h-control);
   padding: 0 var(--space-2) 0 calc(var(--space-1) + var(--space-2));
   border-radius: var(--r-pill);
@@ -318,6 +330,7 @@ input {
 /* The chrome row's tools; the rule under the chrome is the workspace's top edge. */
 .nav-buttons {
   display: flex;
+  flex: none;
   align-items: center;
   gap: var(--space-1);
 }
@@ -328,6 +341,7 @@ input {
 .tool {
   display: grid;
   place-items: center;
+  flex: none;
   width: var(--h-control);
   height: var(--h-control);
   padding: 0;
@@ -389,13 +403,14 @@ input {
 
 /* An --h-field pill on --bg-surface with --e-raised, the tablist's next sibling; the transparent border
    is the edge forced colours draw (1px less padding). Focus rings the whole field. It takes the room
-   the tabs leave, and keeps ADDRESS_MIN_WIDTH_PX (specs/tabs.spec.ts) however many tabs are open. */
+   the tabs leave and keeps --address-basis however many tabs are open; only the room left beside one
+   whole tab, in a narrow window, takes it under that, never under --address-min. */
 .address {
-  flex: 1 1 360px;
+  flex: 1 1 var(--address-basis);
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-width: 240px;
+  min-width: clamp(var(--address-min), var(--row-free) - var(--one-tab), var(--address-basis));
   height: var(--h-field);
   padding: 0 calc(var(--space-4) - 1px);
   border: 1px solid transparent;
