@@ -6019,92 +6019,96 @@ input {
 /* Content panel ------------------------------------------------------------------------------
    Phase 2.5 Task 3 (specs/seo-content.feature.md): the snippet previews and drafts, the target
    query checklist, n-grams and readability. Bars and meters are SVG attributes; nothing here is set
-   inline. The previews are frost's own drawing of a result, in a common sans-serif. */
+   inline. On Signal (design-tokens.feature.md, The SEO panels' Content, JavaScript, SERP and
+   Visibility): cards --space-4 apart, text from the --text-* tokens. The previews are frost's own
+   drawing of a result in the panel's type and tokens (the Migration table's --serp-* rows): not to
+   scale, so not in the face the width table was measured in. */
 
 .seo-content {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
+/* A section's "info only" badge. */
 .seo-content-heading {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   color: var(--text-faint);
-  font-size: 11px;
-  font-weight: 500;
+  font: var(--text-small);
 }
 
 .seo-content-heading .icon {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .seo-snippet {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
+/* A row of the shared filter chips (the snippet's source, the result type, what the preview shows). */
 .seo-snippet-sources {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: var(--space-2);
 }
 
 .seo-snippet-sources .icon {
-  width: 13px;
-  height: 13px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .seo-serp {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--space-2);
   margin: 0;
 }
 
 .seo-serp-device {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .seo-serp-device .icon {
-  width: 13px;
-  height: 13px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
+/* A result: a card in the section's card, --bg-surface at --r-md with --e-ring; the transparent border
+   is the edge forced colours draw. */
 .seo-serp-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 11px 13px 12px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 10px;
-  background: var(--serp-card);
-  font-family: Arial, 'Liberation Sans', Helvetica, sans-serif;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
   overflow-wrap: anywhere;
 }
 
 .seo-serp[data-device='mobile'] .seo-serp-card {
   max-width: 300px;
-  border-radius: 16px;
-  box-shadow: var(--shadow-card);
+  border-radius: var(--r-lg);
 }
 
 .seo-serp-site {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   min-width: 0;
-  margin-bottom: 2px;
+  margin-bottom: calc(var(--space-1) / 2);
 }
 
 .seo-serp-glyph {
@@ -6117,41 +6121,37 @@ input {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  line-height: 1.3;
 }
 
 .seo-serp-host {
   overflow: hidden;
   color: var(--text);
-  font-size: 12.5px;
+  font: var(--text-small);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .seo-serp-path {
   overflow: hidden;
-  color: var(--serp-path);
-  font-size: 11.5px;
+  color: var(--text-muted);
+  font: var(--text-small);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* The title reads as a link, as Overview's preview: --accent. */
 .seo-serp-title {
-  color: var(--serp-title);
-  font-size: 16px;
-  line-height: 1.3;
-}
-
-.seo-serp[data-device='mobile'] .seo-serp-title {
-  font-size: 15px;
+  color: var(--accent);
+  font: var(--text-heading);
+  font-weight: 500;
 }
 
 .seo-serp-description {
-  color: var(--serp-text);
-  font-size: 12.5px;
-  line-height: 1.5;
+  color: var(--text-muted);
+  font: var(--text-small);
 }
 
+/* No title or description: a placeholder (after the rules above: the font shorthand resets the italic). */
 .seo-serp-empty {
   color: var(--text-faint);
   font-style: italic;
@@ -6161,31 +6161,31 @@ input {
   margin-top: 0;
 }
 
-/* Phase 11 Task 3: the result preview's facts and rich variants (frost's own drawing). */
+/* Phase 11 Task 3: the result preview's facts and rich variants (frost's own drawing). The site's mark
+   is a monogram on an --r-pill disc, never a favicon. */
 .seo-serp-monogram {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  background: var(--serp-glyph);
-  color: var(--serp-glyph-mark);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
   overflow: hidden;
 }
 
 .seo-serp-rating {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  color: var(--serp-text);
-  font-size: 12px;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font: var(--text-small);
 }
 
+/* The stars are a graphic (aria-hidden) beside the rating's words. */
 .seo-serp-stars {
   color: var(--warn);
-  letter-spacing: 1px;
 }
 
 .seo-serp-description-row {
@@ -6193,81 +6193,80 @@ input {
 }
 
 .seo-serp-date {
-  color: var(--serp-path);
-  font-size: 12.5px;
+  color: var(--text-muted);
+  font: var(--text-small);
 }
 
 .seo-serp-options {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .seo-serp-rich-card {
   flex-direction: row;
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 .seo-serp-rich-lines {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
 .seo-serp-rich-line {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
-  color: var(--serp-text);
-  font-size: 12.5px;
+  color: var(--text-muted);
+  font: var(--text-small);
 }
 
 .seo-serp-rich-line .seo-serp-glyph {
   width: 18px;
   height: 18px;
-  font-size: 10px;
 }
 
 .seo-serp-rich-title {
-  color: var(--serp-title);
-  font-size: 15px;
-  line-height: 1.3;
+  color: var(--accent);
+  font: var(--text-heading);
+  font-weight: 500;
 }
 
-.seo-serp-rich-site,
-.seo-serp-rich-meta {
-  color: var(--serp-path);
-  font-size: 12px;
-}
-
+/* A rich card's badge: On-Page's tag. */
 .seo-serp-rich-badge {
   align-self: flex-start;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--serp-glyph);
-  color: var(--serp-glyph-mark);
-  font-size: 11px;
-  font-weight: 600;
+  padding: calc(var(--space-1) / 2) var(--space-2);
+  border-radius: var(--r-xs);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 .seo-serp-video-frame {
   flex: none;
   width: 96px;
   height: 54px;
-  border-radius: 8px;
-  background: var(--serp-glyph);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  box-shadow: var(--e-ring);
 }
 
+/* The width meters: an --r-sm box with --e-ring on the card (--ok on --bg-subtle is under 3:1 in light),
+   each verdict in its -ink; the bar's fill keeps the tone. */
 .seo-width-meters {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 11px;
-  border-radius: 9px;
-  background: var(--bg-hover);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
 }
 
 .seo-width-meter {
@@ -6275,11 +6274,11 @@ input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 3px 10px;
+  gap: var(--space-1) var(--space-3);
 }
 
 .seo-width-meter[data-state='over'] {
-  --meter: var(--caution);
+  --meter: var(--warn);
 }
 
 .seo-width-meter[data-state='empty'] {
@@ -6290,18 +6289,27 @@ input {
   grid-row: 1;
   grid-column: 1;
   color: var(--text-muted);
-  font-size: 11.5px;
-  font-weight: 600;
+  font: var(--text-small);
+  font-weight: 500;
 }
 
+/* "… px: fits", "… px: cut", "Nothing to measure": status text in its -ink. */
 .seo-width-meter-text {
   grid-row: 1;
   grid-column: 2;
-  color: var(--meter);
-  font-size: 11px;
+  color: var(--ok-ink);
+  font: var(--text-small);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.seo-width-meter[data-state='over'] .seo-width-meter-text {
+  color: var(--warn-ink);
+}
+
+.seo-width-meter[data-state='empty'] .seo-width-meter-text {
+  color: var(--text-faint);
 }
 
 .seo-width-meter-bar {
@@ -6314,7 +6322,7 @@ input {
 }
 
 .seo-width-meter-track {
-  fill: var(--seo-track);
+  fill: var(--track);
 }
 
 .seo-width-meter-fill {
@@ -6328,62 +6336,72 @@ input {
 .seo-snippet-form {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: var(--space-3);
 }
 
 .seo-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .seo-field-label {
   display: flex;
   justify-content: space-between;
   color: var(--text-muted);
-  font-size: 11.5px;
-  font-weight: 600;
+  font: var(--text-small);
+  font-weight: 500;
 }
 
 .seo-field-count {
   color: var(--text-faint);
-  font-weight: 500;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 
+/* A field inside a card ("--r-sm inside cards", as the panels' search field and Settings' fields):
+   --h-control on --bg-surface with --e-raised; the transparent border is the edge forced colours draw. */
 .seo-field-input {
   width: 100%;
-  padding: 7px 9px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-control);
-  outline: 0;
-  background: var(--bg-field);
+  height: var(--h-control);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
-  font: inherit;
-  font-size: 12.5px;
-  line-height: 1.45;
+  font: var(--text-body);
 }
 
-.seo-field-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+.seo-field-input::placeholder {
+  color: var(--text-faint);
 }
 
 .seo-field-textarea {
+  height: auto;
   min-height: 76px;
+  padding: var(--space-2) var(--space-3);
   resize: vertical;
+}
+
+.seo-field-input:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .seo-snippet-tools {
   margin-top: 0;
 }
 
-.seo-toggle-danger:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
-  color: var(--danger);
+/* "Delete draft", "Delete all notes…": the shared toggle, hovered with a --danger edge and --danger-ink
+   text (--danger is 4.37:1 on the hovered toggle in light). Its edge and text only, so the focus ring stays. */
+.seo-toggle-danger:hover:where(:not(:disabled)) {
+  border-color: var(--danger);
+  color: var(--danger-ink);
 }
 
-.seo-toggle-danger:hover:not(:disabled) .icon {
+.seo-toggle-danger:hover:where(:not(:disabled)) .icon {
   color: currentColor;
 }
 
@@ -6396,28 +6414,24 @@ input {
   color: var(--warn-ink);
 }
 
-/* Target query */
+/* Target query: the shared search field, with a clear button inside it. */
 .seo-query {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.seo-query-field .icon {
-  color: var(--text-faint);
+  gap: var(--space-3);
 }
 
 .seo-query-clear {
   display: grid;
   place-items: center;
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: var(--h-badge);
+  height: var(--h-badge);
   padding: 0;
-  border: 0;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   background: transparent;
-  color: var(--text-faint);
+  color: var(--text-muted);
 }
 
 .seo-query-clear:hover {
@@ -6426,8 +6440,14 @@ input {
 }
 
 .seo-query-clear .icon {
-  width: 13px;
-  height: 13px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+.seo-query-clear:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 .seo-query-list {
@@ -6442,15 +6462,16 @@ input {
   display: grid;
   grid-template-columns: auto minmax(84px, auto) minmax(0, 1fr);
   align-items: start;
-  gap: 8px;
-  padding: 7px 0;
-  border-top: 1px solid var(--seo-card-edge);
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--divider);
 }
 
 .seo-query-row:first-child {
   border-top: 0;
 }
 
+/* A place's mark, by shape: a ring with a check (every term), a half disc (some), a dashed ring (none). */
 .seo-query-glyph {
   display: grid;
   place-items: center;
@@ -6458,72 +6479,74 @@ input {
 }
 
 .seo-query-glyph .icon {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
-.seo-query-glyph[data-presence='all'] {
-  color: var(--ok);
+/* Drawn by stroke: --ok is a graphics colour, never text. */
+.seo-query-glyph[data-presence='all'] .icon {
+  stroke: var(--ok);
 }
 
 .seo-query-glyph[data-presence='some'] {
-  color: var(--info-tone);
+  color: var(--accent);
 }
 
 .seo-query-place {
   color: var(--text);
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 500;
-  line-height: 16px;
 }
 
 .seo-query-terms {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
+/* A term: an 18px badge, a dashed --track edge while absent, --ok-ink on --ok-soft (a solid edge) once
+   present; forced colours draw both edges, so the shape still says which. */
 .seo-query-term {
   max-width: 100%;
-  padding: 0 6px;
+  padding: 1px var(--space-2);
   overflow: hidden;
-  border: 1px dashed var(--border-field);
-  border-radius: 5px;
-  color: var(--text-faint);
-  font-size: 11px;
-  line-height: 16px;
+  border: 1px dashed var(--track);
+  border-radius: var(--r-xs);
+  color: var(--text-muted);
+  font: var(--text-micro);
+  font-weight: 400;
+  letter-spacing: 0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .seo-query-term[data-present='true'] {
   border: 1px solid transparent;
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-  color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
   font-weight: 600;
 }
 
 .seo-query-phrase {
   color: var(--text-muted);
-  font-size: 10.5px;
+  font: var(--text-small);
   font-style: italic;
-  line-height: 18px;
 }
 
 /* n-grams */
 .seo-ngram-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .seo-ngram-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
+  gap: var(--space-1) var(--space-4);
   color: var(--text-faint);
-  font-size: 10.5px;
+  font: var(--text-small);
 }
 
 .seo-ngrams {
@@ -6538,9 +6561,9 @@ input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
-  gap: 2px 10px;
-  padding: 6px 0 7px;
-  border-top: 1px solid var(--seo-card-edge);
+  gap: calc(var(--space-1) / 2) var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--divider);
 }
 
 .seo-ngram:first-child {
@@ -6549,12 +6572,12 @@ input {
 
 .seo-ngram-text {
   color: var(--text);
-  font-size: 12.5px;
+  font: var(--text-body);
 }
 
 .seo-ngram-count {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -6569,97 +6592,118 @@ input {
 }
 
 .seo-ngram-track {
-  fill: var(--seo-track);
+  fill: var(--track);
 }
 
 .seo-ngram-fill {
-  fill: color-mix(in srgb, var(--accent) 70%, var(--seo-track));
+  fill: var(--accent);
 }
 
 .seo-ngram-places {
   grid-row: 1 / 3;
   grid-column: 3;
   display: inline-flex;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
 }
 
-/* An n-gram row's keyphrase highlight (Phase 11): icon only, pressed while it shows that phrase. */
+/* An n-gram row's keyphrase highlight (Phase 11): icon only, pressed while it shows that phrase. An
+   --h-badge square on the card; a hover lays --bg-hover on it, skipping a pressed one. */
 .seo-ngram-highlight {
   grid-row: 1 / 3;
   grid-column: 4;
   display: inline-grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: var(--h-badge);
+  height: var(--h-badge);
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: transparent;
-  color: var(--icon);
+  color: var(--text-muted);
 }
 
 .seo-ngram-highlight .icon {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
-.seo-ngram-highlight:hover {
-  border-color: var(--border-field);
+.seo-ngram-highlight:hover:where(:not([aria-pressed='true'])) {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
-.seo-ngram-highlight:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
+/* Pressed: the fill and an --accent edge on the transparent border (PRESSED_EDGES), as a pressed chip. */
 .seo-ngram-highlight[aria-pressed='true'] {
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
+.seo-ngram-highlight:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* A place mark (T, H1, D, U): --accent on --accent-soft where the phrase is, its letter dimmed where it
+   is not (DISABLED_INK); the transparent border is the edge forced colours draw. */
 .seo-ngram-place {
   display: inline-grid;
   place-items: center;
   min-width: 18px;
-  height: 16px;
-  padding: 0 2px;
-  border-radius: 4px;
+  height: 18px;
+  padding: 0 calc(var(--space-1) / 2);
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
   background: transparent;
-  color: color-mix(in srgb, var(--text-faint) 55%, transparent);
-  font-size: 9.5px;
-  font-weight: 700;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
+}
+
+.seo-ngram-place[data-present='false'] {
+  color: color-mix(in srgb, var(--text-faint) 50%, transparent);
 }
 
 .seo-ngram-place[data-present='true'] {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* Forced colours replace the fills that say pressed (Highlight) and the colour that says absent (GrayText). */
+@media (forced-colors: active) {
+  .seo-ngram-highlight[aria-pressed='true'] {
+    border-color: Highlight;
+  }
+
+  .seo-ngram-place[data-present='false'] {
+    border-color: GrayText;
+    color: GrayText;
+  }
 }
 
 /* Readability */
 .seo-readability {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .seo-readability-score {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .seo-readability-value {
   color: var(--text);
-  font-size: 26px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
+  font: var(--text-display);
   letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .seo-readability-band {
   color: var(--text-muted);
-  font-size: 13px;
+  font: var(--text-body);
   font-weight: 600;
 }
 
@@ -6670,7 +6714,7 @@ input {
 }
 
 .seo-readability-track {
-  fill: var(--seo-track);
+  fill: var(--track);
 }
 
 .seo-readability-marker {
@@ -6681,72 +6725,72 @@ input {
   display: flex;
   justify-content: space-between;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font: var(--text-small);
 }
 
+/* Its tiles: On-Page's stat tiles, --bg-subtle at --r-sm. */
 .seo-readability-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  margin: 4px 0 0;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 0;
 }
 
 .seo-readability-stats div {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 7px 8px;
-  border-radius: 8px;
-  background: var(--bg-hover);
+  min-width: 0;
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
 }
 
 .seo-readability-stats dt {
-  color: var(--text-faint);
-  font-size: 10.5px;
+  color: var(--text-muted);
+  font: var(--text-small);
 }
 
 .seo-readability-stats dd {
   margin: 0;
   color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
+  font: var(--text-heading);
   font-variant-numeric: tabular-nums;
 }
 
 .seo-readability-formula {
   margin-left: auto;
   color: var(--text-faint);
-  font-size: 11px;
-  font-weight: 600;
+  font: var(--text-small);
+  font-weight: 500;
 }
 
 /* Sentences (Phase 8): statistics, the difficult sentences and the page highlight's toggle. */
 .seo-sentences {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
 }
 
 .seo-difficult-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .seo-difficult-title {
   margin: 0;
   color: var(--text);
-  font-size: 12px;
-  font-weight: 650;
+  font: var(--text-small);
+  font-weight: 600;
 }
 
 .seo-difficult-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 6px 0 0;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
   padding: 0;
   list-style: none;
 }
@@ -6754,41 +6798,36 @@ input {
 .seo-difficult-row {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 7px 8px;
-  border-radius: 8px;
-  background: var(--bg-hover);
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
 }
 
 .seo-difficult-text {
   color: var(--text);
-  font-size: 12px;
-  line-height: 1.4;
+  font: var(--text-small);
 }
 
 .seo-difficult-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   color: var(--text-faint);
-  font-size: 10.5px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
+/* The reason ("Long", "Complex"): a neutral badge; its word says it, as the page's boxes do. */
 .seo-difficult-chip {
-  padding: 0 6px;
-  border-radius: 5px;
-  font-weight: 600;
-}
-
-.seo-difficult-chip[data-reason='long'] {
-  background: color-mix(in srgb, #b45309 16%, transparent);
-  color: #b45309;
-}
-
-.seo-difficult-chip[data-reason='complex'] {
-  background: color-mix(in srgb, #be185d 16%, transparent);
-  color: #be185d;
+  padding: 1px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
+  color: var(--text-muted);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 .seo-notes-line {
@@ -6797,11 +6836,13 @@ input {
 
 /* End of Content panel */
 
-/* JavaScript panel (Phase 2.5 Task 2, seo-javascript.feature.md): served HTML vs the rendered page. */
+/* JavaScript panel (Phase 2.5 Task 2, seo-javascript.feature.md): served HTML vs the rendered page. Its
+   state card, signals and pills are Indexability's (`.seo-verdict`, `.seo-signal`, `.seo-pill`): this
+   panel sets the verdict's colour. */
 .seo-js {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
 .seo-js-state[data-verdict='unavailable'] {
@@ -6813,7 +6854,7 @@ input {
 }
 
 .seo-js-state[data-verdict='js-partly'] {
-  --verdict: var(--caution);
+  --verdict: var(--warn);
 }
 
 .seo-js-state[data-verdict='js-heavily'] {
@@ -6821,32 +6862,31 @@ input {
 }
 
 .seo-js-state .seo-verdict-summary {
-  margin: 8px 0 0;
+  margin: var(--space-3) 0 0;
 }
 
 .seo-js-refetch {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 10px;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 .seo-js-note {
-  margin: 6px 0 0;
+  margin: var(--space-2) 0 0;
   color: var(--text-muted);
-  font-size: 11.5px;
-  line-height: 1.45;
+  font: var(--text-small);
 }
 
 .seo-js-note[data-tone='warn'] {
-  color: var(--caution);
+  color: var(--warn-ink);
 }
 
 .seo-js-fields,
 .seo-js-items {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -6855,9 +6895,9 @@ input {
 .seo-js-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 7px 0;
-  border-top: 1px solid var(--seo-card-edge);
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--divider);
 }
 
 .seo-js-field:first-child {
@@ -6868,33 +6908,32 @@ input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .seo-js-field-label {
   color: var(--text);
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 600;
 }
 
 .seo-js-value {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .seo-js-sides {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 3px 8px;
+  gap: var(--space-1) var(--space-3);
   margin: 0;
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .seo-js-sides dt {
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -6906,31 +6945,31 @@ input {
 
 .seo-js-counts {
   color: var(--text-faint);
-  font-size: 11px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
 .seo-js-list + .seo-js-list {
-  margin-top: 10px;
+  margin-top: var(--space-4);
 }
 
 .seo-js-list-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 0 0 6px;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-weight: 600;
 }
 
 .seo-js-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 5px 0;
-  border-top: 1px solid var(--seo-card-edge);
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--divider);
 }
 
 .seo-js-item:first-child {
@@ -6942,12 +6981,11 @@ input {
   flex: 1;
   flex-direction: column;
   min-width: 0;
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .seo-js-item-detail {
   color: var(--text-faint);
-  font-size: 11px;
 }
 
 .seo-js-open {
@@ -8256,25 +8294,28 @@ input {
 
 /* SERP and Visibility panels (Phase 3 Task 6, specs/serp-panels.feature.md) ---------------------- */
 
+/* On Signal (design-tokens.feature.md, The SEO panels' Content, JavaScript, SERP and Visibility):
+   cards --space-4 apart, text from the --text-* tokens. */
 .serp,
 .visibility {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
   min-width: 0;
 }
 
-/* The search parameters bar: a compact grid of label / value pairs. */
+/* The search parameters bar: a card (--bg-surface at --r-md with --e-ring; the transparent border is
+   the edge forced colours draw) holding a compact grid of label / value pairs. */
 .serp-params {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px 10px;
+  gap: var(--space-3) var(--space-4);
   margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 12px;
-  background: var(--seo-card);
-  box-shadow: var(--shadow-card);
+  padding: var(--space-4) calc(var(--space-2) + var(--space-3));
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
 }
 
 .serp-param {
@@ -8287,28 +8328,27 @@ input {
 }
 
 .serp-param-label {
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 600;
+  color: var(--text-muted);
+  font: var(--text-caps);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .serp-param-value {
-  margin: 1px 0 0;
+  margin: 0;
   color: var(--text);
-  font-size: 12.5px;
+  font: var(--text-body);
   font-weight: 500;
 }
 
-/* The query's intent: a chip, its confidence, or the classifier's state. */
+/* The query's intent: a chip (the canvas's info badge), its confidence, or the classifier's state. */
 .serp-intent {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 8px;
+  gap: var(--space-2) var(--space-3);
   margin: 0;
-  padding: 0 2px;
+  padding: 0 calc(var(--space-1) / 2);
 }
 
 .serp-intent .seo-note {
@@ -8316,24 +8356,27 @@ input {
 }
 
 .serp-intent-chip {
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  display: inline-flex;
+  align-items: center;
+  height: var(--h-badge);
+  padding: 0 var(--space-3);
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
   color: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 .serp-intent-confidence {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
 .serp-intent-query {
   flex: 1 1 100%;
   color: var(--text-faint);
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .serp-intent .serp-enable {
@@ -8341,33 +8384,34 @@ input {
 }
 
 .serp-enable-prompt {
-  margin-top: 4px;
+  margin-top: var(--space-1);
 }
 
 .serp-enable .seo-panel-tools {
   align-items: center;
-  margin-top: 8px;
+  margin-top: var(--space-3);
 }
 
 .serp-tools {
   margin-top: 0;
 }
 
-/* The composition bar: SVG segments (geometry and colour are attributes, never styles). */
+/* The composition bar: SVG segments (geometry and colour are attributes, never styles: the outlines'
+   colours in the page, SERP_OUTLINE_STYLES) on --track. */
 .serp-bar {
   display: block;
   width: 100%;
   height: 10px;
   overflow: hidden;
-  border-radius: 5px;
-  background: var(--seo-track);
+  border-radius: var(--r-pill);
+  background: var(--track);
 }
 
 .serp-counts {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
-  margin: 10px 0 0;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-4) 0 0;
   padding: 0;
   list-style: none;
 }
@@ -8375,9 +8419,9 @@ input {
 .serp-count {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-2);
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .serp-swatch {
@@ -8392,7 +8436,8 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
-/* Tables (ownership, probes): real table markup, scrolling sideways when wider than the panel. */
+/* Tables (ownership, probes): real table markup, scrolling sideways when wider than the panel; rows ruled
+   by --divider (border-spacing, not border-collapse: each cell draws its own rule). */
 .serp-table-wrap {
   max-width: 100%;
   overflow-x: auto;
@@ -8401,25 +8446,25 @@ input {
 
 .serp-table {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
+  border-spacing: 0;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
 .serp-table th,
 .serp-table td {
-  padding: 5px 6px;
-  border-bottom: 1px solid var(--seo-card-edge);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--divider);
   text-align: left;
   vertical-align: top;
 }
 
+/* Header cells in sentence case at weight 600: caps (--text-caps) would push "Who owns page 1" past
+   the panel's 360px. */
 .serp-table thead th {
-  color: var(--text-faint);
-  font-size: 10.5px;
+  color: var(--text-muted);
+  font: var(--text-small);
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .serp-table tbody tr:last-child > * {
@@ -8449,9 +8494,9 @@ input {
 
 .serp-result {
   display: flex;
-  gap: 9px;
-  padding: 7px 0;
-  border-top: 1px solid var(--seo-card-edge);
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--divider);
 }
 
 .serp-result:first-child {
@@ -8463,7 +8508,7 @@ input {
   flex: none;
   width: 22px;
   color: var(--text-faint);
-  font-size: 12px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -8477,33 +8522,38 @@ input {
 
 .serp-result-type {
   color: var(--text-muted);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .serp-result-title {
   color: var(--text);
-  font-size: 12.5px;
+  font: var(--text-body);
 }
 
 .serp-result-domain {
   color: var(--text-faint);
-  font-size: 11.5px;
+  font: var(--text-small);
+}
+
+/* "No link" (`.seo-missing`): the font shorthand above resets its italic. */
+.seo-missing.serp-result-domain {
+  font-style: italic;
 }
 
 .serp-pack-status {
   margin: 0;
   color: var(--text);
-  font-size: 12.5px;
+  font: var(--text-body);
 }
 
-/* A state that is not a reading. */
+/* A state that is not a reading: an --r-md tile of --accent-soft with an --accent icon; a problem
+   (couldn't read, reading off) --warn on --warn-soft. Its title says which. */
 .serp-state-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
 .serp-state-icon {
@@ -8512,33 +8562,33 @@ input {
   flex: none;
   width: 32px;
   height: 32px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--seo-bg));
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
 .serp-state[data-state='unreadable'] .serp-state-icon,
 .serp-state[data-state='disabled'] .serp-state-icon {
-  background: color-mix(in srgb, var(--caution) 14%, var(--seo-bg));
-  color: var(--caution);
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .serp-state-title {
   margin: 0;
   color: var(--text);
-  font-size: 13.5px;
+  font: var(--text-body);
   font-weight: 600;
 }
 
 .serp-state-message {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 /* The probe table: one column per agent; a cell that differs from the browser is marked. */
 .visibility-table {
   min-width: 560px;
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 /* The fact column stays in view while the agents scroll sideways. */
@@ -8547,18 +8597,26 @@ input {
   position: sticky;
   left: 0;
   z-index: 1;
-  background: var(--seo-card);
+  background: var(--bg-surface);
 }
 
+/* An agent told something the browser was not: --warn-ink with a --warn underline (not hue alone). */
 .visibility-table thead th[data-differs='true'] {
-  color: var(--caution);
+  color: var(--warn-ink);
+  text-decoration-line: underline;
+  text-decoration-color: var(--warn);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 
+/* A differing cell: --warn-ink on --warn-soft at weight 600, a 2px --warn edge on its left (a border,
+   which forced colours draw, where an inset box-shadow was dropped); its padding keeps the text in line. */
 .visibility-table td[data-diff='true'] {
-  background: color-mix(in srgb, var(--caution) 13%, transparent);
-  color: var(--caution);
+  padding-left: calc(var(--space-2) - 2px);
+  border-left: 2px solid var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
   font-weight: 600;
-  box-shadow: inset 2px 0 0 var(--caution);
 }
 
 .visibility-table td .seo-page-text {
@@ -8574,10 +8632,10 @@ input {
 }
 
 .visibility-robots-list {
-  margin: 8px 0 0;
+  margin: var(--space-3) 0 0;
   padding: 0;
   list-style: none;
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .visibility-robots-file {
@@ -8593,7 +8651,7 @@ input {
 
 .visibility-query {
   display: flex;
-  gap: 6px;
+  gap: var(--space-2);
   align-items: center;
 }
 
@@ -8603,7 +8661,7 @@ input {
 }
 
 .visibility .serp-intent {
-  margin-top: 10px;
+  margin-top: var(--space-4);
 }
 
 /* End of SERP and Visibility panels */
@@ -10139,11 +10197,12 @@ input {
   touch-action: none;
 }
 
-/* The SERP panel's search tools (Phase 10 Task 9): Edit search and Track this search…. */
+/* The SERP panel's search tools (Phase 10 Task 9): Edit search and Track this search…, each a card as
+   the search parameters, its selects the shared select. */
 .serp-search-tools {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -10155,24 +10214,24 @@ input {
 .serp-track {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 12px;
-  background: var(--seo-card);
-  box-shadow: var(--shadow-card);
+  gap: var(--space-4);
+  padding: var(--space-4) calc(var(--space-2) + var(--space-3));
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
 }
 
 .serp-editor-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 10px;
+  gap: var(--space-3) var(--space-4);
 }
 
 .serp-editor-field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -10181,26 +10240,30 @@ input {
 }
 
 .serp-editor-label {
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-weight: 600;
+  color: var(--text-muted);
+  font: var(--text-caps);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
+/* The shared select's look: --h-control on --bg-surface with --e-raised at --r-sm. */
 .serp-editor-select {
   width: 100%;
   min-width: 0;
-  height: 30px;
-  padding: 0 6px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-field);
-  background: var(--bg-field);
+  height: var(--h-control);
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
+  font: var(--text-body);
 }
 
-.serp-editor-hint {
-  font-size: 11px;
+.serp-editor-select:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
 /* "Open in" an AI engine (Phase 10 Task 10): the panel's row and the editor's. While the editor is
@@ -10208,7 +10271,7 @@ input {
 .serp-open-in {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
 }
 

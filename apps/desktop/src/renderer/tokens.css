@@ -72,11 +72,7 @@
 
   /* ---- Content panel: the SERP previews (was in styles.css) */
   --serp-card: var(--bg-surface);
-  --serp-title: #2450c8;
   --serp-text: var(--text-muted);
-  --serp-path: #5d6573;
-  --serp-glyph: #e3e8f1;
-  --serp-glyph-mark: #6b7a90;
 
   /* ---- Browser polish: find bar, History, "Jump back in" (was in styles.css) */
   --find-height: 40px;
@@ -129,12 +125,6 @@
     --render-accent: #a98bff;
     --render-soft: rgb(169 139 255 / 0.16);
     --render-edge: rgb(169 139 255 / 0.55);
-
-    /* ---- Content panel: the SERP previews (was in styles.css) */
-    --serp-title: #93b4ff;
-    --serp-path: #9aa3b2;
-    --serp-glyph: #2c3139;
-    --serp-glyph-mark: #a3acba;
 
     /* ---- Search Console panel (was in gsc-panel.css) */
     --gsc-grid: #30353e;
