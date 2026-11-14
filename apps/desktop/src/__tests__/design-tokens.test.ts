@@ -43,9 +43,21 @@ import {
 import { SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 
 const RENDERER = fileURLToPath(new URL('../renderer/', import.meta.url));
-const read = (relative: string) => readFileSync(`${RENDERER}${relative}`, 'utf8');
-/** An entry's cascade: its stylesheet, then each stylesheet that loads after it (`loadsBefore`), as one. */
-const cascade = (entry: { readonly stylesheet: string } & LoadsBefore) => [entry.stylesheet, ...(entry.loadsBefore ?? [])].map(read).join('\n');
+const texts = new Map<string, string>();
+/** A renderer file's text, read once (the same string, so `parse` below finds it again). */
+const read = (relative: string) => {
+  if (!texts.has(relative)) texts.set(relative, readFileSync(`${RENDERER}${relative}`, 'utf8'));
+  return texts.get(relative)!;
+};
+/** An entry's cascade: its stylesheet, then each stylesheet that loads after it (`loadsBefore`), as one.
+ * Memoized, so the same string (and its parse, below) is reused across entries. */
+const cascades = new Map<string, string>();
+const cascade = (entry: { readonly stylesheet: string } & LoadsBefore) => {
+  const names = [entry.stylesheet, ...(entry.loadsBefore ?? [])];
+  const key = names.join('\n');
+  if (!cascades.has(key)) cascades.set(key, names.map(read).join('\n'));
+  return cascades.get(key)!;
+};
 
 /** Every file under the renderer, relative to it. */
 const RENDERER_FILES = (readdirSync(RENDERER, { recursive: true }) as string[]).map((name) => name.replaceAll('\\', '/')).sort();
@@ -75,9 +87,21 @@ interface Declaration {
   readonly block: number;
 }
 
+/** `parseText`, once per stylesheet text: the resolver looks the same cascade up for every entry, property
+ * and theme (re-parsing styles.css each time timed the focus-ring test out under load). Read-only results. */
+const parsed = new Map<string, { declarations: Declaration[]; blocks: string[][] }>();
+function parse(css: string): { declarations: Declaration[]; blocks: string[][] } {
+  let result = parsed.get(css);
+  if (result === undefined) {
+    result = parseText(css);
+    parsed.set(css, result);
+  }
+  return result;
+}
+
 /** The declarations of `css`, each with its context, and the context of every block. (The
  * renderer's CSS has no braces or semicolons inside strings, so a brace walk is enough.) */
-function parse(css: string): { declarations: Declaration[]; blocks: string[][] } {
+function parseText(css: string): { declarations: Declaration[]; blocks: string[][] } {
   const declarations: Declaration[] = [];
   const blocks: string[][] = [];
   const stack: string[] = [];
@@ -441,15 +465,25 @@ function specificity(raw: string): number {
  * ordered by specificity then source order; custom properties set by those rules followed through
  * `var()`. Returns the final value (a `var(--token)` that the element itself does not set).
  */
+/** Each declaration of `css` with its rule's selectors split and normalised, once per stylesheet text. */
+const splitRules = new Map<string, { d: Declaration; selectors: string[] }[]>();
+function ruleSelectors(css: string): { d: Declaration; selectors: string[] }[] {
+  let rules = splitRules.get(css);
+  if (rules === undefined) {
+    rules = parse(css).declarations.map((d) => ({ d, selectors: splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim()) }));
+    splitRules.set(css, rules);
+  }
+  return rules;
+}
+
 function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark', options: { readonly forced?: boolean } = {}): string {
   const wanted = new Set(element.map((s) => s.replace(/\s+/g, ' ').trim()));
   const matched: { order: number; spec: number; property: string; value: string }[] = [];
-  parse(css).declarations.forEach((d, order) => {
+  ruleSelectors(css).forEach(({ d, selectors }, order) => {
     const outer = d.context.slice(0, -1);
     // Top level; the dark block in dark; and with `forced`, the forced-colours block (forced colours on).
     const applies = (level: string) => (theme === 'dark' && level === DARK) || (options.forced === true && FORCED_COLOURS_MEDIA.test(level));
     if (!(outer.length === 0 || (outer.length === 1 && applies(outer[0]!)))) return;
-    const selectors = splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim());
     const hits = selectors.filter((s) => wanted.has(s));
     if (hits.length === 0) return;
     matched.push({ order, spec: Math.max(...hits.map(specificity)), property: d.property, value: d.value });
