@@ -300,6 +300,13 @@
   box-shadow: var(--focus-ring);
 }
 
+/* A focused answer is raised over its neighbours (2px apart), so a hovered or chosen one below it
+   never covers its ring. */
+.ai-answers-pick:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
 /* Forced colours replace the fill and the edge that say chosen and watched (FORCED_COLOURS_PRESSED). */
 @media (forced-colors: active) {
   .ai-answers-pick[aria-pressed='true'],

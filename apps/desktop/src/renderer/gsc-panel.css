@@ -8,6 +8,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  container: gsc / inline-size;
   font: var(--text-body);
   animation: panel-in var(--dur-base) var(--ease-out) both;
 }
@@ -342,6 +343,15 @@
   box-shadow: var(--focus-ring);
 }
 
+/* Focused and pressed: the ring outside, the pressed inner line kept inside. */
+.gsc-tile[aria-pressed='true']:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    var(--focus-ring);
+}
+
 .gsc-tile-label {
   color: var(--text-muted);
   font: var(--text-small);
@@ -446,6 +456,34 @@
 .gsc-queries-table .gsc-num {
   text-align: right;
   white-space: nowrap;
+}
+
+/* The numbers in --text-micro at 400: six-digit counts ("123,456") fit their columns. */
+.gsc-queries-table td.gsc-num {
+  font: var(--text-micro);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Below a 360px panel the query gives the numbers room: clicks and impressions widest. */
+@container gsc (max-width: 320px) {
+  .gsc-queries-table th:first-child {
+    width: 28%;
+  }
+
+  .gsc-queries-table th:nth-child(2),
+  .gsc-queries-table th:nth-child(3) {
+    width: 21%;
+  }
+
+  .gsc-queries-table th:nth-child(4) {
+    width: 17%;
+  }
+
+  .gsc-queries-table th:nth-child(5) {
+    width: 13%;
+  }
 }
 
 .gsc-muted,

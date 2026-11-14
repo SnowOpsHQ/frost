@@ -80,3 +80,10 @@
 .gsc-targets-use {
   flex: none;
 }
+
+/* While the page's notes load: the shared chip's disabled colour (DISABLED_INK), never a fade (it faded
+   to half over it). */
+.gsc-targets-use:disabled {
+  color: color-mix(in srgb, var(--text-faint) 50%, transparent);
+  cursor: default;
+}
