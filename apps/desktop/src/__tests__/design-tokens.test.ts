@@ -8,6 +8,7 @@ import {
   CONTRAST_PAIRS,
   DISABLED_CONTROLS,
   DISABLED_INK,
+  FADES_SPARE_FOCUS,
   FOCUS_RING_RULES,
   FORCED_COLOURS_BUSY,
   FORCED_COLOURS_KEPT,
@@ -530,13 +531,20 @@ test('focus-rings-outlast-hover-and-busy', () => {
 
   const rules: readonly FocusRingRule[] = FOCUS_RING_RULES;
   expect(rules.length).toBeGreaterThan(0);
+  // The ring, alone or after inset layers (a pressed tile's inner line): never after or before an outer layer.
+  expect(isFocusRing('var(--focus-ring)')).toBe(true);
+  expect(isFocusRing('inset 0 0 0 1px var(--accent), var(--focus-ring)')).toBe(true);
+  expect(isFocusRing('0 0 0 1px var(--accent), var(--focus-ring)'), 'an outer layer before it').toBe(false);
+  expect(isFocusRing('var(--focus-ring), inset 0 0 0 1px var(--accent)'), 'a layer after it').toBe(false);
+  expect(isFocusRing('inset 0 0 0 1px var(--accent)'), 'no ring').toBe(false);
   for (const rule of rules) {
     const css = cascade(rule);
     // Every selector named is one of the stylesheet's (a typo would quietly drop out of the cascade).
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of rule.element) expect(selectors.has(selector), `${rule.stylesheet} has ${selector}`).toBe(true);
     for (const theme of THEME_NAMES) {
-      expect(resolveOnElement(css, rule.element, 'box-shadow', theme), `${rule.why} (${theme})`).toBe('var(--focus-ring)');
+      const shadow = resolveOnElement(css, rule.element, 'box-shadow', theme);
+      expect(isFocusRing(shadow), `${rule.why}: box-shadow ${shadow} (${theme})`).toBe(true);
       expect(resolveOnElement(css, rule.element, 'outline', theme), `${rule.why}: outline (${theme})`).toBe('2px solid transparent');
       // Nothing fades the ring: an opacity, if the element's rules set one, is 1 (only "no opacity" is swallowed).
       const faded = (() => {
@@ -549,6 +557,30 @@ test('focus-rings-outlast-hover-and-busy', () => {
       })();
       expect(faded, `${rule.why}: opacity (${theme})`).toBe('1');
     }
+  }
+});
+
+/** A focused control's box-shadow: `var(--focus-ring)`, alone or after inset layers only. */
+function isFocusRing(shadow: string): boolean {
+  const layers = splitSelectors(shadow).map((layer) => layer.trim());
+  return layers.at(-1) === 'var(--focus-ring)' && layers.slice(0, -1).every((layer) => /^inset\s/.test(layer));
+}
+
+test('fades-spare-focus', () => {
+  /** Every selector of a rule that fades (opacity under 1) in `css` that does not end in :not(:focus-within). */
+  const problemsIn = (css: string) => {
+    const fades = parse(css).declarations.filter((d) => d.property === 'opacity' && Number.parseFloat(d.value) < 1);
+    const bare = fades.flatMap((d) => splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim()).filter((s) => !s.endsWith(':not(:focus-within)')));
+    return { fades: fades.length, bare };
+  };
+  expect(problemsIn(".r[data-pending='true'] .d:not(:focus-within) { opacity: 0.55; }")).toEqual({ fades: 1, bare: [] });
+  expect(problemsIn(".r[data-pending='true'] .d { opacity: 0.55; }").bare, 'the same fade without it').toHaveLength(1);
+  expect(problemsIn('.a:not(:focus-within), .b { opacity: 0.5; }').bare, 'a list with one selector that lacks it').toEqual(['.b']);
+  expect(problemsIn('.a { opacity: 1; }').fades, 'full strength is no fade').toBe(0);
+  for (const entry of FADES_SPARE_FOCUS) {
+    const { fades, bare } = problemsIn(read(entry.stylesheet));
+    expect(fades, `${entry.stylesheet} has a fade (${entry.why})`).toBeGreaterThan(0);
+    expect(bare, entry.why).toEqual([]);
   }
 });
 
@@ -709,26 +741,33 @@ function edgeProblems(css: string, element: readonly string[], edge: string): st
   return problems;
 }
 
-test('disabled-controls-dim-their-text', () => {
-  const entries: readonly DisabledControl[] = DISABLED_CONTROLS;
-  for (const entry of entries) {
-    const css = cascade(entry);
-    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
-    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
-    for (const theme of THEME_NAMES) {
-      expect(resolveOnElement(css, entry.element, 'color', theme), `${entry.why} (${theme})`).toBe(DISABLED_INK);
-      // ... by its colour alone, never faded as well (only "no opacity" is swallowed, as the focus-ring check does).
-      const faded = (() => {
-        try {
-          return resolveOnElement(css, entry.element, 'opacity', theme);
-        } catch (error) {
-          if (error instanceof Error && error.message.endsWith(`: no opacity (${theme})`)) return '1';
-          throw error;
-        }
-      })();
-      expect(faded, `${entry.why}: opacity (${theme})`).toBe('1');
+/** What keeps a `DISABLED_CONTROLS` entry's element in `css` from showing disabled by its colour alone. */
+function disabledProblems(css: string, entry: DisabledControl): string[] {
+  const problems: string[] = [];
+  const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+  for (const selector of entry.element) if (!selectors.has(selector)) problems.push(`no ${selector}`);
+  if (problems.length > 0) return problems;
+  for (const theme of THEME_NAMES) {
+    const colour = resolveOnElement(css, entry.element, 'color', theme);
+    if (colour !== DISABLED_INK) problems.push(`color ${colour} (${theme})`);
+    // ... by its colour alone, never faded as well (only "no opacity" is swallowed, as the focus-ring check does).
+    try {
+      const opacity = resolveOnElement(css, entry.element, 'opacity', theme);
+      if (opacity !== '1') problems.push(`opacity ${opacity} (${theme})`);
+    } catch (error) {
+      if (!(error instanceof Error && error.message.endsWith(`: no opacity (${theme})`))) throw error;
     }
   }
+  return problems;
+}
+
+test('disabled-controls-dim-their-text', () => {
+  const entries: readonly DisabledControl[] = DISABLED_CONTROLS;
+  for (const entry of entries) expect(disabledProblems(cascade(entry), entry), entry.why).toEqual([]);
+  // Content's "Use as target" with main's fade put back in its own sheet fails (its entry reads that rule).
+  const targets = entries.find((entry) => entry.stylesheet === 'gsc-targets.css')!;
+  const faded = `${read('gsc-targets.css')}\n.gsc-targets-use:disabled { opacity: 0.5; }\n${read('styles.css')}`;
+  expect(disabledProblems(faded, targets)).toEqual(['opacity 0.5 (light)', 'opacity 0.5 (dark)']);
 });
 
 test('pressed-controls-draw-an-edge', () => {

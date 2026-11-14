@@ -1557,10 +1557,22 @@ export const DISABLED_CONTROLS = [
   {
     stylesheet: 'gsc-targets.css',
     loadsBefore: ['styles.css'],
-    element: ['.seo-chip-button', '.seo-chip-button:disabled', '.gsc-targets-use'],
-    why: 'Content\'s "Use as target" while the page\'s notes load (the shared chip\'s disabled colour, unfaded)',
+    element: ['.seo-chip-button', '.seo-chip-button:disabled', '.gsc-targets-use', '.gsc-targets-use:disabled'],
+    why: 'Content\'s "Use as target" while the page\'s notes load: its own disabled rule keeps the chip\'s colour, unfaded (it faded to half)',
   },
 ] as const satisfies readonly DisabledControl[];
+
+/**
+ * Stylesheets whose fades must spare focus: a region dimmed while it is re-read (Search Console's last
+ * data, the URL Inspection card's last answer) holds focusable controls, and an `opacity` under 1 would
+ * dim a focused one's ring. In each, every rule that sets `opacity` under 1 ends every selector of its
+ * list with `:not(:focus-within)` (the region stays at full strength while focus is inside it, as a busy
+ * switch in Settings fades only while it is not focused), and at least one such rule exists.
+ */
+export const FADES_SPARE_FOCUS = [
+  { stylesheet: 'gsc-panel.css', why: 'Search Console\'s last data while another scope or range is read' },
+  { stylesheet: 'gsc-inspection.css', why: 'a URL Inspection card\'s last answer while it is inspected again' },
+] as const satisfies readonly { readonly stylesheet: string; readonly why: string }[];
 
 export const PRESSED_EDGES = [
   {
@@ -1629,7 +1641,9 @@ export const PRESSED_EDGES = [
  * draw) in every state it can be focused in: hovered, busy (`aria-disabled`, which stays focusable),
  * primary or not. `element` lists the selectors, in `stylesheet`, that such an element matches in that
  * state; resolving the cascade over them (as `TEXT_COLOUR_RULES`: specificity, `:where()` adding none,
- * then source order) gives `box-shadow: var(--focus-ring)` and `outline: 2px solid transparent`, and no
+ * then source order) gives `box-shadow: var(--focus-ring)` (or inset layers and then it: an inset line,
+ * such as a pressed tile's inner edge, sits inside the element and never covers the ring; an outer
+ * layer before or after it fails) and `outline: 2px solid transparent`, and no
  * `opacity` under 1 (it would dim the ring: at 0.55 it falls to about 2.4–2.8:1). So a hover's or a
  * primary button's own box-shadow never outranks the focus rule, and a busy button shows it is busy by
  * its colours, not by fading; a busy switch or choice fades only while it is not focused.
@@ -1860,8 +1874,8 @@ export const FOCUS_RING_RULES = [
   { stylesheet: 'gsc-panel.css', element: ['.gsc-tile', GSC_TILE_HOVER, '.gsc-tile:focus-visible'], why: 'a Search Console total tile, focused and hovered' },
   {
     stylesheet: 'gsc-panel.css',
-    element: ['.gsc-tile', ".gsc-tile[aria-pressed='true']", '.gsc-tile:focus-visible'],
-    why: 'the tile the chart shows, focused: its pressed line (a box-shadow) gives way to --focus-ring; the edge is its border',
+    element: ['.gsc-tile', ".gsc-tile[aria-pressed='true']", '.gsc-tile:focus-visible', ".gsc-tile[aria-pressed='true']:focus-visible"],
+    why: 'the tile the chart shows, focused: --focus-ring after its pressed inner line, so both its edges stay',
   },
   {
     stylesheet: 'gsc-panel.css',

@@ -658,7 +658,13 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   at weight 400 in `--text-faint` (`--gsc-axis`, `--gsc-line`: aliases, now unread, kept). Top queries:
   `--text-small`, heads `--text-micro` in `--text-muted`, rows ruled `--divider`. While another scope or
   range is read the data dims to 0.55 only while focus is not inside it (a fade would dim a focused
-  tile's ring, as a busy switch in Settings); so does the URL Inspection card's body. **URL Inspection:**
+  tile's ring, as a busy switch in Settings); so does the URL Inspection card's body
+  (`FADES_SPARE_FOCUS`). The chart's left gutter (`GSC_CHART.padLeft`) grew from 38 to 52 units for
+  the larger axis type, so a tiny CTR step ("0.0005%") stays inside the card from 300px to 560px; Top
+  queries' numbers are `--text-micro` at weight 400, and below a 360px panel its columns give the
+  numbers the room (the query 28%, clicks and impressions 21% each, CTR 17%, position 13%), where
+  six-digit counts ran into each other. A focused chosen tile keeps its inner line under the ring; a
+  focused answer in the AI answers list is raised over its neighbours, so its ring is whole. **URL Inspection:**
   `--text-small` throughout; a rich result item an `--r-sm` box ruled `--divider`; a group's label
   `--text-caps`, "Error" `--danger-ink`, "Warning" `--warn-ink`. **Content's targets:** rows ruled
   `--divider`, `--text-small`; "Use as target" is the panels' chip at `--h-chip` (it was squeezed to 24px)
@@ -757,6 +763,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `background` to `var(<background>)` where the entry names one), and that pair is in
   `CONTRAST_PAIRS`; for an `unfaded` entry (a disabled button shown by its colours), `opacity` resolves to
   nothing under 1, so a fade put back in place of the colours fails.
+- **Scenario: fades-spare-focus** — in each `FADES_SPARE_FOCUS` stylesheet, every rule setting an
+  `opacity` under 1 ends each selector with `:not(:focus-within)`, and one such rule exists; it catches
+  the same fade without it, and a list with one selector that lacks it.
 - **Scenario: focus-rings-outlast-hover-and-busy** — for each `FOCUS_RING_RULES` entry (Settings' and
   Help's controls, the chrome's tools, tabs, new-tab button, address bar and prompt buttons, an SEO
   issue's heading row and the panels' link button, the panels' toggles, row actions, segments,
@@ -766,7 +775,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   buttons, links and fields, and History's controls), in light and
   dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
   none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
-  `var(--focus-ring)` and `outline` to `2px solid transparent`, and sets no `opacity` under 1: a focused
+  `var(--focus-ring)` (inset layers before it allowed, an outer layer not) and `outline` to `2px solid
+  transparent`, and sets no `opacity` under 1: a focused
   button keeps its ring, at full strength, when hovered, when busy (`aria-disabled`) and when primary;
   so does a focused switch, and the chosen choice. The resolver itself scores
   `.a:hover:where(:not([x], :disabled))` as two classes.
