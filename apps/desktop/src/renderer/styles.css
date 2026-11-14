@@ -2352,17 +2352,20 @@ input {
 
 /* ---- Links, Images, Social ------------------------------------------------------------------ */
 
+/* Links, Images, Social and the controls the panels share, on Signal (design-tokens.feature.md, The SEO
+   panels' Links, Images, Social and Schema): cards --space-4 apart, text from the --text-* tokens. */
 .seo-links,
 .seo-images,
 .seo-social {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
+/* No finding: every panel's issue list says so in --ok-ink. */
 .seo-all-clear-line {
   margin: 0;
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 
 .seo-stats-3 {
@@ -2376,10 +2379,10 @@ input {
 .seo-rel-counts {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 14px;
-  margin: 10px 0 0;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-4) 0 0;
   color: var(--text);
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -2387,61 +2390,62 @@ input {
 .seo-rel-count {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .seo-panel-tools {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 .seo-section-head + .seo-panel-tools,
 .seo-heading-counts + .seo-panel-tools {
   margin-top: 0;
-  margin-bottom: 10px;
+  margin-bottom: var(--space-3);
 }
 
-/* A small pill button; `aria-pressed` for toggles. */
-.seo-toggle {
+/* A toggle (aria-pressed) or a one-shot tool, and a row's actions: the canvas's secondary button at
+   --h-chip, a pill on --bg-surface with --e-raised; the transparent border is the edge forced colours
+   draw. A hover lays --bg-hover over it; a pressed toggle is --accent on --accent-soft. */
+.seo-toggle,
+.seo-action {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 11px 0 9px;
-  border: 1px solid var(--border-field);
-  border-radius: 999px;
-  background: var(--bg-field);
+  gap: var(--space-2);
+  height: var(--h-chip);
+  padding: 0 var(--space-4) 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 500;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 
-.seo-toggle .icon {
-  width: 15px;
-  height: 15px;
-  color: var(--icon);
+.seo-toggle .icon,
+.seo-action .icon {
+  flex: none;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--text-muted);
 }
 
-.seo-toggle:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--border-field) 60%, var(--text-faint));
-}
-
-.seo-toggle:focus-visible,
-.seo-segment:focus-visible,
-.seo-chip-button:focus-visible,
-.seo-select:focus-visible,
-.seo-action:focus-visible,
-.seo-table-main:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+/* The state checks sit in :where(), so a hover adds no weight over the focus rule below. */
+.seo-toggle:hover:where(:not(:disabled, [aria-pressed='true'])),
+.seo-action:hover:where(:not(:disabled)) {
+  box-shadow:
+    inset 0 0 0 var(--h-chip) var(--bg-hover),
+    var(--e-raised);
 }
 
 .seo-toggle[aria-pressed='true'] {
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--accent-soft);
+  box-shadow: none;
   color: var(--accent);
 }
 
@@ -2449,23 +2453,35 @@ input {
   color: currentColor;
 }
 
-.seo-toggle:disabled {
-  opacity: 0.5;
+/* Disabled: the token sheet's disabled control, --text-faint on --bg-subtle with no shadow (it faded). */
+.seo-toggle:disabled,
+.seo-action:disabled {
+  background: var(--bg-subtle);
+  box-shadow: none;
+  color: var(--text-faint);
+  cursor: default;
 }
 
-/* Feedback after an action: a toast pinned to the bottom of the panel's scroll area. */
+.seo-toggle:disabled .icon,
+.seo-action:disabled .icon {
+  color: currentColor;
+}
+
+/* Feedback after an action: a toast pinned to the bottom of the panel's scroll area, --on-inverse on
+   --inverse with --e-overlay; the transparent border is the edge forced colours draw. */
 .seo-flash {
   position: sticky;
   bottom: 0;
   align-self: center;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: var(--text);
-  color: var(--bg-chrome);
-  font-size: 12px;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--inverse);
+  box-shadow: var(--e-overlay);
+  color: var(--on-inverse);
+  font: var(--text-small);
   font-weight: 500;
-  box-shadow: 0 4px 12px rgb(16 24 40 / 0.18);
-  transition: opacity 160ms ease;
+  transition: opacity var(--dur-base) var(--ease-out);
 }
 
 .seo-flash[data-shown='false'] {
@@ -2476,30 +2492,28 @@ input {
 .seo-filters {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
+/* Fields inside a card ("--r-sm inside cards", as Settings'): --h-control on --bg-surface with
+   --e-raised; focus is the ring, on the field round the input. */
 .seo-search {
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-control);
-  background: var(--bg-field);
-  color: var(--text-faint);
-}
-
-.seo-search:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  gap: var(--space-3);
+  height: var(--h-control);
+  padding: 0 var(--space-4) 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
+  color: var(--text-muted);
 }
 
 .seo-search .icon {
   flex: none;
-  width: 15px;
-  height: 15px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .seo-search-input {
@@ -2511,82 +2525,100 @@ input {
   outline: 0;
   background: transparent;
   color: var(--text);
-  font-size: 12.5px;
+  font: var(--text-body);
 }
 
+.seo-search-input::placeholder {
+  color: var(--text-faint);
+}
+
+/* The canvas's segmented control: an --r-pill track on --bg-subtle, the chosen segment raised. */
 .seo-segmented {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 9px;
-  background: var(--bg-hover);
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
 }
 
 .seo-segment {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
-  height: 26px;
-  padding: 0 4px;
-  border: 0;
-  border-radius: 7px;
+  height: var(--h-chip);
+  padding: 0 var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-weight: 500;
   white-space: nowrap;
 }
 
-.seo-segment[aria-pressed='true'] {
-  background: var(--seo-card);
-  box-shadow: 0 1px 2px rgb(16 24 40 / 0.12);
+.seo-segment:hover:where(:not(:disabled)) {
   color: var(--text);
+}
+
+.seo-segment[aria-pressed='true'] {
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
+  color: var(--text);
+}
+
+.seo-segment:disabled {
+  color: var(--text-faint);
+  cursor: default;
 }
 
 .seo-segment-count {
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 
 .seo-select {
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-control);
-  background: var(--bg-field);
+  height: var(--h-control);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
-  font: inherit;
-  font-size: 12.5px;
+  font: var(--text-body);
 }
 
+/* The canvas's chips: --h-chip pills on --bg-subtle, pressed --accent on --accent-soft. */
 .seo-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: var(--space-2);
 }
 
 .seo-chip-button {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 9px;
-  border: 1px solid var(--border-field);
-  border-radius: 999px;
-  background: transparent;
+  gap: var(--space-2);
+  height: var(--h-chip);
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-weight: 500;
 }
 
+.seo-chip-button:hover:where(:not(:disabled, [aria-pressed='true'])) {
+  color: var(--text);
+}
+
 .seo-chip-button[aria-pressed='true'] {
-  border-color: transparent;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
@@ -2594,23 +2626,61 @@ input {
   color: currentColor;
 }
 
-.seo-table-count {
-  margin: 10px 0 6px;
+.seo-chip-button:disabled {
   color: var(--text-faint);
-  font-size: 11.5px;
+  cursor: default;
+}
+
+/* Focus: the ring, after every hover and pressed rule; the transparent outline is what forced colours
+   draw. A row is raised above its neighbours so the ring is whole. */
+.seo-toggle:focus-visible,
+.seo-action:focus-visible,
+.seo-segment:focus-visible,
+.seo-chip-button:focus-visible,
+.seo-select:focus-visible,
+.seo-search:focus-within,
+.seo-table-main:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* Forced colours replace the fills that say pressed (Highlight) and the colours that say disabled
+   (GrayText): FORCED_COLOURS_PRESSED, FORCED_COLOURS_BUSY. */
+@media (forced-colors: active) {
+  .seo-toggle[aria-pressed='true'],
+  .seo-segment[aria-pressed='true'],
+  .seo-chip-button[aria-pressed='true'] {
+    border-color: Highlight;
+  }
+
+  .seo-toggle:disabled,
+  .seo-action:disabled,
+  .seo-segment:disabled,
+  .seo-chip-button:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
+}
+
+.seo-table-count {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--text-faint);
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
+/* The rows of a table (a link, an image), ruled by --divider. */
 .seo-table {
   display: flex;
   flex-direction: column;
-  margin: 0 -6px;
+  margin: 0 calc(-1 * var(--space-2));
   padding: 0;
   list-style: none;
 }
 
 .seo-table-row {
-  border-top: 1px solid var(--seo-card-edge);
+  border-top: 1px solid var(--divider);
 }
 
 .seo-table-row:first-child {
@@ -2618,17 +2688,19 @@ input {
 }
 
 .seo-table-main {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   width: 100%;
   min-width: 0;
-  padding: 7px 6px;
+  padding: var(--space-2);
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text);
   text-align: left;
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 
 .seo-table-main:hover,
@@ -2636,102 +2708,89 @@ input {
   background: var(--bg-hover);
 }
 
+.seo-table-main:focus-visible {
+  z-index: 1;
+}
+
 .seo-table-line {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .seo-table-title {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font: var(--text-body);
   font-weight: 500;
 }
 
 .seo-table-sub {
   color: var(--text-muted);
-  font-size: 11px;
+  font: var(--text-small);
 }
 
-/* A link's type, and its rel flags. */
+.seo-table-sub.seo-mono {
+  font: var(--text-mono);
+}
+
+/* "No anchor text", "No source": --text-muted, since --text-faint on a hovered or open row is under
+   4.5:1 in dark; the font shorthand above resets the frame's italic. */
+.seo-table-title.seo-missing,
+.seo-table-sub.seo-missing {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* A link's kind, its rel and target flags, Images' loading flags and alt badge: On-Page's tag, 18px at
+   --r-xs in --text-micro; neutral, a status one on its -soft fill with -ink text, internal --accent. */
 .seo-kind,
 .seo-flag,
 .seo-alt {
   display: inline-grid;
   place-items: center;
   flex: none;
-  height: 17px;
-  padding: 0 5px;
-  border-radius: 5px;
-  font: 600 10px/1 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  height: 18px;
+  padding: 0 var(--space-1);
+  border-radius: var(--r-xs);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
 .seo-kind[data-kind='internal'] {
-  background: color-mix(in srgb, #1f6feb 15%, transparent);
-  color: #1f6feb;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
-.seo-kind[data-kind='external'] {
-  background: color-mix(in srgb, #d4670c 16%, transparent);
-  color: #c25e0b;
-}
-
-.seo-kind[data-kind='other'],
-.seo-flag-plain {
-  background: var(--bg-hover);
-  color: var(--text-muted);
-}
-
-.seo-flag[data-flag='nofollow'] {
-  background: color-mix(in srgb, #c42b5c 14%, transparent);
-  color: #c42b5c;
-}
-
-.seo-flag[data-flag='sponsored'] {
-  background: color-mix(in srgb, #8b5cf6 15%, transparent);
-  color: #7c4ddf;
-}
-
-.seo-flag[data-flag='ugc'] {
-  background: color-mix(in srgb, #0d9488 15%, transparent);
-  color: #0b7f75;
-}
-
-.seo-flag[data-flag='warn'] {
-  background: color-mix(in srgb, var(--caution) 16%, transparent);
-  color: var(--caution);
-}
-
-.seo-flag.seo-page-text {
-  display: inline-block;
-  max-width: 120px;
-  line-height: 17px;
-}
-
+.seo-flag[data-flag='warn'],
 .seo-alt[data-alt='missing'] {
-  background: color-mix(in srgb, var(--caution) 16%, transparent);
-  color: var(--caution);
-}
-
-.seo-alt[data-alt='decorative'] {
-  background: var(--bg-hover);
-  color: var(--text-muted);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
 }
 
 .seo-alt[data-alt='present'] {
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-  color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+}
+
+/* Page text cut with an ellipsis: a block, so its height comes from padding, not a line-height. */
+.seo-flag.seo-page-text {
+  display: inline-block;
+  max-width: 120px;
+  height: auto;
+  padding-block: calc(var(--space-1) / 2);
 }
 
 .seo-image-facts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 2px;
-  font-size: 11.5px;
+  gap: var(--space-2);
+  margin-top: calc(var(--space-1) / 2);
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2741,16 +2800,16 @@ input {
   min-width: 0;
 }
 
+/* --text-muted: --text-faint on a hovered or open row is under 4.5:1 in dark. */
 .seo-image-fact-label {
-  color: var(--text-faint);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .seo-image-fact[data-missing='true'] {
-  color: var(--caution);
+  color: var(--warn-ink);
 }
 
 .seo-image-flags {
@@ -2764,75 +2823,24 @@ input {
 .seo-row-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 6px 9px;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-3);
 }
 
-.seo-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 10px 0 8px;
-  border: 1px solid var(--border-field);
-  border-radius: 7px;
-  background: var(--bg-field);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.seo-action .icon {
-  width: 14px;
-  height: 14px;
-  color: var(--icon);
-}
-
-.seo-action:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--border-field) 60%, var(--text-faint));
-}
-
-.seo-action:disabled {
-  opacity: 0.45;
-}
-
-@media (prefers-color-scheme: dark) {
-  .seo-kind[data-kind='internal'] {
-    color: #79a8ff;
-  }
-
-  .seo-kind[data-kind='external'] {
-    color: #f3a25c;
-  }
-
-  .seo-flag[data-flag='nofollow'] {
-    color: #f07ea3;
-  }
-
-  .seo-flag[data-flag='sponsored'] {
-    color: #b9a1ff;
-  }
-
-  .seo-flag[data-flag='ugc'] {
-    color: #5fd3c6;
-  }
-
-  .seo-flash {
-    box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
-  }
-}
-
-/* Social: share cards drawn from the tags' text, with a placeholder for the image. */
+/* Social: share cards drawn from the tags, with a placeholder for the image. */
 .seo-preview-note {
-  margin: 0 0 10px;
+  margin: 0 0 var(--space-3);
 }
 
+/* A card in the section's card: --bg-surface at --r-md with --e-ring; the transparent border is the
+   edge forced colours draw. */
 .seo-card {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-3);
   overflow: hidden;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 10px;
-  background: var(--bg-field);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  box-shadow: var(--e-ring);
 }
 
 .seo-card .seo-page-text {
@@ -2842,7 +2850,7 @@ input {
 .seo-card-image {
   position: relative;
   aspect-ratio: 1.91 / 1;
-  border-bottom: 1px solid var(--seo-card-edge);
+  border-bottom: 1px solid var(--divider);
 }
 
 .seo-placeholder-art {
@@ -2852,11 +2860,11 @@ input {
 }
 
 .seo-placeholder-bg {
-  fill: color-mix(in srgb, var(--accent) 9%, var(--bg-hover));
+  fill: color-mix(in srgb, var(--accent) 9%, var(--bg-subtle));
 }
 
 .seo-placeholder-shape {
-  fill: color-mix(in srgb, var(--accent) 22%, var(--bg-hover));
+  fill: color-mix(in srgb, var(--accent) 22%, var(--bg-subtle));
 }
 
 [data-has-image='false'] .seo-placeholder-shape {
@@ -2865,42 +2873,39 @@ input {
 
 .seo-card-image-label {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: rgb(16 24 40 / 0.55);
-  color: #ffffff;
-  font-size: 10.5px;
-  font-weight: 600;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  padding: calc(var(--space-1) / 2) var(--space-2);
+  border-radius: var(--r-pill);
+  background: var(--inverse);
+  color: var(--on-inverse);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
 }
 
 .seo-card-body {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
   min-width: 0;
-  padding: 9px 11px 10px;
+  padding: var(--space-3) var(--space-4);
 }
 
 .seo-card-domain {
   color: var(--text-faint);
-  font-size: 10.5px;
-  letter-spacing: 0.02em;
+  font: var(--text-small);
 }
 
 .seo-card-title {
   color: var(--text);
-  font-size: 13px;
+  font: var(--text-body);
   font-weight: 600;
-  line-height: 1.3;
 }
 
 .seo-card-description {
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.4;
+  font: var(--text-small);
 }
 
 .seo-card-summary {
@@ -2911,7 +2916,7 @@ input {
 .seo-card-thumb {
   flex: none;
   width: 88px;
-  border-right: 1px solid var(--seo-card-edge);
+  border-right: 1px solid var(--divider);
 }
 
 .seo-card-summary .seo-card-body {
@@ -2920,31 +2925,31 @@ input {
 }
 
 .seo-card-sources {
-  margin-top: 4px;
+  margin-top: var(--space-1);
 }
 
 .seo-card-heading {
-  margin: 0 0 6px;
+  margin: 0 0 var(--space-2);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-weight: 600;
 }
 
 .seo-card-source {
-  margin: -4px 0 12px;
+  margin: calc(-1 * var(--space-1)) 0 var(--space-4);
 }
 
 .seo-card-image-info {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--seo-card-edge);
+  gap: var(--space-1);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
 }
 
 .seo-card-image-info .seo-row-actions {
-  padding: 4px 0 0;
+  padding: var(--space-1) 0 0;
 }
 
 .seo-card-size {
@@ -2960,58 +2965,64 @@ input {
 .seo-schema {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
 .seo-schema-verdict {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
+/* The summary's status by shape, as the rail's dots: valid a filled --ok disc, warnings a --warn ring
+   (a border), errors a filled --danger square. They keep their colours in forced colours
+   (FORCED_COLOURS_KEPT), where a fill would turn to the canvas; the verdict beside it says it. */
 .seo-status-dot {
   flex: none;
+  box-sizing: border-box;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--r-pill);
   background: var(--ok);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+  forced-color-adjust: none;
 }
 
 .seo-status-dot[data-status='warn'] {
-  background: var(--caution);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--caution) 20%, transparent);
+  border: 2px solid var(--warn);
+  background: transparent;
 }
 
 .seo-status-dot[data-status='error'] {
+  border-radius: calc(var(--r-xs) / 2);
   background: var(--danger);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent);
 }
 
 .seo-schema-verdict-text {
   flex: 1;
   min-width: 0;
-  font-size: 13.5px;
+  font: var(--text-body);
   font-weight: 600;
 }
 
 .seo-type-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 12px 0 0;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
   padding: 0;
   list-style: none;
 }
 
+/* A top-level type and its count: a badge and a number in an --e-ring outline (a transparent border
+   for forced colours). On the card, not --bg-subtle: an --accent badge there is 4.0:1 in dark. */
 .seo-type-count {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
   max-width: 100%;
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--seo-card-edge));
-  border-radius: 7px;
   overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  box-shadow: var(--e-ring);
 }
 
 .seo-type-count .seo-type-badge {
@@ -3019,38 +3030,40 @@ input {
 }
 
 .seo-type-count-n {
-  padding: 0 7px;
+  padding: 0 var(--space-2);
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
 }
 
-/* A node's type: accent-tinted, monospaced, cut when long. */
+/* A node's type: On-Page's tag in --accent on --accent-soft, cut when long (a block: its height comes
+   from padding, not a line-height). */
 .seo-type-badge {
   display: inline-block;
   flex: none;
   max-width: 150px;
-  height: 19px;
-  padding: 0 6px;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  padding: calc(var(--space-1) / 2) var(--space-1);
+  border-radius: var(--r-xs);
+  background: var(--accent-soft);
   color: var(--accent);
-  font: 600 10.5px/19px ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* An @id that adds to another node: a dashed edge for a fill, as tall as the others. */
 .seo-type-extends {
-  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  padding-block: calc(var(--space-1) / 2 - 1px);
+  border: 1px dashed var(--accent);
   background: transparent;
-  line-height: 17px;
 }
 
 .seo-type-badge[data-untyped='true'],
 .seo-type-more {
-  background: var(--bg-hover);
+  background: var(--bg-subtle);
   color: var(--text-muted);
 }
 
@@ -3059,72 +3072,79 @@ input {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 6px 12px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--seo-card-edge);
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
 .seo-schema-severities {
   display: inline-flex;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .seo-schema-severity {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   font-weight: 600;
 }
 
-.seo-schema-severity .seo-severity .icon {
-  width: 14px;
-  height: 14px;
+/* A severity with none: --text-faint, icon and all (it faded); GrayText under forced colours. */
+.seo-schema-severity[data-count='0'],
+.seo-schema-severity[data-count='0'] .seo-severity {
+  color: var(--text-faint);
 }
 
-.seo-schema-severity[data-count='0'] {
-  opacity: 0.55;
+@media (forced-colors: active) {
+  .seo-schema-severity[data-count='0'],
+  .seo-schema-severity[data-count='0'] .seo-severity {
+    color: GrayText;
+  }
 }
 
 .seo-schema-empty {
-  padding-top: 24px;
+  padding-top: var(--space-6);
 }
 
-/* A JSON-LD block or a markup syntax. */
+/* A JSON-LD block's status: a frame badge, -ink on its -soft fill. */
 .seo-block-status {
+  display: inline-flex;
+  align-items: center;
   flex: none;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-  color: var(--ok);
-  font-size: 11px;
-  font-weight: 600;
+  height: var(--h-badge);
+  padding: 0 var(--space-3);
+  border-radius: var(--r-pill);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 .seo-block-status[data-status='invalid'] {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  background: var(--danger-soft);
   color: var(--danger-ink);
 }
 
 .seo-block-status[data-status='cut'] {
-  background: color-mix(in srgb, var(--caution) 16%, transparent);
-  color: var(--caution);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
 }
 
 .seo-block-types {
-  margin: -4px 0 10px;
+  margin: calc(-1 * var(--space-1)) 0 var(--space-3);
   color: var(--text-faint);
-  font-size: 11.5px;
+  font: var(--text-small);
   overflow-wrap: anywhere;
 }
 
 .seo-section-head + .seo-panel-tools.seo-block-tools,
 .seo-block-types + .seo-panel-tools.seo-block-tools {
   justify-content: space-between;
-  margin: 0 0 10px;
+  margin: 0 0 var(--space-3);
 }
 
 .seo-view-switch {
@@ -3132,24 +3152,20 @@ input {
 }
 
 .seo-view-switch .seo-segment .icon {
-  width: 14px;
-  height: 14px;
-}
-
-.seo-view-switch .seo-segment:disabled {
-  opacity: 0.45;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .seo-block-note {
-  margin: -4px 0 8px;
+  margin: calc(-1 * var(--space-1)) 0 var(--space-3);
 }
 
-/* A node's issues, inline. */
+/* A node's issues, inline: a notice on its severity's -soft fill (a transparent border for forced colours). */
 .seo-node-issues {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 0 0 8px;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-3);
   padding: 0;
   list-style: none;
 }
@@ -3157,87 +3173,80 @@ input {
 .seo-node-issue {
   display: flex;
   align-items: flex-start;
-  gap: 7px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--info-tone) 8%, transparent);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
 }
 
 .seo-node-issue[data-severity='error'] {
-  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  background: var(--danger-soft);
 }
 
 .seo-node-issue[data-severity='warning'] {
-  background: color-mix(in srgb, var(--caution) 10%, transparent);
+  background: var(--warn-soft);
 }
 
 .seo-node-issue .seo-severity .icon {
-  width: 14px;
-  height: 14px;
-  margin-top: 1px;
+  margin-top: calc(var(--space-1) / 4);
 }
 
 .seo-node-issue-text {
   display: flex;
   flex-direction: column;
-  gap: 1px;
   min-width: 0;
 }
 
 .seo-node-issue-title {
-  font-size: 12px;
+  font: var(--text-small);
   font-weight: 600;
 }
 
 .seo-node-issue-detail {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
-/* The entity tree. */
+/* The entity tree: --r-sm rows, their guide lines --divider. */
 .seo-entity-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .seo-entity-nested {
-  margin: 2px 0 2px 2px;
-  padding-left: 9px;
-  border-left: 1px solid var(--seo-card-edge);
+  margin: calc(var(--space-1) / 2) 0 calc(var(--space-1) / 2) calc(var(--space-1) / 2);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--divider);
 }
 
 .seo-entity-head {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   width: 100%;
   min-width: 0;
-  padding: 5px 6px 5px 2px;
+  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--space-1) / 2);
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text);
   text-align: left;
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 
 .seo-entity-head:hover {
   background: var(--bg-hover);
 }
 
-.seo-entity-head:focus-visible,
-.seo-ref-head:focus-visible,
-.seo-icon-action:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
 .seo-entity-head .seo-chevron {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   margin-top: 0;
 }
 
@@ -3248,7 +3257,7 @@ input {
 .seo-entity-types {
   display: inline-flex;
   flex: none;
-  gap: 3px;
+  gap: var(--space-1);
   max-width: 60%;
   overflow: hidden;
 }
@@ -3256,20 +3265,25 @@ input {
 .seo-entity-name {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font: var(--text-body);
   font-weight: 500;
 }
 
+/* "No name" keeps the frame's italic (the shorthand above resets font-style). */
+.seo-entity-name.seo-missing {
+  font-style: italic;
+}
+
 .seo-entity-body {
-  margin: 2px 0 6px 9px;
-  padding: 2px 0 0 10px;
-  border-left: 1px solid var(--seo-card-edge);
+  margin: calc(var(--space-1) / 2) 0 var(--space-2) var(--space-3);
+  padding: calc(var(--space-1) / 2) 0 0 var(--space-3);
+  border-left: 1px solid var(--divider);
 }
 
 .seo-props {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--space-1);
   margin: 0;
 }
 
@@ -3277,22 +3291,22 @@ input {
   display: grid;
   grid-template-columns: minmax(64px, 32%) minmax(0, 1fr);
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 /* A property holding nodes gets the full width for them. */
 .seo-prop:has(> .seo-prop-values > .seo-entity-list, > .seo-prop-values > .seo-ref) {
   grid-template-columns: minmax(0, 1fr);
-  gap: 1px;
+  gap: 0;
 }
 
+/* Its name is --text-mono (.seo-mono): only its colour here. */
 .seo-prop-name {
   display: inline-flex;
   align-items: baseline;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
   color: var(--text-muted);
-  font-size: 11px;
   overflow: hidden;
 }
 
@@ -3305,19 +3319,20 @@ input {
 .seo-prop-count {
   flex: none;
   color: var(--text-faint);
-  font-size: 10px;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
 }
 
 .seo-prop-values {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   min-width: 0;
   margin: 0;
 }
 
 .seo-value {
-  font-size: 12.5px;
+  font: var(--text-small);
 }
 
 /* Mono values take --text-mono over .seo-value's size. */
@@ -3326,13 +3341,13 @@ input {
 }
 
 .seo-value-literal {
-  color: var(--info-tone);
+  color: var(--accent);
 }
 
 .seo-value-url {
   display: flex;
   align-items: flex-start;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -3341,33 +3356,37 @@ input {
   color: var(--accent);
 }
 
+/* A URL value's open-in-tab button: an icon-only ghost button, --text-muted, --accent on --bg-hover
+   hovered; disabled --text-faint at half strength, as the chrome's disabled tool. */
 .seo-icon-action {
+  position: relative;
   display: grid;
   place-items: center;
   flex: none;
-  width: 22px;
-  height: 20px;
-  border: 0;
-  border-radius: 5px;
+  width: var(--h-badge);
+  height: var(--h-badge);
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
   background: transparent;
-  color: var(--icon);
+  color: var(--text-muted);
 }
 
 .seo-icon-action .icon {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
-.seo-icon-action:hover:not(:disabled) {
+.seo-icon-action:hover:where(:not(:disabled)) {
   background: var(--bg-hover);
   color: var(--accent);
 }
 
 .seo-icon-action:disabled {
-  opacity: 0.35;
+  color: color-mix(in srgb, var(--text-faint) 50%, transparent);
+  cursor: default;
 }
 
-/* A reference by @id. */
+/* A reference by @id: a dashed --accent edge. */
 .seo-ref {
   display: flex;
   flex-direction: column;
@@ -3375,19 +3394,20 @@ input {
 }
 
 .seo-ref-head {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
-  padding: 3px 6px;
-  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--seo-card-edge));
-  border-radius: 7px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text);
   text-align: left;
 }
 
-.seo-ref-head:hover:not(:disabled) {
+.seo-ref-head:hover:where(:not(:disabled)) {
   background: var(--bg-hover);
 }
 
@@ -3398,15 +3418,15 @@ input {
 
 .seo-ref-head .icon {
   flex: none;
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   color: var(--accent);
 }
 
+/* Its @id is --text-mono (.seo-mono). */
 .seo-ref-id {
   flex: 0 1 auto;
   max-width: 55%;
-  font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3416,23 +3436,24 @@ input {
   flex: 1;
   min-width: 0;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The raw view: page text in a <pre>, escaped by React; the error's character marked. */
+/* The raw view: page text in a <pre>, escaped by React, --text-mono on --bg-subtle (the agent panel's
+   code); the error's character marked. */
 .seo-raw {
   position: relative;
   max-height: 340px;
   margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--seo-card-edge);
-  border-radius: 9px;
-  background: var(--seo-bg);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
   color: var(--text);
-  font: 11.5px/1.55 ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font: var(--text-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   overflow: auto;
@@ -3442,15 +3463,18 @@ input {
 }
 
 .seo-raw[data-invalid='true'] {
-  border-color: color-mix(in srgb, var(--danger) 40%, var(--seo-card-edge));
+  border-color: var(--danger);
 }
 
+/* The character where parsing stopped: --danger-ink on --danger-soft ringed in --danger; forced colours
+   draw its transparent outline. */
 .seo-raw-mark {
-  padding: 0 1px;
-  border-radius: 3px;
-  background: var(--danger);
-  color: #ffffff;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 30%, transparent);
+  padding: 0 calc(var(--space-1) / 4);
+  outline: 1px solid transparent;
+  border-radius: calc(var(--r-xs) * 0.75);
+  background: var(--danger-soft);
+  box-shadow: 0 0 0 1px var(--danger);
+  color: var(--danger-ink);
 }
 
 .seo-raw-mark[data-end='true'] {
@@ -3461,26 +3485,27 @@ input {
 /* A bidi or control character in the raw view, shown as its code point instead of itself. */
 .seo-raw-marker {
   display: inline-block;
-  margin: 0 1px;
-  padding: 0 3px;
-  border: 1px solid color-mix(in srgb, var(--caution) 55%, transparent);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--caution) 14%, transparent);
-  color: var(--caution);
-  font-size: 9.5px;
-  line-height: 14px;
+  margin: 0 calc(var(--space-1) / 4);
+  padding: 0 calc(var(--space-1) * 0.75);
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
   vertical-align: 1px;
 }
 
 .seo-show-more {
+  position: relative;
   align-self: flex-start;
-  margin: 4px 0 2px;
-  padding: 2px 6px;
+  margin: var(--space-1) 0 calc(var(--space-1) / 2);
+  padding: calc(var(--space-1) / 2) var(--space-2);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--accent);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-weight: 500;
 }
 
@@ -3488,25 +3513,40 @@ input {
   background: var(--bg-hover);
 }
 
+/* Focus: the ring, after the hovers; the transparent outline is what forced colours draw. */
+.seo-entity-head:focus-visible,
+.seo-ref-head:focus-visible,
+.seo-icon-action:focus-visible,
 .seo-show-more:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  z-index: 1;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
 
+@media (forced-colors: active) {
+  .seo-icon-action:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
+}
+
+/* The block's error: a --danger-soft notice, its position in --danger-ink. */
 .seo-raw-error {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin: 0 0 8px;
-  padding: 7px 9px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  gap: calc(var(--space-1) / 2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--danger-soft);
   color: var(--text);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .seo-raw-error-at {
-  color: var(--danger);
+  color: var(--danger-ink);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -7954,13 +7994,14 @@ input {
 
 /* Link and sitemap checks (Phase 2.5 Task 7, specs/seo-checks.feature.md) ------------------------- */
 
+/* The link status notice and summary (and the sitemap checks', in Indexability): a --bg-subtle note at
+   --r-sm, a --text-small line in --text-muted. */
 .seo-checks-notice {
-  margin: 0 0 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--bg-hover);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
   color: var(--text-muted);
-  line-height: 1.4;
 }
 
 .seo-checks .seo-panel-tools {
@@ -7968,39 +8009,41 @@ input {
 }
 
 .seo-checks-summary {
-  margin: 8px 0 0;
+  margin: var(--space-3) 0 0;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-variant-numeric: tabular-nums;
 }
 
 .seo-checks-counts {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin: 8px 0 0;
+  gap: var(--space-1);
+  margin: var(--space-3) 0 0;
   padding: 0;
   list-style: none;
 }
 
+/* The status chips keep their height from a box, not a line-height (a surface rule's type is a token's). */
 .seo-checks-counts .seo-flag-chip {
-  line-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
 }
 
 .seo-checks-count {
-  margin-left: 2px;
+  margin-left: calc(var(--space-1) / 2);
   font-variant-numeric: tabular-nums;
 }
 
+/* A broken row's status chip says so: no side bar (an inset box-shadow, which hid the focus ring). */
 .seo-link-status {
+  display: inline-flex;
+  align-items: center;
   flex: none;
+  height: 16px;
   margin-left: auto;
-  line-height: 16px;
   white-space: nowrap;
-}
-
-.seo-table-row[data-status='broken'] .seo-table-main {
-  box-shadow: inset 2px 0 0 var(--danger);
 }
 
 .seo-checks-samples {
