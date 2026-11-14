@@ -273,6 +273,28 @@ test('legacy-aliases-point-at-signal-tokens', () => {
   expect(LIGHT.get('--w-rail')).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
 });
 
+/**
+ * A pair's ratio in one theme: `bg` (a tint when `alpha` is set) composited over `over`, which lies on
+ * `under` when that is set. `under` is checked before anything is composited (`composite()` always
+ * returns an opaque colour, so a check after it would pass anything): it needs a translucent `over` and
+ * must itself be opaque.
+ */
+function pairRatio(pair: ContrastPair, colour: (name: string) => Rgba): number {
+  let bg = colour(pair.bg);
+  if (pair.alpha !== undefined) bg = [bg[0], bg[1], bg[2], bg[3] * pair.alpha];
+  if (pair.under !== undefined) {
+    if (pair.over === undefined || colour(pair.over)[3] >= 1) throw new Error(`${pair.fg} on ${pair.bg}: \`under\` is only for a translucent \`over\``);
+    if (colour(pair.under)[3] !== 1) throw new Error(`${pair.fg} on ${pair.bg}: \`under\` must be opaque`);
+  }
+  if (bg[3] < 1) {
+    if (pair.over === undefined) throw new Error(`${pair.fg} on ${pair.bg}: a translucent background needs \`over\``);
+    const over = colour(pair.over);
+    if (pair.under === undefined && over[3] !== 1) throw new Error(`${pair.fg} on ${pair.bg}: \`over\` must be opaque, or lie on an opaque \`under\``);
+    bg = composite(bg, pair.under === undefined ? over : composite(over, colour(pair.under)));
+  }
+  return contrastRatio(composite(colour(pair.fg), bg), bg);
+}
+
 test('signal-contrast-meets-aa', () => {
   // The ratio helper against known values.
   expect(contrastRatio(parseColour('#000'), parseColour('#ffffff'))).toBeCloseTo(21, 5);
@@ -281,24 +303,22 @@ test('signal-contrast-meets-aa', () => {
   // A tint (color-mix with transparent) composites like the token at that opacity.
   expect(composite([0, 0, 0, 0.14], parseColour('#ffffff'))[0]).toBeCloseTo(219.3, 5);
 
+  // The pair helper itself: a tint over a translucent `over` on an opaque `under` composes all three;
+  // a translucent `under`, an `under` beside an opaque `over`, and an opaque-less `over` fail.
+  const fixture: Record<string, Rgba> = { '--ink': [0, 0, 0, 1], '--card': [255, 255, 255, 1], '--wash': [0, 0, 0, 0.5], '--tint': [0, 0, 0, 0.25] };
+  const fake = (name: string): Rgba => fixture[name]!;
+  const as = (pair: object) => ({ min: 3, why: 'fixture', ...pair }) as unknown as ContrastPair;
+  expect(pairRatio(as({ fg: '--card', bg: '--tint', over: '--wash', under: '--card' }), fake)).toBeCloseTo(contrastRatio([255, 255, 255, 1], [95.625, 95.625, 95.625, 1]), 5);
+  expect(() => pairRatio(as({ fg: '--ink', bg: '--tint', over: '--wash', under: '--wash' }), fake)).toThrow(/`under` must be opaque/);
+  expect(() => pairRatio(as({ fg: '--ink', bg: '--tint', over: '--card', under: '--card' }), fake)).toThrow(/only for a translucent `over`/);
+  expect(() => pairRatio(as({ fg: '--ink', bg: '--tint', over: '--wash' }), fake)).toThrow(/`over` must be opaque/);
+
   const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
   expect(pairs.length).toBeGreaterThan(0);
   for (const theme of THEME_NAMES) {
-    const colour = (name: string) => colourIn(theme, name);
     for (const pair of pairs) {
-      const label = `${pair.fg} on ${pair.bg}${pair.over ? ` over ${pair.over}` : ''} (${theme})`;
-      let bg = colour(pair.bg);
-      if (pair.alpha !== undefined) bg = [bg[0], bg[1], bg[2], bg[3] * pair.alpha];
-      if (bg[3] < 1) {
-        expect(pair.over, `${label}: a translucent background needs \`over\``).toBeDefined();
-        let surface = colour(pair.over ?? pair.bg);
-        // A translucent `over` (a hovered row's --bg-hover) lies on its opaque `under` first.
-        if (pair.under !== undefined) surface = composite(surface, colour(pair.under));
-        expect(surface[3], `${label}: \`over\` must be opaque, or lie on an opaque \`under\``).toBe(1);
-        bg = composite(bg, surface);
-      }
-      const fg = composite(colour(pair.fg), bg);
-      expect(contrastRatio(fg, bg), label).toBeGreaterThanOrEqual(pair.min);
+      const label = `${pair.fg} on ${pair.bg}${pair.alpha !== undefined ? ` at ${pair.alpha}` : ''}${pair.over ? ` over ${pair.over}` : ''}${pair.under ? ` on ${pair.under}` : ''} (${theme})`;
+      expect(pairRatio(pair, (name) => colourIn(theme, name)), label).toBeGreaterThanOrEqual(pair.min);
     }
   }
 });

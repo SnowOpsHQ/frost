@@ -716,7 +716,8 @@ export const HEX_COLOUR_RATCHET = 47;
  * A foreground on a background that the Signal token sheet says must reach a WCAG 2.x contrast ratio
  * of `min` (4.5 for text, 3 for UI and graphics), in light and in dark. `over` is the opaque surface a
  * translucent `bg` (`--accent-soft`, a dark `-soft` fill) sits on, so the pair is composited first (a
- * translucent `over`, a hovered row's `--bg-hover`, is itself composited over the opaque `under` first); a
+ * translucent `over`, a hovered row's `--bg-hover`, is itself composited over the opaque `under` first;
+ * `under` is only for a translucent `over`, and must itself be opaque); a
  * translucent `fg` is composited over the (composited) `bg`. `alpha` makes `bg` a tint: the token at
  * that opacity, as `color-mix(in srgb, <bg> <alpha × 100>%, transparent)` draws it (then `over` is
  * needed). `why` cites the sheet.
@@ -726,7 +727,7 @@ export interface ContrastPair {
   readonly bg: TokenName;
   readonly min: 4.5 | 3;
   readonly over?: TokenName;
-  /** The opaque surface under a translucent `over` (a tint on a hovered row: `--bg-hover` over `--bg-surface`). */
+  /** The opaque surface under a translucent `over` (a tint on a hovered row: `--bg-hover` over `--bg-surface`); only with a translucent `over`. */
   readonly under?: TokenName;
   readonly alpha?: number;
   readonly why: string;
@@ -954,6 +955,8 @@ export const CONTRAST_PAIRS = [
   { fg: '--warn-ink', bg: '--warn-soft', over: '--bg-window', min: 4.5, why: `${INK}: the editor bar's notes (11.5px, were --text-muted on a 10% --caution tint) inside the band` },
   { fg: '--accent', bg: '--accent-soft', over: '--bg-window', min: 4.5, why: 'the status bar\'s render-profile chip (--render-accent on --render-soft → --accent on --accent-soft, 12px) (4.5:1)' },
   { fg: '--on-accent', bg: '--danger', min: 4.5, why: 'the page-area frame\'s "Profile failed" tag (--danger, its text the header\'s --on-accent) (4.5:1)' },
+  // Contrast is symmetric: --on-accent at 62% over the --accent header is the edge of the frame's tags and buttons.
+  { fg: '--accent', bg: '--on-accent', alpha: 0.62, over: '--accent', min: 3, why: 'the page-area frame\'s tag and button edges (--on-accent at 62% on the --accent header: at 45% it was 2.48:1 in light, 2.38 in dark) (UI, 3:1)' },
   { fg: '--accent', bg: '--on-accent', min: 4.5, why: 'the page-area frame\'s Reload to apply (a white button with --render-accent text → --on-accent with --accent) (4.5:1)' },
   {
     fg: '--accent',

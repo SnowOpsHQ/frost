@@ -449,7 +449,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   doesn't move), its tags outlined in `--on-accent` at 62% (a white 18% fill left their 11px text at
   3.5:1 in light; the edge, the one thing that groups a tag, is 3.41:1 on the header in light and 3.42:1 in
   dark, where 45% was 2.48 and 2.38), the failed tag `--danger` with `--on-accent`; its buttons `--h-badge` pills outlined
-  the same way, hovered `--accent-hover`, the primary one (Reload to apply) `--on-accent` with `--accent`
+  the same way (62%, so the controls' edge is no weaker than the static tag's; `CONTRAST_PAIRS` computes it), hovered `--accent-hover`, the primary one (Reload to apply) `--on-accent` with `--accent`
   text (its two literal whites and the bar's third went). **Tab badge and status chip:** the badge is an
   `--icon-size` square at `--r-xs` on `--accent-soft` with an `--accent` icon, edged `--accent` (a border,
   not an inset shadow) while the tab needs a reload or the profile failed (its name says which); the
@@ -469,7 +469,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   JavaScript, Compliance and Search Console panels, the SEO sidebar's Retry) gets it too, the same
   there; it keeps their face (the rule sets no font: the error panel's own text sets `--text-body`), and
   their own rules that fade a disabled one (`.changes-capture`, `.inspector-pick`, `.seo-a11y-run`) wait
-  for their PRs. **DevTools drawer:** a `--bg-sheet` band ("rail, sidebar, agent panel") with a
+  for their PRs. The editor bar's checkbox labels still fade while disabled
+  (`.render-check:has(input:disabled)`, `opacity: 0.5`): a native checkbox can't take the disabled colours, so
+  the label fades with it. **DevTools drawer:** a `--bg-sheet` band ("rail, sidebar, agent panel") with a
   `--divider` top edge (`--bg-chrome`), its text `--text-small`; the resize edge `--accent-soft` under
   the pointer and `--accent` focused (inside it, a transparent outline forced colours draw: the drawer
   clips anything outside); tabs `--h-chip` pills in `--text-muted` at weight 500, `--bg-hover` hovered,
@@ -554,7 +556,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`specs/seo-sidebar.spec.ts`).
 - **Scenario: signal-contrast-meets-aa** — every `CONTRAST_PAIRS` pair reaches its minimum WCAG 2.x
   contrast ratio in light and in dark, read from `tokens.css` (`var()` resolved, translucent colours
-  composited, a translucent `over` itself first over its opaque `under`: a tint on a hovered row); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
+  composited, a translucent `over` itself first over its opaque `under`: a tint on a hovered row; an `under`
+  that is translucent, or beside an opaque `over` or none, fails before anything is composited); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
 - **Scenario: known-contrast-exceptions-are-current** — each `KNOWN_CONTRAST_EXCEPTIONS` pair still
   misses its minimum in at least one theme, is not in `CONTRAST_PAIRS`, and exactly `rules`
   declarations in the renderer's stylesheets draw text in its `fg` (so fixing them removes the entry).
