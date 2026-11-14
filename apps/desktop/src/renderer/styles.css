@@ -9469,8 +9469,13 @@ input {
   border-radius: var(--r-sm);
 }
 
-/* Forced colours replace the chosen version's fill and edge (FORCED_COLOURS_PRESSED). */
+/* Forced colours replace the chosen version's fill and edge (FORCED_COLOURS_PRESSED): only its edge draws,
+   in Highlight; the others' transparent borders, which forced colours would paint, take the canvas. */
 @media (forced-colors: active) {
+  .changes-version {
+    border-color: Canvas;
+  }
+
   .changes-version[aria-pressed='true'] {
     border-color: Highlight;
   }
@@ -9515,7 +9520,7 @@ input {
   outline: none;
   font: var(--text-body);
   /* The sheet sits in the page column, whatever the window: the columns stack by its own width (below). */
-  container-type: inline-size;
+  container: projects / inline-size;
 }
 
 .projects-sheet[data-running='true'] {
@@ -10118,15 +10123,13 @@ input {
 }
 
 /* A narrow sheet (a tiled window, or the sidebar and the agent panel open beside it): the list above the
-   project, which scrolls in the height left (the body scrolls too if the list alone is taller). It is the
-   sheet's width that counts, not the window's: a viewport query never fired for a 327px sheet in a 776px
-   window, which left the project a 29px column. */
-@container (max-width: 640px) {
+   project. Both are scroll boxes with min-height: 0, so the two rows split the sheet's height and each
+   scrolls on its own. It is the sheet's width that counts, not the window's: a viewport query never fired
+   for a 327px sheet in a 776px window, which left the project a 29px column. */
+@container projects (max-width: 640px) {
   .projects-body {
     grid-template-columns: minmax(0, 1fr);
     align-content: start;
-    overflow-y: auto;
-    overscroll-behavior: contain;
   }
 }
 

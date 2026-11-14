@@ -41,15 +41,17 @@
   box-shadow: var(--focus-ring);
 }
 
-/* In a narrow sheet (the Projects sheet's container query, styles.css) the four tabs fit a 288px column;
-   narrower still, they wrap rather than widen it. */
-@container (max-width: 640px) {
+/* In a narrow sheet (the Projects sheet's container, styles.css) the four tabs are about 274px, one row in
+   a 280px column (a 776px window with the sidebar open, less the column's 15px scrollbar); narrower still,
+   they wrap rather than widen it. */
+@container projects (max-width: 640px) {
   .projects-views {
     flex-wrap: wrap;
+    column-gap: 2px;
   }
 
   .projects-view-tab {
-    padding: 0 var(--space-3);
+    padding: 0 var(--space-2);
   }
 }
 
