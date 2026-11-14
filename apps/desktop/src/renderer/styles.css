@@ -5829,12 +5829,13 @@ input {
   flex: 1;
 }
 
-/* The header's buttons: --h-badge pills outlined in --on-accent, --accent-hover under the pointer. */
+/* The header's buttons: --h-badge pills outlined in --on-accent at 62%, as the tags (no weaker edge on a
+   control than on a label), --accent-hover under the pointer. */
 .render-frame-button {
   flex: none;
   height: var(--h-badge);
   padding: 0 calc(var(--space-3) - 1px);
-  border: 1px solid color-mix(in srgb, var(--on-accent) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--on-accent) 62%, transparent);
   border-radius: var(--r-pill);
   background: transparent;
   color: inherit;

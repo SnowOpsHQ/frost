@@ -18,7 +18,7 @@
 [data-testid='changes-version-time'],
 .changes-pair-time,
 [data-testid='changes-compare'],
-/* History: a visit's time (a fixed 56 px column). */
+/* History: a visit's time (a fixed 64 px column, 60 px in a narrow sheet). */
 .history-time,
 /* Search Console: "Through <date>" (a grid row of its own). */
 [data-testid='gsc-through'],
