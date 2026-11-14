@@ -553,6 +553,7 @@ test('only-kept-marks-opt-out-of-forced-colours', () => {
     'auto (handing back is not supported yet)': ['.seo-speed-source { forced-color-adjust: auto; }', 'styles.css'],
     'a list with one unkept selector': ['.seo-rail-dot, .seo-speed-source { forced-color-adjust: none; }', 'styles.css'],
     'nested in an at-rule, unkept': ['.seo-speed-source { @media (forced-colors: active) { forced-color-adjust: none; } }', 'styles.css'],
+    'a kept mark handed back in a nested block': ['.seo-category-dot { @media (forced-colors: active) { forced-color-adjust: auto; } }', 'styles.css'],
   };
   for (const [name, [css, stylesheet]] of Object.entries(caught)) expect(check(css, stylesheet), name).not.toEqual([]);
   // Every renderer stylesheet, whole.
@@ -590,7 +591,7 @@ const COLOUR_PROPERTY = /^(?:color|background(?:-color|-image)?|border(?:-[a-z-]
 /**
  * Every `forced-color-adjust` declaration among `declarations` (of `stylesheet`) whose selector
  * FORCED_COLOURS_KEPT does not name for that stylesheet: only the kept status marks may opt out of
- * forced colours, with any value (`auto` too: handing an element back is not supported yet). The
+ * forced colours, and only with `none` (`auto`, on a kept mark too: handing an element back is not supported yet). The
  * selector is the declaration's nearest enclosing one, so an opt-out nested in an at-rule
  * (`.x { @media (forced-colors: active) { … } }`) is matched on `.x`; each selector of its list must be named.
  */
@@ -604,6 +605,8 @@ function forcedAdjustProblems(declarations: readonly Declaration[], stylesheet: 
     const selector = [...d.context].reverse().find((level) => !level.startsWith('@'));
     const unnamed = selector === undefined ? ['(no selector)'] : splitSelectors(selector).map((s) => s.replace(/\s+/g, ' ').trim()).filter((s) => !kept.has(s));
     if (unnamed.length > 0) problems.push(`${label}: ${unnamed.join(', ')} sets forced-color-adjust, but FORCED_COLOURS_KEPT does not name it`);
+    // A kept mark only opts out: `auto` in a nested block would hand it back, unseen by the cascade test.
+    else if (d.value.trim() !== 'none') problems.push(`${label}: ${selector} sets forced-color-adjust: ${d.value}, but a kept mark only sets none`);
   }
   return problems;
 }

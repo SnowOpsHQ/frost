@@ -455,7 +455,7 @@ export const FORCED_COLOURS_PRESSED = [
  * the only place anything may opt out of forced colours: `only-kept-marks-opt-out-of-forced-colours`
  * fails a rule of any renderer stylesheet that sets `forced-color-adjust` (any value: handing an
  * element back with `auto` is not supported yet) unless every selector of it, its nearest enclosing one
- * when nested in an at-rule, is named here for its stylesheet.
+ * when nested in an at-rule, is named here for its stylesheet, and its value is `none`.
  */
 export const FORCED_COLOURS_KEPT = [
   { stylesheet: 'styles.css', element: ['.seo-rail-dot'], why: 'an SEO rail dot (a pass disc)' },

@@ -484,12 +484,13 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: only-kept-marks-opt-out-of-forced-colours** — every `forced-color-adjust` declaration in
   every renderer stylesheet, whatever surface its rule belongs to and whatever its value (`auto` too:
   a rule handing an element back to forced colours is not supported yet, and none exists), sits in a
-  rule each of whose selectors a `FORCED_COLOURS_KEPT` entry for that stylesheet names; a declaration
+  rule each of whose selectors a `FORCED_COLOURS_KEPT` entry for that stylesheet names, and a kept
+  mark's is `none` (a nested `auto` would hand it back unseen by the cascade check); a declaration
   in a nested at-rule is matched on its nearest enclosing selector. It passes the kept marks at the top
   level, inside `@media (forced-colors: active)` and with that block nested in their rule; it catches
   `.seo-speed-source` (a panel not yet converted) in `styles.css`, `.seo-overview` and the kept
-  `.seo-rail-dot` in `settings.css`, `auto`, a list with one unkept selector and an unkept rule with a
-  nested block.
+  `.seo-rail-dot` in `settings.css`, `auto`, a list with one unkept selector, an unkept rule with a
+  nested block and a kept mark set to `auto` in a nested block.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).
