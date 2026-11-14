@@ -8568,7 +8568,8 @@ input {
    the edge forced colours draw) holding a compact grid of label / value pairs. */
 .serp-params {
   display: grid;
-  /* Each column at least its longest word ("Language", "Desktop" whole at 300px); a value breaks anywhere. */
+  /* Each column at least its label and its value's longest word ("Language" and "Desktop" whole at 300px);
+     Engine and Query, which span two, break anywhere instead. */
   grid-template-columns: repeat(4, minmax(min-content, 1fr));
   gap: var(--space-3);
   margin: 0;
@@ -8600,6 +8601,22 @@ input {
   color: var(--text);
   font: var(--text-small);
   font-weight: 500;
+  overflow-wrap: break-word;
+}
+
+/* A value wraps between words (page text is otherwise one cut line), so its longest word, "Desktop",
+   sets its column's floor... */
+.serp-param-value .seo-page-text {
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+
+/* ... but the engine and the query, which span two columns, break anywhere: a long or unbroken query
+   wraps inside them rather than widening the grid. */
+.serp-param[data-key='engine'] .serp-param-value,
+.serp-param[data-key='engine'] .serp-param-value .seo-page-text,
+.serp-param[data-key='query'] .serp-param-value,
+.serp-param[data-key='query'] .serp-param-value .seo-page-text {
   overflow-wrap: anywhere;
 }
 

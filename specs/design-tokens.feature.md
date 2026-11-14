@@ -685,8 +685,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   counts and details `--text-small` in `--text-faint`. **SERP:** the parameters a card (`--bg-surface`,
   `--r-md`, `--e-ring`, a transparent border; it was `--seo-card-edge` and `--shadow-card`), each label
   `--text-caps` in `--text-muted`, each value `--text-small` at weight 500, the four columns at least as
-  wide as their longest word (`minmax(min-content, 1fr)`; a value may break anywhere), so "Language"
-  and "Desktop" fit whole at 300px; the intent chip the canvas's
+  wide as their label and their value's longest word (`minmax(min-content, 1fr)`; a value wraps between
+  words, `break-word`), so "Language" and "Desktop" fit whole at 300px, while the engine and the
+  query, which span two columns, break anywhere, so a long or unbroken query wraps inside the card (council
+  round 2 on PR #49: `anywhere` on every value let "Desktop" break, and the cut one-line query widened
+  the grid); the intent chip the canvas's
   info badge (`--h-badge` pill, `--accent` on `--accent-soft`, `--text-micro`; it was a 14% tint), its
   confidence `--text-small` in `--text-muted`; the composition bar `--r-pill` on `--track` (its segments
   and swatches keep `SERP_OUTLINE_STYLES`' colours, SVG attributes, as the outlines in the page), its
