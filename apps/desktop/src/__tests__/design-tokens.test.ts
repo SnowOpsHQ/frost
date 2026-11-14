@@ -1,4 +1,4 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, DISABLED_CONTROLS)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ import {
   KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
   PRESSED_EDGES,
+  STATE_EDGES,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
   SIGNAL_SURFACES,
   SIGNAL_TOKENS,
@@ -32,6 +33,7 @@ import {
   type HoverSkipsPressed,
   type LegacyTokenMigration,
   type PressedEdge,
+  type StateEdge,
   type SignalSurface,
   type TextColourRule,
   type SignalToken,
@@ -761,6 +763,34 @@ test('pressed-controls-draw-an-edge', () => {
     expect(edgeProblems(css, entry.element, entry.edge), entry.why).toEqual([]);
     for (const fill of entry.fills) {
       expect(
+        pairs.some((p) => p.fg === entry.edge && p.bg === fill.bg && p.over === fill.over && p.min >= 3),
+        `${entry.edge} on ${fill.bg}${fill.over ? ` over ${fill.over}` : ''} is a CONTRAST_PAIRS pair at 3:1 or more`,
+      ).toBe(true);
+    }
+  }
+});
+
+test('state-edges-draw-their-shape', () => {
+  // The resolver reads the style and width from the shorthand and the longhands alike.
+  const term = ['.t', ".t[data-on='true']"];
+  const sample = ".t { border: 1px dashed var(--faint); } .t[data-on='true'] { border-style: solid; border-color: var(--ok); }";
+  expect(resolveOnElement(sample, term, 'border-style', 'light')).toBe('solid');
+  expect(resolveOnElement(sample, ['.t'], 'border-style', 'light')).toBe('dashed');
+  expect(resolveOnElement(sample, term, 'border-width', 'dark')).toBe('1px');
+
+  const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
+  const entries: readonly StateEdge[] = STATE_EDGES;
+  for (const entry of entries) {
+    const css = read(entry.stylesheet);
+    const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+    for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
+    expect.soft(edgeProblems(css, entry.element, entry.edge), entry.why).toEqual([]);
+    for (const theme of THEME_NAMES) {
+      expect.soft(resolveOnElement(css, entry.element, 'border-style', theme), `${entry.why}: style (${theme})`).toBe(entry.style);
+      expect.soft(resolveOnElement(css, entry.element, 'border-width', theme), `${entry.why}: width (${theme})`).toBe(entry.width);
+    }
+    for (const fill of entry.fills) {
+      expect.soft(
         pairs.some((p) => p.fg === entry.edge && p.bg === fill.bg && p.over === fill.over && p.min >= 3),
         `${entry.edge} on ${fill.bg}${fill.over ? ` over ${fill.over}` : ''} is a CONTRAST_PAIRS pair at 3:1 or more`,
       ).toBe(true);

@@ -1500,6 +1500,45 @@ export const PRESSED_EDGES = [
 ] as const satisfies readonly PressedEdge[];
 
 /**
+ * A state shown by an edge's shape as well as its colour (council round 1 on PR #49: Content's query
+ * terms, present or absent, were told apart by a solid transparent edge and a dashed `--track` one,
+ * 1.48:1 on the card, which only forced colours drew). For each entry the cascade over `element` in
+ * `stylesheet` resolves `border-color` to `var(<edge>)`, `border-style` to `style` and `border-width` to
+ * `width`, in light and dark, and for each of `fills` (what the edge sits on) `CONTRAST_PAIRS` holds
+ * `edge` on it at 3:1 or more. Forced colours keep the style, so the shape still says which.
+ */
+export interface StateEdge {
+  readonly stylesheet: string;
+  readonly element: readonly string[];
+  readonly edge: TokenName;
+  readonly style: 'solid' | 'dashed';
+  readonly width: string;
+  readonly fills: readonly { readonly bg: TokenName; readonly over?: TokenName }[];
+  readonly why: string;
+}
+
+export const STATE_EDGES = [
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-query-term', ".seo-query-term[data-present='true']"],
+    edge: '--ok',
+    style: 'solid',
+    width: '1px',
+    fills: [{ bg: '--bg-surface' }],
+    why: 'Content: a target query\'s term found in a place, a solid --ok edge (3.30:1 on the card in light) round its --ok-soft fill',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-query-term'],
+    edge: '--text-faint',
+    style: 'dashed',
+    width: '1px',
+    fills: [{ bg: '--bg-surface' }],
+    why: 'Content: a target query\'s term not found there, a dashed --text-faint edge (5.53:1 light, 5.03:1 dark on the card)',
+  },
+] as const satisfies readonly StateEdge[];
+
+/**
  * A control whose keyboard focus must show `--focus-ring` (and the transparent 2px outline forced colours
  * draw) in every state it can be focused in: hovered, busy (`aria-disabled`, which stays focusable),
  * primary or not. `element` lists the selectors, in `stylesheet`, that such an element matches in that

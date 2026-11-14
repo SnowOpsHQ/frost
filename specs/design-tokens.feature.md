@@ -632,7 +632,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   its colours onto Signal (`--serp-title` → `--accent`, `--serp-path` → `--text-muted`, `--serp-glyph`
   → `--bg-subtle`, `--serp-glyph-mark` → `--text-muted`, all four now `removed`): a result card is
   `--bg-surface` at `--r-md` (`--r-lg` on mobile) with `--e-ring` and a transparent border, its site
-  name `--text-small` in `--text`, its address and date `--text-small` in `--text-muted`, its title
+  name `--text-small` in `--text`, its address and date `--text-small` in `--text-muted` (the address
+  wraps, so the page's crumb shows whole), its title
   Overview's preview title (`--text-heading` at weight 500 in `--accent`), its description
   `--text-small` in `--text-muted`, a missing value `--text-faint` in italics, the stars `--warn` (a
   graphic beside the rating's words), the monogram an `--r-pill` disc of `--bg-subtle` with its letter
@@ -640,9 +641,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   was a literal Arial stack (`SNIPPET_FONT` is only the face the width table was measured in; the
   previews are not to scale), and the device caption is a `--text-caps` label in `--text-muted`. The
   **width meters** sit in an `--r-sm` box with `--e-ring` on the card (they were on a translucent
-  `--bg-hover`; `--ok` on `--bg-subtle` is 2.998:1 in light, under 3:1), each verdict "… px: fits"
+  `--bg-hover`; `--ok` on `--bg-subtle` is 2.998:1 in light, under 3:1), the label column at least as wide as its
+  longest word (`minmax(min-content, 1fr)`, so at 300px the verdict wraps rather than drawing over it), each verdict "… px: fits"
   `--ok-ink`, "… px: cut" `--warn-ink` (`--caution`) and "Nothing to measure" `--text-faint`, the bar's
-  fill `--ok`, `--warn` or `--text-faint` on `--track`. A **field** (a draft's title and description,
+  fill `--ok`, `--warn` or `--text-faint` on `--track` (the "fits" fill is 2.23:1 on `--track` in light,
+  as On-Page's length meters are: the verdict's word carries the state). A **field** (a draft's title and description,
   the site name) is Settings' field inside a card: `--h-control` (a textarea from 76px) at `--r-sm` on
   `--bg-surface` with `--e-raised` and a transparent border, `--text-body`, its placeholder
   `--text-faint`; focus is `--focus-ring` with a transparent outline, where it was an `--accent` edge
@@ -652,9 +655,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   **target query**: its clear button an `--h-badge` circle in `--text-muted`, `--text` on `--bg-hover`
   hovered, with its own focus ring (it had none); each place's mark keeps its shape (a ring with a
   check, a half disc, a dashed ring) in `--ok` (drawn by `stroke`, not `color`), `--accent` and
-  `--text-faint`; a term is an 18px `--r-xs` badge in `--text-micro`, absent `--text-muted` with a dashed
-  `--track` edge at weight 400, present `--ok-ink` on `--ok-soft` (was `--ok` on its 14% tint) at weight
-  600 with a solid transparent edge, so absent is dashed and present solid in forced colours too; "exact
+  `--text-faint`; a term is an 18px `--r-xs` badge in `--text-micro` (its block padding makes the 18px:
+  `(18px - 2px - 1.3em) / 2`), absent `--text-muted` with a 1px dashed `--text-faint` edge at weight 400,
+  present `--ok-ink` on `--ok-soft` (was `--ok` on its 14% tint) at weight 600 with a 1px solid `--ok` edge
+  (`STATE_EDGES`: 5.53:1 and 3.30:1 on the card in light; council round 1 on PR #49 found the first
+  edges, a `--track` dash and a transparent solid line, invisible outside forced colours), so absent is
+  dashed and present solid in forced colours too; "exact
   phrase" `--text-small` in italics. **n-grams:** rows ruled by `--divider`, the phrase `--text-body`,
   its count `--text-small` at weight 600 in `--text-muted`, the bar `--accent` on `--track` (it was a
   70% mix); the highlight button an `--h-badge` square at `--r-xs` in `--text-muted`, `--text` on
@@ -670,7 +676,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`--bg-subtle` at `--r-sm`, the label `--text-small` in `--text-muted`, the value `--text-heading`; they
   were translucent `--bg-hover`); a difficult sentence an `--r-sm` `--bg-subtle` box, its text
   `--text-small`, its meta `--text-small` in `--text-faint`, and its reason chip ("Long", "Complex") a
-  neutral 18px badge, `--text-muted` on `--bg-surface` with `--e-ring`: it took the page highlight's two
+  neutral 18px badge (the term's block padding), `--text-muted` on `--bg-surface` with `--e-ring`: it took the page highlight's two
   hues (`#b45309`, `#be185d`, the hex ratchet's 4), and its word says the reason, as the boxes in the
   page do. **JavaScript:** its verdict colour (`--verdict`, read by Indexability's card) `--ok`,
   `--warn` (`--caution`), `--danger` or `--text-faint`; its notes `--text-small` in `--text-muted`, the
@@ -678,11 +684,13 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   label `--text-small` at weight 600, its served and rendered labels `--text-caps` in `--text-muted`,
   counts and details `--text-small` in `--text-faint`. **SERP:** the parameters a card (`--bg-surface`,
   `--r-md`, `--e-ring`, a transparent border; it was `--seo-card-edge` and `--shadow-card`), each label
-  `--text-caps` in `--text-muted`, each value `--text-body` at weight 500; the intent chip the canvas's
+  `--text-caps` in `--text-muted`, each value `--text-small` at weight 500, the four columns at least as
+  wide as their longest word (`minmax(min-content, 1fr)`; a value may break anywhere), so "Language"
+  and "Desktop" fit whole at 300px; the intent chip the canvas's
   info badge (`--h-badge` pill, `--accent` on `--accent-soft`, `--text-micro`; it was a 14% tint), its
   confidence `--text-small` in `--text-muted`; the composition bar `--r-pill` on `--track` (its segments
   and swatches keep `SERP_OUTLINE_STYLES`' colours, SVG attributes, as the outlines in the page), its
-  counts `--text-small`; tables `--text-small`, their header cells `--text-small` at weight 600 in
+  counts `--text-small`; tables `--text-small` with tabular figures (Visibility's table keeps them), their header cells `--text-small` at weight 600 in
   `--text-muted` (sentence case: `--text-caps` pushed the ownership table past a 360px panel), rows
   ruled by `--divider` (`border-spacing: 0`, not `border-collapse`); a result's rank `--text-small` in
   `--text-faint`, its type `--text-caps` in `--text-muted`, title `--text-body`, domain `--text-small` in
@@ -826,6 +834,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   with a border that draws (non-zero width, a style other than `none` or `hidden`, shorthand included;
   it catches `border: 0 solid transparent` and `border-style: none`), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or more. Every selector named is one
   of the stylesheet's.
+- **Scenario: state-edges-draw-their-shape** — for each `STATE_EDGES` entry (Content's query term,
+  present and absent), in light and dark, the cascade over its `element` selectors resolves
+  `border-color` to `var(<edge>)`, `border-style` to its `style` and `border-width` to its `width` (the
+  shorthand and longhands alike), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or
+  more. Every selector named is one of the stylesheet's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).
