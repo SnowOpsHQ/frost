@@ -1136,7 +1136,7 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'styles.css', element: ['.seo-score-summary', '.seo-not-indexable'], color: '--danger-ink', why: 'Overview\'s not-indexable reasons (12px, was --danger): status text takes its -ink' },
   // Links, Images, Social and Schema (their surface PR): status text takes its -ink, on its -soft fill
   // where it is a badge; a missing value in a row takes --text-muted, since --text-faint on a hovered
-  // or open row (--bg-hover over a card) is 4.25:1 in dark.
+  // or open row (--bg-hover over a card) is 4.26:1 in dark.
   {
     stylesheet: 'styles.css',
     element: ['.seo-empty-line', '.seo-all-clear-line'],
@@ -1154,13 +1154,13 @@ export const TEXT_COLOUR_RULES = [
     stylesheet: 'styles.css',
     element: ['.seo-missing', '.seo-table-title', '.seo-table-title.seo-missing'],
     color: '--text-muted',
-    why: 'Links: "No anchor text" in a row, which is --bg-hover when hovered or open (--text-faint there is 4.25:1 in dark)',
+    why: 'Links: "No anchor text" in a row, which is --bg-hover when hovered or open (--text-faint there is 4.26:1 in dark)',
   },
   {
     stylesheet: 'styles.css',
     element: ['.seo-missing', '.seo-table-sub', '.seo-table-sub.seo-missing'],
     color: '--text-muted',
-    why: 'Links and Images: "No usable URL", "No source" in a row, hovered or open (--text-faint is 4.25:1 there in dark)',
+    why: 'Links and Images: "No usable URL", "No source" in a row, hovered or open (--text-faint is 4.26:1 there in dark)',
   },
 ] as const satisfies readonly TextColourRule[];
 

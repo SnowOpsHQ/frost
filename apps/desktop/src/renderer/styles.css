@@ -3014,7 +3014,7 @@ input {
 }
 
 /* A top-level type and its count: a badge and a number in an --e-ring outline (a transparent border
-   for forced colours). On the card, not --bg-subtle: an --accent badge there is 4.0:1 in dark. */
+   for forced colours). On the card, not --bg-subtle: an --accent badge there is 4.18:1 in dark. */
 .seo-type-count {
   display: inline-flex;
   align-items: center;

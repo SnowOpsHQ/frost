@@ -437,7 +437,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--text-muted`, pressed `--accent` on `--accent-soft`. **Rows** (a link, an image) are ruled by
   `--divider`, each an `--r-sm` button, `--bg-hover` hovered or open, its title `--text-body` at weight
   500, its URL `--text-mono` or its line `--text-small` in `--text-muted`, a missing title or URL
-  `--text-muted` in italics (`--text-faint` is 4.25:1 on a hovered row in dark), the count above them
+  `--text-muted` in italics (`--text-faint` is 4.26:1 on a hovered row in dark), the count above them
   `--text-small` in `--text-faint`. A broken link's row loses its inset 2px `--danger` edge, which hid
   the focus ring (a box-shadow at a higher specificity) and was a coloured side bar: its status chip
   says "Broken". Focus on every control is `--focus-ring` beside a transparent 2px outline
@@ -462,7 +462,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   disc, warnings a 2px `--warn` ring, errors a filled `--danger` square; it was a disc in three hues with a
   tinted halo) and keeps its colours in forced colours (`FORCED_COLOURS_KEPT`), its verdict `--text-body`
   at weight 600; a top-level type count is a badge and its count `--text-micro` in `--text-muted`, ringed by
-  `--e-ring` with a transparent border (an `--accent` badge on `--bg-subtle` is 4.0:1 in dark); a block's
+  `--e-ring` with a transparent border (an `--accent` badge on `--bg-subtle` is 4.18:1 in dark); a block's
   status is a frame badge (`--h-badge` pill, `-ink` on `-soft`: valid `--ok`, cut `--warn`, invalid
   `--danger`), its types `--text-small` in `--text-faint`; counts by severity `--text-small` at weight 600, a
   zero `--text-faint`, icon and all (it faded), and `GrayText` under forced colours; a node's issue a
