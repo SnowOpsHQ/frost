@@ -370,12 +370,14 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   by `--space-4` apart, as on the screen, the count `--text-muted`; the status mark is 8px and differs
   by shape, as the rail's dots do: a filled `--ok` disc for a pass (the screen's check glyph needs
   markup), a filled `--danger` square for an error, a `--warn` ring (a 2px border) for a warning (it was
-  a `--caution` disc), a hollow `--accent` diamond for a notice (the 8px box with a 1.5px border, turned 45°, so its
-  hollow stays open; an `--info-tone` disc; the screen draws
+  a `--caution` disc), a hollow `--accent` diamond for a notice (the 8px box with a 2px border, as the warning ring's, turned 45°, so its
+  4px hollow stays open and every side a solid run of `--accent`; no fractional border widths, which
+  Chromium rounds down; an `--info-tone` disc; the screen draws
   it a ring like the warning's, in another hue only). The marks keep their colours in forced colours
   (`forced-color-adjust: none`, `FORCED_COLOURS_KEPT`), where a fill would turn to the canvas and every
-  status look the same; and only these marks and the rail's dots may opt out of forced colours (a
-  surface rule setting `forced-color-adjust` must be one `FORCED_COLOURS_KEPT` names). **The audit's render profile** (above Overview) is an `--accent-soft` notice at
+  status look the same; and only these marks and the rail's dots may opt out of forced colours (any
+  rule of any renderer stylesheet setting `forced-color-adjust` must be one `FORCED_COLOURS_KEPT` names,
+  `only-kept-marks-opt-out-of-forced-colours`). **The audit's render profile** (above Overview) is an `--accent-soft` notice at
   `--r-md` (`--render-soft`; its `--render-edge` border is a transparent one for forced colours), its
   summary `--text-small` at weight 600. **On-Page:** the measured title and description are
   `--text-body`, their sections ruled by `--divider`; a length meter is a 6px `--r-pill` bar, its track
@@ -479,6 +481,15 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too resolves `forced-color-adjust` to `none`, so a mark whose fill or border colour is its status keeps
   it. Every selector named is one of the stylesheet's.
+- **Scenario: only-kept-marks-opt-out-of-forced-colours** — every `forced-color-adjust` declaration in
+  every renderer stylesheet, whatever surface its rule belongs to and whatever its value (`auto` too:
+  a rule handing an element back to forced colours is not supported yet, and none exists), sits in a
+  rule each of whose selectors a `FORCED_COLOURS_KEPT` entry for that stylesheet names; a declaration
+  in a nested at-rule is matched on its nearest enclosing selector. It passes the kept marks at the top
+  level, inside `@media (forced-colors: active)` and with that block nested in their rule; it catches
+  `.seo-speed-source` (a panel not yet converted) in `styles.css`, `.seo-overview` and the kept
+  `.seo-rail-dot` in `settings.css`, `auto`, a list with one unkept selector and an unkept rule with a
+  nested block.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).
@@ -498,8 +509,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   a rule inside `@media (forced-colors: active)` the CSS system colours, `FORCED_COLOURS_SYSTEM_COLOURS`); a
   rule whose `box-shadow` reads `--focus-ring` sets an `outline` forced colours draw (non-zero width,
   not `none`: `outline: 2px solid transparent`); a rule setting `forced-color-adjust` has every selector
-  named by a `FORCED_COLOURS_KEPT` entry for its stylesheet (it catches `.palette-x { forced-color-adjust:
-  none; }`, and passes `.seo-rail-dot` in `styles.css`); no `font-size`, `font-family` or `line-height`; `font` only `var(--text-*)`; a
+  named by a `FORCED_COLOURS_KEPT` entry for its stylesheet, its nearest enclosing selector when the
+  declaration sits in a nested at-rule (it catches `.palette-x { forced-color-adjust: none; }`, and
+  passes `.seo-rail-dot` in `styles.css`, also as `.seo-rail-dot { @media (forced-colors: active) { … } }`); no `font-size`, `font-family` or `line-height`; `font` only `var(--text-*)`; a
   rule whose `--text-*` token has a non-zero tracking sets exactly that `letter-spacing`, and any
   `letter-spacing` equals the tracking of the token its own rule sets; a `font-weight` is one
   `BUNDLED_FONTS` has for the family of its rule's own `--text-*` token (or for Geist when the rule

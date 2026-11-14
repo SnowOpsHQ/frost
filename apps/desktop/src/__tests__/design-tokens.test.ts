@@ -539,6 +539,26 @@ test('status-marks-keep-their-colours-under-forced-colours', () => {
   }
 });
 
+test('only-kept-marks-opt-out-of-forced-colours', () => {
+  const check = (css: string, stylesheet: string) => forcedAdjustProblems(parse(css).declarations, stylesheet, stylesheet);
+  // The kept marks, at the top level or inside a forced-colours block, either way round.
+  expect(check('.seo-rail-dot { forced-color-adjust: none; }', 'styles.css')).toEqual([]);
+  expect(check('@media (forced-colors: active) { .seo-category-dot { forced-color-adjust: none; } }', 'styles.css')).toEqual([]);
+  expect(check('.seo-rail-dot { @media (forced-colors: active) { forced-color-adjust: none; } }', 'styles.css')).toEqual([]);
+  // Anything else, in any stylesheet and any rule (a surface's or not), with any value.
+  const caught: Record<string, [string, string]> = {
+    'an unconverted panel in styles.css': ['.seo-speed-source { forced-color-adjust: none; }', 'styles.css'],
+    'a kept selector in another stylesheet': ['.seo-rail-dot { forced-color-adjust: none; }', 'settings.css'],
+    'an Overview class in settings.css': ['.seo-overview { forced-color-adjust: none; }', 'settings.css'],
+    'auto (handing back is not supported yet)': ['.seo-speed-source { forced-color-adjust: auto; }', 'styles.css'],
+    'a list with one unkept selector': ['.seo-rail-dot, .seo-speed-source { forced-color-adjust: none; }', 'styles.css'],
+    'nested in an at-rule, unkept': ['.seo-speed-source { @media (forced-colors: active) { forced-color-adjust: none; } }', 'styles.css'],
+  };
+  for (const [name, [css, stylesheet]] of Object.entries(caught)) expect(check(css, stylesheet), name).not.toEqual([]);
+  // Every renderer stylesheet, whole.
+  for (const name of STYLESHEETS) expect(check(read(name), name), name).toEqual([]);
+});
+
 test('no-other-stylesheet-declares-root-tokens', () => {
   for (const name of STYLESHEETS) {
     if (name === TOKENS_STYLESHEET) continue;
@@ -566,6 +586,27 @@ const SYSTEM_COLOURS = new Set<string>(FORCED_COLOURS_SYSTEM_COLOURS);
 const COLOUR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
 /** Properties whose value can carry a colour (these, and custom properties, get the colour allowlist). */
 const COLOUR_PROPERTY = /^(?:color|background(?:-color|-image)?|border(?:-[a-z-]+)?|outline(?:-color)?|box-shadow|text-shadow|fill|stroke|caret-color|accent-color|text-decoration(?:-color)?|column-rule(?:-color)?)$/;
+
+/**
+ * Every `forced-color-adjust` declaration among `declarations` (of `stylesheet`) whose selector
+ * FORCED_COLOURS_KEPT does not name for that stylesheet: only the kept status marks may opt out of
+ * forced colours, with any value (`auto` too: handing an element back is not supported yet). The
+ * selector is the declaration's nearest enclosing one, so an opt-out nested in an at-rule
+ * (`.x { @media (forced-colors: active) { … } }`) is matched on `.x`; each selector of its list must be named.
+ */
+function forcedAdjustProblems(declarations: readonly Declaration[], stylesheet: string, label: string): string[] {
+  const kept = new Set<string>(
+    (FORCED_COLOURS_KEPT as readonly ForcedColoursBusy[]).filter((entry) => entry.stylesheet === stylesheet).flatMap((entry) => entry.element.map((s) => s.replace(/\s+/g, ' ').trim())),
+  );
+  const problems: string[] = [];
+  for (const d of declarations) {
+    if (d.property !== 'forced-color-adjust') continue;
+    const selector = [...d.context].reverse().find((level) => !level.startsWith('@'));
+    const unnamed = selector === undefined ? ['(no selector)'] : splitSelectors(selector).map((s) => s.replace(/\s+/g, ' ').trim()).filter((s) => !kept.has(s));
+    if (unnamed.length > 0) problems.push(`${label}: ${unnamed.join(', ')} sets forced-color-adjust, but FORCED_COLOURS_KEPT does not name it`);
+  }
+  return problems;
+}
 
 /**
  * What breaks `surface`'s rules in `css` (design-tokens.feature.md, surface-rules-read-signal-tokens).
@@ -615,15 +656,9 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
     if (!blocks.some((context) => context.some((level) => new RegExp(`^@keyframes\\s+${escape(name)}$`).test(level)))) problems.push(`${surface.name}: listed keyframes ${name} names no rule`);
   }
   // Only the status marks FORCED_COLOURS_KEPT names may opt out of forced colours.
-  const kept = new Set<string>(
-    (FORCED_COLOURS_KEPT as readonly ForcedColoursBusy[]).filter((entry) => entry.stylesheet === surface.stylesheet).flatMap((entry) => entry.element.map((s) => s.replace(/\s+/g, ' ').trim())),
-  );
+  problems.push(...forcedAdjustProblems(own, surface.stylesheet, surface.name));
   const byBlock = new Map<number, Declaration[]>();
   for (const d of own) {
-    if (d.property === 'forced-color-adjust') {
-      const unnamed = splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim()).filter((s) => !kept.has(s));
-      if (unnamed.length > 0) problems.push(`${surface.name}: ${unnamed.join(', ')} sets forced-color-adjust, but FORCED_COLOURS_KEPT does not name it`);
-    }
     byBlock.set(d.block, [...(byBlock.get(d.block) ?? []), d]);
     const label = `${surface.name}: ${d.context.join(' > ')} { ${d.property}: ${d.value} }`;
     if (/var\(\s*--[\w-]+\s*,/.test(d.value)) problems.push(`${label}: a var() fallback`);
@@ -723,6 +758,10 @@ test('surface-rules-read-signal-tokens', () => {
   const rail: SignalSurface = { name: 'fixture rail', stylesheet: 'styles.css', selectorPrefix: '.seo', classes: ['.seo-rail-*'] };
   expect(surfaceProblems('.seo-rail-dot { forced-color-adjust: none; }', rail).problems).toEqual([]);
   expect(surfaceProblems('.seo-rail-dot, .seo-rail-x { forced-color-adjust: none; }', rail).problems.join()).toContain('.seo-rail-x sets forced-color-adjust');
+  // A kept mark's opt-out inside a nested at-rule is matched on its nearest selector, not the at-rule.
+  expect(surfaceProblems('.seo-rail-dot { @media (forced-colors: active) { forced-color-adjust: none; } }', rail).problems).toEqual([]);
+  expect(surfaceProblems('@media (forced-colors: active) { .seo-rail-dot { forced-color-adjust: none; } }', rail).problems).toEqual([]);
+  expect(surfaceProblems('.seo-rail-x { @media (forced-colors: active) { forced-color-adjust: none; } }', rail).problems.join()).toContain('.seo-rail-x sets forced-color-adjust');
   expect(surfaceProblems('.table-row { color: red; }', { name: 'tab', stylesheet: 'n/a', selectorPrefix: '.tab' }).checked).toBe(0);
   expect(surfaceProblems('.palettes, .x-palette { color: red; }', palette).checked).toBe(0);
   // A surface that lists its classes (the SEO sidebar's frame, under the `.seo` prefix every panel

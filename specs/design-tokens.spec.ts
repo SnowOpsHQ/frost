@@ -452,9 +452,10 @@ export const FORCED_COLOURS_PRESSED = [
  * resolves `forced-color-adjust` to `none` in light and dark: the mark keeps its own colours there, as
  * the SEO rail's dots do. (The score ring and the length meters are SVG strokes and fills, which
  * Chromium's forced colours leave as they are; their state is also in words beside them.) It is also
- * the only place a surface may opt out of forced colours: `surface-rules-read-signal-tokens` fails a
- * surface rule that sets `forced-color-adjust` unless every selector of it is named here, for its
- * stylesheet.
+ * the only place anything may opt out of forced colours: `only-kept-marks-opt-out-of-forced-colours`
+ * fails a rule of any renderer stylesheet that sets `forced-color-adjust` (any value: handing an
+ * element back with `auto` is not supported yet) unless every selector of it, its nearest enclosing one
+ * when nested in an at-rule, is named here for its stylesheet.
  */
 export const FORCED_COLOURS_KEPT = [
   { stylesheet: 'styles.css', element: ['.seo-rail-dot'], why: 'an SEO rail dot (a pass disc)' },
