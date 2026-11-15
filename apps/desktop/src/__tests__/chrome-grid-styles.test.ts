@@ -12,6 +12,7 @@ import { RENDER_FRAME } from '@app/specs/render-profile.spec';
 import { SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 import { ADDRESS_BASIS_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
 import {
+  ENTRANCE_FILL_EXCEPTIONS,
   PAGE_AREA_COLLAPSES,
   pageViewRadius,
   RENDER_DEVICE_OUTLINE_RADIUS,
@@ -259,18 +260,21 @@ test('workspace-layout-values', () => {
 test('workspace-is-padded-and-gapped', () => {
   const stack = resolved(['styles.css'], '.workspace-stack');
   expect(stack.get('padding')).toBe(`0 ${GAP}`);
+  // It clips its sheets' ink 1px outside itself: their rings show, their shadows stay out of the chrome row.
+  expect(stack.get('overflow')).toBe('clip');
+  expect(stack.get('overflow-clip-margin')).toBe('1px');
   const row = resolved(['styles.css'], '.workspace');
   expect(row.get('gap')).toBe(GAP);
   const seo = resolved(['styles.css'], '.seo');
   expect(seo.get('gap')).toBe(GAP);
   // The wrappers and the status bar draw nothing of their own, and the workspace never clips the sheets' edges.
   const plain: [string, string[]][] = [
-    ['.workspace-stack', ['styles.css']],
     ['.workspace', ['styles.css']],
     ['.seo', ['styles.css']],
     ['.agent', ['components/agent/agent.css', 'styles.css']],
     ['.status-bar', ['styles.css']],
   ];
+  expect([...stack.keys()].filter((property) => /^(border|background|box-shadow|outline)/.test(property))).toEqual([]);
   for (const [selector, files] of plain) {
     const own = resolved(files, selector);
     const drawn = [...own.keys()].filter((property) => /^(border|background|box-shadow|outline)/.test(property) || (/^overflow/.test(property) && own.get(property) !== 'visible'));
@@ -329,6 +333,20 @@ test('page-area-collapses-hide-it', () => {
   const running = resolved(['styles.css'], ".page-column:has(> .projects-sheet[data-running='true']) > .page-area");
   expect(running.get('height')).toBe('auto');
   expect(running.get('visibility')).toBe('visible');
+});
+
+test('entrance-animations-end', () => {
+  const kept = new Set(ENTRANCE_FILL_EXCEPTIONS.map((entry) => `${entry.stylesheet}: ${entry.selector}`));
+  const lingering: string[] = [];
+  for (const file of CSS_FILES)
+    for (const { selector: list, body } of rules(read(file))) {
+      const fills = [...body.matchAll(/animation(?:-fill-mode)?\s*:\s*([^;]+);/g)].some(([, value]) => /(?:^|[\s,])(both|forwards)(?:[\s,]|$)/.test(value!));
+      if (!fills) continue;
+      for (const selector of selectorsOf(list)) if (!kept.has(`${file}: ${selector}`)) lingering.push(`${file}: ${selector}`);
+    }
+  expect(lingering).toEqual([]);
+  // Each exception still names a rule that fills so (a stale entry guards nothing).
+  for (const entry of ENTRANCE_FILL_EXCEPTIONS) expect(resolved([entry.stylesheet], entry.selector).get('animation'), entry.selector).toMatch(/\bboth\b/);
 });
 
 test('separators-sit-in-the-gap', () => {
