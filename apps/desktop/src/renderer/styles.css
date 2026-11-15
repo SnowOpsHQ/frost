@@ -521,7 +521,7 @@ input {
   background: var(--accent-soft);
   color: var(--text);
   font: var(--text-body);
-  animation: prompt-in var(--dur-base) var(--ease-out) both;
+  animation: prompt-in var(--dur-base) var(--ease-out) backwards;
 }
 
 .prompt-icon {
@@ -682,14 +682,18 @@ input {
    share of this stack, so the page keeps some height).
    Signal (specs/workspace-layout.feature.md): floating sheets on the window's --bg-window, --space-3
    apart and --space-3 in from the window's left and right edges, with no rule between them (the
-   chrome row above and the status bar below leave their own room). Neither box clips: each sheet
-   clips its own content, and clipping here would cut the sheets' rings and shadows at the edges. */
+   chrome row above and the status bar below leave their own room). Each sheet clips its own content;
+   the stack clips its sheets' ink 1px outside itself, so their rings show and their --e-sheet shadows
+   (whose ink reaches ~16px up) stay out of the chrome row: overlapping its composited address bar, they
+   made Chromium composite the sheets and the tab, and that text lost its LCD antialiasing. */
 .workspace-stack {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   padding: 0 var(--space-3);
+  overflow: clip;
+  overflow-clip-margin: 1px;
 }
 
 .workspace {
@@ -743,7 +747,7 @@ input {
   height: 64px;
   margin-bottom: var(--space-3);
   color: var(--accent);
-  animation: mark-in var(--dur-slow) var(--ease-out) both;
+  animation: mark-in var(--dur-slow) var(--ease-out) backwards;
 }
 
 /* The type scale's largest step: the wordmark was 44px at weight 300, which Geist isn't bundled in. */
@@ -798,7 +802,7 @@ input {
   flex-direction: column;
   align-items: flex-start;
   width: min(100%, 460px);
-  animation: panel-in var(--dur-slow) var(--ease-out) both;
+  animation: panel-in var(--dur-slow) var(--ease-out) backwards;
 }
 
 .panel[data-error-class='certificate'] .panel-card {
@@ -1089,7 +1093,7 @@ input {
   border-radius: var(--r-lg);
   background: var(--bg-sheet);
   box-shadow: var(--e-sheet);
-  animation: seo-panel-in var(--dur-base) var(--ease-out) both;
+  animation: seo-panel-in var(--dur-base) var(--ease-out) backwards;
 }
 
 @keyframes seo-panel-in {
@@ -1796,7 +1800,7 @@ input {
 /* An open issue, under its title: the severity icon's width and the row's gap in from the row's edge. */
 .seo-issue-body {
   margin: 0 var(--space-2) var(--space-4) calc(var(--space-2) + var(--icon-sm) + var(--space-3));
-  animation: prompt-in var(--dur-base) var(--ease-out) both;
+  animation: prompt-in var(--dur-base) var(--ease-out) backwards;
 }
 
 .seo-issue-label {
@@ -2343,7 +2347,7 @@ input {
   margin: auto 0;
   padding: var(--space-6) var(--space-4) 12vh;
   text-align: center;
-  animation: panel-in var(--dur-base) var(--ease-out) both;
+  animation: panel-in var(--dur-base) var(--ease-out) backwards;
 }
 
 .seo-hint-art {
@@ -5356,7 +5360,7 @@ input {
   font: var(--text-body);
   overflow: hidden;
   container: palette / inline-size;
-  animation: palette-in var(--dur-base) var(--ease-out) both;
+  animation: palette-in var(--dur-base) var(--ease-out) backwards;
 }
 
 @keyframes palette-in {
@@ -5752,7 +5756,7 @@ input {
   background: var(--accent-soft);
   color: var(--text);
   font: var(--text-small);
-  animation: prompt-in var(--dur-base) var(--ease-out) both;
+  animation: prompt-in var(--dur-base) var(--ease-out) backwards;
 }
 
 .render-bar-row {
@@ -8428,7 +8432,7 @@ input {
   background: var(--accent-soft);
   color: var(--text);
   font: var(--text-body);
-  animation: prompt-in var(--dur-base) var(--ease-out) both;
+  animation: prompt-in var(--dur-base) var(--ease-out) backwards;
 }
 
 .update-bar[data-kind='error'] {
