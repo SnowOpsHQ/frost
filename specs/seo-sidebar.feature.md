@@ -128,7 +128,8 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
 
 ## Sidebar (renderer)
 - Docks left of the page area: the rail (`SIDEBAR_RAIL_WIDTH`) at the window's edge, then the
-  panel (`SIDEBAR_PANEL_WIDTH`). The page area (and so the tab's view, through `setPageBounds`)
+  panel (`SIDEBAR_PANEL_WIDTH`), two floating sheets `WORKSPACE_GAP` apart and as far off the window's
+  edge and the page (`workspace-layout.feature.md`). The page area (and so the tab's view, through `setPageBounds`)
   shrinks and moves right to make room; collapsing hides the panel and keeps the rail. In a narrow
   window the page area keeps `PAGE_MIN_WIDTH` and the panel narrows instead
   (`narrow-window-keeps-page-usable`).

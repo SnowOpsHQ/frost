@@ -149,9 +149,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   plain `--bg-surface` card with `--e-overlay`, and its note and its "More code below" hint take
   `--warn-ink`. Warning text elsewhere
   (`--caution` and the approval edge used as text: the risk note, the "Untrusted" chip) takes
-  `--warn-ink`, field errors `--danger-ink`; the collapsed rail stays on `--bg-window` (it shows in
-  every other capture) with a `--divider` edge, and the open panel stays flush with the page (the
-  screen's floating sheet, with gaps and `--r-lg` corners, is the workspace's surface PR). Nothing in
+  `--warn-ink`, field errors `--danger-ink`; the collapsed rail stayed on `--bg-window` with a `--divider` edge and the open panel flush with the
+  page until the workspace's layout (`workspace-layout.feature.md`), which makes both floating sheets
+  (`--bg-sheet` at `--r-lg` with `--e-sheet`, `--space-3` off the page). Nothing in
   the panel drew `--ok` as text, and it held no literal hex, so `KNOWN_CONTRAST_EXCEPTIONS` and
   `HEX_COLOUR_RATCHET` stay.
 - **Settings and Help** (every rule of `settings.css`, `settings-ai-checks.css`,
@@ -201,18 +201,20 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--ok-ink`, and its actions `--h-chip` pills on `--bg-surface` with `--e-raised` (hover lays
   `--bg-hover` over them; it ringed them in `--accent`). A transparent outline forced colours draw goes
   beside every `--focus-ring`. Settings' and Help's widths (`--settings-width`, `--settings-nav-width`,
-  760px) stay layout constants. The floating sheet (gaps, `--r-lg` corners) is the workspace's surface
-  PR. The visual baseline gains `help-shortcuts`.
+  760px) stay layout constants. The workspace's layout (`workspace-layout.feature.md`) makes both
+  rounded sheets in the page column (`--r-lg`, `--e-ring`). The visual baseline gains `help-shortcuts`.
 - **The SEO sidebar's frame and shared parts** (the sidebar, its rail and "More panels", the header,
   body and footer; the cards, section heads, badges, page text and severity icons every panel shares;
   the pending, unavailable and empty states) follow the Migration notes, the token `use` notes and the
   approved main screen, where they agree. The `.seo` prefix names every panel's classes too, so its
   `SIGNAL_SURFACES` entry lists the frame's classes (`.seo-chip` is never `.seo-chip-button`, and
   `.seo-panel-tools`, `.seo-toggle` and the panels' interiors wait for their own PRs); `.seo-page-text`
-  (no colour or type of its own) and `.pane-separator` (the agent panel shares it) stay out. Rail and
-  panel are one `--bg-sheet` ("rail, sidebar, agent panel"; `--seo-bg`, and `--bg-chrome` under the
-  rail), flush with the page and ruled by `--divider` (`--bg-chrome-edge`); the screen's floating
-  sheets, with gaps and `--r-lg` corners, are the workspace's surface PR. Rail items are `--h-field`
+  (no colour or type of its own) and `.pane-separator` (the agent panel shares it; the chrome's entry
+  lists it since the workspace's layout) stay out. Rail and
+  panel are `--bg-sheet` ("rail, sidebar, agent panel"; `--seo-bg`, and `--bg-chrome` under the
+  rail); they were flush with the page and ruled by `--divider` (`--bg-chrome-edge`) until the
+  workspace's layout (`workspace-layout.feature.md`) made them two floating sheets, with gaps and
+  `--r-lg` corners. Rail items are `--h-field`
   squares at `--r-md` with `--text-muted` icons at `--icon-size` (`--icon`), `--bg-hover` and
   `--bg-active` under the pointer; the open panel's item is raised (`--bg-surface`, `--e-raised`, its
   icon `--accent`, a transparent outline for forced colours) and loses the 3px side marker, as on the
@@ -236,8 +238,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--warn`, `--info-tone` → `--accent`; inside a Changes region's title, a line of text, a badge keeps
   the line's height); notes `--text-small` in `--text-faint`, mono values
   `--text-mono`, the link button `--text-body` at its emphasis weight over a `--divider` rule. The body
-  keeps its 12px (`--space-4`) padding where the screen draws 16px, so the panels' interiors keep their
-  width until their own PRs. The skeleton is `--bg-subtle` (`--seo-skeleton`) with a soft `--bg-sheet`
+  kept its 12px (`--space-4`) padding where the screen draws 16px, so the panels' interiors kept their
+  width until their own PRs; with all of them in, the workspace's layout gives it the screen's 16px
+  (`--space-5`, `workspace-layout.feature.md`). The skeleton is `--bg-subtle` (`--seo-skeleton`) with a soft `--bg-sheet`
   band sweeping over it (`--seo-skeleton-shine`), drawn as a blurred box rather than a gradient; both
   retired names are `removed`. The empty and unavailable hints keep the panel's 64px art on an
   `--accent-soft` tile at `--r-lg` (`--warn-soft` with `--warn-ink` art when unavailable), its inset edge
@@ -291,9 +294,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   is `--text-muted` on `--bg-window`, the connection `--text-faint`, the zoom plain `--text-mono` (the
   canvas's; its outlined chip went). The page area's frame keeps `--bg-page`; the rule between the
   chrome and the page moved from the toolbar's foot to the top of the workspace (`--bg-chrome-edge` →
-  `--divider`), so a band under the toolbar belongs to the chrome, and the status bar keeps a `--divider`
-  rule above it while the page is flush (the page card, its corners and the floating sheets are the
-  workspace's PR). The toolbar's SEO sidebar toggle had the classes `tool seo-toggle`, so it also drew
+  `--divider`), so a band under the toolbar belongs to the chrome, and the status bar kept a `--divider`
+  rule above it while the page was flush. The workspace's layout (`workspace-layout.feature.md`) made
+  the page area the page card (`--r-lg`, `--e-ring`, the native view's corners rounded to match) and
+  the sheets' gaps replaced both rules. The toolbar's SEO sidebar toggle had the classes `tool seo-toggle`, so it also drew
   the panels' `.seo-toggle` pill (a bordered 28px pill, its own font and focus outline); it is now
   `tool sidebar-toggle` (its `data-testid` unchanged), a plain tool, pressed `--accent` on
   `--accent-soft` as the SEO frame's PR decided (the canvas draws it `--text` on `--bg-active`). The
@@ -345,8 +349,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   their own). Text is Geist from the `--text-*` tokens, every space a `--space-*` step and every corner
   an `--r-*`; a part's own geometry (the 84px ring, which the frame's skeleton ring matches; the 6px
   meter; the 18px tag; the outline's 14px indent per level; the label columns) stays a layout constant.
-  The panels stand their cards `--space-4` apart (the body's padding and the skeleton's gap; the
-  screen's 16px is the workspace PR's, with the body's). **Score card:** `--space-5` in and between,
+  The panels stand their cards `--space-4` apart (and so does the skeleton), where the screen
+  draws 16px: each panel's PR kept it, and the workspace's layout left it (the body's padding took
+  the screen's 16px there). **Score card:** `--space-5` in and between,
   as on the screen; the ring's arc is its band's graphics colour (`--ok`, `--warn` for "Needs work" where
   it was `--caution`, `--danger`) on a `--track` circle (`--seo-track`), easing in `--dur-slow`; the
   value `--text-display` in `--text`; the eyebrow ("Health score") `--text-micro` in `--text-muted`, in
