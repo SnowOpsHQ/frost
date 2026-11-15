@@ -496,19 +496,26 @@ test('drag-resize-moves-page-view', async () => {
     await expect(separator).toHaveAttribute('aria-valuemin', String(SIDEBAR_PANEL_WIDTH_RANGE.min));
     await expect(separator).toHaveAttribute('aria-valuemax', String(SIDEBAR_PANEL_WIDTH_RANGE.max));
     await expect.poll(async () => (await viewBounds()).x).toBeGreaterThanOrEqual(SIDEBAR_RAIL_WIDTH + SIDEBAR_PANEL_WIDTH);
+    // From the minimum: the view's left edge then never sweeps under the Windows runner's parked OS
+    // cursor (near the screen's centre), whose real move with no button down would end the drag.
+    await separator.focus();
+    await page.keyboard.press('Home');
+    const start = SIDEBAR_PANEL_WIDTH_RANGE.min;
+    await expect(separator).toHaveAttribute('aria-valuenow', String(start));
+    await expect.poll(async () => (await viewBounds()).x).toBe(Math.round((await page.getByTestId('page-area').boundingBox())!.x));
     const before = await viewBounds();
 
     // Dragged 100 px towards the page: the tab's view starts 100 px later and is 100 px narrower.
     await dragBy(separator, 100);
-    await expect(separator).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH + 100));
+    await expect(separator).toHaveAttribute('aria-valuenow', String(start + 100));
     await expect.poll(async () => (await viewBounds()).x).toBe(before.x + 100);
     expect((await viewBounds()).width).toBe(before.width - 100);
-    expect(await page.evaluate((key) => localStorage.getItem(key), SIDEBAR_WIDTH_STORAGE_KEY)).toBe(String(SIDEBAR_PANEL_WIDTH + 100));
+    expect(await page.evaluate((key) => localStorage.getItem(key), SIDEBAR_WIDTH_STORAGE_KEY)).toBe(String(start + 100));
 
     // The keyboard: Left narrows by one step, and the view follows.
     await separator.focus();
     await page.keyboard.press('ArrowLeft');
-    const stepped = SIDEBAR_PANEL_WIDTH + 100 - SIDEBAR_PANEL_WIDTH_RANGE.keyboardStep;
+    const stepped = start + 100 - SIDEBAR_PANEL_WIDTH_RANGE.keyboardStep;
     await expect(separator).toHaveAttribute('aria-valuenow', String(stepped));
     await expect.poll(async () => (await viewBounds()).x).toBe(before.x + 100 - SIDEBAR_PANEL_WIDTH_RANGE.keyboardStep);
 
