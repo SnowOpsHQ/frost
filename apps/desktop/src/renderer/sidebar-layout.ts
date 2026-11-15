@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
-import { AGENT_PANEL_RESIZE_LABEL, AGENT_PANEL_WIDTH, AGENT_PANEL_WIDTH_RANGE, AGENT_PANEL_WIDTH_STORAGE_KEY, AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
+import { AGENT_PANEL_RESIZE_LABEL, AGENT_PANEL_WIDTH, AGENT_PANEL_WIDTH_RANGE, AGENT_PANEL_WIDTH_STORAGE_KEY } from '@app/specs/agent-panel.spec';
 import {
   ALWAYS_PINNED_PANELS,
   PAGE_MIN_WIDTH,
@@ -7,12 +7,12 @@ import {
   SIDEBAR_PANEL_WIDTH,
   SIDEBAR_PANEL_WIDTH_RANGE,
   SIDEBAR_PINS_STORAGE_KEY,
-  SIDEBAR_RAIL_WIDTH,
   SIDEBAR_RESIZE_LABEL,
   SIDEBAR_WIDTH_STORAGE_KEY,
   type PanelStatus,
   type SeoPanelId,
 } from '@app/specs/seo-sidebar.spec';
+import { workspaceRowChrome } from '@app/specs/workspace-layout.spec';
 
 // The workspace row's resizable panes and the SEO rail's pins (Phase 11 Task 10, Decision 12; specs
 // `seo-sidebar.spec.ts`, `agent-panel.spec.ts`; acceptance `seo-sidebar.feature.md`, Resize and pins).
@@ -36,9 +36,6 @@ const STORAGE_KEYS: Readonly<Record<PaneId, string>> = { sidebar: SIDEBAR_WIDTH_
 /** The CSS custom property each pane's width is set as (on the pane's own element). */
 const WIDTH_PROPERTIES: Readonly<Record<PaneId, string>> = { sidebar: '--seo-panel-width', agent: '--agent-panel-width' };
 const RESIZE_LABELS: Readonly<Record<PaneId, string>> = { sidebar: SIDEBAR_RESIZE_LABEL, agent: AGENT_PANEL_RESIZE_LABEL };
-
-/** The row's borders besides the panes' own boxes: the sidebar's right edge and the agent's left (`styles.css`, `agent.css`; border-box). */
-const ROW_EDGES = 2;
 
 /** `width` as a whole number in `[range.min, range.max]` (not a number: the minimum). */
 export function clampWidth(width: number, range: Pick<WidthRange, 'min' | 'max'>): number {
@@ -70,9 +67,12 @@ export interface PaneWidths {
   readonly agent: number;
 }
 
-/** What the row leaves the two open panes beside the page's minimum: the SEO rail, the collapsed agent's rail, the borders. */
+/**
+ * What the row leaves the two open panes beside the page's minimum: the SEO rail, the collapsed
+ * agent's rail and the gaps between the row's sheets (`workspaceRowChrome`, specs/workspace-layout.spec.ts).
+ */
 export function roomForPanes(input: LayoutInput): number {
-  return input.workspace - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - ROW_EDGES - (input.agent.open ? 0 : AGENT_RAIL_WIDTH);
+  return input.workspace - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: input.sidebar.open, agent: input.agent.open });
 }
 
 /**

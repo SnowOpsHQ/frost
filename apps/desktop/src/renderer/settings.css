@@ -5,6 +5,7 @@
 .page-column:has(> .settings-sheet) > .page-area {
   flex: 0 0 0;
   height: 0;
+  visibility: hidden;
 }
 
 /* The find bar is hidden while Settings shows (as while History does). Its slot stays: it is one of the
@@ -21,8 +22,8 @@
   min-height: 0;
   overflow: hidden;
   contain: inline-size;
-  /* Signal: a sheet (the approved Settings screen), its cards --bg-surface on it. It stays flush with
-     the page column: the floating sheet (gaps, --r-lg corners) is the workspace's surface PR. */
+  /* Signal: a sheet (the approved Settings screen), its cards --bg-surface on it; its shape is the page
+     card's (styles.css, the page column's sheets). */
   background: var(--bg-sheet);
 }
 

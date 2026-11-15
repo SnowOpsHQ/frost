@@ -6,7 +6,7 @@ import type { BrowserState, TabState } from '@app/specs/browser.spec';
 import type { SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
 import { devtoolsPaletteSources } from '../../devtools-palette';
-import { clampHeight, heightAfterKey, maxHeight } from '../../devtools-view';
+import { clampHeight, drawerColumn, heightAfterKey, maxHeight } from '../../devtools-view';
 import { useDevtoolsDrawer, useDevtoolsVersion } from '../../hooks/useDevtools';
 import { CloseIcon } from '../../icons';
 import { registerPaletteActions } from '../../palette/registry';
@@ -60,7 +60,8 @@ export function DevtoolsDrawer({
   if (!open) return null;
 
   /** The workspace stack's height, the workspace's and the drawer's together (the clamp's reference); 0 before layout. */
-  const column = (): number => root.current?.parentElement?.clientHeight ?? 0;
+  // What the drawer and the page share: the stack less the gap the drawer's sheet stands under the row.
+  const column = (): number => drawerColumn(root.current?.parentElement?.clientHeight ?? 0);
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
