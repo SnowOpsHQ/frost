@@ -58,6 +58,7 @@ export class FakeTabView {
     return (this.contents.destroyed ? undefined : this.contents) as FakeTabContents;
   }
   setBounds = vi.fn();
+  setBorderRadius = vi.fn();
   setVisible = vi.fn();
 }
 

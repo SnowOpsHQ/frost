@@ -26,7 +26,8 @@ import {
   AGENT_SET_KEY_MESSAGES,
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
-import { PAGE_MIN_WIDTH, SIDEBAR_PANEL_WIDTH, SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
+import { PAGE_MIN_WIDTH, SIDEBAR_PANEL_WIDTH } from '@app/specs/seo-sidebar.spec';
+import { WORKSPACE_GAP, workspaceRowChrome } from '@app/specs/workspace-layout.spec';
 import {
   AGENT_GRANTS_EXPLAINER,
   CHAT_EXPORT_MESSAGES,
@@ -311,7 +312,8 @@ test('agent-pane-resize', async () => {
     await page.getByTestId('seo-toggle').click();
     await expect(page.getByTestId('seo-resize')).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH));
     const agentRoom = 400;
-    const width = PAGE_MIN_WIDTH + SIDEBAR_RAIL_WIDTH + 2 + SIDEBAR_PANEL_WIDTH + agentRoom;
+    // The window: the page's minimum, both panels, the SEO rail and the gaps (specs/workspace-layout.spec.ts).
+    const width = 2 * WORKSPACE_GAP.px + PAGE_MIN_WIDTH + workspaceRowChrome({ sidebar: true, agent: true }) + SIDEBAR_PANEL_WIDTH + agentRoom;
     await page.setViewportSize({ width, height: 800 });
     // (Within a pixel: on a scaled display the chrome's width is a fraction off the one asked for.)
     const near = (locator: ReturnType<Page['getByTestId']>, value: number) => expect.poll(async () => Math.abs(Number(await locator.getAttribute('aria-valuenow')) - value)).toBeLessThanOrEqual(1);

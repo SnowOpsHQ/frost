@@ -26,13 +26,16 @@ import {
   type LayoutInput,
   type SeparatorProps,
 } from '../sidebar-layout';
+import { WORKSPACE_GAP, workspaceRowChrome } from '@app/specs/workspace-layout.spec';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const S = SIDEBAR_PANEL_WIDTH_RANGE;
 const A = AGENT_PANEL_WIDTH_RANGE;
-/** The row's fixed parts beside the page's minimum with the agent open (the SEO rail and two borders). */
-const FIXED_OPEN = PAGE_MIN_WIDTH + SIDEBAR_RAIL_WIDTH + 2;
+/** The row's fixed parts beside the page's minimum (the rails and the gaps between the sheets: specs/workspace-layout.spec.ts). */
+const fixed = (sidebar: boolean, agent: boolean) => PAGE_MIN_WIDTH + workspaceRowChrome({ sidebar, agent });
+/** Both panes open: the SEO rail and three gaps. */
+const FIXED_OPEN = fixed(true, true);
 
 const layout = (workspace: number, sidebar: [boolean, number], agent: [boolean, number]): LayoutInput => ({
   workspace,
@@ -76,7 +79,11 @@ describe('resizable panes', () => {
     expect(paneMax('sidebar', layout(500, [true, 360], [true, 400]))).toBe(S.min);
     expect(paneMax('agent', layout(500, [true, 360], [true, 400]))).toBe(A.min);
     // The collapsed agent's rail counts against the room.
-    expect(roomForPanes(layout(1_000, [true, 360], [false, 380]))).toBe(1_000 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 2 - AGENT_RAIL_WIDTH);
+    expect(roomForPanes(layout(1_000, [true, 360], [false, 380]))).toBe(1_000 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 3 * WORKSPACE_GAP.px - AGENT_RAIL_WIDTH);
+    // pane-room-counts-the-gaps (specs/workspace-layout.feature.md): the gap between the SEO rail and
+    // its sheet only while the sheet is open, the two beside the page always.
+    expect(roomForPanes(layout(1_000, [false, 360], [true, 380]))).toBe(1_000 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 2 * WORKSPACE_GAP.px);
+    expect(paneMax('sidebar', layout(800, [false, 360], [false, 380]))).toBe(800 - fixed(true, false));
     // Unmeasured: the chosen widths, any maximum.
     expect(paneWidths(layout(0, [true, 500], [true, 600]))).toEqual({ sidebar: 500, agent: 600 });
     expect(paneMax('sidebar', layout(0, [true, 500], [true, 600]))).toBe(S.max);
@@ -92,9 +99,9 @@ describe('resizable panes', () => {
     // Short by more than both can give: both at their minimums (CSS narrows them past that, as before).
     expect(paneWidths(layout(600, [true, 400], [true, 480]))).toEqual({ sidebar: S.min, agent: A.min });
     // The agent closed: its rail is in the row; only the sidebar gives way.
-    expect(paneWidths(layout(FIXED_OPEN + AGENT_RAIL_WIDTH + 330, [true, 400], [false, 480]))).toEqual({ sidebar: 330, agent: 480 });
+    expect(paneWidths(layout(fixed(true, false) + 330, [true, 400], [false, 480]))).toEqual({ sidebar: 330, agent: 480 });
     // The sidebar closed: only the agent gives way.
-    expect(paneWidths(layout(FIXED_OPEN + 350, [false, 400], [true, 480]))).toEqual({ sidebar: 400, agent: 350 });
+    expect(paneWidths(layout(fixed(false, true) + 350, [false, 400], [true, 480]))).toEqual({ sidebar: 400, agent: 350 });
     // The chosen widths are kept: widening the window gives them back.
     const store: Record<string, string> = { [SIDEBAR_WIDTH_STORAGE_KEY]: '400', [AGENT_PANEL_WIDTH_STORAGE_KEY]: '480' };
     const row = createWorkspaceLayout(

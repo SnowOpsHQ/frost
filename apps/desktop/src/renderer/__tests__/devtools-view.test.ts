@@ -16,8 +16,10 @@ import {
 } from '@app/specs/devtools.spec';
 import { SEO_CATEGORIES } from '@app/specs/seo-rules.spec';
 import { SEO_PANELS } from '@app/specs/seo-sidebar.spec';
+import { WORKSPACE_GAP } from '@app/specs/workspace-layout.spec';
 import {
   clampHeight,
+  drawerColumn,
   maxHeight,
   filterNetwork,
   formatBytes,
@@ -73,6 +75,15 @@ describe('devtools drawer helpers', () => {
     expect(heightAfterKey(300, 'End', column)).toBe(max);
     expect(heightAfterKey(DEVTOOLS_HEIGHT.min, 'ArrowDown', column)).toBe(DEVTOOLS_HEIGHT.min);
     expect(heightAfterKey(300, 'a', column)).toBeNull();
+  });
+
+  test('drawer-keeps-the-page-gap-counted', () => {
+    // specs/workspace-layout.feature.md: the drawer is a sheet WORKSPACE_GAP under the workspace row, so
+    // its column (what it and the page share) is the stack's height less that gap; unmeasured stays 0.
+    expect(drawerColumn(800)).toBe(800 - WORKSPACE_GAP.px);
+    expect(maxHeight(drawerColumn(800))).toBe(800 - WORKSPACE_GAP.px - DEVTOOLS_HEIGHT.pageMinVisible);
+    expect(drawerColumn(0)).toBe(0);
+    expect(drawerColumn(WORKSPACE_GAP.px - 1)).toBe(0);
   });
 
   test('drawer-state-from-storage', () => {

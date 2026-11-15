@@ -23,7 +23,7 @@ import {
   SIDEBAR_TOGGLE_MENU_ID,
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from '@app/specs/seo-sidebar.spec';
-import { AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
+import { WORKSPACE_GAP, workspaceRowChrome, workspaceRowWidth } from '@app/specs/workspace-layout.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -414,15 +414,17 @@ test('sidebar-toggle-resizes-page', async () => {
     const id = await contentsIdAt(url);
     const open = await viewBounds();
     const panel = page.getByTestId('seo-panel');
-    // Docked left: the rail and the panel sit between the window's edge and the page.
+    // Docked left: the rail and the panel sit between the window's edge and the page. Collapsing
+    // gives the page the panel's width and the gap beside it (specs/workspace-layout.feature.md).
     expect(open.x).toBeGreaterThanOrEqual(SIDEBAR_RAIL_WIDTH + SIDEBAR_PANEL_WIDTH);
+    const panelRoom = SIDEBAR_PANEL_WIDTH + WORKSPACE_GAP.px;
 
     // The toolbar button.
     await page.getByTestId('seo-toggle').click();
     await expect(panel).toHaveCount(0);
     await expect(page.getByTestId('seo-toggle')).toHaveAttribute('aria-pressed', 'false');
-    await expect.poll(async () => (await viewBounds()).width).toBe(open.width + SIDEBAR_PANEL_WIDTH);
-    expect((await viewBounds()).x).toBe(open.x - SIDEBAR_PANEL_WIDTH);
+    await expect.poll(async () => (await viewBounds()).width).toBe(open.width + panelRoom);
+    expect((await viewBounds()).x).toBe(open.x - panelRoom);
     // The persistent rail keeps the page's status.
     await expect(railItem('on-page')).toHaveAttribute('data-status', 'pass');
     // Collapsing from the panel's own button leaves focus on its rail item.
@@ -441,7 +443,7 @@ test('sidebar-toggle-resizes-page', async () => {
     await run(id, `window.__keys = 0; addEventListener('keydown', () => { window.__keys += 1; }, true); true`);
     await press(id, 'S', ['mod', 'shift']);
     await expect(panel).toHaveCount(0);
-    await expect.poll(async () => (await viewBounds()).width).toBe(open.width + SIDEBAR_PANEL_WIDTH);
+    await expect.poll(async () => (await viewBounds()).width).toBe(open.width + panelRoom);
     expect(await run(id, 'window.__keys')).toBe(0);
 
     // Closed survives a relaunch on the same profile.
@@ -513,7 +515,8 @@ test('drag-resize-moves-page-view', async () => {
     // In a narrower chrome, End stops where the page keeps its minimum.
     await page.setViewportSize({ width: 900, height: 800 });
     await page.keyboard.press('End');
-    const room = 900 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 2 - AGENT_RAIL_WIDTH;
+    // The row less the page's minimum, the rails and the gaps (specs/workspace-layout.spec.ts).
+    const room = workspaceRowWidth(900) - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: true, agent: false });
     await expect(separator).toHaveAttribute('aria-valuenow', String(room));
     await expect(separator).toHaveAttribute('aria-valuemax', String(room));
     // The page keeps its minimum (borders are one device pixel: a fraction of a CSS px on a scaled display).

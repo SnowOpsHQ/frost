@@ -1,11 +1,26 @@
 // Layout regression guards. Context: specs/browser-chrome.feature.md (Layout: the chrome's rows), specs/help.feature.md and
 // specs/account-settings.feature.md (sheets over the page column hide the find bar), specs/agent-data.feature.md
 // (the chat list's and skill library's search fields), specs/data-sources.feature.md, specs/ai-answers.feature.md and
-// specs/site-crawl.feature.md (screen-reader text inside the sheets' scroll boxes; AI answers' "Reach through" selects).
+// specs/site-crawl.feature.md (screen-reader text inside the sheets' scroll boxes; AI answers' "Reach through" selects),
+// specs/workspace-layout.feature.md (the workspace's floating sheets, its gaps and the page card).
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
+import { AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
+import { SIGNAL_TOKENS } from '@app/specs/design-tokens.spec';
+import { RENDER_FRAME } from '@app/specs/render-profile.spec';
+import { SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 import { ADDRESS_BASIS_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
+import {
+  PAGE_AREA_COLLAPSES,
+  pageViewRadius,
+  RENDER_DEVICE_OUTLINE_RADIUS,
+  SHEET_RADIUS,
+  WORKSPACE_GAP,
+  WORKSPACE_SHEETS,
+  workspaceRowChrome,
+  workspaceRowWidth,
+} from '@app/specs/workspace-layout.spec';
 
 /** The row's tools (`CHROME_ROW` but the tablist and the address bar) and its gaps (between its items and inside the navigation group: one fewer than its controls). */
 const ROW_TOOLS = CHROME_ROW.filter((id) => id !== 'tab-strip' && id !== 'address').length;
@@ -174,4 +189,157 @@ test('crawl-run-state-wraps-a-long-pause-reason', () => {
   expect(state).not.toMatch(/flex:\s*none/);
   expect(state).toMatch(/min-width:\s*0/);
   expect(state).toMatch(/overflow-wrap:\s*anywhere/);
+});
+
+// ---- The workspace's layout (specs/workspace-layout.feature.md) ------------------------------------
+
+/** Top-level rules only (comments and `@media` / `@supports` blocks dropped), in file order. */
+function topRules(file: string): { selector: string; body: string }[] {
+  let plain = read(file).replace(/\/\*[\s\S]*?\*\//g, '');
+  // Nested blocks: drop each at-rule's whole block, innermost first.
+  for (let before = ''; before !== plain; ) {
+    before = plain;
+    plain = plain.replace(/@(?:media|supports)[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
+  }
+  return [...plain.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((match) => ({ selector: match[1]!.trim(), body: match[2]! }));
+}
+
+/** A selector list split on its top-level commas. */
+function selectorsOf(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    const ch = list[i];
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
+    else if (ch === ',' && depth === 0) {
+      out.push(list.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  out.push(list.slice(start).trim());
+  return out;
+}
+
+/**
+ * The declarations `selector` (exactly, in any rule's selector list) gets from `files`, in that order
+ * (feature stylesheets load before styles.css, so styles.css goes last): the last one wins.
+ */
+function resolved(files: readonly string[], selector: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const file of files)
+    for (const { selector: list, body } of topRules(file)) {
+      if (!selectorsOf(list).includes(selector)) continue;
+      for (const [, property, value] of body.matchAll(/([\w-]+)\s*:\s*([^;]+);/g)) out.set(property!, value!.replace(/\s+/g, ' ').trim());
+    }
+  return out;
+}
+
+const GAP = `var(${WORKSPACE_GAP.token})`;
+
+test('workspace-layout-values', () => {
+  const token = (name: string) => Object.values(SIGNAL_TOKENS).flat().find((t) => t.name === name)?.light;
+  expect(token(WORKSPACE_GAP.token)).toBe(`${WORKSPACE_GAP.px}px`);
+  expect(token(SHEET_RADIUS.token)).toBe(`${SHEET_RADIUS.px}px`);
+  expect(workspaceRowChrome({ sidebar: true, agent: false })).toBe(SIDEBAR_RAIL_WIDTH + AGENT_RAIL_WIDTH + 3 * WORKSPACE_GAP.px);
+  expect(workspaceRowChrome({ sidebar: false, agent: false })).toBe(SIDEBAR_RAIL_WIDTH + AGENT_RAIL_WIDTH + 2 * WORKSPACE_GAP.px);
+  expect(workspaceRowChrome({ sidebar: true, agent: true })).toBe(SIDEBAR_RAIL_WIDTH + 3 * WORKSPACE_GAP.px);
+  expect(workspaceRowChrome({ sidebar: false, agent: true })).toBe(SIDEBAR_RAIL_WIDTH + 2 * WORKSPACE_GAP.px);
+  expect(workspaceRowWidth(1280)).toBe(1280 - 2 * WORKSPACE_GAP.px);
+  expect(pageViewRadius({ fullscreen: false, framed: false })).toBe(16);
+  expect(pageViewRadius({ fullscreen: true, framed: false })).toBe(0);
+  expect(pageViewRadius({ fullscreen: true, framed: true })).toBe(0);
+  expect(pageViewRadius({ fullscreen: false, framed: true })).toBe(16 - RENDER_FRAME.inset);
+  // A device preset's outline, one pixel outside the framed view, follows its corner.
+  expect(RENDER_DEVICE_OUTLINE_RADIUS).toBe(13);
+  expect(read('components/RenderProfile.tsx')).toMatch(/<rect className="render-frame-device"[^>]*rx=\{RENDER_DEVICE_OUTLINE_RADIUS\}/);
+});
+
+test('workspace-is-padded-and-gapped', () => {
+  const stack = resolved(['styles.css'], '.workspace-stack');
+  expect(stack.get('padding')).toBe(`0 ${GAP}`);
+  const row = resolved(['styles.css'], '.workspace');
+  expect(row.get('gap')).toBe(GAP);
+  const seo = resolved(['styles.css'], '.seo');
+  expect(seo.get('gap')).toBe(GAP);
+  // The wrappers and the status bar draw nothing of their own, and the workspace never clips the sheets' edges.
+  const plain: [string, string[]][] = [
+    ['.workspace-stack', ['styles.css']],
+    ['.workspace', ['styles.css']],
+    ['.seo', ['styles.css']],
+    ['.agent', ['components/agent/agent.css', 'styles.css']],
+    ['.status-bar', ['styles.css']],
+  ];
+  for (const [selector, files] of plain) {
+    const own = resolved(files, selector);
+    const drawn = [...own.keys()].filter((property) => /^(border|background|box-shadow|outline)/.test(property) || (/^overflow/.test(property) && own.get(property) !== 'visible'));
+    expect(drawn, selector).toEqual([]);
+  }
+  // The gaps replace the rules: no --divider edge on a sheet or a wrapper.
+  for (const selector of ['.workspace-stack', '.seo', '.seo-panel', '.seo-rail', '.agent', '.agent-main', '.agent-rail', '.status-bar', '.devtools', '.projects-sheet', ".projects-sheet[data-running='true']", '.palette-sheet'])
+    for (const [property, value] of resolved(['components/agent/agent.css', 'styles.css'], selector))
+      expect(/^border/.test(property) && value.includes('--divider'), `${selector} { ${property}: ${value} }`).toBe(false);
+  // The command palette's band: the canvas's padding, the gap to the page card under the card.
+  expect(resolved(['styles.css'], '.palette-sheet').get('padding')).toBe(`0 0 ${GAP}`);
+  // A Projects run's band stands the gap off the page card under it; the DevTools drawer as far under the row.
+  expect(resolved(['styles.css'], ".projects-sheet[data-running='true']").get('margin-bottom')).toBe(GAP);
+  expect(resolved(['styles.css'], '.devtools').get('margin-top')).toBe(GAP);
+  expect(resolved(['styles.css'], '.devtools').get('max-height')).toBe(`calc(100% - var(--devtools-page-min) - ${GAP})`);
+});
+
+test('sheets-are-rounded-and-raised', () => {
+  expect(WORKSPACE_SHEETS.length).toBe(11);
+  for (const sheet of WORKSPACE_SHEETS) {
+    const files = sheet.stylesheet === 'styles.css' ? ['styles.css'] : [sheet.stylesheet, 'styles.css'];
+    const own = resolved(files, sheet.selector);
+    expect(own.get('border-radius'), sheet.name).toBe(`var(${SHEET_RADIUS.token})`);
+    expect(own.get('background'), sheet.name).toBe(`var(${sheet.fill})`);
+    expect(own.get('box-shadow'), sheet.name).toBe(`var(${sheet.elevation})`);
+    // The edge forced colours draw: a whole-pixel transparent border inside the sheet, or an outline outside it.
+    expect(own.get(sheet.edge), sheet.name).toBe('1px solid transparent');
+    if (sheet.edge === 'outline') expect(own.has('border'), sheet.name).toBe(false);
+    // It clips its content to its corners (`clip`, or the scroll box it already was); the agent rail
+    // doesn't (its toggle's focus ring reaches past its content box).
+    if ('clips' in sheet) expect(own.get('overflow') ?? 'visible', sheet.name).toBe('visible');
+    else expect(['clip', 'hidden', 'auto'], sheet.name).toContain(own.get('overflow'));
+  }
+  // Each sheet's own rule is where its fill lives (the page column's sheets share one shape rule).
+  for (const sheet of WORKSPACE_SHEETS) expect(resolved([sheet.stylesheet], sheet.selector).get('background'), sheet.name).toBe(`var(${sheet.fill})`);
+  // A rail's items keep their place inside its border; the agent rail's badge is cut out of the sheet.
+  expect(resolved(['styles.css'], '.seo-rail').get('padding')).toBe('calc(var(--space-3) - 1px) 0');
+  expect(resolved(['components/agent/agent.css'], '.agent-rail').get('padding')).toBe('calc(var(--space-3) - 1px) 0');
+  expect(resolved(['components/agent/agent.css'], '.agent-rail-badge').get('box-shadow')).toBe('0 0 0 2px var(--bg-sheet)');
+  // The SEO sheet's body: the canvas's 16px in.
+  expect(resolved(['styles.css'], '.seo-body').get('padding')).toBe('var(--space-5)');
+});
+
+test('page-area-collapses-hide-it', () => {
+  const listed = new Set(PAGE_AREA_COLLAPSES.map((entry) => `${entry.stylesheet}: ${entry.selector}`));
+  const found: string[] = [];
+  for (const file of CSS_FILES)
+    for (const { selector: list, body } of topRules(file))
+      for (const selector of selectorsOf(list)) {
+        if (!/\.page-area$/.test(selector) || !/(?:^|[\s;])height:\s*0;/.test(body)) continue;
+        found.push(`${file}: ${selector}`);
+        expect(body, `${file}: ${selector}`).toMatch(/visibility:\s*hidden;/);
+      }
+  expect(found.sort()).toEqual([...listed].sort());
+  // A Projects run gives the page area back its height, and shows it again.
+  const running = resolved(['styles.css'], ".page-column:has(> .projects-sheet[data-running='true']) > .page-area");
+  expect(running.get('height')).toBe('auto');
+  expect(running.get('visibility')).toBe('visible');
+});
+
+test('separators-sit-in-the-gap', () => {
+  const separator = resolved(['styles.css'], '.pane-separator');
+  expect(separator.get('width')).toBe(GAP);
+  const line = resolved(['styles.css'], '.pane-separator::after');
+  expect(line.get('width')).toBe('2px');
+  expect(line.get('left')).toBe('calc(50% - 1px)');
+  expect(resolved(['styles.css'], '.seo-separator').get('right')).toBe(`calc(-1 * ${GAP})`);
+  expect(resolved(['components/agent/agent.css'], '.agent-separator').get('left')).toBe(`calc(-1 * ${GAP})`);
+  // The line is centred for both: neither pane moves it.
+  expect(resolved(['styles.css', 'components/agent/agent.css'], '.seo-separator::after').size).toBe(0);
+  expect(resolved(['styles.css', 'components/agent/agent.css'], '.agent-separator::after').size).toBe(0);
 });
