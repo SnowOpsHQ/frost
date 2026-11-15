@@ -2,7 +2,7 @@
 
 Spec: `specs/workspace-layout.spec.ts` (`WORKSPACE_GAP`, `SHEET_RADIUS`, `workspaceRowChrome`,
 `workspaceRowWidth`, `pageViewRadius`, `RENDER_DEVICE_OUTLINE_RADIUS`, `WORKSPACE_SHEETS`,
-`PAGE_AREA_COLLAPSES`). Signal step 3, the last surface: how the pieces sit in the window, not their
+`PAGE_AREA_COLLAPSES`, `ENTRANCE_FILL_EXCEPTIONS`). Signal step 3, the last surface: how the pieces sit in the window, not their
 interiors (`design-tokens.feature.md`). Source: the approved canvas's light and dark main screens, its
 agent, Settings and palette screens, and its token sheet (`--r-lg`: "sheets, rail, page card,
 palette"). Code: `apps/desktop/src/renderer/styles.css` (Layout, Workspace, Page area, SEO sidebar,
@@ -84,9 +84,23 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   `max-height` and the drawer's column both take the gap off). Its resize edge stays its top 6px.
 - **Status bar.** Full width under the workspace on the window's fill, with no rule and no fill of its
   own (the body's `--bg-window` shows through), so the sheets' edges and shadows show over it.
-- **The workspace doesn't clip.** Each sheet clips its own content; the workspace and its stack no
-  longer `overflow: hidden` (they would cut the sheets' rings and shadows at their edges); the window
-  clips what a too-narrow row leaves past it.
+- **The workspace clips 1px outside itself.** Each sheet clips its own content. The workspace's stack
+  clips its sheets' ink 1px outside its box (`overflow: clip` with `overflow-clip-margin: 1px`, where
+  it was `overflow: hidden` at its edge): the sheets' 1px rings show, and their `--e-sheet` shadows
+  stop there. Chromium sizes a shadow's ink at about 1.5 times its blur, so unclipped they reached
+  about 16px up into the chrome row, over the address bar, which Chromium composites (it overlaps the
+  text caret's layer). Anything painted later that overlaps a composited layer is composited too, and
+  text in a layer that isn't opaque loses its subpixel (LCD) antialiasing: on CI's 1x renders the
+  tab, the SEO header and the agent panel's text turned greyscale. What the clip cuts is under 1%
+  opaque above the sheets; below them the canvas's status bar covers the shadows, so the canvas draws
+  none there either. The row inside doesn't clip.
+- **Entrance animations end.** A sheet's or a card's entrance animation (`seo-panel-in`,
+  `agent-panel-in`, `palette-in`, `mark-in`, `panel-in`, `prompt-in`) fills `backwards`, not `both`:
+  each ends at the element's own style, so nothing changes on screen, but an animation that stays in
+  effect keeps its element composited, and Chromium assumes a composited transform animation overlaps
+  what a sheet's shadow now reaches (the new tab's mark composited the agent panel beside the page
+  card). The Search Console panel's two (`gsc-panel.css`, PR #50's stylesheet) are
+  `ENTRANCE_FILL_EXCEPTIONS`: they sit inside the SEO sheet, where no shadow reaches them.
 - **Where the canvas and the app differ.** The canvas draws the SEO sheet's body 16px in, and the
   frame's PR left that to this one (the panels' interiors kept their width until their own PRs, all
   now in): the body's padding is `--space-5` (it was `--space-4`), so every panel's content is 8px
@@ -102,7 +116,8 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   both sides; `pageViewRadius` is 16, 0 in fullscreen (framed or not) and 12 framed;
   `RENDER_DEVICE_OUTLINE_RADIUS` is 13.
 - **Scenario: workspace-is-padded-and-gapped** (same file) — `.workspace-stack` has inline padding
-  `--space-3` and no block padding, no border and no overflow clip; `.workspace` and `.seo` have
+  `--space-3` and no block padding, no border, and clips 1px outside itself (`overflow: clip`,
+  `overflow-clip-margin: 1px`); `.workspace` and `.seo` have
   `gap: var(--space-3)` and no border, fill or overflow clip; `.agent` has no border or fill; the
   status bar has no border and no fill; no rule in any renderer stylesheet draws a `--divider` edge on
   `.workspace-stack`, `.seo`, `.seo-panel`, `.agent`, `.status-bar` or `.devtools`.
@@ -114,6 +129,8 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
 - **Scenario: page-area-collapses-hide-it** (same file) — every rule that sets the page area's
   `height: 0` is in `PAGE_AREA_COLLAPSES` and sets `visibility: hidden`; the Projects run's rule that
   gives it back its height sets `visibility: visible`.
+- **Scenario: entrance-animations-end** (same file) — no rule in any renderer stylesheet runs an
+  animation with `both` or `forwards` fill but `ENTRANCE_FILL_EXCEPTIONS`, each of which still does.
 - **Scenario: separators-sit-in-the-gap** (same file) — `.pane-separator` is `WORKSPACE_GAP` wide
   with its line centred; the SEO separator sits `WORKSPACE_GAP` past the sidebar's right edge, the
   agent's as far past its left.

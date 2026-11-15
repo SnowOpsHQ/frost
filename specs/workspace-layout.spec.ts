@@ -107,3 +107,14 @@ export const PAGE_AREA_COLLAPSES = [
   { stylesheet: 'settings.css', selector: '.page-column:has(> .settings-sheet) > .page-area' },
   { stylesheet: 'help.css', selector: '.page-column:has(> .help-sheet) > .page-area' },
 ] as const;
+
+/**
+ * Entrance animations fill `backwards` (`workspace-layout.feature.md`, Entrance animations end): one
+ * that stays in effect (`both`, `forwards`) keeps its element composited, and what overlaps it then
+ * loses LCD text. These rules still fill `both`: the Search Console panel's, inside the SEO sheet, where
+ * no shadow reaches them (their stylesheet is PR #50's).
+ */
+export const ENTRANCE_FILL_EXCEPTIONS = [
+  { stylesheet: 'gsc-panel.css', selector: '.gsc' },
+  { stylesheet: 'gsc-panel.css', selector: '.gsc-cal' },
+] as const;
