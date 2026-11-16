@@ -396,8 +396,6 @@ test('tight-gaps-switch-together', () => {
     ['styles.css', '.seo', 'gap', T],
     ['styles.css', '.devtools', 'margin-top', T],
     ['styles.css', '.devtools', 'max-height', `calc(100% - var(--devtools-page-min) - ${T})`],
-    ['styles.css', '.palette-sheet', 'padding', `0 0 ${T}`],
-    ['styles.css', ".projects-sheet[data-running='true']", 'margin-bottom', T],
     ['styles.css', '.prompt-bar', 'margin', `0 ${T} ${T}`],
     ['styles.css', '.find-bar', 'margin', `0 ${T} ${T}`],
     ['styles.css', '.render-bar', 'margin', `0 ${T} ${T}`],

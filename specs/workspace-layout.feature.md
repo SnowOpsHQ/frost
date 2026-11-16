@@ -75,8 +75,10 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   than `TIGHT_WORKSPACE_BELOW` (748px: where, with `--space-3` gaps and the agent collapsed, the SEO
   sheet would fall under its minimum beside the page's), every gap and inset of the workspace is
   `--space-1` together: the window's edges, rail | sheet, sheet | page, page | agent, the DevTools
-  drawer's gap, the command palette's and a Projects run's gap above the page card, and the bands'
-  inset and gap above the workspace, so their edges stay on the sheets'. One rule:
+  drawer's gap, and the bands' inset and gap above the workspace, so their edges stay on the sheets'.
+  The two gaps inside the page column above the page card (the command palette's band and a Projects
+  run's band) stay `--space-3`: they cost no width, and Projects' rules keep to its own container's
+  queries (`projects-sheet-stacks-by-its-own-width`). One rule:
   `@container chrome (width < 748px)` on `.chrome` (`container: chrome / inline-size`), whose width
   is the workspace's (its stack spans the chrome's one column); the agent's stylesheet repeats the
   same query for its separator. Corners stay `--r-lg` and the native view's radius is unchanged. At
@@ -187,8 +189,8 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   container; every `@container chrome` query in the renderer's stylesheets is
   `(width < TIGHT_WORKSPACE_BELOW px)`, and together they set `--space-1` for each gap and inset that is
   `--space-3` outside them: the stack's padding, the row's and the SEO sidebar's gap, the drawer's
-  margin and its `max-height`, the palette band's and a Projects run's gap, the four bands' margin, and
-  both separators' offsets, their lines centred in the 4px gap.
+  margin and its `max-height`, the four bands' margin, and both separators' offsets, their lines
+  centred in the 4px gap.
 - **Scenario: pane-room-counts-the-gaps** (`renderer/__tests__/sidebar-layout.test.ts`) —
   `roomForPanes` is the row less `PAGE_MIN_WIDTH` and `workspaceRowChrome` with the layout's gap (the
   tight one in a narrow workspace); the shrink order and `paneMax` follow.
