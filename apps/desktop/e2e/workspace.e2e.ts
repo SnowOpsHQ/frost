@@ -169,7 +169,7 @@ test('page-view-matches-the-card', async () => {
     await expect(page.getByTestId('devtools')).toBeVisible();
     await cardMatches(PLAIN);
     const [card, drawer] = await Promise.all([box('.page-area'), box('.devtools')]);
-    expect(near(drawer!.y - (card!.y + card!.height), WORKSPACE_GAP.px)).toBe(true);
+    expect(near(drawer!.y - (card!.y + card!.height), workspaceGap(await page.evaluate(() => innerWidth)))).toBe(true);
     await menu(DEVTOOLS_MENU_ID);
     await expect(page.getByTestId('devtools')).toHaveCount(0);
     // The command palette's band pushes the card down.
@@ -222,11 +222,13 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
   // The audit is in: Overview shows its score card.
   await expect(page.locator('.seo-score-card')).toBeVisible({ timeout: 30_000 });
   const padding = () => page.locator('.seo-body').evaluate((el) => getComputedStyle(el).paddingLeft);
+  // Inside the window's own height (main clamps the view to the window; a tiling window manager sets it).
+  const height = Math.min(700, (await viewState()).content.height);
   try {
     // A width the panel's minimum fits: the canvas's 16px.
-    await page.setViewportSize({ width: 900, height: 700 });
+    await page.setViewportSize({ width: 900, height });
     await expect.poll(padding).toBe('16px');
-    await page.setViewportSize({ width: NARROW_WINDOW.width, height: 700 });
+    await page.setViewportSize({ width: NARROW_WINDOW.width, height });
     // Each within a pixel: on a scaled display the chrome's width is a fraction off the one asked for.
     // Tight gaps everywhere: the window's edges and between every two sheets.
     const T = WORKSPACE_GAP_TIGHT.px;
@@ -259,14 +261,22 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
     // The view still lines up with the card.
     await cardMatches(PLAIN);
     // The tight gaps apply exactly under the threshold, and not in a 776px (tiled) chrome.
-    const gapAt = async (width: number) => {
-      await page.setViewportSize({ width, height: 700 });
-      await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width);
-      return page.locator('.workspace').evaluate((el) => getComputedStyle(el).columnGap);
-    };
-    expect(await gapAt(TIGHT_WORKSPACE_BELOW - 1)).toBe(`${WORKSPACE_GAP_TIGHT.px}px`);
-    expect(await gapAt(TIGHT_WORKSPACE_BELOW)).toBe(`${WORKSPACE_GAP.px}px`);
-    expect(await gapAt(776)).toBe(`${WORKSPACE_GAP.px}px`);
+    // The chrome's own (fractional) width decides; at a 1x scale (CI) it is exactly the width asked for,
+    // on a fractional one it can land a little off, so the gap is checked against the width measured.
+    const scale = await page.evaluate(() => devicePixelRatio);
+    for (const [width, gap] of [
+      [TIGHT_WORKSPACE_BELOW - 1, WORKSPACE_GAP_TIGHT.px],
+      [TIGHT_WORKSPACE_BELOW, WORKSPACE_GAP.px],
+      [776, WORKSPACE_GAP.px],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      await expect.poll(async () => Math.abs((await box('.chrome'))!.width - width)).toBeLessThanOrEqual(1);
+      const measured = (await box('.chrome'))!.width;
+      if (scale === 1) expect(measured).toBe(width);
+      const used = await page.locator('.workspace').evaluate((el) => getComputedStyle(el).columnGap);
+      expect(used, `chrome ${measured}px`).toBe(`${workspaceGap(measured)}px`);
+      if (scale === 1) expect(used).toBe(`${gap}px`);
+    }
   } finally {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
   }
