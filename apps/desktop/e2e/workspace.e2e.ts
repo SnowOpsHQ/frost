@@ -269,6 +269,20 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
       };
     });
     expect(facts).toEqual({ cardInside: true, bodyScrolls: false, textCut: [], controlCut: false });
+    // Changes: its capture card's Screenshot row and Project picker stack, so the body doesn't scroll
+    // sideways and no screenshot kind (nor its label) or Project picker part is cut inside its own box
+    // (overlapping kinds were cut that way, inside a body that only just fitted).
+    await page.locator('[data-testid="seo-rail-item"][data-panel="changes"]').click();
+    await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'changes');
+    await expect(page.locator('.changes-shot-kinds .seo-segment')).toHaveCount(3);
+    const changes = await page.locator('.seo-body').evaluate((body) => {
+      const cut = (el: Element) => el.scrollWidth > el.clientWidth;
+      const name = (el: Element) => `${el.className.toString()}: ${(el.textContent ?? '').trim()}`;
+      const kinds = [...body.querySelectorAll('.changes-shot-kinds .seo-segment')].flatMap((el) => [el, ...el.querySelectorAll('*')]);
+      const picker = [...body.querySelectorAll('.changes-project, .changes-project > *')];
+      return { bodyScrolls: body.scrollWidth > body.clientWidth, kindsCut: kinds.filter(cut).map(name), pickerCut: picker.length === 0 ? ['missing'] : picker.filter(cut).map(name) };
+    });
+    expect(changes).toEqual({ bodyScrolls: false, kindsCut: [], pickerCut: [] });
     // The view still lines up with the card.
     await cardMatches(PLAIN);
     // The tight gaps apply exactly under the threshold, and not in a 776px (tiled) chrome.
