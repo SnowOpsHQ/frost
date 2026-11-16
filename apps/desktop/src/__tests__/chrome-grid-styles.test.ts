@@ -358,8 +358,15 @@ test('narrow-window-styles', () => {
   const queries = [...plain.matchAll(/@container\s+seo-panel\s*\(([^)]*)\)\s*\{([^{}]*\{[^{}]*\})*\s*\}/g)];
   expect(queries.map((q) => q[1]!.trim())).toEqual([`width < ${SEO_BODY_NARROW_PADDING.belowContentWidth}px`]);
   expect(queries[0]![0]).toMatch(new RegExp(`\\.seo-body\\s*\\{\\s*padding:\\s*var\\(${SEO_BODY_NARROW_PADDING.token}\\);\\s*\\}`));
-  // Under the panel's minimum the one-line parts wrap, in their stylesheet's seo-panel query, and only there.
+  // Under the panel's minimum the one-line parts wrap, in their stylesheet's seo-panel query, and only there,
+  // the query after every top-level rule of each selector it overrides (the later rule wins a tie).
   for (const wrap of NARROW_PANEL_WRAPS) {
+    const plain = read(wrap.stylesheet).replace(/\/\*[\s\S]*?\*\//g, '');
+    const query = plain.indexOf('@container seo-panel');
+    const escaped = wrap.selector.replace(/[.*+?^${}()|[\]\\]/g, (ch) => `\\${ch}`);
+    const own = new RegExp(`^${escaped}(?=\\s*[,{])`, 'gm');
+    const later = [...plain.matchAll(own)].filter((match) => match.index! > query);
+    expect(later.map((match) => match.index), `${wrap.stylesheet}: ${wrap.selector} after its narrow query`).toEqual([]);
     const blocks = containerBlocks(wrap.stylesheet, 'seo-panel');
     expect(blocks.map((block) => block.condition), wrap.stylesheet).toEqual([`width < ${SEO_BODY_NARROW_PADDING.belowContentWidth}px`]);
     const inside = blocks[0]!.rules.get(wrap.selector) ?? new Map<string, string>();
