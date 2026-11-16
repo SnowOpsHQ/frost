@@ -13,7 +13,7 @@
  * 2. values (done, this step): the legacy aliases point at their Signal tokens and the names in
  *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values; Geist and Geist Mono are bundled
  *    (`BUNDLED_FONTS`, declared in `FONTS_STYLESHEET`), applied per surface through the `--text-*`
- *    tokens from step 3 on (`--font-ui` stays the system stack);
+ *    tokens from step 3 on (`--font-ui`, the body's face, stayed the system stack until step 5);
  * 3. next, one PR per surface moves its rules onto Signal tokens and drops the retired names it used
  *    (the command palette first: its retired `--palette-*` names are `removed`, and it is the first
  *    surface to read the `--text-*` type tokens, so the first to draw Geist; then the new-tab view,
@@ -27,11 +27,14 @@
  *    Changes panel, Projects, Rankings, Inspector and the screenshot editor, which retired nothing either; then the panel stylesheets
  *    (Search Console, the AI cards, the Crawl and AI answers sheets, the location badge), which retired
  *    `--gsc-grid`);
- * 4. cleanup (done, this step): the legacy names no rule read any more are `removed`, retired names
+ * 4. cleanup (done): the legacy names no rule read any more are `removed`, retired names
  *    and aliases alike, and the aliases read only by their own converted surface (`--bg-chrome`,
  *    `--palette-bg`, `--jump-tile-bg`, `--agent-card`) gave their readers to their Signal tokens and
- *    went too; the last `--ok`-as-text rule moved to `stroke` (`GRAPHICS_ONLY_COLOURS`). What is
- *    left (`--font-ui`, three aliases the workspace's layout reads, the layout constants) is in
+ *    went too; the last `--ok`-as-text rule moved to `stroke` (`GRAPHICS_ONLY_COLOURS`);
+ * 5. base face (done, this step): `body` sets `--text-body` (`BASE_TYPE`), so no text draws in the
+ *    system stack; the texts that inherited it set their own type (`TEXT_TYPE_RULES`), and `--font-ui`
+ *    went, with the three aliases the workspace's sheets read (`--bg-page`, `--agent-bg`,
+ *    `--seo-rail-width`), whose readers took their Signal tokens. What the rollout leaves is in
  *    `design-tokens.feature.md`, Left for later.
  */
 
@@ -243,9 +246,8 @@ export interface LegacyTokenMigration {
 
 /**
  * Every custom property that was declared on `:root` before Signal: 89 names, each mapped. The ones
- * not `removed` are declared in `tokens.css`: since the cleanup, the self-aliases (Signal tokens), the
- * layout constants, `--seo-panel-width` (the sidebar's resize sets it on the panel), `--font-ui` and the
- * three aliases the workspace's layout still reads (`--bg-page`, `--agent-bg`, `--seo-rail-width`).
+ * not `removed` are declared in `tokens.css`: since the base face's PR, only the self-aliases (Signal
+ * tokens), the layout constants and `--seo-panel-width` (the sidebar's resize sets it on the panel).
  */
 export const LEGACY_TOKEN_MIGRATION = [
   // Chrome sizes: the chrome's surface PR sized its rows from --h-control, --h-field and --h-status and
@@ -258,7 +260,8 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--radius-control', kind: 'retire', signal: '--r-pill', was: '9px', note: '', removed: true },
   { legacy: '--radius-field', kind: 'retire', signal: '--r-pill', was: '11px', note: '--r-sm inside cards', removed: true },
   { legacy: '--seo-panel-width', kind: 'alias', signal: '--w-panel', was: '360px', note: '' },
-  { legacy: '--seo-rail-width', kind: 'alias', signal: '--w-rail', was: '48px', note: '' },
+  // The base face's PR moved the SEO rail's width to --w-rail (the last reader) and dropped --seo-rail-width.
+  { legacy: '--seo-rail-width', kind: 'alias', signal: '--w-rail', was: '48px', note: '', removed: true },
   // Layout constants: kept, no visual token
   { legacy: '--page-min-width', kind: 'alias', signal: null, was: '320px', note: 'layout constant: the name stays, no visual token' },
   { legacy: '--agent-panel-width', kind: 'alias', signal: null, was: '380px', note: 'layout constant: the name stays, no visual token' },
@@ -272,15 +275,15 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--palette-sheet-height', kind: 'alias', signal: null, was: '404px', note: 'layout constant: the name stays, no visual token; the palette band' },
   { legacy: '--palette-sheet-min-height', kind: 'alias', signal: null, was: '180px', note: 'layout constant: the name stays, no visual token' },
   { legacy: '--palette-page-min-visible', kind: 'alias', signal: null, was: '96px', note: 'layout constant: the name stays, no visual token' },
-  // Type and icons: --font-ui is still the body's face (design-tokens.feature.md, Left for later); --icon had no reader.
-  { legacy: '--font-ui', kind: 'retire', signal: '--text-*', was: 'system stack', note: 'Geist, system-ui; Geist Mono' },
+  // Type and icons: the base face's PR set the body in --text-body (BASE_TYPE) and dropped --font-ui; --icon had no reader.
+  { legacy: '--font-ui', kind: 'retire', signal: '--text-*', was: 'system stack', note: 'Geist, system-ui; Geist Mono', removed: true },
   { legacy: '--icon', kind: 'retire', signal: '--text-muted', was: 'icon colour', note: 'name now means size: --icon-size', removed: true },
   { legacy: '--panel-art', kind: 'retire', signal: '--text-faint', was: '#6b7a90', note: '', removed: true },
   // Surfaces and edges
   { legacy: '--bg-chrome', kind: 'alias', signal: '--bg-window', was: '#f3f5f8', note: '', removed: true },
   { legacy: '--bg-strip', kind: 'retire', signal: '--bg-window', was: '#e4e8ee', note: 'no separate strip', removed: true },
   { legacy: '--bg-chrome-edge', kind: 'retire', signal: '--divider', was: '#e2e6ec', note: '', removed: true },
-  { legacy: '--bg-page', kind: 'alias', signal: '--bg-surface', was: '#fbfcfd', note: 'the page card' },
+  { legacy: '--bg-page', kind: 'alias', signal: '--bg-surface', was: '#fbfcfd', note: 'the page card', removed: true },
   { legacy: '--bg-field', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '', removed: true },
   { legacy: '--bg-field-hover', kind: 'retire', signal: '--bg-hover', was: '#ffffff', note: 'over --bg-surface', removed: true },
   { legacy: '--border-field', kind: 'retire', signal: '--e-raised', was: '#d7dce4', note: 'field outlines (ring shadow, no border); --track for scrollbar thumbs; --divider or --e-ring for other borders', removed: true },
@@ -344,8 +347,8 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--gsc-axis', kind: 'alias', signal: '--text-faint', was: 'faint', note: '', removed: true },
   { legacy: '--settings-switch-off', kind: 'retire', signal: '--switch-off', was: '#c9cfd9', note: '', removed: true },
   // Agent panel (--agent-*): its surface PR moved every rule onto Signal and dropped the retired names; the
-  // cleanup moved the cards to --bg-surface (--agent-card); --agent-bg is the workspace's agent sheet's fill.
-  { legacy: '--agent-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '' },
+  // cleanup moved the cards to --bg-surface (--agent-card), the base face's PR the agent sheet to --bg-sheet (--agent-bg).
+  { legacy: '--agent-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '', removed: true },
   { legacy: '--agent-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '', removed: true },
   { legacy: '--agent-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '--divider for rules', removed: true },
   { legacy: '--agent-user', kind: 'retire', signal: '--accent-soft', was: '#e6eefc', note: 'your messages', removed: true },
@@ -2673,9 +2676,8 @@ export const TAB_STRIP = {
 /**
  * The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares the bundled
  * fonts: only `@font-face` rules, one per `BUNDLED_FONTS` entry. `main.tsx` imports it right after
- * `TOKENS_STYLESHEET`. It applies no font itself: a surface draws Geist once its rules read the
- * `--text-*` type tokens (the command palette first). `--font-ui`, the body's face, is still the system
- * stack: text that sets no font of its own draws in it (design-tokens.feature.md, Left for later).
+ * `TOKENS_STYLESHEET`. It applies no font itself: text draws Geist through the `--text-*` type tokens,
+ * since the base face's PR the body's too (`BASE_TYPE`), so Geist 400 is drawn from launch.
  */
 export const FONTS_STYLESHEET = 'fonts.css';
 
@@ -2724,3 +2726,59 @@ export const BUNDLED_FONTS = [
   { family: 'Geist', weight: 600, file: 'geist-sans/Geist-SemiBold.woff2' },
   { family: 'Geist Mono', weight: 400, file: 'geist-mono/GeistMono-Regular.woff2' },
 ] as const satisfies readonly BundledFont[];
+
+// ---- The base face (the body, and the text that inherited it) ----
+
+/**
+ * The app's base type: in `stylesheet`, `selector`'s `font` is exactly `var(<font>)`, the canvas's base
+ * (every board of the design canvas sets Geist 13px/1.45, `--text-body`, on its root, and its buttons
+ * `font: inherit`). So text that sets no font of its own draws Geist at the body size, never the system
+ * stack (`--font-ui`, `removed`). No other rule of a renderer stylesheet sets a font on `html`, `:root` or
+ * `body`. Form controls draw the font of the element around them only where a rule says so (Chromium's
+ * own stylesheet gives them a system font): the `inherit` elements take `font: inherit` in one rule
+ * (`button, input`, as before), and a `select` or a `textarea` sets its own type through its class.
+ */
+export const BASE_TYPE = { stylesheet: 'styles.css', selector: 'body', font: '--text-body', inherit: ['button', 'input'] } as const;
+
+/**
+ * Text that drew in the body's face because nothing around it set a font: since the base face it sets its
+ * own type, a `--text-*` token, rather than lean on `BASE_TYPE`. For each entry, in light and dark, the
+ * cascade over `element` (each selector one of the stylesheets') in `stylesheet` (and each of its `loadsBefore`, read after it) resolves `font`
+ * to `var(<font>)`, with a `font` shorthand resetting the weight and style set before it; then
+ * `font-weight` to `weight` and `font-style` to `style` when the entry names them (a compound class's
+ * italic or emphasis, which the shorthand would otherwise drop), and to nothing set when it doesn't.
+ *
+ * The SEO panels' wrapper (`.seo`) and `.panel-button` set no font, so before the base face six texts in
+ * the visual baseline drew the system stack: the `.panel-button` labels Compliance's "Run accessibility
+ * check", JavaScript's "Fetch again", SERP's "Check for selector updates", Visibility's "Enable on-device
+ * intent" and "Classify", and JavaScript's "Not set". A `.panel-button` is the app's secondary button
+ * (the canvas draws its label as body text at `TEXT_BODY_EMPHASIS_WEIGHT`), so it sets that itself in every
+ * panel it sits in; a panel that wants another face for its button says so in a rule naming both classes
+ * (`.panel-button.x`), which wins whatever the order of the stylesheets, as its colours do. A missing
+ * value (`.seo-missing`, a modifier: its colour and italic) takes the type of the value it stands in
+ * for: in a JavaScript field that is `.seo-js-value`'s `--text-small`.
+ */
+export interface TextTypeRule extends LoadsBefore {
+  readonly stylesheet: string;
+  readonly element: readonly string[];
+  readonly font: TokenName;
+  readonly weight?: string;
+  readonly style?: 'italic';
+  readonly why: string;
+}
+
+const SECONDARY_BUTTON = "the app's secondary button: its label body text at the emphasis weight (the canvas's buttons), in every panel";
+
+export const TEXT_TYPE_RULES = [
+  { stylesheet: 'styles.css', element: ['.panel-button'], font: '--text-body', weight: '500', why: `${SECONDARY_BUTTON}: SERP's "Check for selector updates", Visibility's "Enable on-device intent" and "Classify" (system text before)` },
+  { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button-primary'], font: '--text-body', weight: '500', why: `${SECONDARY_BUTTON}, primary: Compliance's "Run accessibility check" (system text before; its .seo-a11y-run sets no type)` },
+  { stylesheet: 'styles.css', element: ['.panel-button', '.seo-js-refetch'], font: '--text-body', weight: '500', why: `JavaScript's "Fetch again" (system text before)` },
+  { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button-primary', '.seo-hint-button'], font: '--text-body', weight: '500', why: "the SEO sidebar's Retry" },
+  // The panel stylesheets' buttons: their own rules come first, styles.css after (loadsBefore).
+  { stylesheet: 'ai-answers.css', loadsBefore: ['styles.css'], element: ['.panel-button', '.panel-button.ai-answers-danger'], font: '--text-body', weight: '500', why: "AI answers' Delete" },
+  { stylesheet: 'crawl.css', loadsBefore: ['styles.css'], element: ['.panel-button', '.panel-button.crawl-danger'], font: '--text-body', weight: '500', why: "the crawl sheet's Delete" },
+  { stylesheet: 'gsc-panel.css', loadsBefore: ['styles.css'], element: ['.panel-button', '.panel-button-primary', '.gsc-notice-button'], font: '--text-body', weight: '500', why: "Search Console's notice button" },
+  { stylesheet: 'rankings.css', loadsBefore: ['styles.css'], element: ['.panel-button', '.panel-button-primary', '.projects-bulk-form > .panel-button'], font: '--text-body', weight: '500', why: "Bulk add's Add" },
+  // JavaScript's "Not set": a field's missing value, the type of the value beside it (.seo-js-value), italic.
+  { stylesheet: 'styles.css', element: ['.seo-missing', '.seo-js-field .seo-missing'], font: '--text-small', style: 'italic', why: `JavaScript's "Not set" (system text before), where a field's value is --text-small` },
+] as const satisfies readonly TextTypeRule[];
