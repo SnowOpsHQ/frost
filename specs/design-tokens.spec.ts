@@ -10,7 +10,7 @@
  * retired name and a layout constant keep their pre-Signal values until a surface PR drops the
  * retired name (`removed`), and an alias goes once no rule reads it (the cleanup). The rollout:
  * 1. foundation (done): one token source and the full Signal vocabulary, no pixel changed;
- * 2. values (done, this step): the legacy aliases point at their Signal tokens and the names in
+ * 2. values (done): the legacy aliases point at their Signal tokens and the names in
  *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values; Geist and Geist Mono are bundled
  *    (`BUNDLED_FONTS`, declared in `FONTS_STYLESHEET`), applied per surface through the `--text-*`
  *    tokens from step 3 on (`--font-ui`, the body's face, stayed the system stack until step 5);
@@ -2764,7 +2764,21 @@ export const BASE_TYPE = { stylesheet: 'styles.css', selector: 'body', font: '--
  * Each takes the type of the text it holds, so its lines are that text's: Page Speed's "Since the page
  * loaded" header (its caps eyebrow), Content's result preview description row (its date and description,
  * `--text-small`: three lines are 50.4px, where they were 54.6) and Help's key hints (`--text-small`, as
- * its "or"; the hints' own boxes are taller, so nothing moves).
+ * its "or"; the hints' own boxes are taller, so nothing moves). Review found a fourth by rendering a state
+ * no capture shows: JavaScript's "Served HTML unavailable" card, whose first line is its inline eyebrow.
+ * There the eyebrow takes a line of its own (`display`: `block`), so the line is the eyebrow's `--text-micro`
+ * (14.3px), as in the other verdict cards, whose eyebrows sit in a flex head. Not the card's `font`: a
+ * `--text-micro` block needs its tracking beside it, which its summary, facts and button would inherit.
+ * Only that state has an eyebrow directly in the card (`.seo-js-state > .seo-eyebrow`).
+ *
+ * `.panel-button` used to inherit its container's type, so a panel whose container set another size drew
+ * its buttons in that: Rankings' API-check notice (`.rankings-notice`, `--text-small`), whose Send and
+ * Cancel were 12px at 500. They are 13px now, as AI answers' Send and Cancel already were: a secondary
+ * button is one size everywhere, and no exception rule keeps the old size.
+ *
+ * What the check cannot see: `resolveOnElement` reads only the rules whose selector names the element, so a
+ * type an element used to inherit from its container is invisible to it. The changes inheritance made (the
+ * Rankings notice's buttons, the JavaScript card) were found by rendering, not by `text-type-rules-resolve`.
  */
 export interface TextTypeRule extends LoadsBefore {
   readonly stylesheet: string;
@@ -2772,13 +2786,16 @@ export interface TextTypeRule extends LoadsBefore {
   readonly font: TokenName;
   readonly weight?: string;
   readonly style?: 'italic';
+  /** A `display` the element must also resolve to (an inline label given a line of its own). */
+  readonly display?: 'block';
   readonly why: string;
 }
 
 const SECONDARY_BUTTON = "the app's secondary button: its label body text at the emphasis weight (the canvas's buttons), in every panel";
 
 export const TEXT_TYPE_RULES = [
-  { stylesheet: 'styles.css', element: ['.panel-button'], font: '--text-body', weight: '500', why: `${SECONDARY_BUTTON}: SERP's "Check for selector updates", Visibility's "Enable on-device intent" and "Classify" (system text before)` },
+  { stylesheet: 'styles.css', element: ['.panel-button'], font: '--text-body', weight: '500', why: `${SECONDARY_BUTTON}: SERP's "Check for selector updates", Visibility's "Enable on-device intent" and "Classify" (system text before); in every other panel it inherited --text-body at 500 already, but Rankings' API-check notice, where it inherited the notice's --text-small (12px)` },
+  { stylesheet: 'rankings.css', loadsBefore: ['styles.css'], element: ['.panel-button'], font: '--text-body', weight: '500', why: "Rankings' API-check notice's Send and Cancel: 13px now (12px before, from .rankings-notice's --text-small), as AI answers' Send and Cancel" },
   { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button-primary'], font: '--text-body', weight: '500', why: `${SECONDARY_BUTTON}, primary: Compliance's "Run accessibility check" (system text before; its .seo-a11y-run sets no type)` },
   { stylesheet: 'styles.css', element: ['.panel-button', '.seo-js-refetch'], font: '--text-body', weight: '500', why: `JavaScript's "Fetch again" (system text before)` },
   { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button-primary', '.seo-hint-button'], font: '--text-body', weight: '500', why: "the SEO sidebar's Retry" },
@@ -2791,6 +2808,7 @@ export const TEXT_TYPE_RULES = [
   { stylesheet: 'styles.css', element: ['.seo-speed-since'], font: '--text-caps', why: 'Page Speed\'s "Since the page loaded" header: its eyebrow\'s type' },
   { stylesheet: 'styles.css', element: ['.seo-serp-description-row'], font: '--text-small', why: "Content's result preview: the description row, its date's and description's type" },
   { stylesheet: 'help.css', element: ['.shortcuts-keys'], font: '--text-small', why: 'Help\'s keyboard shortcuts: a shortcut\'s key hints, the type of their "or"' },
+  { stylesheet: 'styles.css', element: ['.seo-eyebrow', '.seo-js-state > .seo-eyebrow'], font: '--text-micro', display: 'block', why: 'JavaScript\'s "Served HTML unavailable" card: its eyebrow, the card\'s first line, on a line of its own' },
   // JavaScript's "Not set": a field's missing value, the type of the value beside it (.seo-js-value), italic.
   { stylesheet: 'styles.css', element: ['.seo-missing', '.seo-js-field .seo-missing'], font: '--text-small', style: 'italic', why: `JavaScript's "Not set" (system text before), where a field's value is --text-small` },
 ] as const satisfies readonly TextTypeRule[];

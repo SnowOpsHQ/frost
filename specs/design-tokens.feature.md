@@ -126,7 +126,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   JavaScript's "Not set". `.panel-button`, the app's secondary button, sets `font: var(--text-body)` and
   keeps its weight 500 (the canvas's buttons: body text at the emphasis weight), in every panel it sits
   in; a panel that wants another face for it names both classes (`.panel-button.x`), which wins whatever
-  the order of the stylesheets. A missing value (`.seo-missing`, a modifier: `--text-faint`, italic)
+  the order of the stylesheets. Every other panel's buttons inherited `--text-body` at 500 already, but
+  one: Rankings' API-check notice (`.rankings-notice`, `--text-small`) drew its Send and Cancel at 12px;
+  they are 13px now, as AI answers' Send and Cancel already were (a secondary button is one size
+  everywhere; no exception rule). No capture shows that notice. A missing value (`.seo-missing`, a modifier: `--text-faint`, italic)
   takes the type of the value it stands in for: in a JavaScript field `.seo-js-value`'s `--text-small`
   (`.seo-js-field .seo-missing`, its italic restored after the shorthand). Comparing the computed type
   and box of every element of every capture, before and after, found three blocks whose text sets its own
@@ -134,7 +137,14 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   "Since the page loaded" header, Content's result preview description row and Help's key hints. Each
   grew 0.65px a line; each now takes the type of the text it holds (`--text-caps`, `--text-small`,
   `--text-small`), so the header is 15.95px (it was 18.2) and the description's lines 16.8px (18.2), and
-  the key hints, whose own boxes are taller, don't move. The three aliases the
+  the key hints, whose own boxes are taller, don't move. Review found a fourth by rendering, in no capture:
+  JavaScript's "Served HTML unavailable" card (`.seo-js-state[data-verdict='unavailable']`), a plain block
+  whose first line is its inline eyebrow; that eyebrow takes a line of its own (`.seo-js-state >
+  .seo-eyebrow { display: block }`), so the line is the eyebrow's 14.3px, as the other verdict cards'
+  eyebrows are (in a flex head). Not a `font` on the card: `--text-micro` needs its tracking beside it,
+  and the card's summary, facts and button would inherit that. The cascade check reads only rules that name an element, so a
+  type an element inherited from its container is invisible to it: the notice and the card were found by
+  rendering every DOM state the renderer's component tests produce under main's CSS and the branch's. The three aliases the
   workspace's sheets read went in the same PR, with no pixel changed: the page card, the new-tab view,
   the error panels and Help's frame (`.page-area`, `.start`, `.panel`, `.panel-card`'s badge tint,
   `.help-sheet`) read `--bg-surface` (`--bg-page`), the agent panel's sheet (`.agent-main`) `--bg-sheet`
@@ -1137,14 +1147,18 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `stroke`, a border and a custom property only a `stroke` reads are not.
 - **Scenario: body-sets-the-base-type** — `BASE_TYPE.font` is a type token; `body`'s rule in `styles.css`
   sets exactly `font: var(--text-body)` and no other font longhand or letter-spacing; it is the only rule
-  in any renderer stylesheet setting a font on `:root`, `html` or `body`; `button` and `input` each sit in
+  in any renderer stylesheet setting a font on `:root`, `html` or `body` (a selector whose subject is one of
+  them or `*`, also inside `:where()` or `:is()`, never a pseudo-element; fixtures: `:where(body)` with a
+  font and with a line height, `*` with a size, `:is(html)` and `body` in a list are caught; `body .x`, `.body`,
+  `*::before`, `* .x` and a rule with no font are not); `button` and `input` each sit in
   a rule setting `font: inherit`; and no stylesheet but `fonts.css` sets `font-family` or a `font` that
   is not one `var(--text-*)` or `inherit` (so nothing names the system stack).
 - **Scenario: text-type-rules-resolve** — for each `TEXT_TYPE_RULES` entry, its `font` is a type token and
   its `weight` one `BUNDLED_FONTS` has for that token's family; each selector it names is one of its
   stylesheets'; in light and dark the cascade over its `element` (its stylesheet, then each
   `loadsBefore`) resolves `font` to `var(<font>)`, and `font-weight` and `font-style` to the entry's
-  `weight` and `style`, or to nothing set when it names none; a `font` shorthand resets the weight and
+  `weight` and `style`, or to nothing set when it names none, and `display` to the entry's `display` when it
+  names one; a `font` shorthand resets the weight and
   style set before it (the resolver's fixtures: a shorthand after a weight and an italic drops both; a
   later weight sets it again; `.panel-button.x`'s font wins over `.panel-button`'s from a stylesheet
   loaded after it, and drops its weight). The six texts are each named in an entry.

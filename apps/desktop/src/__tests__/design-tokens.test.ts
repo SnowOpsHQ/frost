@@ -783,7 +783,59 @@ function resolvedOrNull(css: string, element: readonly string[], property: strin
   }
 }
 
+/** A selector's subject: its last compound (after its last combinator outside parentheses). */
+function subjectCompound(selector: string): string {
+  let depth = 0;
+  let start = 0;
+  const text = selector.trim();
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
+    else if (depth === 0 && /[\s>+~]/.test(ch)) start = i + 1;
+  }
+  return text.slice(start);
+}
+
+/**
+ * Whether a selector can match the document's root or body itself: its subject is `:root`, `html`, `body` or
+ * the universal selector (which matches the body too), each with any classes, attributes or pseudo-classes
+ * after it, or a `:where()` or `:is()` holding one; never a pseudo-element.
+ */
+function setsRootOrBody(selector: string): boolean {
+  const subject = subjectCompound(selector);
+  if (subject.includes('::')) return false;
+  const wrapped = /^:(?:where|is)\((.*)\)/.exec(subject);
+  if (wrapped) return splitSelectors(wrapped[1]!).some(setsRootOrBody);
+  return /^(?:\*|:root|html|body)(?![\w-])/.test(subject);
+}
+
+/** The declarations of `css` that set a font (shorthand or longhand) on a selector that can match the root or body. */
+const rootFontDeclarations = (css: string) =>
+  parse(css)
+    .declarations.filter((d) => (d.property === 'font' || FONT_LONGHANDS.includes(d.property)) && splitSelectors(d.context.at(-1) ?? '').some(setsRootOrBody))
+    .map((d) => `${d.context.join(' > ')} { ${d.property}: ${d.value} }`);
+
 test('body-sets-the-base-type', () => {
+  // The matcher: the root and body by name, inside `:where()` or `:is()`, and the universal selector (which sets
+  // the body's own font too); not a descendant of them, a class, or a pseudo-element.
+  const caught: Record<string, string> = {
+    ':where(body) font': ':where(body) { font: var(--text-small); }',
+    ':where(body) line-height': ':where(body) { line-height: 2; }',
+    'the universal selector': '* { font-size: 15px; }',
+    ':is(html) font-weight': ':is(html) { font-weight: 600; }',
+    'body in a list': '.x, body { font-style: italic; }',
+  };
+  for (const [label, css] of Object.entries(caught)) expect.soft(rootFontDeclarations(css), label).not.toEqual([]);
+  const passed: Record<string, string> = {
+    'a descendant of body': 'body .x { font: var(--text-small); }',
+    'a class named body': '.body { font: var(--text-small); }',
+    'a pseudo-element of everything': '*::before { font-size: 15px; }',
+    'a descendant of everything': '* .x { font-weight: 600; }',
+    'no font': ':where(body) { color: red; }',
+  };
+  for (const [label, css] of Object.entries(passed)) expect.soft(rootFontDeclarations(css), label).toEqual([]);
+
   const typeTokens = new Set<string>(SIGNAL_TOKENS.type.map((token) => token.name));
   expect(typeTokens.has(BASE_TYPE.font), BASE_TYPE.font).toBe(true);
   const css = read(BASE_TYPE.stylesheet);
@@ -792,12 +844,7 @@ test('body-sets-the-base-type', () => {
   const type = body.filter((d) => d.property === 'font' || FONT_LONGHANDS.includes(d.property) || d.property === 'letter-spacing');
   expect(type.map((d) => `${d.property}: ${d.value}`)).toEqual([`font: var(${BASE_TYPE.font})`]);
   // No other rule of any renderer stylesheet sets a font on the document's root or body.
-  const rootish = /^(?::root|html|body)(?![\w-])/;
-  const others = STYLESHEETS.flatMap((file) =>
-    parse(read(file))
-      .declarations.filter((d) => (d.property === 'font' || FONT_LONGHANDS.includes(d.property)) && splitSelectors(d.context.at(-1) ?? '').some((s) => rootish.test(withoutWhere(s).trim())))
-      .map((d) => `${file}: ${d.context.join(' > ')} { ${d.property}: ${d.value} }`),
-  );
+  const others = STYLESHEETS.flatMap((file) => rootFontDeclarations(read(file)).map((d) => `${file}: ${d}`));
   expect(others).toEqual([`${BASE_TYPE.stylesheet}: ${BASE_TYPE.selector} { font: var(${BASE_TYPE.font}) }`]);
   // Buttons and fields take the font around them (Chromium's own stylesheet would give them a system font).
   const inherit = parse(css).declarations.filter((d) => d.context.length === 1 && d.property === 'font' && d.value === 'inherit');
@@ -840,6 +887,7 @@ test('text-type-rules-resolve', () => {
       expect(resolveOnElement(css, rule.element, 'font', theme), `${label}: font (${theme})`).toBe(`var(${rule.font})`);
       expect(resolvedOrNull(css, rule.element, 'font-weight', theme), `${label}: font-weight (${theme})`).toBe(rule.weight ?? null);
       expect(resolvedOrNull(css, rule.element, 'font-style', theme), `${label}: font-style (${theme})`).toBe(rule.style ?? null);
+      if (rule.display !== undefined) expect(resolvedOrNull(css, rule.element, 'display', theme), `${label}: display (${theme})`).toBe(rule.display);
     }
   }
   // The six texts the visual baseline drew in the system stack are each covered.
