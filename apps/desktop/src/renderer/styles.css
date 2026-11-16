@@ -1178,14 +1178,6 @@ input {
   cursor: auto;
 }
 
-/* Under the panel's minimum (SIDEBAR_PANEL_WIDTH_RANGE.min: a 298px content box inside its 1px border),
-   only in a window too narrow for it, the body gives its content the padding back
-   (specs/workspace-layout.feature.md, A narrow window). */
-@container seo-panel (width < 298px) {
-  .seo-body {
-    padding: var(--space-1);
-  }
-}
 
 .seo-foot {
   flex: none;
@@ -10914,5 +10906,35 @@ input {
   .render-bar,
   .update-bar {
     margin: 0 var(--space-1) var(--space-1);
+  }
+}
+
+/* ---- SEO panel: under its minimum -------------------------------------------------------- */
+
+/* Under the panel's minimum (SIDEBAR_PANEL_WIDTH_RANGE.min: a 298px content box inside its 1px border),
+   only in a window too narrow for it, the body gives its content the padding back
+   (specs/workspace-layout.feature.md, A narrow window). Last in the file: at the same weight it must
+   come after the rules it overrides. */
+@container seo-panel (width < 298px) {
+  .seo-body {
+    padding: var(--space-1);
+  }
+
+  /* What keeps everything on one line wraps (NARROW_PANEL_WRAPS): the score card's ring above its
+     words, a section head's badge under its title, a long toggle or action label onto a second line. */
+  .seo-score-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .seo-section-head {
+    flex-wrap: wrap;
+  }
+
+  .seo-toggle,
+  .seo-action {
+    height: auto;
+    min-height: var(--h-chip);
+    white-space: normal;
   }
 }
