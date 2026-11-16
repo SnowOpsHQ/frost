@@ -12,7 +12,7 @@ import {
   type PanelStatus,
   type SeoPanelId,
 } from '@app/specs/seo-sidebar.spec';
-import { workspaceRowChrome } from '@app/specs/workspace-layout.spec';
+import { WORKSPACE_GAP, workspaceGap, workspaceRowChrome } from '@app/specs/workspace-layout.spec';
 
 // The workspace row's resizable panes and the SEO rail's pins (Phase 11 Task 10, Decision 12; specs
 // `seo-sidebar.spec.ts`, `agent-panel.spec.ts`; acceptance `seo-sidebar.feature.md`, Resize and pins).
@@ -58,6 +58,8 @@ export interface PaneInput {
 export interface LayoutInput {
   /** The workspace row's width in CSS px; `0` before it was measured. */
   readonly workspace: number;
+  /** The workspace's gap and inset there (`workspaceGap` of the chrome's width); `WORKSPACE_GAP` when left out. */
+  readonly gap?: number;
   readonly sidebar: PaneInput;
   readonly agent: PaneInput;
 }
@@ -72,7 +74,7 @@ export interface PaneWidths {
  * agent's rail and the gaps between the row's sheets (`workspaceRowChrome`, specs/workspace-layout.spec.ts).
  */
 export function roomForPanes(input: LayoutInput): number {
-  return input.workspace - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: input.sidebar.open, agent: input.agent.open });
+  return input.workspace - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: input.sidebar.open, agent: input.agent.open }, input.gap ?? WORKSPACE_GAP.px);
 }
 
 /**
@@ -225,7 +227,7 @@ export function createWorkspaceLayout(read: (key: string) => string | null = rea
     }));
   const update = (next: LayoutInput): void => {
     const was = current().input;
-    if (next.workspace === was.workspace && (['sidebar', 'agent'] as const).every((p) => next[p].open === was[p].open && next[p].preferred === was[p].preferred)) return;
+    if (next.workspace === was.workspace && next.gap === was.gap && (['sidebar', 'agent'] as const).every((p) => next[p].open === was[p].open && next[p].preferred === was[p].preferred)) return;
     snapshot = snapshotOf(next);
     for (const listener of listeners) listener();
   };
@@ -235,9 +237,10 @@ export function createWorkspaceLayout(read: (key: string) => string | null = rea
       return () => listeners.delete(listener);
     },
     snapshot: current,
-    setWorkspace(width: number): void {
+    /** The row's width and, when known, the workspace's gap there (`workspaceGap` of the chrome's width). */
+    setWorkspace(width: number, gap?: number): void {
       // Whole CSS px, rounded down: on a scaled display the row can measure a fraction over, and the page keeps its minimum.
-      if (Number.isFinite(width) && width >= 0) update({ ...current().input, workspace: Math.floor(width) });
+      if (Number.isFinite(width) && width >= 0) update({ ...current().input, workspace: Math.floor(width), ...(gap === undefined ? {} : { gap }) });
     },
     setOpen(pane: PaneId, open: boolean): void {
       const input = current().input;
@@ -292,7 +295,9 @@ export function usePaneLayout(pane: PaneId, open: boolean, element: RefObject<HT
   useLayoutEffect(() => {
     const row = element.current?.parentElement;
     if (!row) return;
-    const measure = () => layout.setWorkspace(row.getBoundingClientRect().width);
+    // The row's width, and the gap the workspace's own width gives (the chrome's: specs/workspace-layout.spec.ts).
+    const chrome = row.closest('.chrome');
+    const measure = () => layout.setWorkspace(row.getBoundingClientRect().width, chrome ? workspaceGap(chrome.getBoundingClientRect().width) : undefined);
     measure();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(measure);

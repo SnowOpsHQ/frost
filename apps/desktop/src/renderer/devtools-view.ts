@@ -43,10 +43,10 @@ export function tabFromStorage(value: string | null): DevtoolsTabId {
 /**
  * The column the drawer and the page share: its parent's (the workspace stack's) height less the
  * gap the drawer's sheet stands under the workspace row (specs/workspace-layout.spec.ts,
- * `WORKSPACE_GAP`); 0 before layout.
+ * `WORKSPACE_GAP`, or `gap`: the tight one in a narrow workspace); 0 before layout.
  */
-export function drawerColumn(parentHeight: number): number {
-  return Math.max(0, parentHeight - WORKSPACE_GAP.px);
+export function drawerColumn(parentHeight: number, gap: number = WORKSPACE_GAP.px): number {
+  return Math.max(0, parentHeight - gap);
 }
 
 /** The tallest the drawer may be in a `column` (never below `min`); `null` before layout (a `column` of 0 or less). */

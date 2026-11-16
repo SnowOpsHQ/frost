@@ -65,6 +65,9 @@ input {
      the page area, so the tab's view is laid out clear of them all. */
   grid-template-rows: var(--h-chrome) auto auto auto auto minmax(0, 1fr) var(--h-status);
   height: 100%;
+  /* The workspace's own width (its stack spans the one column): under TIGHT_WORKSPACE_BELOW the
+     workspace's gaps and inset are --space-1 (end of this file; specs/workspace-layout.feature.md). */
+  container: chrome / inline-size;
 }
 
 /* The last two rows are pinned, counted from the end: if a slot above them ever leaves the layout
@@ -10867,4 +10870,45 @@ input {
   border-radius: var(--r-lg);
   box-shadow: var(--e-ring);
   outline: 1px solid transparent;
+}
+
+/* ---- Workspace: tight gaps in a narrow window ----------------------------------------------- */
+
+/* specs/workspace-layout.feature.md, A narrow window: under TIGHT_WORKSPACE_BELOW (748px of workspace,
+   where --space-3 gaps would leave the SEO sheet under its minimum with the agent collapsed), every
+   gap and inset of the workspace is --space-1 together, the bands' too, so their edges stay on the
+   sheets' (the two gaps inside the page column, the palette's and a Projects run's, cost no width
+   and stay). The separators keep their 8px hit area: offset by the 4px gap, they also cover the pane's
+   own 4px edge beside it (never the page card), their line in the middle of the gap. The agent's
+   stylesheet repeats this query for its separator. Last in the file, after the rules it overrides. */
+@container chrome (width < 748px) {
+  .workspace-stack {
+    padding: 0 var(--space-1);
+  }
+
+  .workspace,
+  .seo {
+    gap: var(--space-1);
+  }
+
+  .seo-separator {
+    right: calc(-1 * var(--space-1));
+  }
+
+  .seo-separator::after {
+    left: auto;
+    right: calc(var(--space-1) / 2 - 1px);
+  }
+
+  .devtools {
+    max-height: calc(100% - var(--devtools-page-min) - var(--space-1));
+    margin-top: var(--space-1);
+  }
+
+  .prompt-bar,
+  .find-bar,
+  .render-bar,
+  .update-bar {
+    margin: 0 var(--space-1) var(--space-1);
+  }
 }

@@ -30,6 +30,19 @@
   left: calc(-1 * var(--space-3));
 }
 
+/* Tight gaps under TIGHT_WORKSPACE_BELOW (the chrome's query in styles.css): offset by the 4px gap, the
+   8px separator also covers the panel's own 4px edge; its line stays in the middle of the gap (this
+   sheet loads before styles.css, hence the second class). */
+@container chrome (width < 748px) {
+  .agent-separator {
+    left: calc(-1 * var(--space-1));
+  }
+
+  .pane-separator.agent-separator::after {
+    left: calc(var(--space-1) / 2 - 1px);
+  }
+}
+
 /* Collapsed: the rail and its toggle (1px less padding inside the border). It doesn't clip: its one
    toggle never reaches the corners, and the toggle's focus ring reaches past the rail's content box. */
 .agent-rail {
