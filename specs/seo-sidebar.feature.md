@@ -237,11 +237,17 @@ Spec: `SIDEBAR_PANEL_WIDTH_RANGE`, `SIDEBAR_WIDTH_STORAGE_KEY`, `SIDEBAR_PINS_ST
   unpinned panels; none when none of them has a status.
 - **Scenario: jump-to-unpinned-panel-shows-it** — the open unpinned panel is on the rail in its
   `SEO_PANELS` place; once another panel opens (or the sidebar collapses) it is gone again.
-- **Scenario: drag-resize-moves-page-view** (e2e `seo-sidebar.e2e.ts`) — from the panel's minimum
-  (Home), dragging the separator by 100 px moves the tab's view's left edge by 100 px and narrows it
-  by as much (the width is stored); (from the minimum, so the view's edge never sweeps under the
-  Windows runner's parked OS cursor near the screen's centre: a real mouse move with no button down
-  reaching the chrome ends a drag, as a release over the tab's view must);
+- **Scenario: drag-resize-moves-page-view** (e2e `seo-sidebar.e2e.ts`) — from the default width
+  and again from the panel's minimum (Home), dragging the separator by 100 px moves the tab's view's
+  left edge by 100 px and narrows it by as much (the width is stored). The drag from the default
+  width is skipped on Windows, for a cause a CI probe confirmed (run 43893592708): the runner parks
+  the OS cursor at the screen's centre, (512, 384), which is (504, 353) in the chrome; when the tab
+  view's left edge, moving with the drag, crosses it (432 → 532), Windows gives the chrome a
+  `lostpointercapture` and a trusted `pointermove` with no button down at exactly that point, and the
+  drag ends there (at 435 or 448 of 460), as a release over the tab's view must end it. With the
+  cursor moved to (2, 2) first, the same drag reaches 460 three times out of three; from the minimum
+  the edge moves 372 → 472 and never crosses it. A user's own drag holds the button down, so the app
+  is unaffected;
   ArrowLeft steps it back; in a narrower chrome End stops where the page keeps its minimum and a drag
   takes no more; Home goes to the minimum; that width survives a relaunch on the same profile.
 - **Scenario: unpin-into-more** (e2e `seo-sidebar.e2e.ts`) — unpinning the open Links panel keeps it

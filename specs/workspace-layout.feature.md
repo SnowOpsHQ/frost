@@ -131,6 +131,14 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   gaps. The canvas has no collapsed agent rail, DevTools drawer, render-profile frame, Projects run
   band or narrow window; those follow the rules above.
 
+## Known differences
+- **`devtools-drawer-light`'s tab text is greyscale** where the base's had subpixel (LCD)
+  antialiasing; dark keeps it. A CI probe (run 43893592708) in that capture found no layer for the
+  tab in either theme, light greyscale both before and after dark (so not capture timing), and 16
+  other layers composited for overlap in that state (the rail's scroller, the SEO sheet, the page
+  card, the agent rail, the drawer, the separator, the palette's status). The cause wasn't found; the
+  baseline keeps the render.
+
 ## Scenarios
 - **Scenario: workspace-layout-values** (`apps/desktop/src/__tests__/chrome-grid-styles.test.ts`) —
   `WORKSPACE_GAP` and `SHEET_RADIUS` are their tokens' values in `SIGNAL_TOKENS`;
