@@ -24,7 +24,9 @@
  *    heights, `--bg-strip` and `--bg-tab-hover`, then merged the tab row and the toolbar into one
  *    `--h-chrome` row; then the SEO panels' interiors, Overview and On-Page first, which retired
  *    nothing: every retired name they read, later panels still read; and so on, panel by panel, to the
- *    Changes panel, Projects, Rankings, Inspector and the screenshot editor, which retired nothing either).
+ *    Changes panel, Projects, Rankings, Inspector and the screenshot editor, which retired nothing either; then the panel stylesheets
+ *    (Search Console, the AI cards, the Crawl and AI answers sheets, the location badge), which retired
+ *    `--gsc-grid`).
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -320,7 +322,7 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--jump-tile-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '', removed: true },
   { legacy: '--jump-monogram-bg', kind: 'retire', signal: '--accent-soft', was: '.12 accent', note: '', removed: true },
   { legacy: '--gsc-line', kind: 'alias', signal: '--accent', was: 'accent', note: '' },
-  { legacy: '--gsc-grid', kind: 'retire', signal: '--divider', was: '#e7ebf1', note: '' },
+  { legacy: '--gsc-grid', kind: 'retire', signal: '--divider', was: '#e7ebf1', note: 'the chart\'s grid lines', removed: true },
   { legacy: '--gsc-axis', kind: 'alias', signal: '--text-faint', was: 'faint', note: '' },
   { legacy: '--settings-switch-off', kind: 'retire', signal: '--switch-off', was: '#c9cfd9', note: '', removed: true },
   // Agent panel (--agent-*): its surface PR moved every rule onto Signal and dropped the retired names.
@@ -401,13 +403,26 @@ export const FORCED_COLOURS_SYSTEM_COLOURS = [
 ] as const;
 
 /**
+ * The stylesheets, after an entry's `stylesheet`, whose rules its element also matches. A feature
+ * stylesheet (`gsc-panel.css`, `crawl.css`, …) is imported by its component, so it loads before
+ * `styles.css` (`main.tsx` imports `App` before it): a shared control's rule there (`.panel-button`,
+ * `.seo-chip-button`, `.seo-select`) wins a tie of specificity. The guards that resolve a cascade
+ * (`FORCED_COLOURS_*`, `TEXT_COLOUR_RULES`, `FOCUS_RING_RULES`, `DISABLED_CONTROLS`, `PRESSED_EDGES`)
+ * read `stylesheet` and then each of these, in that order, as one stylesheet; every selector an entry
+ * names must be in one of them.
+ */
+export interface LoadsBefore {
+  readonly loadsBefore?: readonly string[];
+}
+
+/**
  * Busy or disabled controls that show it only by colour (`FOCUS_RING_RULES`: fading would dim their
  * focus ring), and an empty count shown dimmed (Overview's zero-count pill). Forced colours replace those colours, so for each entry the cascade over its `element`
  * selectors in `stylesheet`, with the rules inside `@media (forced-colors: active)` read too (as the
  * dark block is in dark), resolves `color` and `border-color` to `GrayText` in light and dark: a later
  * rule of the control's own (the primary button's `--accent` text) must not win over it.
  */
-export interface ForcedColoursBusy {
+export interface ForcedColoursBusy extends LoadsBefore {
   readonly stylesheet: string;
   readonly element: readonly string[];
   readonly why: string;
@@ -466,6 +481,15 @@ export const FORCED_COLOURS_BUSY = [
     element: ['.projects-small-button', '.projects-danger', '.projects-small-button:disabled'],
     why: 'Delete project while the sheet is busy (its --danger-ink must give way)',
   },
+  // The panel stylesheets (their surface PR): a busy chip, the calendar's arrows and the days out of range.
+  {
+    stylesheet: 'ai-checks.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-chip-button', ".seo-chip-button.ai-judgment-action[aria-disabled='true']"],
+    why: 'the AI judgment card\'s Check with AI while its call runs (aria-disabled, still focusable)',
+  },
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-cal-nav', '.gsc-cal-nav:disabled'], why: 'the Search Console calendar\'s previous or next month at the end of the range' },
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-cal-day', ".gsc-cal-day[aria-disabled='true']"], why: 'a calendar day Search Console has no data for' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -520,6 +544,32 @@ export const FORCED_COLOURS_PRESSED = [
   },
   { stylesheet: 'styles.css', element: ['.shot-editor-swatch', ".shot-editor-swatch[aria-pressed='true']"], rest: 'canvas', why: 'the screenshot editor\'s chosen colour (its --accent ring)' },
   { stylesheet: 'rankings.css', element: ['.projects-view-tab', ".projects-view-tab[aria-selected='true']"], rest: 'canvas', why: 'the Projects sheet\'s chosen view (its --accent underline)' },
+  // The panel stylesheets (their surface PR): a chosen tile, filter, day, run, answer or view, and a watched domain.
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-tile', ".gsc-tile[aria-pressed='true']"], why: 'Search Console\'s total tile the chart shows (its --accent edge)' },
+  {
+    stylesheet: 'gsc-panel.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-chip-button', ".seo-chip-button.gsc-dates[data-active='true']"],
+    why: 'Search Console\'s custom dates, in force (--accent on --accent-soft, an --accent edge)',
+  },
+  {
+    stylesheet: 'gsc-panel.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-chip-button', ".seo-chip-button.gsc-dates[aria-expanded='true']"],
+    why: 'Search Console\'s custom dates, its calendar open',
+  },
+  {
+    stylesheet: 'gsc-panel.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-select', ".gsc .gsc-select[data-active='true']"],
+    why: 'a Search Console filter in force (a month preset, a country, a device: an --accent edge and text)',
+  },
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-cal-day', ".gsc-cal-day[aria-selected='true']"], why: 'a calendar day inside the chosen range (an --accent-soft band, its ends --accent)' },
+  { stylesheet: 'crawl.css', element: ['.crawl-tab', ".crawl-tab[aria-pressed='true']"], why: 'the crawl sheet\'s chosen view (Pages or Site structure), a segment' },
+  { stylesheet: 'crawl.css', element: ['.crawl-run', ".crawl-run[data-selected='true']"], why: 'the crawl run the sheet shows (--accent-soft, an --accent edge)' },
+  { stylesheet: 'ai-answers.css', element: ['.ai-answers-pick', ".ai-answers-pick[aria-pressed='true']"], why: 'the AI answer the sheet shows' },
+  { stylesheet: 'ai-answers.css', element: ['.ai-answer-domain', ".ai-answer-domain[data-watched='true']"], why: 'a cited domain that is the watched one' },
+  { stylesheet: 'ai-answers.css', element: ['.ai-answer-citation', ".ai-answer-citation[data-watched='true']"], why: 'a citation on the watched domain' },
 ] as const satisfies readonly ForcedColoursPressed[];
 
 /**
@@ -968,6 +1018,25 @@ export const SIGNAL_SURFACES = [
   // Rankings and Compare (specs/rankings.feature.md, The views): every other rule of rankings.css.
   { name: 'Rankings', stylesheet: 'rankings.css', selectorPrefix: '.rankings' },
   { name: 'Rankings: Compare', stylesheet: 'rankings.css', selectorPrefix: '.compare' },
+  // The panel stylesheets (specs/design-tokens.feature.md, The panel stylesheets): every rule of each.
+  // The Search Console panel (specs/gsc-panel.feature.md): controls, the calendar, notices, totals, the
+  // chart, top queries and the pending and loading states.
+  { name: 'Search Console panel', stylesheet: 'gsc-panel.css', selectorPrefix: '.gsc' },
+  // Google's URL Inspection cards in Indexability and Schema (specs/gsc-inspection.feature.md, Card).
+  { name: 'Search Console: URL Inspection cards', stylesheet: 'gsc-inspection.css', selectorPrefix: '.gsc-inspect' },
+  // Content's Search Console targets (specs/seo-content.feature.md, Search Console targets).
+  { name: "Search Console: Content's targets", stylesheet: 'gsc-targets.css', selectorPrefix: '.gsc-targets' },
+  // Overview's AI judgment card and Content's Quality row (specs/ai-checks.feature.md, UI).
+  { name: 'AI checks: the AI judgment card', stylesheet: 'ai-checks.css', selectorPrefix: '.ai-judgment' },
+  // AI readiness (specs/ai-readiness.feature.md, AI readiness views: Visibility's, and Overview's tile) and
+  // Overview's "Page" card (specs/page-type.feature.md); their classes share no prefix.
+  { name: 'AI readiness and the Page card', stylesheet: 'ai-readiness.css', classes: ['.ai-*', '.page-type-*', '.page-intent-*'] },
+  // The AI answers sheet in Help's frame (specs/ai-answers.feature.md, Renderer): the sheet's classes and an answer's.
+  { name: 'AI answers sheet', stylesheet: 'ai-answers.css', classes: ['.ai-answers-*', '.ai-answer-*'] },
+  // The site crawl sheet in Help's frame (specs/site-crawl.feature.md, Pages and Site structure).
+  { name: 'site crawl sheet', stylesheet: 'crawl.css', selectorPrefix: '.crawl' },
+  // A location tab's badge in the chrome row (specs/location-profiles.feature.md, location-badge-always-visible).
+  { name: 'location badge', stylesheet: 'location.css', selectorPrefix: '.tab-location' },
 ] as const satisfies readonly SignalSurface[];
 
 /**
@@ -1401,6 +1470,35 @@ export const CONTRAST_PAIRS = [
     min: 4.5,
     why: 'Compare: the "Your site" badge (11px, --accent-soft) on the row for your site (--accent-soft too) (4.5:1)',
   },
+  // The panel stylesheets (their surface PR). Already covered above: Search Console's text on the sheet
+  // and its cards (--text, --text-muted, --text-faint), a tile hovered (--text and --text-muted on
+  // --bg-hover over a card), the chosen tile's and filters' --accent edge and text (on --bg-surface and
+  // the sheet), the custom dates in force (--accent on --accent-soft over the sheet), the calendar's
+  // range (--accent on --accent-soft over its card) and its ends (--on-accent on --accent), the chart's
+  // line and dots (--accent on a card, at 4.5:1 where 3:1 is needed), the notices' art (--accent on
+  // --accent-soft, --warn-ink on --warn-soft, over a card); status text on a card (--ok-ink, --warn-ink,
+  // --danger-ink: the inspection's groups, AI readiness's verdicts, the Page card's unsure confidence and
+  // a disagreeing signal, whose wavy underline is --warn); the Crawl and AI answers sheets' text on the
+  // page card, their fields, a chosen run or answer (--text and --text-muted on --accent-soft over
+  // --bg-surface, its --accent edge), a row hovered, a destructive button (--danger-ink on --bg-surface,
+  // hovered over --bg-hover) and a segment (--text-muted on --bg-subtle, chosen --text on --bg-surface).
+  // New with them: a location tab's badge, which lies on every tab state.
+  {
+    fg: '--accent-hover',
+    bg: '--accent-soft',
+    over: '--bg-tab-idle',
+    under: '--bg-window',
+    min: 4.5,
+    why: 'a location tab\'s badge (11px, --accent-hover on --accent-soft) on an inactive tab (--bg-tab-idle over the tab row) (4.5:1)',
+  },
+  {
+    fg: '--accent-hover',
+    bg: '--accent-soft',
+    over: '--bg-hover',
+    under: '--bg-window',
+    min: 4.5,
+    why: 'a location tab\'s badge on a hovered inactive tab (--bg-hover over the tab row): --accent there is 4.18:1 in light (4.5:1)',
+  },
 ] as const satisfies readonly ContrastPair[];
 
 /**
@@ -1423,8 +1521,8 @@ export const KNOWN_CONTRAST_EXCEPTIONS = [
     fg: '--ok',
     bg: '--bg-surface',
     min: 4.5,
-    rules: 2,
-    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property; the panels\' all-clear line, Images\' alt badge and Schema\'s block status their 3; the DevTools drawer its robots line and 2xx code, 2; Page Speed its "Live" source badge; Content its target query\'s present term, now --ok-ink on --ok-soft, and its all-terms mark, an icon now drawn by `stroke`; the Changes panel its capture and screenshot statuses and the diff\'s added words, Projects a captured target and Rankings a rise, 5).',
+    rules: 1,
+    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property; the panels\' all-clear line, Images\' alt badge and Schema\'s block status their 3; the DevTools drawer its robots line and 2xx code, 2; Page Speed its "Live" source badge; Content its target query\'s present term, now --ok-ink on --ok-soft, and its all-terms mark, an icon now drawn by `stroke`; the Changes panel its capture and screenshot statuses and the diff\'s added words, Projects a captured target and Rankings a rise, 5; AI readiness its passing verdict, 1).',
   },
 ] as const satisfies readonly ContrastException[];
 
@@ -1435,7 +1533,7 @@ export const KNOWN_CONTRAST_EXCEPTIONS = [
  * (specificity, then source order; light, or light then the dark media block; component custom
  * properties followed through `var()`) gives `color: var(<color>)`. Its pair is in `CONTRAST_PAIRS`.
  */
-export interface TextColourRule {
+export interface TextColourRule extends LoadsBefore {
   readonly stylesheet: string;
   readonly element: readonly string[];
   readonly color: TokenName;
@@ -1452,6 +1550,9 @@ export interface TextColourRule {
 const UPDATE_BUTTON_HOVER = '.update-button:hover:where(:not(:disabled))';
 const UPDATE_PRIMARY_HOVER = '.update-primary:hover:where(:not(:disabled))';
 const OK_TINT = '--ok as text on its own 14% tint is 2.82:1 in light (11px chips)';
+/** A shared control's hover in `styles.css` (TEXT_COLOUR_RULES, FOCUS_RING_RULES and DISABLED_CONTROLS of the panel stylesheets). */
+const CHIP_HOVER = ".seo-chip-button:hover:where(:not(:disabled, [aria-pressed='true']))";
+const PANEL_HOVER = '.panel-button:hover:where(:not(:disabled))';
 const DANGER_TINT = '--danger as text on its own 14% tint is 3.88:1 in light (11px chips)';
 
 export const TEXT_COLOUR_RULES = [
@@ -1814,6 +1915,63 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'rankings.css', element: ['.compare-movement', ".compare-movement[data-movement='down']"], color: '--danger-ink', why: 'Compare: a domain that fell, "Down 2" (12px, was --danger)' },
   { stylesheet: 'rankings.css', element: ['.compare-movement', ".compare-movement[data-movement='gone']"], color: '--danger-ink', why: 'Compare: a domain gone on the later date, "Gone" (12px, was --danger)' },
   { stylesheet: 'rankings.css', element: ['.rankings-capped'], color: '--warn-ink', why: 'Rankings: the capped mark beside a trend ("*", was --warn)' },
+  // The panel stylesheets (their surface PR). A destructive button in the Crawl and AI answers sheets is a
+  // .panel-button whose own rule loaded first, so .panel-button's --text won and it never looked
+  // destructive: its rule now outweighs .panel-button (two classes), whatever the order, hovered too.
+  { stylesheet: 'crawl.css', loadsBefore: ['styles.css'], element: ['.panel-button', '.panel-button.crawl-danger'], color: '--danger-ink', why: 'the crawl sheet\'s Delete this crawl, confirmed (was --danger, and lost to .panel-button\'s --text)' },
+  { stylesheet: 'crawl.css', loadsBefore: ['styles.css'], element: ['.panel-button', PANEL_HOVER, '.panel-button.crawl-danger'], color: '--danger-ink', why: 'the crawl sheet\'s Delete this crawl, hovered' },
+  { stylesheet: 'ai-answers.css', loadsBefore: ['styles.css'], element: ['.panel-button', '.panel-button.ai-answers-danger'], color: '--danger-ink', why: 'the AI answers sheet\'s Delete, Delete all and shorter-retention confirmations (were --danger, and lost to .panel-button\'s --text)' },
+  { stylesheet: 'ai-answers.css', loadsBefore: ['styles.css'], element: ['.panel-button', PANEL_HOVER, '.panel-button.ai-answers-danger'], color: '--danger-ink', why: 'the AI answers sheet\'s confirmations, hovered' },
+  // Status text on a card takes its -ink (each also says its word).
+  {
+    stylesheet: 'gsc-inspection.css',
+    element: ['.gsc-inspect-group-label', ".gsc-inspect-group[data-severity='ERROR'] .gsc-inspect-group-label"],
+    color: '--danger-ink',
+    why: 'the URL Inspection card\'s "Error" group label (was --danger)',
+  },
+  {
+    stylesheet: 'gsc-inspection.css',
+    element: ['.gsc-inspect-group-label', ".gsc-inspect-group[data-severity='WARNING'] .gsc-inspect-group-label"],
+    color: '--warn-ink',
+    why: 'the URL Inspection card\'s "Warning" group label (was --caution)',
+  },
+  { stylesheet: 'ai-readiness.css', element: ['.ai-status', ".ai-status[data-status='pass']"], color: '--ok-ink', why: 'AI readiness: a check that passed, its verdict and glyph (was --ok: 3.30:1 on a card in light)' },
+  { stylesheet: 'ai-readiness.css', element: ['.ai-status', ".ai-status[data-status='warn']"], color: '--warn-ink', why: 'AI readiness: a check with a warning (was --caution)' },
+  { stylesheet: 'ai-readiness.css', element: ['.ai-status', ".ai-status[data-status='fail']"], color: '--danger-ink', why: 'AI readiness: a check that failed (was --danger)' },
+  { stylesheet: 'ai-readiness.css', element: ['.page-type-confidence', ".page-type-confidence[data-confidence='unsure']"], color: '--warn-ink', why: 'the Page card\'s "Unsure" (was --caution)' },
+  {
+    stylesheet: 'ai-readiness.css',
+    element: ['.page-type-signal-type', ".page-type-signal[data-agrees='false'] .page-type-signal-type"],
+    color: '--warn-ink',
+    why: 'the Page card: a signal that disagrees, its type (was --caution; a wavy --warn underline says it without hue)',
+  },
+  // A chosen filter's text says it is in force: the shared controls' hover must not wash it out.
+  {
+    stylesheet: 'gsc-panel.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-chip-button', CHIP_HOVER, ".seo-chip-button.gsc-dates[data-active='true']"],
+    color: '--accent',
+    background: '--accent-soft',
+    why: 'Search Console\'s custom dates in force, hovered too (the chip\'s hover is --text)',
+  },
+  {
+    stylesheet: 'gsc-panel.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-select', ".gsc .gsc-select[data-active='true']"],
+    color: '--accent',
+    background: '--bg-surface',
+    why: 'a Search Console filter in force (a month preset, a country, a device)',
+  },
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-cal-day', ".gsc-cal-day[aria-selected='true']"], color: '--accent', background: '--accent-soft', why: 'a calendar day inside the chosen range' },
+  {
+    stylesheet: 'gsc-panel.css',
+    element: ['.gsc-cal-day', ".gsc-cal-day[aria-selected='true']", ".gsc-cal-day[data-edge='true']"],
+    color: '--on-accent',
+    background: '--accent',
+    why: 'the chosen range\'s first and last day',
+  },
+  // On every tab state (an inactive tab is --bg-tab-idle, hovered --bg-hover, over the row): --accent is 4.18:1 on a hovered one in light.
+  { stylesheet: 'location.css', element: ['.tab-location'], color: '--accent-hover', background: '--accent-soft', why: 'a location tab\'s badge (11px, was --accent)' },
 ] as const satisfies readonly TextColourRule[];
 
 /**
@@ -1837,6 +1995,8 @@ export const HOVER_OVERLAYS_SKIP_PRESSED = [
   { stylesheet: 'styles.css', control: '.seo-action', why: 'the Inspector\'s Tree, Rendered and Served buttons (`seo-action inspector-view-button`), the chosen one pressed' },
   { stylesheet: 'styles.css', control: '.seo-ngram-highlight', why: 'Content: an n-gram row\'s highlight button, pressed while the page shows that phrase' },
   { stylesheet: 'styles.css', control: '.changes-version', why: 'a version in the Changes panel\'s history, the chosen one pressed (its --accent-soft fill and edge stay under the pointer)' },
+  { stylesheet: 'gsc-panel.css', control: '.gsc-tile', why: 'Search Console\'s total tile the chart shows: its hover would replace the pressed edge\'s inner line' },
+  { stylesheet: 'ai-answers.css', control: '.ai-answers-pick', why: 'the AI answer the sheet shows (--accent-soft): the hover would lay --bg-hover over it' },
 ] as const satisfies readonly HoverSkipsPressed[];
 
 /**
@@ -1848,7 +2008,7 @@ export const HOVER_OVERLAYS_SKIP_PRESSED = [
  * longhands or the `border` shorthand), and for each of
  * `fills` (the pressed fill, the card around it) `CONTRAST_PAIRS` holds `edge` on it at 3:1 or more.
  */
-export interface PressedEdge {
+export interface PressedEdge extends LoadsBefore {
   readonly stylesheet: string;
   readonly element: readonly string[];
   readonly edge: TokenName;
@@ -1867,8 +2027,15 @@ export const DISABLED_INK = 'color-mix(in srgb, var(--text-faint) 50%, transpare
 /**
  * Disabled controls on the same fill as their enabled selves (a filter chip on `--bg-subtle`, a segment
  * on its track): for each entry the cascade over `element` in `stylesheet` resolves `color` to
- * `DISABLED_INK` in light and dark. (`GrayText` marks them under forced colours: `FORCED_COLOURS_BUSY`.)
+ * `DISABLED_INK` in light and dark, and gives no `opacity` under 1 (a fade would dim the colours that say
+ * it, and a busy control's focus ring). (`GrayText` marks them under forced colours: `FORCED_COLOURS_BUSY`.)
  */
+export interface DisabledControl extends LoadsBefore {
+  readonly stylesheet: string;
+  readonly element: readonly string[];
+  readonly why: string;
+}
+
 export const DISABLED_CONTROLS = [
   { stylesheet: 'styles.css', element: ['.seo-chip-button', '.seo-chip-button:disabled'], why: 'a filter chip, disabled (Changes\' screenshot kinds with no page, SERP\'s snippet sources, the AI card\'s targets)' },
   { stylesheet: 'styles.css', element: ['.seo-segment', '.seo-segment:disabled'], why: 'a segment, disabled (Schema\'s Tree for a block that did not parse)' },
@@ -1877,7 +2044,35 @@ export const DISABLED_CONTROLS = [
     element: ['.seo-segment', '.seo-segment:disabled', '.changes-shot-kind-button:disabled'],
     why: 'the Changes panel\'s screenshot kinds, disabled (no page, or a screenshot under way)',
   },
-] as const satisfies readonly { readonly stylesheet: string; readonly element: readonly string[]; readonly why: string }[];
+  // The panel stylesheets (their surface PR): a busy chip (it faded to 0.6), the calendar's arrows and the
+  // days out of range (they faded to 0.35 and 0.45), and Content's "Use as target" (it faded to half).
+  {
+    stylesheet: 'ai-checks.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-chip-button', CHIP_HOVER, ".seo-chip-button.ai-judgment-action[aria-disabled='true']"],
+    why: 'the AI judgment card\'s Check with AI while its call runs, hovered too (aria-disabled: still focusable)',
+  },
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-cal-nav', '.gsc-cal-nav:disabled'], why: 'the calendar\'s previous or next month at the end of the range' },
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-cal-day', ".gsc-cal-day[aria-disabled='true']"], why: 'a calendar day Search Console has no data for' },
+  {
+    stylesheet: 'gsc-targets.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-chip-button', '.seo-chip-button:disabled', '.gsc-targets-use', '.gsc-targets-use:disabled'],
+    why: 'Content\'s "Use as target" while the page\'s notes load: its own disabled rule keeps the chip\'s colour, unfaded (it faded to half)',
+  },
+] as const satisfies readonly DisabledControl[];
+
+/**
+ * Stylesheets whose fades must spare focus: a region dimmed while it is re-read (Search Console's last
+ * data, the URL Inspection card's last answer) holds focusable controls, and an `opacity` under 1 would
+ * dim a focused one's ring. In each, every rule that sets `opacity` under 1 ends every selector of its
+ * list with `:not(:focus-within)` (the region stays at full strength while focus is inside it, as a busy
+ * switch in Settings fades only while it is not focused), and at least one such rule exists.
+ */
+export const FADES_SPARE_FOCUS = [
+  { stylesheet: 'gsc-panel.css', why: 'Search Console\'s last data while another scope or range is read' },
+  { stylesheet: 'gsc-inspection.css', why: 'a URL Inspection card\'s last answer while it is inspected again' },
+] as const satisfies readonly { readonly stylesheet: string; readonly why: string }[];
 
 export const PRESSED_EDGES = [
   {
@@ -1931,6 +2126,58 @@ export const PRESSED_EDGES = [
     fills: [{ bg: '--bg-surface' }],
     why: 'the screenshot editor\'s chosen colour: a 2px --accent ring on the editor\'s sheet',
   },
+  // The panel stylesheets (their surface PR): what is chosen draws an --accent edge beside its fill.
+  {
+    stylesheet: 'gsc-panel.css',
+    element: ['.gsc-tile', ".gsc-tile[aria-pressed='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--bg-surface' }, { bg: '--bg-sheet' }],
+    why: 'Search Console\'s total tile the chart shows: its fill stays --bg-surface, so the edge (and a line inside it) says it',
+  },
+  {
+    stylesheet: 'gsc-panel.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-chip-button', ".seo-chip-button.gsc-dates[data-active='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-sheet' }, { bg: '--bg-sheet' }],
+    why: 'Search Console\'s custom dates in force, as a pressed chip, on the panel\'s sheet',
+  },
+  {
+    stylesheet: 'gsc-panel.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-chip-button', ".seo-chip-button.gsc-dates[aria-expanded='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-sheet' }, { bg: '--bg-sheet' }],
+    why: 'Search Console\'s custom dates while the calendar is open',
+  },
+  {
+    stylesheet: 'crawl.css',
+    element: ['.crawl-run', ".crawl-run[data-selected='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
+    why: 'the crawl run the sheet shows, a card on the page card',
+  },
+  {
+    stylesheet: 'ai-answers.css',
+    element: ['.ai-answers-pick', ".ai-answers-pick[aria-pressed='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
+    why: 'the AI answer the sheet shows, a row on the page card',
+  },
+  {
+    stylesheet: 'ai-answers.css',
+    element: ['.ai-answer-domain', ".ai-answer-domain[data-watched='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
+    why: 'a cited domain that is the watched one (an unwatched one is a --bg-subtle chip)',
+  },
+  {
+    stylesheet: 'ai-answers.css',
+    element: ['.ai-answer-citation', ".ai-answer-citation[data-watched='true']"],
+    edge: '--accent',
+    fills: [{ bg: '--accent-soft', over: '--bg-surface' }, { bg: '--bg-surface' }],
+    why: 'a citation on the watched domain',
+  },
 ] as const satisfies readonly PressedEdge[];
 
 /**
@@ -1977,14 +2224,19 @@ export const STATE_EDGES = [
  * draw) in every state it can be focused in: hovered, busy (`aria-disabled`, which stays focusable),
  * primary or not. `element` lists the selectors, in `stylesheet`, that such an element matches in that
  * state; resolving the cascade over them (as `TEXT_COLOUR_RULES`: specificity, `:where()` adding none,
- * then source order) gives `box-shadow: var(--focus-ring)` and `outline: 2px solid transparent`, and no
+ * then source order) gives `box-shadow: var(--focus-ring)` (or inset layers and then it: an inset line,
+ * such as a pressed tile's inner edge, sits inside the element and never covers the ring; an outer
+ * layer before or after it fails) and `outline: 2px solid transparent`, and no
  * `opacity` under 1 (it would dim the ring: at 0.55 it falls to about 2.4–2.8:1). So a hover's or a
  * primary button's own box-shadow never outranks the focus rule, and a busy button shows it is busy by
  * its colours, not by fading; a busy switch or choice fades only while it is not focused.
  */
-export interface FocusRingRule {
+export interface FocusRingRule extends LoadsBefore {
   readonly stylesheet: string;
   readonly element: readonly string[];
+  /** Inset layers the focused element must keep before the ring (a pressed tile's inner edge): its
+   * box-shadow is then exactly `<insetBefore>, var(--focus-ring)`, not the ring alone. */
+  readonly insetBefore?: string;
   readonly why: string;
 }
 
@@ -2022,6 +2274,11 @@ const CHANGES_VERSION_HOVER = ".changes-version:hover:where(:not([aria-pressed='
 const PROJECTS_BUTTON_HOVER = '.projects-small-button:hover:where(:not(:disabled))';
 /** A project's row under the pointer: the chosen one lays no hover over its --accent-soft. */
 const PROJECTS_ITEM_HOVER = ".projects-item:where(:not([data-selected='true'])) .projects-item-open:hover";
+const GSC_TILE_HOVER = ".gsc-tile:hover:where(:not([aria-pressed='true']))";
+const GSC_CAL_NAV_HOVER = '.gsc-cal-nav:hover:where(:not(:disabled))';
+const GSC_CAL_DAY_HOVER = ".gsc-cal-day:hover:where(:not([aria-disabled='true'], [aria-selected='true']))";
+const AI_ANSWERS_PICK_HOVER = ".ai-answers-pick:hover:where(:not([aria-pressed='true']))";
+const CRAWL_TAB_HOVER = ".crawl-tab:hover:where(:not([aria-pressed='true']))";
 
 export const FOCUS_RING_RULES = [
   {
@@ -2292,6 +2549,52 @@ export const FOCUS_RING_RULES = [
     why: 'the screenshot editor\'s chosen colour, focused (it had the browser\'s default outline)',
   },
   { stylesheet: 'styles.css', element: ['.shot-editor-text', '.shot-editor-text:focus-visible'], why: 'the screenshot editor\'s text field, focused' },
+  // The panel stylesheets (their surface PR): every control of their own, in each state it can be focused in.
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-tile', GSC_TILE_HOVER, '.gsc-tile:focus-visible'], why: 'a Search Console total tile, focused and hovered' },
+  {
+    stylesheet: 'gsc-panel.css',
+    element: ['.gsc-tile', ".gsc-tile[aria-pressed='true']", '.gsc-tile:focus-visible', ".gsc-tile[aria-pressed='true']:focus-visible"],
+    insetBefore: 'inset 0 0 0 1px var(--accent)',
+    why: 'the tile the chart shows, focused: --focus-ring after its pressed inner line, so both its edges stay',
+  },
+  {
+    stylesheet: 'gsc-panel.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-chip-button', CHIP_HOVER, ".seo-chip-button.gsc-dates[data-active='true']", '.seo-chip-button:focus-visible'],
+    why: 'Search Console\'s custom dates in force, focused and hovered',
+  },
+  {
+    stylesheet: 'gsc-panel.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-select', ".gsc .gsc-select[data-active='true']", '.seo-select:focus-visible'],
+    why: 'a Search Console filter in force, focused',
+  },
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-cal-nav', GSC_CAL_NAV_HOVER, '.gsc-cal-nav:focus-visible'], why: 'the calendar\'s previous or next month, focused and hovered' },
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-cal-day', GSC_CAL_DAY_HOVER, '.gsc-cal-day:focus-visible'], why: 'a calendar day, focused (the grid\'s roving focus) and hovered' },
+  { stylesheet: 'gsc-panel.css', element: ['.gsc-cal-day', ".gsc-cal-day[aria-selected='true']", '.gsc-cal-day:focus-visible'], why: 'a calendar day inside the chosen range, focused' },
+  {
+    stylesheet: 'gsc-panel.css',
+    element: ['.gsc-cal-day', ".gsc-cal-day[aria-selected='true']", ".gsc-cal-day[data-edge='true']", '.gsc-cal-day:focus-visible'],
+    why: 'the chosen range\'s first or last day, focused',
+  },
+  {
+    stylesheet: 'ai-checks.css',
+    loadsBefore: ['styles.css'],
+    element: ['.seo-chip-button', CHIP_HOVER, ".seo-chip-button.ai-judgment-action[aria-disabled='true']", '.seo-chip-button:focus-visible'],
+    why: 'the AI judgment card\'s Check with AI while its call runs (aria-disabled, still focusable), focused and hovered: it faded to 0.6, dimming the ring',
+  },
+  { stylesheet: 'ai-answers.css', element: ['.ai-answers-input', '.ai-answers-input:focus-visible'], why: 'the AI answers sheet\'s query and watched-domain fields, focused' },
+  { stylesheet: 'ai-answers.css', element: ['.ai-answers-select', '.ai-answers-select:focus-visible'], why: 'the AI answers sheet\'s engine, retention and "reach through" selects, focused' },
+  { stylesheet: 'ai-answers.css', element: ['.ai-answers-pick', AI_ANSWERS_PICK_HOVER, '.ai-answers-pick:focus-visible'], why: 'an AI answer in the list, focused and hovered' },
+  { stylesheet: 'ai-answers.css', element: ['.ai-answers-pick', ".ai-answers-pick[aria-pressed='true']", '.ai-answers-pick:focus-visible'], why: 'the AI answer the sheet shows, focused' },
+  { stylesheet: 'crawl.css', element: ['.crawl-input', '.crawl-input:focus-visible'], why: 'a crawl field (start URL, page cap, include and exclude rules), focused' },
+  { stylesheet: 'crawl.css', element: ['.crawl-select', '.crawl-select:focus-visible'], why: 'a crawl select (scope, pace, the Pages filters and sort), focused' },
+  { stylesheet: 'crawl.css', element: ['.crawl-rules-more > summary', '.crawl-rules-more > summary:focus-visible'], why: 'the crawl rule set\'s "what is left out" disclosure, focused' },
+  { stylesheet: 'crawl.css', element: ['.crawl-run-pick', '.crawl-run-pick:focus-visible'], why: 'a crawl run\'s name (it shows the run), focused' },
+  { stylesheet: 'crawl.css', element: ['.crawl-tab', CRAWL_TAB_HOVER, '.crawl-tab:focus-visible'], why: 'the crawl sheet\'s Pages or Site structure, focused and hovered' },
+  { stylesheet: 'crawl.css', element: ['.crawl-tab', ".crawl-tab[aria-pressed='true']", '.crawl-tab:focus-visible'], why: 'the chosen view, focused: its --e-raised edge gives way to --focus-ring' },
+  { stylesheet: 'crawl.css', element: ['.crawl-tree-toggle', '.crawl-tree-toggle:focus-visible'], why: 'a folder in the site structure (it opens), focused' },
+  { stylesheet: 'crawl.css', element: ['.crawl-link-button', '.crawl-link-button:hover', '.crawl-link-button:focus-visible'], why: 'a crawl page\'s Open in tab, focused and hovered' },
 ] as const satisfies readonly FocusRingRule[];
 
 /**

@@ -171,7 +171,12 @@ export const GSC_CHART = Object.freeze({
   padTop: 10,
   padRight: 10,
   padBottom: 22,
-  padLeft: 38,
+  /**
+   * Room for the y labels, which end 6 units left of the plot: the widest realistic one, a tiny CTR
+   * step ("0.0005%", about 43 units in the Signal axis type, `--text-micro`), starts inside the chart
+   * card at every panel width (38 let it run past the card's edge from 300px up).
+   */
+  padLeft: 52,
   maxYTicks: 4,
   xTicks: 3,
   /** A range longer than this many days labels its x ticks with the month (`Jul 2025`), not the day. */

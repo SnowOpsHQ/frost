@@ -1,7 +1,11 @@
 /* The site crawl sheet (Phase 12 Task 7, specs/site-crawl.feature.md, Pages and Site structure). A Help
    sheet's frame (help.css lays the page area out zero-high while it shows), wider for the Pages table.
-   Bundled and served from app:// (CSP style-src 'self'): no inline styles, existing tokens only. Page
-   text wraps or ellipsises, never widens the sheet: the table scrolls inside its own box. */
+   Bundled and served from app:// (CSP style-src 'self'): no inline styles. Page text wraps or
+   ellipsises, never widens the sheet: the table scrolls inside its own box. Signal
+   (specs/design-tokens.feature.md, The panel stylesheets): the sheet sets --text-body on its root (Help's
+   frame sets no font); fields are the field inside a card, a run a card (the one shown --accent-soft with
+   an --accent edge), Pages and Site structure a segmented control. This sheet loads before styles.css,
+   so a rule that changes .panel-button names its class too. */
 
 .help:has(> .help-body > .crawl) {
   width: min(1120px, 100%);
@@ -10,9 +14,9 @@
 .crawl {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-5);
   min-width: 0;
-  font-size: 13px;
+  font: var(--text-body);
 }
 
 .crawl-status:empty {
@@ -21,34 +25,33 @@
 
 .crawl-status {
   margin: 0;
-  padding: 8px 12px;
-  border-radius: var(--radius-field);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
   background: var(--accent-soft);
 }
 
 .crawl-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .crawl-section-title {
   margin: 0;
-  font-size: 15px;
-  font-weight: 600;
+  font: var(--text-heading);
 }
 
 .crawl-subtitle {
   margin: 0;
-  font-size: 13px;
+  font: var(--text-body);
   font-weight: 600;
 }
 
 .crawl-note {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .crawl-note:empty {
@@ -58,39 +61,42 @@
 .crawl-form {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-  gap: 10px 12px;
+  gap: var(--space-3) var(--space-4);
   align-items: end;
 }
 
 .crawl-field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   min-width: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .crawl-field-wide {
   grid-column: 1 / -1;
 }
 
+/* A field inside a card: --h-control at --r-sm on --bg-surface with --e-raised and a transparent border
+   (the edge forced colours draw); focus is --focus-ring, where it was an --accent border and halo. */
 .crawl-input,
 .crawl-select {
   min-width: 0;
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-field);
-  background: var(--bg-field);
+  height: var(--h-control);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
-  font: inherit;
+  font: var(--text-body);
   user-select: text;
 }
 
 .crawl-textarea {
   height: auto;
-  padding: 6px 8px;
+  padding: var(--space-2) var(--space-3);
   resize: vertical;
 }
 
@@ -102,28 +108,22 @@
   width: 8em;
 }
 
-.crawl-input:focus,
-.crawl-select:focus {
-  border-color: var(--accent);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
 .crawl-check {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   color: var(--text);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .crawl-rules {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .crawl-rules-more > summary {
+  border-radius: var(--r-xs);
   cursor: default;
   font-weight: 500;
 }
@@ -131,14 +131,14 @@
 .crawl-rules-more[open] {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .crawl-rule-list {
   margin: 0;
-  padding-inline-start: 18px;
+  padding-inline-start: var(--space-5);
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
 .crawl-start-row,
@@ -149,7 +149,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .crawl-toolbar {
@@ -163,19 +163,22 @@
 .crawl-runs {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* A run: a card on the page card; the one the sheet shows --accent-soft with an --accent edge
+   (PRESSED_EDGES). */
 .crawl-run {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-field);
-  border-radius: var(--radius-field);
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  box-shadow: var(--e-ring);
 }
 
 .crawl-run[data-selected='true'] {
@@ -187,7 +190,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -196,21 +199,14 @@
   overflow: hidden;
   padding: 0;
   border: 0;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--text);
-  font: inherit;
+  font: var(--text-body);
   font-weight: 600;
   text-align: start;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.crawl-run-pick:focus-visible,
-.crawl-tab:focus-visible,
-.crawl-tree-toggle:focus-visible,
-.crawl-link-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 .crawl-run-state {
@@ -218,31 +214,44 @@
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
-.crawl-danger {
-  color: var(--danger);
+/* Delete this crawl, confirmed: --danger-ink. It names .panel-button too, which would otherwise win with
+   its --text (styles.css loads after this sheet). */
+.panel-button.crawl-danger {
+  color: var(--danger-ink);
 }
 
+/* Pages and Site structure: the canvas's segmented control (they were underlined tabs). An --r-pill
+   track on --bg-subtle, the chosen one raised. */
 .crawl-tabs {
   display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--bg-chrome-edge);
+  align-self: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
 }
 
 .crawl-tab {
-  height: 30px;
-  padding: 0 12px;
-  border: 0;
-  border-bottom: 2px solid transparent;
+  height: var(--h-chip);
+  padding: 0 calc(var(--space-4) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--text-muted);
+  font: var(--text-small);
   font-weight: 500;
 }
 
+.crawl-tab:hover:where(:not([aria-pressed='true'])) {
+  color: var(--text);
+}
+
 .crawl-tab[aria-pressed='true'] {
-  border-bottom-color: var(--accent);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
   color: var(--text);
 }
 
@@ -250,7 +259,7 @@
 .crawl-structure {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -263,21 +272,21 @@
 .crawl-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .crawl-table th,
 .crawl-table td {
-  padding: 4px 6px;
-  border-bottom: 1px solid var(--bg-chrome-edge);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--divider);
   text-align: start;
   vertical-align: top;
 }
 
 .crawl-table thead th {
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font: var(--text-micro);
+  letter-spacing: 0.01em;
   vertical-align: bottom;
 }
 
@@ -288,7 +297,7 @@
 .crawl-url-cell {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
   max-width: 420px;
 }
 
@@ -308,10 +317,10 @@
   align-self: flex-start;
   padding: 0;
   border: 0;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--accent);
-  font: inherit;
-  font-size: 11.5px;
+  font: var(--text-small);
 }
 
 .crawl-link-button:hover {
@@ -330,7 +339,7 @@
 
 .crawl-tree-level {
   margin: 0;
-  padding-inline-start: 14px;
+  padding-inline-start: var(--space-4);
   list-style: none;
 }
 
@@ -341,9 +350,9 @@
 .crawl-tree-row {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-3);
   min-width: 0;
-  padding: 2px 0;
+  padding: calc(var(--space-1) / 2) 0;
 }
 
 .crawl-tree-toggle,
@@ -357,9 +366,10 @@
 .crawl-tree-toggle {
   padding: 0;
   border: 0;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--text);
-  font: inherit;
+  font: var(--text-body);
   font-weight: 500;
   text-align: start;
 }
@@ -376,7 +386,7 @@
 .crawl-depths {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   margin: 0;
 }
 
@@ -384,7 +394,7 @@
   display: grid;
   grid-template-columns: 3em 1fr;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .crawl-depth-label {
@@ -396,10 +406,11 @@
 .crawl-depth-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   margin: 0;
 }
 
+/* The native meter in --accent: forced colours draw it (a CSS-filled bar would vanish there). */
 .crawl-depth-meter {
   flex: 1 1 auto;
   max-width: 360px;
@@ -410,7 +421,7 @@
 .crawl-orphans {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -419,6 +430,27 @@
 .crawl-orphan {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-3);
   min-width: 0;
+}
+
+/* Focus: the ring, after the hover and the pressed rule. */
+.crawl-input:focus-visible,
+.crawl-select:focus-visible,
+.crawl-rules-more > summary:focus-visible,
+.crawl-run-pick:focus-visible,
+.crawl-tab:focus-visible,
+.crawl-tree-toggle:focus-visible,
+.crawl-link-button:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* Forced colours replace the fills and the edge that say chosen (FORCED_COLOURS_PRESSED). */
+@media (forced-colors: active) {
+  .crawl-tab[aria-pressed='true'],
+  .crawl-run[data-selected='true'] {
+    border-color: Highlight;
+  }
 }
