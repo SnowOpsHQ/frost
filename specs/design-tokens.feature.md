@@ -75,7 +75,17 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   targets and rises, leaving 2; AI readiness its pass, leaving 1). The cleanup moved the last, the
   address bar's secure badge (a lock icon, `color: var(--ok)` on its `currentColor` stroke), to
   `stroke: var(--ok)` on the icon, the same pixels, so the list went and `GRAPHICS_ONLY_COLOURS` took
-  its place.
+  its place. A rule draws text in it when its `color` or `-webkit-text-fill-color` reads it anywhere in
+  the value (spaces in `var( … )`, `!important`, inside `color-mix()`), or reads a custom property its
+  stylesheet sets to a value that reads it (one level), at any nesting. That wider match (the first
+  round of review; it had read only an exact `color: var(--ok)`) found two more icon tiles colouring
+  their icon through `color`: the verdict icon of Indexability, Compliance and JavaScript
+  (`.seo-verdict-icon`, `--verdict`) and of Page Speed (`.seo-speed-verdict-icon`, `--band`); they set
+  the icon's `stroke` now (its only `currentColor`), the same pixels. Under forced colours a mark
+  coloured by `stroke` keeps its token, where `color` gave `CanvasText`: the lock and the verdict icons
+  stay above 3:1 on the forced `Canvas` only because Chromium makes `prefers-color-scheme` follow the
+  contrast theme (`--ok` is about 3.2–3.3:1 on a light `Canvas`, about 12:1 on black), and nothing
+  verifies this on Windows.
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
   (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`. The status bar's failed-overrides
@@ -1061,8 +1071,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: removed-legacy-tokens-are-gone** — a `removed` row is a `retire` row or an `alias` of
   another Signal token (its `signal` neither null nor its own name), and no `removed` name is a Signal
   token; each surface PR's and the cleanup's names are among them; a `removed` name is declared in
-  neither theme of `tokens.css`, and no renderer source (`.css`, `.ts`, `.tsx`, `index.html`, each kind
-  present in the search) mentions it outside a comment.
+  neither theme of `tokens.css`, and no renderer source (`.css`, `.ts`, `.tsx`, `index.html` under
+  `src/renderer`, each kind present in the search) mentions it outside a comment. A script's comments are
+  found by a scanner that keeps string, template and regex literals whole (`'a//b var(--bg-chrome)'` is
+  still read; fixtures: double quotes, a template with `${…}`, a URL, a regex holding `//` or a quote).
+  The renderer is enough: nothing in `src/main`, `src/preload`, `src/workers` or `e2e/visual.css`
+  reads a token.
 - **Scenario: legacy-token-values-are-pinned** — the 89 legacy names' light and dark values match a
   committed snapshot (the values step updated it on purpose: the aliases became `var()`, their dark
   entries went, and the shared names took their Signal values; each surface PR, and the cleanup,
@@ -1077,7 +1091,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   whose `under` is translucent or whose `over` is opaque fails before compositing); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
 - **Scenario: graphics-only-colours-draw-no-text** — each `GRAPHICS_ONLY_COLOURS` name still misses
   4.5:1 on `--bg-surface` in at least one theme (else the entry is stale) and is no text pair in
-  `CONTRAST_PAIRS`, and no declaration in the renderer's stylesheets draws text in it (`color: var(<name>)`).
+  `CONTRAST_PAIRS`, and no declaration in the renderer's stylesheets draws text in it: `color` or
+  `-webkit-text-fill-color` reading it anywhere in the value, or through a custom property the stylesheet
+  sets to it (one level). Fixtures: a plain rule, `@media`, `@supports`, native nesting, a custom property,
+  `var( --ok )`, `!important`, `-webkit-text-fill-color` and `color-mix()` are caught; `--ok-ink`, a
+  `stroke`, a border and a custom property only a `stroke` reads are not.
 - **Scenario: tab-strip-sets-tabs-off-the-strip** — in light and dark, against the (opaque) strip
   (`TAB_STRIP.strip`), the active tab's fill reaches `TAB_STRIP.minActiveOnStrip`, an inactive tab's
   (`TAB_STRIP.idle`, composited over the strip) `minIdleOnStrip` and a hovered tab's (`TAB_STRIP.hover`,
@@ -1285,3 +1303,50 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup.
   after it, the readers take the Signal tokens and the three are `removed`.
 - **The pass dot's check glyph** (the SEO rail's `.seo-rail-dot` and Overview's checks by category,
   `styles.css`): the screen draws a check, which needs markup; a pass is a filled `--ok` disc meanwhile.
+- **The render-profile bar's checkbox labels fade** (`styles.css`, `.render-check:has(input:disabled)`,
+  `opacity: 0.5`): a native checkbox can't take the disabled colours, so the label fades with it.
+- **A busy `.panel-button` marked `aria-disabled` shows nothing** (the crawl sheet's Export CSV,
+  `components/crawl/SitePages.tsx`; `styles.css` has `.panel-button:disabled` and `[data-busy]` rules,
+  none for `[aria-disabled]`): it stays focusable while it saves, and no state rule was written for it.
+- **Busy screenshot kinds pulse by `opacity`** (`styles.css`, `.changes-shot-kind-button[data-busy='true']`,
+  `changes-pulse`): they are disabled while busy, so they hold no focus a fade could dim; left as it was.
+- **A Projects page or search row disabled during a capture run looks enabled** (`styles.css`,
+  `.projects-entry-open`; `components/changes/Projects.tsx`, `disabled={running}`): no disabled rule,
+  and its hover still tints the label; the run's band says a run is under way.
+- **The tab's render-profile badge has no forced-colours cue for "needs reload" and "failed"**
+  (`styles.css`, `.tab-profile[data-needs-reload='true']`, `.tab-profile[data-status='failed']`: an
+  `--accent` border, which forced colours repaint like the transparent one): only its accessible name
+  says it.
+- **The Changes panel's screenshot kinds overlap in a 588px window** (`styles.css`, `.changes-shot-kinds`,
+  the shared `.seo-segmented`): the segments don't wrap at the window's minimum width.
+- **Page Speed's "size unavailable" overflows its column, and Compliance's tally labels cut off**
+  (`styles.css`: `.seo-speed-type`'s 64px last column, `.seo-speed-num` `white-space: nowrap`; `.seo-a11y-tally`
+  at the 300px panel width): their widths were kept from before Signal.
+- **A very short Page Speed timing phase can be hidden** (`components/seo/Speed.tsx`, the navigation timing
+  bars): each phase starts at its real end, so the next one covers a phase narrower than its stroke.
+- **The result preview and the width meter wrap badly when narrow** (`styles.css`: `.seo-serp-path` can
+  break inside a crumb at 360px; `.seo-width-meter`'s verdict can split a number from its unit at 300px).
+- **SERP's ownership table scrolls sideways at 300px** (`styles.css`, `.serp-table-wrap`): on purpose
+  for now (real table markup that scrolls when wider than the panel), not yet laid out for that width.
+- **Search Console's controls and Content's targets are cut at 300px** (`gsc-panel.css`: "More range…"
+  and a long country such as "United Kingd…"; `gsc-targets.css`, `.gsc-targets-row`: less of each query):
+  ellipsis, not a narrower layout.
+- **Some states have no baseline capture** (`apps/desktop/e2e/visual.e2e.ts`): the crawl and AI answers
+  sheets' run cards, picks and pills, and SERP's and Visibility's tables; their captures are the empty
+  or before-run states, so those parts are checked by the token guards only.
+- **The Help frame sets no font of its own** (`help.css`, `.help` and `.help-sheet`): its parts set
+  theirs, and anything that doesn't inherits `body`'s `--font-ui` (above).
+- **Help's setup check has a 1.5px border** (`help.css`, `.setup-check`, the setup checklist's 14px
+  `--switch-off` ring): Chromium draws it as 1px; a whole pixel would change its look.
+- **The cascade checks read only the dark and forced-colours blocks** (`apps/desktop/src/__tests__/design-tokens.test.ts`,
+  `resolveOnElement`'s `applies`): a rule nested in another `@media` or in `@supports` is not read, so
+  `TEXT_COLOUR_RULES`, `FOCUS_RING_RULES` and the like can't see one.
+- **The meters' "fits" fill is `--ok` on `--track` at 2.23:1 in light** (`styles.css`, `.seo-meter-fill`
+  through `--meter`, and `.seo-width-meter`): under 3:1 for a graphic; the verdict word beside it carries
+  the state.
+- **The native page view's rounded corner is pixel-checked on Linux only**: in
+  `specs/workspace-layout.feature.md` once the workspace's layout PR merges (not on this branch).
+- **The canvas's features the app doesn't have** (the design canvas; each would need markup or behaviour,
+  not tokens): the score on the SEO sidebar toggle, "Ask frost", click-to-edit on the tab, "More tabs",
+  Overview's AI-readiness, Page and AI-judgment cards as the canvas draws them, the find icon and match
+  count inside the find field, a check glyph for a passing mark (above), and a card per issue.

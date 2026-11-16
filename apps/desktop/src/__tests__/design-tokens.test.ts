@@ -73,10 +73,99 @@ const REMOVED: readonly string[] = MIGRATION.filter((row) => row.removed === tru
 
 const DARK = '@media (prefers-color-scheme: dark)';
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
-/** A source without its comments: block comments, `//` line comments in scripts (not `://`), HTML comments. */
+/** Words after which a `/` starts a regex literal, not a division. */
+const REGEX_AFTER_WORD = /^(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/;
+
+/**
+ * A script without its comments: `//` and block comments outside string, template and regex literals. A
+ * backslash escapes the next character; a `/` starts a regex literal where an expression can begin (after
+ * an operator, a bracket, a comma, `return`, … or at the start), never after a value (`a / b`). Template
+ * literals nest through `${…}`, whose braces are counted.
+ */
+function stripScriptComments(text: string): string {
+  let out = '';
+  let quote: "'" | '"' | '`' | null = null;
+  /** The open `{` count of each `${…}` we are inside, innermost last. */
+  const expressions: number[] = [];
+  /** Whether a `/` here starts a regex literal (the last code token was not a value). */
+  let regexAllowed = true;
+  /** The identifier or keyword being read. */
+  let word = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    const next = text[i + 1];
+    if (quote !== null) {
+      if (ch === '\\') {
+        out += ch + (next ?? '');
+        i += 1;
+      } else if (quote === '`' && ch === '$' && next === '{') {
+        out += '${';
+        i += 1;
+        expressions.push(0);
+        quote = null;
+        regexAllowed = true;
+      } else {
+        if (ch === quote) quote = null;
+        out += ch;
+      }
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      const end = text.indexOf('\n', i);
+      i = (end === -1 ? text.length : end) - 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      const end = text.indexOf('*/', i + 2);
+      i = end === -1 ? text.length : end + 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch;
+      out += ch;
+      regexAllowed = false;
+      word = '';
+      continue;
+    }
+    if (ch === '/' && regexAllowed) {
+      // A regex literal, to its closing `/` outside a character class; escapes kept.
+      let j = i + 1;
+      let inClass = false;
+      for (; j < text.length && text[j] !== '\n'; j += 1) {
+        if (text[j] === '\\') j += 1;
+        else if (text[j] === '[') inClass = true;
+        else if (text[j] === ']') inClass = false;
+        else if (text[j] === '/' && !inClass) break;
+      }
+      out += text.slice(i, j + 1);
+      i = j;
+      regexAllowed = false;
+      word = '';
+      continue;
+    }
+    if (expressions.length > 0 && ch === '}' && expressions.at(-1) === 0) {
+      // The end of a template's `${…}`: back in its text.
+      expressions.pop();
+      quote = '`';
+      out += ch;
+      continue;
+    }
+    if (expressions.length > 0 && ch === '{') expressions[expressions.length - 1]! += 1;
+    if (expressions.length > 0 && ch === '}') expressions[expressions.length - 1]! -= 1;
+    out += ch;
+    // The word being read (code only); after it, a `/` divides, unless the word is a keyword.
+    word = /[\w$]/.test(ch) ? word + ch : '';
+    if (word !== '') regexAllowed = REGEX_AFTER_WORD.test(word);
+    else if (ch === ')' || ch === ']') regexAllowed = false;
+    else if (!/\s/.test(ch)) regexAllowed = true;
+  }
+  return out;
+}
+
+/** A source without its comments: a script's (`stripScriptComments`), a stylesheet's block comments, HTML comments. */
 const stripSourceComments = (name: string, text: string) => {
+  if (/\.tsx?$/.test(name)) return stripScriptComments(text);
   const blockless = stripComments(text);
-  if (/\.tsx?$/.test(name)) return blockless.replace(/(^|[^:])\/\/.*$/gm, '$1');
   if (name.endsWith('.html')) return blockless.replace(/<!--[\s\S]*?-->/g, '');
   return blockless;
 };
@@ -268,6 +357,16 @@ test('legacy-tokens-are-defined', () => {
 });
 
 test('removed-legacy-tokens-are-gone', () => {
+  // The search's comment stripper: a script's comments go, its string, template and regex literals stay.
+  const stripped = (text: string) => stripSourceComments('fixture.ts', text);
+  expect(stripped("const s = 'a//b var(--bg-chrome)';"), 'a // inside a string').toContain('var(--bg-chrome)');
+  expect(stripped('const s = "a//b var(--bg-chrome)";'), 'a // inside a double-quoted string').toContain('var(--bg-chrome)');
+  expect(stripped('const s = `a//b ${x} var(--bg-chrome)`;'), 'a // inside a template literal').toContain('var(--bg-chrome)');
+  expect(stripped("const u = 'https://x'; const v = 'var(--bg-chrome)';"), 'a URL before a read').toContain('var(--bg-chrome)');
+  expect(stripped('const r = /https?:\\/\\//; const v = "var(--bg-chrome)";'), 'a regex literal holding //').toContain('var(--bg-chrome)');
+  expect(stripped('const r = /[\'"]/; const v = "var(--bg-chrome)"; // var(--gone)'), 'a quote inside a regex literal').toBe('const r = /[\'"]/; const v = "var(--bg-chrome)"; ');
+  expect(stripped('x(); // var(--bg-chrome)\ny(); /* var(--bg-chrome) */ z();'), 'line and block comments').toBe('x(); \ny();  z();');
+  expect(stripped("const s = `${'}'} // var(--gone)`; // var(--gone)"), 'a brace inside a template expression').toBe("const s = `${'}'} // var(--gone)`; ");
   // A removed row is a retired name, or an alias of another Signal token: never a self-alias (a Signal
   // token's own name) or a layout constant, which nothing replaces.
   for (const row of MIGRATION) {
@@ -392,7 +491,47 @@ function layerProblems(pair: ContrastPair, theme: (typeof THEME_NAMES)[number]):
   return problems;
 }
 
+/** The properties that colour text. */
+const TEXT_COLOUR_PROPERTIES = new Set(['color', '-webkit-text-fill-color']);
+
+/**
+ * The declarations of `css` that draw text in `name` (`GRAPHICS_ONLY_COLOURS`), each as `<context> {
+ * <property>: <value> }`: a text-colour property whose value reads `name` anywhere (`var(`, optional
+ * space, the name on a name boundary: `!important` and `color-mix()` included), or reads a custom
+ * property this stylesheet sets, anywhere, to a value reading `name` (one level).
+ */
+function textColourReads(css: string, name: string): string[] {
+  const reads = (value: string, token: string) => new RegExp(`var\\(\\s*${token}(?![\\w-])`).test(value);
+  const { declarations } = parse(css);
+  const carriers = [...new Set(declarations.filter((d) => d.property.startsWith('--') && reads(d.value, name)).map((d) => d.property))];
+  return declarations
+    .filter((d) => TEXT_COLOUR_PROPERTIES.has(d.property.toLowerCase()) && (reads(d.value, name) || carriers.some((carrier) => reads(d.value, carrier))))
+    .map((d) => `${d.context.join(' > ')} { ${d.property}: ${d.value} }`);
+}
+
 test('graphics-only-colours-draw-no-text', () => {
+  // The matcher itself: each of these draws text in --ok and must be caught ...
+  const caught: Record<string, string> = {
+    'a plain rule': '.x { color: var(--ok); }',
+    'a rule in a nested @media': '@media (min-width: 1px) { .x { color: var(--ok); } }',
+    'a rule in @supports': '@supports (display: grid) { .x { color: var(--ok); } }',
+    'native nesting': '.x { .y { color: var(--ok); } }',
+    'through a custom property set in the stylesheet': '.x { --tone: var(--ok); } .y { color: var(--tone); }',
+    'var( with spaces': '.x { color: var( --ok ); }',
+    '!important': '.x { color: var(--ok) !important; }',
+    '-webkit-text-fill-color': '.x { -webkit-text-fill-color: var(--ok); }',
+    'inside color-mix()': '.x { color: color-mix(in srgb, var(--ok) 95%, black); }',
+  };
+  for (const [label, css] of Object.entries(caught)) expect(textColourReads(css, '--ok'), label).not.toEqual([]);
+  // ... and these draw no text in it: its -ink, a graphic's stroke or border, a property only a stroke reads.
+  const passed: Record<string, string> = {
+    'its -ink (a name boundary)': '.x { color: var(--ok-ink); }',
+    'an icon drawn by stroke': '.x .icon { stroke: var(--ok); }',
+    'a border': '.x { border-color: var(--ok); }',
+    'a custom property only a stroke reads': '.x { --tone: var(--ok); } .x .icon { stroke: var(--tone); }',
+  };
+  for (const [label, css] of Object.entries(passed)) expect(textColourReads(css, '--ok'), label).toEqual([]);
+
   const pairs: readonly { fg: string; bg: string; min: number }[] = CONTRAST_PAIRS;
   expect(GRAPHICS_ONLY_COLOURS.length).toBeGreaterThan(0);
   for (const name of GRAPHICS_ONLY_COLOURS) {
@@ -401,11 +540,7 @@ test('graphics-only-colours-draw-no-text', () => {
     expect(Math.min(...ratios), `${name} on --bg-surface still misses 4.5:1 somewhere`).toBeLessThan(4.5);
     expect(pairs.some((p) => p.fg === name && p.min === 4.5), `${name} is a text pair in CONTRAST_PAIRS`).toBe(false);
     // No rule draws text in it.
-    const uses = STYLESHEETS.flatMap((file) =>
-      parse(read(file))
-        .declarations.filter((d) => d.property === 'color' && d.value === `var(${name})`)
-        .map((d) => `${file}: ${d.context.join(' > ')}`),
-    );
+    const uses = STYLESHEETS.flatMap((file) => textColourReads(read(file), name).map((use) => `${file}: ${use}`));
     expect(uses, `rules drawing text in ${name}`).toEqual([]);
   }
 });
@@ -1112,6 +1247,7 @@ test('surface-rules-read-signal-tokens', () => {
     'Geist Mono at 500': '.palette-kbd { font: var(--text-mono); font-weight: 500; }',
     'redeclaring a Signal token': '.palette { --bg-surface: tomato; }',
     'redeclaring a legacy name': '.palette { --palette-bg: red; background: var(--palette-bg); }',
+    'reading a removed alias': '.palette { background: var(--palette-bg); }',
     'a component property with a literal colour': '.palette { --x: rgb(1 2 3); }',
     'a colour function in filter': '.palette { filter: drop-shadow(0 0 2px rgb(255 0 0)); }',
     'hex in scrollbar-color': '.palette-list { scrollbar-color: #f00 #00f; }',

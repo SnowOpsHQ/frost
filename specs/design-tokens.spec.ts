@@ -222,7 +222,11 @@ export const SIGNAL_NAMES_WITH_LEGACY_VALUES = [
  * nothing replaces it (a layout constant that keeps its own name, or a style Signal drops), and
  * `--text-*` means the type scale. `was` is the sheet's description of the old light value.
  * `removed`: `tokens.css` no longer declares the name (light or dark) and no renderer source (`.css`,
- * `.ts`, `.tsx`, `index.html`) mentions it outside a comment. A `retire` row is `removed` once its
+ * `.ts`, `.tsx`, `index.html` under `apps/desktop/src/renderer`) mentions it outside a comment (a
+ * script's comments are found by a scanner that leaves string, template and regex literals whole). The
+ * renderer is enough: the tokens live on its documents' `:root`, and nothing else reads one (no
+ * `var(--…)` or legacy name in `src/main`, `src/preload`, `src/workers` or `e2e/visual.css`, the one
+ * stylesheet main inserts, which sets only its own marker). A `retire` row is `removed` once its
  * surface PR moved every rule off it; an `alias` row once no rule reads it (the cleanup moved the last
  * readers of an alias read only by its own surface to its Signal token), but only an alias of another
  * Signal token: never a self-alias (a Signal token's own name) or a layout constant (`signal: null`),
@@ -1516,12 +1520,27 @@ export const CONTRAST_PAIRS = [
 
 /**
  * Status colours that are graphics only: under 4.5:1 as text on a card in at least one theme, so no rule
- * draws text in them (`color: var(<name>)` in no renderer stylesheet); text in their tone takes its
- * `-ink` (`--ok-ink`), and an icon draws the tone by `stroke` or `fill`. `--ok` is 3.30:1 on a card in
- * light (3.16 on the sheet): a graphics colour (3:1). The values step recorded 21 rules drawing it as text
- * (`KNOWN_CONTRAST_EXCEPTIONS`, a list of exceptions with their rule counts); the surface PRs moved them
- * to `--ok-ink`, and the cleanup PR the last, the address bar's secure badge, an icon now drawn by
- * `stroke`, so the list went and this rule took its place.
+ * of a renderer stylesheet draws text in them. A rule draws text in one when its `color` or
+ * `-webkit-text-fill-color` reads it anywhere in the value (`var(`, optional space, the name on a name
+ * boundary: `!important`, `color-mix()` and the like count), or reads a custom property the same
+ * stylesheet sets, anywhere, to a value that reads it (one level: `--verdict: var(--ok)` then
+ * `color: var(--verdict)`); at any nesting (`@media`, `@supports`, native nesting). Text in their tone
+ * takes its `-ink` (`--ok-ink`), and an icon draws the tone by `stroke` or `fill` on the icon itself.
+ * `--ok` is 3.30:1 on a card in light (3.16 on the sheet): a graphics colour (3:1). The values step
+ * recorded 21 rules drawing it as text (`KNOWN_CONTRAST_EXCEPTIONS`, a list of exceptions with their rule
+ * counts); the surface PRs moved them to `--ok-ink`, and the cleanup PR the last, the address bar's secure
+ * badge, an icon now drawn by `stroke`, so the list went and this rule took its place. Its first round of
+ * review widened the match (it had read only an exact `color: var(--ok)`), which found two more rules
+ * colouring an icon tile's icon through `color`: Indexability's, Compliance's and JavaScript's verdict icon
+ * (`.seo-verdict-icon`, through `--verdict`) and Page Speed's (`.seo-speed-verdict-icon`, through
+ * `--band`). They draw their icon's `stroke` now (the icons' only `currentColor`), the same pixels.
+ *
+ * Under forced colours a mark coloured by `stroke` keeps its token (Chromium leaves SVG strokes as they
+ * are), where one coloured by `color` took `CanvasText`: the lock and the verdict icons keep `--ok` (and
+ * the verdicts' `--warn`, `--danger`, `--accent`) on the forced `Canvas`. They stay above 3:1 there only
+ * because Chromium makes `prefers-color-scheme` follow the contrast theme, so a light `Canvas` gets the
+ * light `--ok` (about 3.2–3.3:1 on it) and a black one the dark `--ok` (about 12:1). Nothing verifies
+ * this on Windows, where forced colours live.
  */
 export const GRAPHICS_ONLY_COLOURS = ['--ok'] as const satisfies readonly TokenName[];
 
