@@ -496,8 +496,19 @@ test('drag-resize-moves-page-view', async () => {
     await expect(separator).toHaveAttribute('aria-valuemin', String(SIDEBAR_PANEL_WIDTH_RANGE.min));
     await expect(separator).toHaveAttribute('aria-valuemax', String(SIDEBAR_PANEL_WIDTH_RANGE.max));
     await expect.poll(async () => (await viewBounds()).x).toBeGreaterThanOrEqual(SIDEBAR_RAIL_WIDTH + SIDEBAR_PANEL_WIDTH);
-    // From the minimum: the view's left edge then never sweeps under the Windows runner's parked OS
-    // cursor (near the screen's centre), whose real move with no button down would end the drag.
+    // From the default width (skipped on Windows: specs/seo-sidebar.feature.md, drag-resize-moves-page-view).
+    // The runner parks the OS cursor at the screen's centre; when the tab view's left edge, moving with
+    // the drag, crosses it, Windows gives the chrome a lostpointercapture and a trusted buttonless
+    // pointermove at that point (CI probe 43893592708), which end the drag as a release over the view must.
+    if (process.platform !== 'win32') {
+      const fromDefault = await viewBounds();
+      await dragBy(separator, 100);
+      await expect(separator).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH + 100));
+      await expect.poll(async () => (await viewBounds()).x).toBe(fromDefault.x + 100);
+      expect((await viewBounds()).width).toBe(fromDefault.width - 100);
+      expect(await page.evaluate((key) => localStorage.getItem(key), SIDEBAR_WIDTH_STORAGE_KEY)).toBe(String(SIDEBAR_PANEL_WIDTH + 100));
+    }
+    // From the minimum, on every OS: the view's left edge (372 → 472) never crosses that cursor.
     await separator.focus();
     await page.keyboard.press('Home');
     const start = SIDEBAR_PANEL_WIDTH_RANGE.min;
