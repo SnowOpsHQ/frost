@@ -12,7 +12,6 @@ import { RENDER_FRAME } from '@app/specs/render-profile.spec';
 import { SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 import { ADDRESS_BASIS_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
 import {
-  ENTRANCE_FILL_EXCEPTIONS,
   NARROW_WINDOW,
   PAGE_AREA_COLLAPSES,
   pageViewRadius,
@@ -354,17 +353,14 @@ test('narrow-window-styles', () => {
 });
 
 test('entrance-animations-end', () => {
-  const kept = new Set(ENTRANCE_FILL_EXCEPTIONS.map((entry) => `${entry.stylesheet}: ${entry.selector}`));
   const lingering: string[] = [];
   for (const file of CSS_FILES)
     for (const { selector: list, body } of rules(read(file))) {
       const fills = [...body.matchAll(/animation(?:-fill-mode)?\s*:\s*([^;]+);/g)].some(([, value]) => /(?:^|[\s,])(both|forwards)(?:[\s,]|$)/.test(value!));
       if (!fills) continue;
-      for (const selector of selectorsOf(list)) if (!kept.has(`${file}: ${selector}`)) lingering.push(`${file}: ${selector}`);
+      for (const selector of selectorsOf(list)) lingering.push(`${file}: ${selector}`);
     }
   expect(lingering).toEqual([]);
-  // Each exception still names a rule that fills so (a stale entry guards nothing).
-  for (const entry of ENTRANCE_FILL_EXCEPTIONS) expect(resolved([entry.stylesheet], entry.selector).get('animation'), entry.selector).toMatch(/\bboth\b/);
 });
 
 test('separators-sit-in-the-gap', () => {
