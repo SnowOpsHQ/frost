@@ -252,7 +252,7 @@
   gap: var(--space-3);
   padding: var(--space-4);
   border-radius: var(--r-md);
-  background: var(--agent-card);
+  background: var(--bg-surface);
   box-shadow: var(--e-ring);
 }
 
@@ -370,7 +370,7 @@
   margin: auto 0;
   padding: var(--space-5);
   border-radius: var(--r-md);
-  background: var(--agent-card);
+  background: var(--bg-surface);
   box-shadow: var(--e-ring);
   text-align: left;
 }
@@ -801,7 +801,7 @@
   gap: var(--space-3);
   padding: var(--space-4);
   border-radius: var(--r-md);
-  background: var(--agent-card);
+  background: var(--bg-surface);
   box-shadow: var(--e-ring);
 }
 
@@ -1164,7 +1164,7 @@
   gap: var(--space-2);
   padding: var(--space-4);
   border-radius: var(--r-md);
-  background: var(--agent-card);
+  background: var(--bg-surface);
   box-shadow: var(--e-ring);
 }
 
@@ -1292,7 +1292,7 @@
   padding: 2px 2px 2px var(--space-3);
   border: 1px solid var(--divider);
   border-radius: var(--r-pill);
-  background: var(--agent-card);
+  background: var(--bg-surface);
   font: var(--text-small);
 }
 
@@ -1345,7 +1345,7 @@
   overflow-y: auto;
   padding: var(--space-1);
   border-radius: var(--r-md);
-  background: var(--agent-card);
+  background: var(--bg-surface);
   box-shadow: var(--e-overlay);
 }
 
