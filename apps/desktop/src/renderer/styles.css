@@ -1094,6 +1094,8 @@ input {
   background: var(--bg-sheet);
   box-shadow: var(--e-sheet);
   animation: seo-panel-in var(--dur-base) var(--ease-out) backwards;
+  /* Its body's padding follows its width (below). */
+  container: seo-panel / inline-size;
 }
 
 @keyframes seo-panel-in {
@@ -1171,6 +1173,15 @@ input {
   scrollbar-color: var(--track) transparent;
   user-select: text;
   cursor: auto;
+}
+
+/* Under the panel's minimum (SIDEBAR_PANEL_WIDTH_RANGE.min: a 298px content box inside its 1px border),
+   only in a window too narrow for it, the body gives its content the padding back
+   (specs/workspace-layout.feature.md, A narrow window). */
+@container seo-panel (width < 298px) {
+  .seo-body {
+    padding: var(--space-1);
+  }
 }
 
 .seo-foot {
@@ -5871,6 +5882,9 @@ input {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* The card's corner (specs/workspace-layout.feature.md): the 4px band's inner corner is then the
+     framed view's 12px (pageViewRadius), with no wedge of the card's fill between them. */
+  border-radius: inherit;
   box-shadow: inset 0 0 0 4px var(--accent);
 }
 

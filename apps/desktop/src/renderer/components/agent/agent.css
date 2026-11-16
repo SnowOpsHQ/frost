@@ -18,6 +18,12 @@
   font: var(--text-body);
 }
 
+/* Collapsed, the wrapper is its rail's width and never shrinks: in a window too narrow for every
+   sheet, the rail stays whole with its gap to the window's edge (specs/workspace-layout.feature.md). */
+.agent[data-open='false'] {
+  flex: none;
+}
+
 /* Phase 11 Task 10: the open panel's separator, in the gap past its left edge next to the page
    (`.pane-separator` in styles.css draws it). */
 .agent-separator {
