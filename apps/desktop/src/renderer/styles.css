@@ -4816,7 +4816,8 @@ input {
 }
 
 /* "Since the page loaded" heads the metric tiles: the section heads' rule draws it (.seo-section-title). */
-/* Its eyebrow's type, so its line box is the eyebrow's, not the body's (TEXT_TYPE_RULES). */
+/* Its eyebrow's type, so its line box is the eyebrow's, not the body's (TEXT_TYPE_RULES). The
+   letter-spacing draws nothing (the eyebrow sets its own); the surface guard wants --text-caps' tracking beside it. */
 .seo-speed-since {
   margin: calc(var(--space-1) / 2) calc(var(--space-1) / 2) calc(-1 * var(--space-1));
   font: var(--text-caps);
@@ -7026,6 +7027,12 @@ input {
 .seo-js-state[data-verdict='js-heavily'] {
   --verdict: var(--danger);
   --verdict-soft: var(--danger-soft);
+}
+
+/* "Served HTML unavailable": the card's first line is its eyebrow, on a line of its own, so the line is
+   the eyebrow's, not the body's (TEXT_TYPE_RULES). Only that state has an eyebrow directly in the card. */
+.seo-js-state > .seo-eyebrow {
+  display: block;
 }
 
 .seo-js-state .seo-verdict-summary {
