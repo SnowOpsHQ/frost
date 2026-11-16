@@ -1,12 +1,17 @@
 // Specs: specs/workspace-layout.spec.ts (WORKSPACE_GAP, pageViewRadius) · Acceptance: specs/workspace-layout.feature.md
-// (page-view-matches-the-card). Linux, Windows and macOS: the rounded native view is platform code.
+// (page-view-matches-the-card, narrow-window-keeps-the-sheets-whole). It runs on Linux, Windows and macOS and
+// proves, on each, the view's bounds against the page card and the radius main passed to setBorderRadius
+// (a spy: Electron has no getter). It does not prove the corner is drawn rounded: that was shown by a
+// screen capture on Linux CI only (workspace-layout.feature.md).
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { COMMAND_PALETTE_MENU_ID } from '@app/specs/command-palette.spec';
 import { DEVTOOLS_MENU_ID } from '@app/specs/devtools.spec';
 import { fitRenderViewport } from '@app/specs/render-profile.spec';
-import { pageViewRadius, WORKSPACE_GAP } from '@app/specs/workspace-layout.spec';
+import { AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
+import { PAGE_MIN_WIDTH } from '@app/specs/seo-sidebar.spec';
+import { NARROW_WINDOW, pageViewRadius, WORKSPACE_GAP } from '@app/specs/workspace-layout.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -28,7 +33,8 @@ test.beforeAll(async () => {
   ({ app, page } = await launchApp());
   await page.waitForLoadState('domcontentloaded');
   // Electron has no getter for a view's radius: a spy on the View prototype's setter records the last
-  // one main set on each view (installed before the first tab's view exists).
+  // value main passed for each view (installed before the first tab's view exists). That is the value
+  // asked for on this OS, not proof that the compositor drew the corner rounded.
   const installed = await app.evaluate(({ WebContentsView }) => {
     let proto: object | null = WebContentsView.prototype;
     while (proto && !Object.prototype.hasOwnProperty.call(proto, 'setBorderRadius')) proto = Object.getPrototypeOf(proto) as object | null;
@@ -200,4 +206,38 @@ test('page-view-matches-the-card', async () => {
   await press(id, 'Escape');
   await expect.poll(() => run(id, 'document.fullscreenElement === null')).toBe(true);
   await cardMatches(PLAIN);
+});
+
+test('narrow-window-keeps-the-sheets-whole', async () => {
+  // The chrome laid out at the window's minimum width (a tiling window manager ignores the window's own
+  // size), the SEO sheet open on Overview, the agent collapsed (specs/workspace-layout.feature.md).
+  await go(`${origin}/narrow`);
+  await contentsIdAt(`${origin}/narrow`);
+  if ((await page.getByTestId('seo-sidebar').getAttribute('data-open')) !== 'true') await page.getByTestId('seo-toggle').click();
+  if ((await page.getByTestId('seo-panel').getAttribute('data-panel')) !== 'overview') await page.locator('[data-testid="seo-rail-item"][data-panel="overview"]').click();
+  await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'overview');
+  await expect(page.getByTestId('agent-panel')).toHaveAttribute('data-open', 'false');
+  const padding = () => page.locator('.seo-body').evaluate((el) => getComputedStyle(el).paddingLeft);
+  try {
+    // A width the panel's minimum fits: the canvas's 16px.
+    await page.setViewportSize({ width: 900, height: 700 });
+    await expect.poll(padding).toBe('16px');
+    await page.setViewportSize({ width: NARROW_WINDOW.width, height: 700 });
+    await expect
+      .poll(async () => {
+        const [rail, panel, card] = await Promise.all([box('.agent-rail'), box('.seo-panel'), box('.page-area')]);
+        return { rail: rail && [Math.round(rail.width), Math.round(NARROW_WINDOW.width - (rail.x + rail.width))], panel: panel && Math.round(panel.width), card: card && Math.round(card.width) };
+      })
+      .toEqual({ rail: [AGENT_RAIL_WIDTH, WORKSPACE_GAP.px], panel: NARROW_WINDOW.seoSheet, card: PAGE_MIN_WIDTH });
+    // Under the panel's minimum the body gives its content the padding back, and Overview's first card fits it.
+    await expect.poll(padding).toBe('4px');
+    const fits = await page.locator('.seo-body').evaluate((body) => {
+      const limit = body.getBoundingClientRect().right - parseFloat(getComputedStyle(body).paddingRight);
+      const card = body.querySelector('.seo-score-card')!;
+      return [card, ...card.querySelectorAll('*')].every((el) => el.getBoundingClientRect().right <= limit + 0.5);
+    });
+    expect(fits).toBe(true);
+  } finally {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
+  }
 });

@@ -13,9 +13,11 @@ import { SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 import { ADDRESS_BASIS_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
 import {
   ENTRANCE_FILL_EXCEPTIONS,
+  NARROW_WINDOW,
   PAGE_AREA_COLLAPSES,
   pageViewRadius,
   RENDER_DEVICE_OUTLINE_RADIUS,
+  SEO_BODY_NARROW_PADDING,
   SHEET_RADIUS,
   WORKSPACE_GAP,
   WORKSPACE_SHEETS,
@@ -194,13 +196,13 @@ test('crawl-run-state-wraps-a-long-pause-reason', () => {
 
 // ---- The workspace's layout (specs/workspace-layout.feature.md) ------------------------------------
 
-/** Top-level rules only (comments and `@media` / `@supports` blocks dropped), in file order. */
+/** Top-level rules only (comments and `@media` / `@supports` / `@container` blocks dropped), in file order. */
 function topRules(file: string): { selector: string; body: string }[] {
   let plain = read(file).replace(/\/\*[\s\S]*?\*\//g, '');
   // Nested blocks: drop each at-rule's whole block, innermost first.
   for (let before = ''; before !== plain; ) {
     before = plain;
-    plain = plain.replace(/@(?:media|supports)[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
+    plain = plain.replace(/@(?:media|supports|container)[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
   }
   return [...plain.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((match) => ({ selector: match[1]!.trim(), body: match[2]! }));
 }
@@ -248,6 +250,9 @@ test('workspace-layout-values', () => {
   expect(workspaceRowChrome({ sidebar: true, agent: true })).toBe(SIDEBAR_RAIL_WIDTH + 3 * WORKSPACE_GAP.px);
   expect(workspaceRowChrome({ sidebar: false, agent: true })).toBe(SIDEBAR_RAIL_WIDTH + 2 * WORKSPACE_GAP.px);
   expect(workspaceRowWidth(1280)).toBe(1280 - 2 * WORKSPACE_GAP.px);
+  // The window's minimum: the SEO sheet with the agent collapsed (specs/workspace-layout.feature.md, A narrow window).
+  expect(NARROW_WINDOW).toEqual({ width: 588, seoSheet: 140 });
+  expect(SEO_BODY_NARROW_PADDING).toEqual({ token: '--space-1', belowContentWidth: 298 });
   expect(pageViewRadius({ fullscreen: false, framed: false })).toBe(16);
   expect(pageViewRadius({ fullscreen: true, framed: false })).toBe(0);
   expect(pageViewRadius({ fullscreen: true, framed: true })).toBe(0);
@@ -333,6 +338,19 @@ test('page-area-collapses-hide-it', () => {
   const running = resolved(['styles.css'], ".page-column:has(> .projects-sheet[data-running='true']) > .page-area");
   expect(running.get('height')).toBe('auto');
   expect(running.get('visibility')).toBe('visible');
+});
+
+test('narrow-window-styles', () => {
+  // The collapsed agent never shrinks: its rail stays whole in a window too narrow for every sheet.
+  expect(resolved(['components/agent/agent.css'], ".agent[data-open='false']").get('flex')).toBe('none');
+  // Under the panel's minimum (its content box, inside the 1px border) the SEO body's padding is the narrow one.
+  expect(resolved(['styles.css'], '.seo-panel').get('container')).toBe('seo-panel / inline-size');
+  const plain = read('styles.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const queries = [...plain.matchAll(/@container\s+seo-panel\s*\(([^)]*)\)\s*\{([^{}]*\{[^{}]*\})*\s*\}/g)];
+  expect(queries.map((q) => q[1]!.trim())).toEqual([`width < ${SEO_BODY_NARROW_PADDING.belowContentWidth}px`]);
+  expect(queries[0]![0]).toMatch(new RegExp(`\\.seo-body\\s*\\{\\s*padding:\\s*var\\(${SEO_BODY_NARROW_PADDING.token}\\);\\s*\\}`));
+  // The render profile's frame takes the card's radius: its inset band's inner corner is the framed view's.
+  expect(resolved(['styles.css'], '.render-frame').get('border-radius')).toBe('inherit');
 });
 
 test('entrance-animations-end', () => {
