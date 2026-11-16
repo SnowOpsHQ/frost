@@ -1,4 +1,4 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS, FADES_SPARE_FOCUS, LoadsBefore)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, GRAPHICS_ONLY_COLOURS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS, FADES_SPARE_FOCUS, LoadsBefore)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -15,9 +15,9 @@ import {
   FORCED_COLOURS_PRESSED,
   PROJECTS_SHEET_NARROW,
   FORCED_COLOURS_SYSTEM_COLOURS,
+  GRAPHICS_ONLY_COLOURS,
   HOVER_OVERLAYS_SKIP_PRESSED,
   HEX_COLOUR_RATCHET,
-  KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
   PRESSED_EDGES,
   STATE_EDGES,
@@ -28,7 +28,6 @@ import {
   TEXT_COLOUR_RULES,
   THEMED_SIGNAL_GROUPS,
   TOKENS_STYLESHEET,
-  type ContrastException,
   type ContrastPair,
   type DisabledControl,
   type FocusRingRule,
@@ -74,12 +73,119 @@ const REMOVED: readonly string[] = MIGRATION.filter((row) => row.removed === tru
 
 const DARK = '@media (prefers-color-scheme: dark)';
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
-/** A source without its comments: block comments, `//` line comments in scripts (not `://`), HTML comments. */
+/** Words after which a `/` starts a regex literal, not a division. */
+const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
+/** A character code of an identifier or number: `[0-9A-Za-z_$]`. */
+const isWordCode = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 36;
+const isSpaceCode = (c: number) => c === 32 || c === 9 || c === 10 || c === 13;
+
+/**
+ * A script without its comments: `//` and block comments outside string, template and regex literals. One
+ * linear pass by character code: the text between comments is copied by slice, a word is looked at only
+ * where it ends. A backslash in a literal escapes the next character; a `/` starts a regex literal where an
+ * expression can begin (after an operator, a bracket, a comma, `return`, … or at the start), never after a
+ * value (`a / b`). Template literals nest through `${…}`, whose braces are counted.
+ */
+function stripScriptComments(text: string): string {
+  const pieces: string[] = [];
+  const n = text.length;
+  /** Where the text not yet copied starts. */
+  let kept = 0;
+  /** The open quote's character code; 0 in code. */
+  let quote = 0;
+  /** The open `{` count of each `${…}` we are inside, innermost last. */
+  const expressions: number[] = [];
+  /** Whether a `/` here starts a regex literal (the last code token was not a value). */
+  let regexAllowed = true;
+  /** Where the word being read starts; -1 outside a word. */
+  let wordStart = -1;
+  for (let i = 0; i < n; i += 1) {
+    const c = text.charCodeAt(i);
+    if (quote !== 0) {
+      if (c === 92) i += 1;
+      else if (quote === 96 && c === 36 && text.charCodeAt(i + 1) === 123) {
+        i += 1;
+        expressions.push(0);
+        quote = 0;
+        regexAllowed = true;
+      } else if (c === quote) quote = 0;
+      continue;
+    }
+    if (wordStart !== -1 && !isWordCode(c)) {
+      // A word ends: a `/` after it divides, unless it is a keyword.
+      regexAllowed = REGEX_AFTER_WORD.has(text.slice(wordStart, i));
+      wordStart = -1;
+    }
+    if (c === 47) {
+      const next = text.charCodeAt(i + 1);
+      if (next === 47 || next === 42) {
+        // A comment: copy what came before it, skip it (a line comment keeps its newline).
+        pieces.push(text.slice(kept, i));
+        let end: number;
+        if (next === 47) {
+          end = text.indexOf('\n', i);
+          if (end === -1) end = n;
+        } else {
+          end = text.indexOf('*/', i + 2);
+          end = end === -1 ? n : end + 2;
+        }
+        kept = end;
+        i = end - 1;
+        continue;
+      }
+      if (regexAllowed) {
+        // A regex literal, to its closing `/` outside a character class.
+        let j = i + 1;
+        let inClass = false;
+        for (; j < n; j += 1) {
+          const d = text.charCodeAt(j);
+          if (d === 10) break;
+          if (d === 92) j += 1;
+          else if (d === 91) inClass = true;
+          else if (d === 93) inClass = false;
+          else if (d === 47 && !inClass) break;
+        }
+        i = j;
+        regexAllowed = false;
+        continue;
+      }
+      regexAllowed = true;
+      continue;
+    }
+    if (c === 39 || c === 34 || c === 96) {
+      quote = c;
+      regexAllowed = false;
+      continue;
+    }
+    if (expressions.length > 0 && c === 125 && expressions[expressions.length - 1] === 0) {
+      // The end of a template's `${…}`: back in its text.
+      expressions.pop();
+      quote = 96;
+      continue;
+    }
+    if (expressions.length > 0 && c === 123) expressions[expressions.length - 1]! += 1;
+    else if (expressions.length > 0 && c === 125) expressions[expressions.length - 1]! -= 1;
+    if (isWordCode(c)) {
+      if (wordStart === -1) wordStart = i;
+    } else if (c === 41 || c === 93) regexAllowed = false;
+    else if (!isSpaceCode(c)) regexAllowed = true;
+  }
+  pieces.push(text.slice(kept));
+  return pieces.join('');
+}
+
+/** A source without its comments: a script's (`stripScriptComments`), a stylesheet's block comments, HTML comments. */
 const stripSourceComments = (name: string, text: string) => {
+  if (/\.tsx?$/.test(name)) return stripScriptComments(text);
   const blockless = stripComments(text);
-  if (/\.tsx?$/.test(name)) return blockless.replace(/(^|[^:])\/\/.*$/gm, '$1');
   if (name.endsWith('.html')) return blockless.replace(/<!--[\s\S]*?-->/g, '');
   return blockless;
+};
+/** A renderer source without its comments, stripped once and reused. */
+const strippedSources = new Map<string, string>();
+const strippedSource = (file: string) => {
+  if (!strippedSources.has(file)) strippedSources.set(file, stripSourceComments(file, read(file)));
+  return strippedSources.get(file)!;
 };
 
 interface Declaration {
@@ -247,10 +353,10 @@ test('signal-tokens-are-defined', () => {
       if (token.dark !== undefined) expect(DARK_VALUES.get(token.name), `${label} (dark)`).toBe(token.dark);
     }
   }
-  // The shared names are Signal tokens, and `--icon` stays a colour beside the `--icon-size` size.
+  // The shared names are Signal tokens; `--icon` (the old icon colour, `removed`) is not: the size is `--icon-size`.
   for (const name of SIGNAL_NAMES_WITH_LEGACY_VALUES) expect(SIGNAL_NAMES.has(name), name).toBe(true);
   expect(SIGNAL_NAMES.has('--icon')).toBe(false);
-  expect(LIGHT.get('--icon')).toMatch(/^#[0-9a-f]{6}$/i);
+  expect(REMOVED).toContain('--icon');
 });
 
 test('legacy-tokens-are-defined', () => {
@@ -269,7 +375,28 @@ test('legacy-tokens-are-defined', () => {
 });
 
 test('removed-legacy-tokens-are-gone', () => {
-  for (const row of MIGRATION) if (row.removed === true) expect(row.kind, `${row.legacy} is removed, so retired`).toBe('retire');
+  // The search's comment stripper: a script's comments go, its string, template and regex literals stay.
+  const stripped = (text: string) => stripSourceComments('fixture.ts', text);
+  expect(stripped("const s = 'a//b var(--bg-chrome)';"), 'a // inside a string').toContain('var(--bg-chrome)');
+  expect(stripped('const s = "a//b var(--bg-chrome)";'), 'a // inside a double-quoted string').toContain('var(--bg-chrome)');
+  expect(stripped('const s = `a//b ${x} var(--bg-chrome)`;'), 'a // inside a template literal').toContain('var(--bg-chrome)');
+  expect(stripped("const u = 'https://x'; const v = 'var(--bg-chrome)';"), 'a URL before a read').toContain('var(--bg-chrome)');
+  expect(stripped('const r = /https?:\\/\\//; const v = "var(--bg-chrome)";'), 'a regex literal holding //').toContain('var(--bg-chrome)');
+  expect(stripped('const r = /[\'"]/; const v = "var(--bg-chrome)"; // var(--gone)'), 'a quote inside a regex literal').toBe('const r = /[\'"]/; const v = "var(--bg-chrome)"; ');
+  expect(stripped('x(); // var(--bg-chrome)\ny(); /* var(--bg-chrome) */ z();'), 'line and block comments').toBe('x(); \ny();  z();');
+  expect(stripped("const s = `${'}'} // var(--gone)`; // var(--gone)"), 'a brace inside a template expression').toBe("const s = `${'}'} // var(--gone)`; ");
+  // A removed row is a retired name, or an alias of another Signal token: never a self-alias (a Signal
+  // token's own name) or a layout constant, which nothing replaces.
+  for (const row of MIGRATION) {
+    if (row.removed !== true) continue;
+    if (row.kind === 'alias') {
+      expect(row.signal, `${row.legacy} is a removed alias, so it names its Signal token`).not.toBeNull();
+      expect(row.signal, `${row.legacy} is a removed alias, so not a self-alias`).not.toBe(row.legacy);
+    } else {
+      expect(row.kind, row.legacy).toBe('retire');
+    }
+    expect(SIGNAL_NAMES.has(row.legacy), `${row.legacy} is removed, so not a Signal token`).toBe(false);
+  }
   // The command palette's surface PR removed its retired names (the rollout only ever adds to this).
   expect(REMOVED).toEqual(expect.arrayContaining(['--palette-edge', '--palette-shadow', '--palette-sheet', '--palette-row-active', '--palette-hit', '--palette-kbd-bg', '--palette-kbd-edge']));
   // The new-tab view's surface PR.
@@ -284,12 +411,21 @@ test('removed-legacy-tokens-are-gone', () => {
   expect(REMOVED).toEqual(expect.arrayContaining(['--serp-title', '--serp-path', '--serp-glyph', '--serp-glyph-mark']));
   // And the panel stylesheets' (Search Console's chart grid).
   expect(REMOVED).toEqual(expect.arrayContaining(['--gsc-grid']));
+  // And the cleanup's: the retired names no rule read any more, the aliases no rule read, and the aliases
+  // whose readers (their own surface's) moved to their Signal token.
+  expect(REMOVED).toEqual(
+    expect.arrayContaining(['--radius-control', '--radius-field', '--icon', '--bg-chrome-edge', '--border-field', '--shadow-card', '--caution', '--info-tone', '--seo-card-edge']),
+  );
+  expect(REMOVED).toEqual(expect.arrayContaining(['--bg-field', '--seo-bg', '--seo-card', '--seo-track', '--serp-card', '--serp-text', '--gsc-line', '--gsc-axis']));
+  expect(REMOVED).toEqual(expect.arrayContaining(['--bg-chrome', '--palette-bg', '--jump-tile-bg', '--agent-card']));
+  // The sources searched below hold the renderer's scripts too (an inline style or a setProperty can read a token).
+  for (const kind of ['.css', '.ts', '.tsx', '.html']) expect(RENDERER_SOURCES.some((name) => name.endsWith(kind)), kind).toBe(true);
   for (const name of REMOVED) {
     expect(LIGHT.has(name), `${name} (light)`).toBe(false);
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
     // `--palette-sheet` must not match `--palette-sheet-height`.
     const mention = new RegExp(`${name}(?![\\w-])`);
-    for (const file of RENDERER_SOURCES) expect(mention.test(stripSourceComments(file, read(file))), `${file} mentions ${name}`).toBe(false);
+    for (const file of RENDERER_SOURCES) expect(mention.test(strippedSource(file)), `${file} mentions ${name}`).toBe(false);
   }
 });
 
@@ -302,8 +438,8 @@ test('legacy-token-values-are-pinned', () => {
 });
 
 test('legacy-aliases-point-at-signal-tokens', () => {
-  for (const row of LEGACY_TOKEN_MIGRATION) {
-    if (row.kind !== 'alias' || row.signal === null) continue;
+  for (const row of MIGRATION) {
+    if (row.kind !== 'alias' || row.signal === null || row.removed === true) continue;
     if (row.signal === row.legacy) continue; // a self-alias: signal-tokens-are-defined checks its value
     // One light declaration, exactly var(<signal>); dark follows the Signal token's own dark value.
     expect(LIGHT.get(row.legacy), row.legacy).toBe(`var(${row.signal})`);
@@ -373,19 +509,57 @@ function layerProblems(pair: ContrastPair, theme: (typeof THEME_NAMES)[number]):
   return problems;
 }
 
-test('known-contrast-exceptions-are-current', () => {
+/** The properties that colour text. */
+const TEXT_COLOUR_PROPERTIES = new Set(['color', '-webkit-text-fill-color']);
+
+/**
+ * The declarations of `css` that draw text in `name` (`GRAPHICS_ONLY_COLOURS`), each as `<context> {
+ * <property>: <value> }`: a text-colour property whose value reads `name` anywhere (`var(`, optional
+ * space, the name on a name boundary: `!important` and `color-mix()` included), or reads a custom
+ * property this stylesheet sets, anywhere, to a value reading `name` (one level).
+ */
+function textColourReads(css: string, name: string): string[] {
+  const reads = (value: string, token: string) => new RegExp(`var\\(\\s*${token}(?![\\w-])`).test(value);
+  const { declarations } = parse(css);
+  const carriers = [...new Set(declarations.filter((d) => d.property.startsWith('--') && reads(d.value, name)).map((d) => d.property))];
+  return declarations
+    .filter((d) => TEXT_COLOUR_PROPERTIES.has(d.property.toLowerCase()) && (reads(d.value, name) || carriers.some((carrier) => reads(d.value, carrier))))
+    .map((d) => `${d.context.join(' > ')} { ${d.property}: ${d.value} }`);
+}
+
+test('graphics-only-colours-draw-no-text', () => {
+  // The matcher itself: each of these draws text in --ok and must be caught ...
+  const caught: Record<string, string> = {
+    'a plain rule': '.x { color: var(--ok); }',
+    'a rule in a nested @media': '@media (min-width: 1px) { .x { color: var(--ok); } }',
+    'a rule in @supports': '@supports (display: grid) { .x { color: var(--ok); } }',
+    'native nesting': '.x { .y { color: var(--ok); } }',
+    'through a custom property set in the stylesheet': '.x { --tone: var(--ok); } .y { color: var(--tone); }',
+    'var( with spaces': '.x { color: var( --ok ); }',
+    '!important': '.x { color: var(--ok) !important; }',
+    '-webkit-text-fill-color': '.x { -webkit-text-fill-color: var(--ok); }',
+    'inside color-mix()': '.x { color: color-mix(in srgb, var(--ok) 95%, black); }',
+  };
+  for (const [label, css] of Object.entries(caught)) expect(textColourReads(css, '--ok'), label).not.toEqual([]);
+  // ... and these draw no text in it: its -ink, a graphic's stroke or border, a property only a stroke reads.
+  const passed: Record<string, string> = {
+    'its -ink (a name boundary)': '.x { color: var(--ok-ink); }',
+    'an icon drawn by stroke': '.x .icon { stroke: var(--ok); }',
+    'a border': '.x { border-color: var(--ok); }',
+    'a custom property only a stroke reads': '.x { --tone: var(--ok); } .x .icon { stroke: var(--tone); }',
+  };
+  for (const [label, css] of Object.entries(passed)) expect(textColourReads(css, '--ok'), label).toEqual([]);
+
   const pairs: readonly { fg: string; bg: string; min: number }[] = CONTRAST_PAIRS;
-  const exceptions: readonly ContrastException[] = KNOWN_CONTRAST_EXCEPTIONS;
-  for (const exception of exceptions) {
-    const label = `${exception.fg} on ${exception.bg}`;
-    const ratios = THEME_NAMES.map((theme) => contrastRatio(colourIn(theme, exception.fg), colourIn(theme, exception.bg)));
-    expect(Math.min(...ratios), `${label} still misses ${exception.min}:1 somewhere`).toBeLessThan(exception.min);
-    expect(
-      pairs.some((p) => p.fg === exception.fg && p.bg === exception.bg && p.min === exception.min),
-      `${label} is not also a CONTRAST_PAIRS pair`,
-    ).toBe(false);
-    const uses = STYLESHEETS.flatMap((name) => parse(read(name)).declarations.filter((d) => d.property === 'color' && d.value === `var(${exception.fg})`));
-    expect(uses.length, `${label}: rules drawing text in ${exception.fg}`).toBe(exception.rules);
+  expect(GRAPHICS_ONLY_COLOURS.length).toBeGreaterThan(0);
+  for (const name of GRAPHICS_ONLY_COLOURS) {
+    // Still under 4.5:1 as text on a card somewhere (else the entry is stale), and never a text pair.
+    const ratios = THEME_NAMES.map((theme) => contrastRatio(colourIn(theme, name), colourIn(theme, '--bg-surface')));
+    expect(Math.min(...ratios), `${name} on --bg-surface still misses 4.5:1 somewhere`).toBeLessThan(4.5);
+    expect(pairs.some((p) => p.fg === name && p.min === 4.5), `${name} is a text pair in CONTRAST_PAIRS`).toBe(false);
+    // No rule draws text in it.
+    const uses = STYLESHEETS.flatMap((file) => textColourReads(read(file), name).map((use) => `${file}: ${use}`));
+    expect(uses, `rules drawing text in ${name}`).toEqual([]);
   }
 });
 
@@ -974,7 +1148,8 @@ function forcedAdjustProblems(declarations: readonly Declaration[], stylesheet: 
  * `classes` owns only those (each exact, or a `-*` family) and only its listed `keyframes`.
  */
 function surfaceProblems(css: string, surface: SignalSurface): { problems: string[]; checked: number; typeRules: number } {
-  const aliases = new Set<string>(MIGRATION.filter((row) => row.kind === 'alias').map((row) => row.legacy));
+  // The aliases still declared: a removed one is no longer a token a rule may read.
+  const aliases = new Set<string>(MIGRATION.filter((row) => row.kind === 'alias' && row.removed !== true).map((row) => row.legacy));
   const tracking = new Map<string, string>(SIGNAL_TOKENS.type.map((token) => [token.name, token.tracking]));
   // The weights BUNDLED_FONTS has per family, and each type token's family (its shorthand's first one).
   const weightsOf = (family: string) => new Set(BUNDLED_FONTS.filter((font) => font.family === family).map((font) => String(font.weight)));
@@ -1090,6 +1265,7 @@ test('surface-rules-read-signal-tokens', () => {
     'Geist Mono at 500': '.palette-kbd { font: var(--text-mono); font-weight: 500; }',
     'redeclaring a Signal token': '.palette { --bg-surface: tomato; }',
     'redeclaring a legacy name': '.palette { --palette-bg: red; background: var(--palette-bg); }',
+    'reading a removed alias': '.palette { background: var(--palette-bg); }',
     'a component property with a literal colour': '.palette { --x: rgb(1 2 3); }',
     'a colour function in filter': '.palette { filter: drop-shadow(0 0 2px rgb(255 0 0)); }',
     'hex in scrollbar-color': '.palette-list { scrollbar-color: #f00 #00f; }',

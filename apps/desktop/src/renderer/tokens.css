@@ -4,65 +4,44 @@
    (prefers-color-scheme); a dark block redefines only the names whose value changes.
 
    Two parts:
-   1. Legacy tokens: every property that used to sit in a :root block of styles.css, settings.css,
-      gsc-panel.css and components/agent/agent.css, in its old order. LEGACY_TOKEN_MIGRATION in the
-      spec maps each one to its Signal token (alias or retire):
+   1. Legacy tokens: the properties that used to sit in a :root block of styles.css, settings.css,
+      gsc-panel.css and components/agent/agent.css and that a rule still reads, in their old order.
+      LEGACY_TOKEN_MIGRATION in the spec maps each one to its Signal token (alias or retire); the rest
+      are removed (the surface PRs dropped the retired names, the cleanup the names no rule read):
       - an alias is var() of its Signal token, declared once (light) with no dark override, so it
         follows that token in both themes;
-      - a retired name keeps its pre-Signal value until its surface PR, which drops it; a layout
-        constant keeps its value.
+      - a layout constant keeps its value; --font-ui, retired, is still the body's face.
       Self-aliases (Signal names that existed with the same meaning: --text, --text-muted,
       --text-faint, --accent, --accent-soft, --accent-hover, --on-accent, --ok, --warn, --danger,
       --bg-hover and --bg-active) are not here: part 2 declares them at their Signal values.
    2. Signal tokens, every one at its Signal value (SIGNAL_TOKENS in the spec).
 
-   --icon is a colour and stays one; the Signal icon size is --icon-size. */
+   The icon size is --icon-size (the old --icon colour is removed). */
 
 /* ==== 1. Legacy tokens (aliases point at part 2) ================================================ */
 
 :root {
-  /* ---- Chrome, surfaces, icons and the SEO sidebar (was in styles.css; text, accent, status and state: part 2) */
+  /* ---- The body's face (was in styles.css) */
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Inter', Roboto, Ubuntu, Cantarell, 'Noto Sans',
     'Helvetica Neue', Arial, sans-serif;
 
-  --radius-control: 9px;
-  --radius-field: 11px;
-
-  --bg-chrome: var(--bg-window);
-  --bg-chrome-edge: #e2e6ec;
-  --bg-field: var(--bg-surface);
-  --border-field: #d7dce4;
+  /* ---- The page card (was in styles.css) */
   --bg-page: var(--bg-surface);
-
-  --icon: #3a4556;
 
   /* SEO sidebar (SIDEBAR_PANEL_WIDTH / SIDEBAR_RAIL_WIDTH in specs/seo-sidebar.spec.ts). */
   --seo-panel-width: var(--w-panel);
   --seo-rail-width: var(--w-rail);
   /* In a narrow window the page keeps at least this much width; the SEO panel gives way. */
   --page-min-width: 320px;
-  --seo-bg: var(--bg-sheet);
-  --seo-card: var(--bg-surface);
-  --seo-card-edge: #e3e7ee;
-  --seo-track: var(--track);
-  --caution: #b7791f;
-  --info-tone: #4b72b8;
-  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04);
 
   /* ---- Command palette (was in styles.css) */
   --palette-sheet-height: 404px;
   --palette-page-min-visible: 96px;
   --palette-sheet-min-height: 180px;
   --palette-width: 640px;
-  --palette-bg: var(--bg-surface);
 
-  /* ---- Content panel: the SERP previews (was in styles.css) */
-  --serp-card: var(--bg-surface);
-  --serp-text: var(--text-muted);
-
-  /* ---- Browser polish: find bar, History, "Jump back in" (was in styles.css) */
+  /* ---- Browser polish: History (was in styles.css) */
   --history-width: 760px;
-  --jump-tile-bg: var(--bg-surface);
 
   /* ---- Projects (was in styles.css) */
   --projects-width: 980px;
@@ -72,30 +51,10 @@
   --settings-width: 820px;
   --settings-nav-width: 168px;
 
-  /* ---- Search Console panel (was in gsc-panel.css) */
-  --gsc-line: var(--accent);
-  --gsc-axis: var(--text-faint);
-
   /* ---- Agent panel (was in components/agent/agent.css) */
   --agent-panel-width: 380px;
   --agent-rail-width: 40px;
   --agent-bg: var(--bg-sheet);
-  --agent-card: var(--bg-surface);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* ---- Chrome, surfaces, icons and the SEO sidebar (was in styles.css; text, accent, status and state: part 2) */
-    --bg-chrome-edge: #2c3038;
-    --border-field: #3a3f49;
-
-    --icon: #c9d0db;
-
-    --seo-card-edge: #2c3038;
-    --caution: #f0b552;
-    --info-tone: #8fb0e8;
-    --shadow-card: none;
-  }
 }
 
 /* ==== 2. Signal tokens (the self-aliases included; Signal-only names unused until the surface PRs) */
