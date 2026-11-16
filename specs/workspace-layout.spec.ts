@@ -110,17 +110,6 @@ export const PAGE_AREA_COLLAPSES = [
 ] as const;
 
 /**
- * Entrance animations fill `backwards` (`workspace-layout.feature.md`, Entrance animations end): one
- * that stays in effect (`both`, `forwards`) keeps its element composited, and what overlaps it then
- * loses LCD text. These rules still fill `both`: the Search Console panel's, inside the SEO sheet, where
- * no shadow reaches them (their stylesheet is PR #50's).
- */
-export const ENTRANCE_FILL_EXCEPTIONS = [
-  { stylesheet: 'gsc-panel.css', selector: '.gsc' },
-  { stylesheet: 'gsc-panel.css', selector: '.gsc-cal' },
-] as const;
-
-/**
  * A narrow window (`workspace-layout.feature.md`, A narrow window): the window's minimum content width (CSS px,
  * `CHROME_MIN_CONTENT_WIDTH_PX`, 588) and, there, the SEO sheet's width with the agent collapsed (the row less the
  * page's minimum and `workspaceRowChrome`). Below the panel's minimum the SEO body's padding is

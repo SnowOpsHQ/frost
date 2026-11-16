@@ -2,7 +2,7 @@
 
 Spec: `specs/workspace-layout.spec.ts` (`WORKSPACE_GAP`, `SHEET_RADIUS`, `workspaceRowChrome`,
 `workspaceRowWidth`, `pageViewRadius`, `RENDER_DEVICE_OUTLINE_RADIUS`, `WORKSPACE_SHEETS`,
-`PAGE_AREA_COLLAPSES`, `ENTRANCE_FILL_EXCEPTIONS`, `NARROW_WINDOW`, `SEO_BODY_NARROW_PADDING`). Signal step 3, the last surface: how the pieces sit in the window, not their
+`PAGE_AREA_COLLAPSES`, `NARROW_WINDOW`, `SEO_BODY_NARROW_PADDING`). Signal step 3, the last surface: how the pieces sit in the window, not their
 interiors (`design-tokens.feature.md`). Source: the approved canvas's light and dark main screens, its
 agent, Settings and palette screens, and its token sheet (`--r-lg`: "sheets, rail, page card,
 palette"). Code: `apps/desktop/src/renderer/styles.css` (Layout, Workspace, Page area, SEO sidebar,
@@ -121,8 +121,9 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   each ends at the element's own style, so nothing changes on screen, but an animation that stays in
   effect keeps its element composited, and Chromium assumes a composited transform animation overlaps
   what a sheet's shadow now reaches (the new tab's mark composited the agent panel beside the page
-  card). The Search Console panel's two (`gsc-panel.css`, PR #50's stylesheet) are
-  `ENTRANCE_FILL_EXCEPTIONS`: they sit inside the SEO sheet, where no shadow reaches them.
+  card). The Search Console panel's two (`.gsc` and its calendar `.gsc-cal`, `panel-in`), which waited
+  for PR #50's stylesheet to land, fill `backwards` too: neither sets a transform or an opacity of its
+  own, so neither needs the animation's end state.
 - **Where the canvas and the app differ.** The canvas draws the SEO sheet's body 16px in, and the
   frame's PR left that to this one (the panels' interiors kept their width until their own PRs, all
   now in): the body's padding is `--space-5` (it was `--space-4`), so every panel's content is 8px
@@ -164,7 +165,7 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   `SIDEBAR_PANEL_WIDTH_RANGE.min` less its 2px of border is `.seo-body`'s padding
   `SEO_BODY_NARROW_PADDING`; `.render-frame` takes the card's radius (`border-radius: inherit`).
 - **Scenario: entrance-animations-end** (same file) — no rule in any renderer stylesheet runs an
-  animation with `both` or `forwards` fill but `ENTRANCE_FILL_EXCEPTIONS`, each of which still does.
+  animation with `both` or `forwards` fill.
 - **Scenario: narrow-window-keeps-the-sheets-whole** (e2e `workspace.e2e.ts`) — the chrome laid out
   588px wide with the SEO sheet open on Overview and the agent collapsed: the agent rail is
   `AGENT_RAIL_WIDTH` wide with `WORKSPACE_GAP` to the chrome's right edge, the SEO sheet is the row
