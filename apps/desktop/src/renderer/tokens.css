@@ -74,7 +74,6 @@
 
   /* ---- Search Console panel (was in gsc-panel.css) */
   --gsc-line: var(--accent);
-  --gsc-grid: #e7ebf1;
   --gsc-axis: var(--text-faint);
 
   /* ---- Agent panel (was in components/agent/agent.css) */
@@ -96,10 +95,6 @@
     --caution: #f0b552;
     --info-tone: #8fb0e8;
     --shadow-card: none;
-
-
-    /* ---- Search Console panel (was in gsc-panel.css) */
-    --gsc-grid: #30353e;
   }
 }
 

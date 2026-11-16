@@ -3,12 +3,14 @@
    Bundled and served from app:// (CSP style-src 'self'): no inline styles. The panel is 360 px wide,
    so the assistants are a list, not a table (the probe table keeps its own sideways scroll). `info`
    and `not-checked` are drawn neutral: never the pass colour. Site text (the /llms.txt title, robots.txt
-   rules) is isolated by `.seo-page-text`. */
+   rules) is isolated by `.seo-page-text`. Signal (specs/design-tokens.feature.md, The panel
+   stylesheets): rows ruled --divider, labels --text-body at 600, the rest --text-small; status text its
+   -ink, beside its word and a glyph shaped by status. */
 
 .ai-score {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-5);
   min-width: 0;
 }
 
@@ -21,13 +23,15 @@
   color: var(--text-faint);
 }
 
+/* The 64px ring's value: --text-title where Overview's 84px ring has --text-display. */
 .ai-ring .ai-ring-value {
-  font-size: 20px;
+  font: var(--text-title);
+  letter-spacing: -0.01em;
 }
 
 .ai-score-basis {
   color: var(--text);
-  font-size: 12.5px;
+  font: var(--text-body);
   font-weight: 600;
 }
 
@@ -45,17 +49,17 @@
 }
 
 .ai-checks {
-  margin-top: 10px;
+  margin-top: var(--space-3);
 }
 
 .ai-check,
 .ai-assistant {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   min-width: 0;
-  padding: 8px 0;
-  border-top: 1px solid var(--seo-card-edge);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--divider);
 }
 
 .ai-check-head,
@@ -63,20 +67,20 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .ai-check-label,
 .ai-assistant-label {
   color: var(--text);
-  font-size: 12.5px;
+  font: var(--text-body);
   font-weight: 600;
 }
 
 .ai-check-unscored {
   color: var(--text-faint);
-  font-size: 11px;
+  font: var(--text-small);
 }
 
 .ai-check-explanation,
@@ -92,7 +96,7 @@
 .ai-llms-title-row,
 .ai-llms-findings {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
   overflow-wrap: anywhere;
 }
 
@@ -101,16 +105,17 @@
 }
 
 .ai-llms-findings li {
-  padding-left: 10px;
+  padding-left: var(--space-3);
 }
 
+/* A verdict: its word beside a glyph shaped by status (a check, a triangle, a cross, an info mark). */
 .ai-status {
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-weight: 600;
 }
 
@@ -125,16 +130,17 @@
   height: 100%;
 }
 
+/* Status text takes its -ink (--ok as text is 3.30:1 on a card in light); the glyph follows it. */
 .ai-status[data-status='pass'] {
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 
 .ai-status[data-status='warn'] {
-  color: var(--caution);
+  color: var(--warn-ink);
 }
 
 .ai-status[data-status='fail'] {
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 /* Neutral on purpose: a training opt-out is a fact, never good or bad. */
@@ -148,10 +154,10 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px 8px;
+  gap: calc(var(--space-1) / 2) var(--space-3);
   min-width: 0;
-  padding: 3px 0;
-  font-size: 12px;
+  padding: var(--space-1) 0;
+  font: var(--text-small);
 }
 
 .ai-agent-label,
@@ -177,10 +183,10 @@
 .ai-crawler-rule {
   display: flex;
   flex: 1 1 100%;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
   color: var(--text-faint);
-  font-size: 11px;
+  font: var(--text-small);
 }
 
 .ai-crawler-note,
@@ -189,13 +195,13 @@
 }
 
 .ai-assistants {
-  margin-top: 12px;
+  margin-top: var(--space-4);
 }
 
 .ai-subhead {
-  margin: 0 0 2px;
+  margin: 0 0 calc(var(--space-1) / 2);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font: var(--text-small);
   font-weight: 600;
 }
 
@@ -203,7 +209,7 @@
 .ai-tile {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .ai-tile-open {
@@ -213,54 +219,58 @@
 .page-type-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .page-type-label {
   color: var(--text);
-  font-size: 15px;
-  font-weight: 650;
+  font: var(--text-heading);
 }
 
 .page-type-confidence {
   color: var(--text-muted);
-  font-size: 12px;
+  font: var(--text-small);
 }
 
+/* "Unsure" says it; status text takes its -ink. */
 .page-type-confidence[data-confidence='unsure'] {
-  color: var(--caution);
+  color: var(--warn-ink);
 }
 
 .page-type-signal {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 8px;
-  padding: 3px 0;
-  font-size: 12px;
+  gap: calc(var(--space-1) / 2) var(--space-3);
+  padding: var(--space-1) 0;
+  font: var(--text-small);
 }
 
 .page-type-signal-label {
   color: var(--text-faint);
 }
 
+/* A signal that disagrees: its type in --warn-ink with a wavy --warn underline, so it reads without hue. */
 .page-type-signal[data-agrees='false'] .page-type-signal-type {
-  color: var(--caution);
+  color: var(--warn-ink);
+  text-decoration: underline wavy var(--warn);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
 .page-intent {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--seo-card-edge);
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
 }
 
 .page-intent-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 8px;
+  gap: var(--space-1) var(--space-3);
   margin: 0;
-  font-size: 12px;
+  font: var(--text-small);
 }
