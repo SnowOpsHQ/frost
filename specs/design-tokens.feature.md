@@ -67,7 +67,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the meter's own property, so it never counted; the panels' all-clear line, Images' alt badge and
   Schema's block status, leaving 12; the DevTools drawer its robots line and 2xx code, leaving 10;
   Page Speed's "Live" source badge, leaving 9; Content's present query term and all-terms
-  mark, leaving 7).
+  mark, leaving 7; the Changes panel, Projects and Rankings their statuses, added words, captured targets
+  and rises, leaving 2).
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
   (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`. The status bar's failed-overrides
@@ -822,6 +823,97 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   with a 2px `--warn` underline (it was `--caution` alone); the robots.txt notes `--text-small`. No row
   in these panels is hoverable, so no tinted badge lies over `--bg-hover`. No markup changed.
 
+- **The Changes panel, Projects, Rankings, Inspector and the screenshot editor** (what the components in
+  `components/changes/` render: `changes-panel.feature.md`, `changes-capture.feature.md`,
+  `projects.feature.md`, `rankings.feature.md`, `retention.feature.md`, `inspector.feature.md`,
+  `screenshot.feature.md`) follow the Migration notes, the token `use` notes and the canvas's component
+  board (buttons, field, segmented control, chips and badges), where they agree; no screen draws them.
+  Each prefix has its `SIGNAL_SURFACES` entry: `.changes` (Capture now and the project picker, the
+  history, the diff, the screenshots; the pick hint `.changes-shot-selecting` is the Inspector's too),
+  `.inspector`, `.shot-editor`, and `.projects` and `.retention` in `styles.css`; in `rankings.css`
+  `.rankings`, `.compare`, and a class list for `.projects-*` with `.project-settings-*` (Settings has
+  no type of its own). No rule elsewhere is theirs alone;
+  the `.page-column … > .page-area` rules of the Projects sheet and the shot editor are layout the chrome's
+  entry checks too. Their `.panel-button`, `.seo-action`, `.seo-segment`, `.seo-select`, chips, badges,
+  cards and hints are the shared ones, already converted, and stay. Text is Geist from the `--text-*`
+  tokens (the panel, the sheets and the editor set `--text-body`, so what draws no type of its own, the
+  .panel-button among it, is Geist too), every space a `--space-*` step, every corner an `--r-*`, every
+  rule `--divider` (`--seo-card-edge`, `--bg-chrome-edge`), focus `--focus-ring` beside a transparent 2px
+  outline after the hovers (it was a 2px `--accent` outline, an inset `--accent` line or the browser's
+  own), and status words take their -ink (`--ok`, `--caution`, `--warn`, `--danger` as text → `--ok-ink`,
+  `--warn-ink`, `--danger-ink`), each beside the word that says it. A part's own geometry (the tree's
+  14px indent per level, the 96px thumbnails, the table's compact cells, the 18px badges, the 22px
+  swatches, the columns' widths) stays a layout constant. Capture now and Pick element no longer fade
+  when disabled: the shared button's disabled colours say it (`TEXT_COLOUR_RULES`, `unfaded`).
+  **Changes panel:** its cards `--space-4` apart; notes `--text-small` in `--text-muted`, a warning note
+  `--warn-ink`; the capture status `--text-small` at weight 500, refused or failed `--warn-ink`, a first or
+  new version and a saved screenshot `--ok-ink`; the project picker an `--h-control` field at `--r-sm` with
+  `--e-raised` (`--border-field`, `--radius-field`, `--bg-field`). A version is an `--r-sm` row with a
+  transparent border, `--bg-hover` hovered (the hover skips the chosen one,
+  `HOVER_OVERLAYS_SKIP_PRESSED`); the chosen one `--accent-soft` with an `--accent` edge (it was a 40%
+  `--accent` edge on a 10% tint; `PRESSED_EDGES`), `Highlight` under forced colours
+  (`FORCED_COLOURS_PRESSED`); its time `--text-small` at 600, its count and a first version's summary
+  `--text-muted` (`--text-faint` on a hovered row is 4.26:1 in dark). The diff's region titles
+  `--text-body` at 600, its rows ruled by `--divider` in `--text-small`, a field's labels and the context's
+  label `--text-caps` in `--text-faint`. A change's kind is a badge of its word with a mark (`+` added, `−`
+  removed, `~` changed): `--h-badge` pill in `--text-micro`, `-ink` on `-soft` (it was the tone on its own
+  14% tint, `--ok` 2.82:1). The inline edits are `-ink` on `-soft` at `--r-xs`: removed words struck through on
+  `--danger-soft`, added words underlined on `--ok-soft` (they were tints, the added words `--ok`), and each
+  is said "[removed: …]" / "[added: …]" to screen readers, so struck, underlined and said, they read
+  without hue and with none under forced colours. The screenshot controls are ruled off by `--divider`;
+  their label `--text-small` at 600; a disabled kind is the shared segment's `DISABLED_INK`
+  (`DISABLED_CONTROLS`); the area hint an `--accent-soft` notice at `--r-md` with a transparent border; a
+  shot's thumbnail and preview at `--r-sm` edged by `--divider`, the thumbnail's empty state on
+  `--bg-subtle` (`--bg-hover`) in `--text-faint`, its time `--text-faint` and size `--text-muted` in
+  `--text-small`. **Projects:** a `--bg-surface` sheet (`--bg-page`), History's: the title `--text-title`,
+  `--space-5` in; Close an `--h-control` circle, a list's icon buttons (star, Remove) `--h-chip` circles in
+  `--text-muted` (`--icon`, `--radius-control`) at `--icon-sm`, `--bg-hover` hovered; the sheet's buttons the
+  canvas's secondary button at `--h-chip` (`--text-small` at 500 on `--bg-surface` with `--e-raised`, hover
+  lays `--bg-hover` over it), disabled `--text-faint` on `--bg-subtle` with no shadow (it faded to half),
+  `GrayText` under forced colours (`FORCED_COLOURS_BUSY`), Delete and Purge `--danger-ink`; fields and menus
+  `--h-control` at `--r-sm` on `--bg-surface` with `--e-raised` and a transparent border, `--text-body`
+  (Settings'; they were 30px with an `--accent` edge and halo focused), the textarea `--space-2` in; the
+  list and the main column `--space-1` in, so a focused row's ring is whole. A project is an `--r-sm` row,
+  the chosen one `--accent-soft` with an `--accent` edge (`PRESSED_EDGES`; it was the fill alone),
+  `Highlight` under forced colours, where the others' edges take the canvas; its "Due" an 18px pill in
+  `--text-micro`; section titles `--text-caps` (they were 12px at 600), counts `--text-faint`; a page's and
+  a search's rows ruled by `--divider`, a tag an `--accent-soft` pill in `--text-micro`; the capture run, a
+  series, Bulk add and Compare's pickers `--bg-surface` cards at `--r-md` with `--e-ring` and a transparent
+  border (`--border-field`, `--radius-field`); a run's outcomes and a blocked run's reason, Bulk add's
+  outcomes `--ok-ink`, `--warn-ink`, `--danger-ink` (they drew `--ok`, `--warn`, `--danger`). The views
+  (Pages, Rankings, Compare, Settings) stay tabs: `--h-control`, `--text-body` at 500 in `--text-muted`,
+  `--text` hovered, the chosen one `--text` over a 2px `--accent` underline (a border, so focus keeps its
+  ring), `Highlight` under forced colours, where the others' underlines take the canvas.
+  **Rankings and Compare:** the table `--text-small` (it was 11.5px; its compact cells keep their 3px, the
+  first `--space-1` so a row button's ring is whole), its heads `--text-micro` in `--text-muted`, rows ruled
+  by `--divider`, no `border-collapse` (separate borders, no spacing: the same lines); the selected row
+  `--accent-soft`, its search at weight 600 (the open series under it says which, too); tags `--bg-subtle`
+  pills in `--text-micro`; a rise or a new search `--ok-ink`, a fall or a lost one `--danger-ink`, written
+  as `+3`, `−2`, "New", "Lost" (Compare: "Up 2", "Down 2", "New", "Gone"), the capped mark `--warn-ink`,
+  each holding 4.5:1 on the selected row (`CONTRAST_PAIRS`); the trend's line and dots `--accent`; notices
+  `--accent-soft` at `--r-md`; "Your site" an `--accent-soft` pill in `--text-micro`. **Inspector:** the
+  tree, its matches and its sources `--text-mono` (they were 11.5px system monospace) on `--bg-surface`
+  cards at `--r-md` with `--e-ring`, `--space-1` in; a node an `--r-xs` row with a transparent border,
+  `--bg-hover` hovered, the selected one `--accent-soft` with an `--accent` edge (`PRESSED_EDGES`; the fill
+  alone before), `Highlight` under forced colours where the others' edges take the canvas; its tag
+  `--accent`, preview `--text-muted`, a shadow root `--text-muted` in italics (`--text-faint`, 4.26:1 on a
+  hovered row in dark); the twisty turns in `--dur-fast`; facts and the attributes table `--text-small`, the
+  table's names `--text-mono`; the chosen view (Tree, Rendered, Served) the shared row action pressed:
+  `--accent` on `--accent-soft` with an `--accent` edge (`PRESSED_EDGES`), `Highlight` under forced colours,
+  keeping the shared focus ring; in a source, matching lines `--accent-soft`, the current one a 2px
+  `--accent` line on its leading edge (a border: it was an inset shadow forced colours drop), and under
+  forced colours the current line `Highlight`, the other matches `CanvasText`; line numbers `--text-muted`
+  (`--text-faint` on a match is under 4.5:1 in dark). **Screenshot editor:** a `--bg-surface` sheet,
+  `--space-5` in, its title `--text-heading`, hint `--text-small`; the text field an `--h-control` field at
+  `--r-sm`; a swatch an `--h-badge` circle outlined by `--switch-off` (`--border-field`: a white swatch
+  needs 3:1 on the sheet), the chosen one ringed by a 2px `--accent` border (`PRESSED_EDGES`), `Highlight`
+  under forced colours where the others' rings take the canvas; the canvas at `--r-sm`, edged by `--divider`.
+  No retired name these surfaces read is unread elsewhere (the AI answers, Crawl, Search Console and the
+  later panels still read `--caution`, `--seo-card-edge`, `--bg-chrome-edge`, `--radius-control`,
+  `--radius-field`, `--icon` and `--border-field`), so none is `removed`. Five rules drew `--ok` as text (the
+  capture and screenshot statuses, the added words, a captured target, a rise), so this PR takes 5 off
+  the `--ok`-as-text exception; they held no literal hex, so `HEX_COLOUR_RATCHET` stays.
+
 - **The panel stylesheets** (each feature's own stylesheet: `gsc-panel.css`, `gsc-inspection.css`,
   `gsc-targets.css`, `ai-checks.css`, `ai-readiness.css`, `ai-answers.css`, `crawl.css` and `location.css`;
   `gsc-panel.feature.md`, `gsc-inspection.feature.md`, `seo-content.feature.md`, `ai-checks.feature.md`,
@@ -924,7 +1016,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    `--render-edge`, `--bg-field-hover`, `--shadow-field` and `--panel-art`), then Indexability, Page Speed and Compliance (none retired: JavaScript,
    Search Console and later panels read each), then Content, JavaScript, SERP and Visibility (Content's
    result preview was the last reader of `--serp-title`, `--serp-path`, `--serp-glyph` and
-   `--serp-glyph-mark`, now `removed`; `--serp-card` and `--serp-text` are aliases), then the panel stylesheets (`--gsc-grid`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
+   `--serp-glyph-mark`, now `removed`; `--serp-card` and `--serp-text` are aliases), then the Changes panel, Projects, Rankings, Inspector and
+   the screenshot editor (none retired: other surfaces still read each), then the panel stylesheets (`--gsc-grid`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
    from the moment the test starts watching.
 
@@ -983,7 +1076,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   field and tools, the editor bar's chips and fields, the frame's buttons, the DevTools drawer's tabs,
   buttons, links and fields, and History's controls; and Page Speed's Resume and Compliance's
   accessibility rule rows; and Content's danger toggles, fields, query clear button and n-gram
-  highlight button, and SERP's editor selects), in light and
+  highlight button, and SERP's editor selects; and the Changes panel's versions and project picker,
+  Projects' buttons, fields, rows, views and link button, the rank table's row button, the Inspector's
+  tree rows, matches and chosen view, and the screenshot editor's swatches and text field), in light and
   dark, the cascade over its `element` selectors in its stylesheet (specificity, with `:where()` adding
   none and a selector list split only outside parentheses, then source order) resolves `box-shadow` to
   `var(--focus-ring)` (inset layers before it allowed, an outer layer not; an entry's `insetBefore`, the
@@ -997,7 +1092,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   toolbar tool; the permission prompt's buttons before they arm; Overview's zero-count pill; a disabled
   panel toggle, row action, segment, filter chip and Schema's open-URL button; a disabled error-panel
   button, primary or not, update notice button, find bar tool, editor bar chip or button; the
-  accessibility tally's tile for an impact with no violated rule; an n-gram's place mark for a place it is not in), in light and
+  accessibility tally's tile for an impact with no violated rule; an n-gram's place mark for a place it is not in; a disabled Projects sheet button and
+  Delete project), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too (a `border` shorthand counting as its colour) resolves `color` and `border-color` to `GrayText`:
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
@@ -1005,10 +1101,14 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: pressed-toggles-show-under-forced-colours** — for each `FORCED_COLOURS_PRESSED` entry (the
   SEO sidebar toggle and the render-profile toggle, pressed; a panel toggle, the chosen segment and a
   filter chip, pressed; the find bar's Match case, pressed; the DevTools drawer's selected tab; an n-gram's highlight button,
-  pressed), in light
+  pressed; the chosen version, project, view, node, Inspector view, source match and swatch), in light
   and dark, the cascade over its
   `element` selectors with the `@media (forced-colors: active)` rules read too resolves `border-color` to
-  `Highlight`. Every selector named is one of the stylesheet's.
+  `Highlight`. An entry with `rest` (a version, a project, a tree row, a source line, a swatch, a Projects view) also
+  resolves `border-color` to `Canvas` over its first selector alone, the item unchosen (forced colours paint a
+  transparent border, so without the reset every item draws the same edge), and the source line's `match`
+  to `CanvasText` over its first two, a matching line that is not the current one. Every selector named is
+  one of the stylesheet's.
 - **Scenario: status-marks-keep-their-colours-under-forced-colours** — for each `FORCED_COLOURS_KEPT`
   entry (the SEO rail's dots, Overview's category marks: pass, error, warning and notice; Schema's status
   mark: valid, warnings, errors; a verdict's signal marks: pass, warning, error and neutral; Page Speed's
@@ -1027,18 +1127,19 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.seo-rail-dot` in `settings.css`, `auto`, a list with one unkept selector, an unkept rule with a
   nested block and a kept mark set to `auto` in a nested block.
 - **Scenario: hover-overlays-skip-pressed-controls** — for each `HOVER_OVERLAYS_SKIP_PRESSED` entry
-  (the panels' toggle and row action, Content's n-gram highlight button), its stylesheet has a hover rule for the control, and every rule
+  (the panels' toggle and row action, Content's n-gram highlight button, the Changes panel's version), its stylesheet has a hover rule for the control, and every rule
   with a compound selector holding the control's class and `:hover` (any order, after any ancestor) that
   sets `box-shadow` or `background` names `[aria-pressed='true']` in a `:not(…)` of that compound. It
   passes `.x:hover:where(:not(:disabled, [aria-pressed='true']))`, catches `.x:hover:where(:not(:disabled))`,
   `.x:hover { background }`, `.x.y:hover`, `.x:not(:disabled):hover` and `.tools .x:hover`, and ignores a
   hover that sets only `color` and `.x-danger:hover`.
 - **Scenario: disabled-controls-dim-their-text** — for each `DISABLED_CONTROLS` entry (a disabled
-  filter chip and segment; the AI judgment's busy chip, the Search Console calendar's arrows and days out
-  of range, Content's "Use as target"), in light and dark, the cascade over its `element` selectors
-  resolves `color` to `DISABLED_INK` and sets no `opacity` under 1.
+  filter chip and segment, and the Changes panel's screenshot kinds; the AI judgment's busy chip, the
+  Search Console calendar's arrows and days out of range, Content's "Use as target"), in light and dark,
+  the cascade over its `element` selectors resolves `color` to `DISABLED_INK` and sets no `opacity` under 1.
 - **Scenario: pressed-controls-draw-an-edge** — for each `PRESSED_EDGES` entry (a pressed filter chip,
-  a pressed n-gram highlight button),
+  a pressed n-gram highlight button; the chosen version, project, node,
+  Inspector view and swatch),
   in light and dark, the cascade over its `element` selectors resolves `border-color` to `var(<edge>)`
   with a border that draws (non-zero width, a style other than `none` or `hidden`, shorthand included;
   it catches `border: 0 solid transparent` and `border-style: none`), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or more. Every selector named is one
@@ -1096,6 +1197,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   with no prefix (a fixture like the browser chrome's: `.tabstrip`, `.tab`, `.address-*`, keyframes `tab-spin`) it checks
   exactly those (`.tab[data-active='true']`, `.tab:has(.tab-main:focus-visible)`, `.address-input`) and
   ignores `.tabs`, `.tab-profile`, `.tabstrip-x`, `.addressbook`, `.x-tab` and `tab-spin-more`.
+- **Scenario: projects-sheet-stacks-by-its-own-width** — `PROJECTS_SHEET_NARROW`: the sheet declares
+  `container: projects / inline-size`; the `.projects-body` rule setting `grid-template-columns:
+  minmax(0, 1fr)` sits inside `@container projects (max-width: 640px)` (a `@media` query, or an unnamed
+  `@container`, fails); every `@container` that holds a `.projects-*` rule in `styles.css` or `rankings.css`
+  names `projects`; and `.projects-bulk-group` keeps `min-inline-size: 0`.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
 

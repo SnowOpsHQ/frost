@@ -13,6 +13,7 @@ import {
   FORCED_COLOURS_BUSY,
   FORCED_COLOURS_KEPT,
   FORCED_COLOURS_PRESSED,
+  PROJECTS_SHEET_NARROW,
   FORCED_COLOURS_SYSTEM_COLOURS,
   HOVER_OVERLAYS_SKIP_PRESSED,
   HEX_COLOUR_RATCHET,
@@ -32,6 +33,7 @@ import {
   type DisabledControl,
   type FocusRingRule,
   type ForcedColoursBusy,
+  type ForcedColoursPressed,
   type HoverSkipsPressed,
   type LegacyTokenMigration,
   type LoadsBefore,
@@ -664,15 +666,21 @@ test('busy-buttons-show-under-forced-colours', () => {
 });
 
 test('pressed-toggles-show-under-forced-colours', () => {
-  const entries: readonly ForcedColoursBusy[] = FORCED_COLOURS_PRESSED;
+  const entries: readonly ForcedColoursPressed[] = FORCED_COLOURS_PRESSED;
   for (const entry of entries) {
     const css = cascade(entry);
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
     for (const theme of THEME_NAMES) {
-      expect(resolveOnElement(css, entry.element, 'border-color', theme, { forced: true }).toLowerCase(), `${entry.why}: border-color under forced colours (${theme})`).toBe('highlight');
+      const edge = (element: readonly string[]) => resolveOnElement(css, element, 'border-color', theme, { forced: true }).toLowerCase();
+      expect(edge(entry.element), `${entry.why}: border-color under forced colours (${theme})`).toBe('highlight');
+      // The unchosen item resets the transparent border forced colours would paint, so only the chosen one draws an edge.
+      if (entry.rest !== undefined) expect(edge(entry.element.slice(0, 1)), `${entry.why}: the unchosen item's edge under forced colours (${theme})`).toBe(entry.rest);
+      if (entry.match !== undefined) expect(edge(entry.element.slice(0, 2)), `${entry.why}: a match's edge under forced colours (${theme})`).toBe(entry.match);
     }
   }
+  // At least the four the Changes panel's PR added keep their unchosen items at the canvas.
+  expect(entries.filter((entry) => entry.rest === 'canvas').length).toBeGreaterThanOrEqual(4);
 });
 
 test('status-marks-keep-their-colours-under-forced-colours', () => {
@@ -1168,6 +1176,32 @@ test('surface-rules-read-signal-tokens', () => {
     expect(result.problems, surface.name).toEqual([]);
     expect(result.typeRules, `${surface.name} reads the --text-* tokens`).toBeGreaterThan(0);
   }
+});
+
+test('projects-sheet-stacks-by-its-own-width', () => {
+  const narrow = PROJECTS_SHEET_NARROW;
+  const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
+  // Rules looked up by selector (the index the cascade checks use).
+  const index = selectorIndex(read(narrow.stylesheet));
+  // The sheet is the named container.
+  expect((index.get(narrow.sheet) ?? []).some((d) => d.outer.length === 0 && d.property === 'container' && collapse(d.value) === narrow.container)).toBe(true);
+  // The stack rule sits in that container's query (never a viewport @media).
+  const stack = (index.get(narrow.stack.selector) ?? []).filter((d) => d.property === narrow.stack.property && d.value === narrow.stack.value);
+  expect(stack.length, `${narrow.stack.selector} { ${narrow.stack.property}: ${narrow.stack.value} }`).toBeGreaterThan(0);
+  for (const d of stack) expect(d.outer.map(collapse)).toEqual([narrow.query]);
+  // Every container query of a Projects rule names the sheet's container.
+  for (const name of narrow.stylesheets) {
+    for (const [selector, entries] of selectorIndex(read(name))) {
+      if (!/\.projects?-/.test(selector)) continue;
+      for (const d of entries) {
+        const query = d.outer.find((level) => level.startsWith('@container'));
+        if (query !== undefined) expect(collapse(query), `${name}: ${selector}`).toMatch(/^@container projects \(/);
+      }
+    }
+  }
+  // Bulk add's fieldsets shrink.
+  const shrink = (selectorIndex(read(narrow.shrink.stylesheet)).get(narrow.shrink.selector) ?? []).filter((d) => d.outer.length === 0 && d.property === narrow.shrink.property);
+  expect(shrink.at(-1)?.value).toBe(narrow.shrink.value);
 });
 
 test('hex-colours-do-not-grow', () => {
