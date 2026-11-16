@@ -2,7 +2,8 @@
 
 Spec: `specs/workspace-layout.spec.ts` (`WORKSPACE_GAP`, `SHEET_RADIUS`, `workspaceRowChrome`,
 `workspaceRowWidth`, `pageViewRadius`, `RENDER_DEVICE_OUTLINE_RADIUS`, `WORKSPACE_SHEETS`,
-`PAGE_AREA_COLLAPSES`, `NARROW_WINDOW`, `SEO_BODY_NARROW_PADDING`). Signal step 3, the last surface: how the pieces sit in the window, not their
+`PAGE_AREA_COLLAPSES`, `NARROW_WINDOW`, `SEO_BODY_NARROW_PADDING`, `WORKSPACE_GAP_TIGHT`,
+`TIGHT_WORKSPACE_BELOW`, `workspaceGap`). Signal step 3, the last surface: how the pieces sit in the window, not their
 interiors (`design-tokens.feature.md`). Source: the approved canvas's light and dark main screens, its
 agent, Settings and palette screens, and its token sheet (`--r-lg`: "sheets, rail, page card,
 palette"). Code: `apps/desktop/src/renderer/styles.css` (Layout, Workspace, Page area, SEO sidebar,
@@ -15,7 +16,8 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   bar) is the window's `--bg-window` holding rounded sheets, left to right: the SEO rail, the SEO
   sheet while the sidebar is open, the page column, and the agent panel (its rail when collapsed). The
   sheets are `WORKSPACE_GAP` (`--space-3`, 8px) apart and the same in from the window's left and
-  right edges (the workspace's inline padding); none at the top (the chrome row's own room, or a
+  right edges (the workspace's inline padding), but in a workspace narrower than
+  `TIGHT_WORKSPACE_BELOW` (748px), where they are `--space-1` (A narrow window); none at the top (the chrome row's own room, or a
   band's `--space-3` margin under it) or at the bottom (the status bar's). The gaps replace the rules
   that ruled the pieces off: the workspace's top `--divider`, the sidebar's right edge, the panel's
   left edge, the agent panel's left edge, the status bar's top rule and the DevTools drawer's top
@@ -58,33 +60,37 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   still gives way before the page goes under `PAGE_MIN_WIDTH`, in the same order (the agent panel to
   its minimum, then the SEO sheet). In the tiled 776px window with the SEO sheet open and the agent
   collapsed, the page keeps `PAGE_MIN_WIDTH` and the SEO sheet narrows from 360 to 328px (it was 360,
-  with the page at 326); at the 588px minimum the page keeps 320 and the sheet is 140px (178 before);
-  with the sidebar collapsed the page is 468px (498 before). The gaps never shrink and never touch the
+  with the page at 326); at the 588px minimum (tight gaps) the page keeps 320 and the sheet is 160px
+  (178 before); with the sidebar collapsed the page is 484px (498 before). The gaps never touch the
   chrome row, whose width rules (`tabs.feature.md`) are unchanged, so no control leaves the row.
+  `sidebar-layout.ts` and the DevTools drawer count the gap the workspace's width gives
+  (`workspaceGap`); main's bounds come from the page card's measured box, so they follow.
 - **A narrow window** (`NARROW_WINDOW`). The collapsed agent panel never shrinks (`flex: none` on
   its wrapper): its rail stays `AGENT_RAIL_WIDTH` wide with its gap to the window's edge, where flex
   shrink had squeezed the wrapper to 24px and cut the rail's corner and toggle. Below the panel's
   minimum (`SIDEBAR_PANEL_WIDTH_RANGE.min`, a 298px content box inside its border; only a window too
   narrow for it gets there) the SEO body's padding is `--space-1` (`SEO_BODY_NARROW_PADDING`, a
   container query on the panel), not the canvas's `--space-5`.
-  **140px is not usable.** Measured at the 588px minimum with the agent collapsed, the sheet is 140px
-  and its body's content box 131px (121px beside a vertical scrollbar), against 152px on `main`
-  (178px sheet, `--space-4`). Overview's, Links', Images', Social's, Schema's, Indexability's,
-  Compliance's, JavaScript's, SERP's, Search Console's and Inspector's first cards stay inside the
-  body, but that is not the same as readable: beside its 84px ring, Overview's score card leaves its
-  text a column under 10px wide that breaks inside words (about 45px on `main`, which broke between
-  words). On-Page's first card needs 147px, Changes' 125px, Visibility's 166px, Page Speed's 185px
-  and Content's 196px; the panels' tool rows (the highlight toggles, Copy as CSV) need 147–217px, so
-  the body scrolls sideways. On `main`, Overview's tools fitted and the others overflowed too. No padding makes 140px usable: the row's
-  inset and gaps cost 40px more than `main`'s two edges. **Proposed, for the owner's choice** (not
-  built): (a) below the SEO sheet's minimum, the workspace's inset and gaps tighten to `--space-1`,
-  which gives the sheet 160px and its body about 150px, near `main`'s, Overview's tools included; or
-  (b) in a window too narrow for the SEO sheet at its minimum beside the page's (under 748px with the
-  agent collapsed), the sheet opens collapsed to its rail, as the agent does; or (c) `PAGE_MIN_WIDTH`
-  gives way before the sheet does. The window's minimum stays 588px.
+  **Tight gaps** (`WORKSPACE_GAP_TIGHT`, the owner's choice on #52, round 2). In a workspace narrower
+  than `TIGHT_WORKSPACE_BELOW` (748px: where, with `--space-3` gaps and the agent collapsed, the SEO
+  sheet would fall under its minimum beside the page's), every gap and inset of the workspace is
+  `--space-1` together: the window's edges, rail | sheet, sheet | page, page | agent, the DevTools
+  drawer's gap, the command palette's and a Projects run's gap above the page card, and the bands'
+  inset and gap above the workspace, so their edges stay on the sheets'. One rule:
+  `@container chrome (width < 748px)` on `.chrome` (`container: chrome / inline-size`), whose width
+  is the workspace's (its stack spans the chrome's one column); the agent's stylesheet repeats the
+  same query for its separator. Corners stay `--r-lg` and the native view's radius is unchanged. At
+  the 588px minimum the sheet is 160px and its body's content box 150px (about 152px on `main`).
+  Measured before this (`--space-3` gaps, a 140px sheet) Overview's score card left its text a column
+  under 10px wide that broke inside words; the panel-by-panel comparison with `main` is in the PR.
+  Options that change behaviour (the sheet opening collapsed, the page giving way) were not needed.
+  The window's minimum stays 588px.
 - **Resizing.** A pane's separator (`.pane-separator`) moves from the pane's own edge into the gap
-  beside the page: `WORKSPACE_GAP` wide, filling it, its 2px line in the middle (still only on hover,
-  drag and focus). Drag, keys, ranges and storage are unchanged.
+  beside the page, its 2px line in the middle of the gap (still only on hover, drag and focus). It is
+  8px wide (`--space-3`) at every width: with `--space-3` gaps it fills the gap; with tight gaps it
+  covers the 4px gap and the pane's own 4px edge beside it (never the page card, which the native view
+  covers), so its hit area and focus line stay as they were. Drag, keys, ranges and storage are
+  unchanged.
 - **Bands.** The permission prompt, the find bar, the render-profile editor bar and the update notice
   are chrome rows above the workspace, already `--space-3` in from the window's edges with
   `--space-3` under each (the canvas's band slot), so their edges line up with the sheets' and a band
@@ -168,18 +174,26 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   animation with `both` or `forwards` fill.
 - **Scenario: narrow-window-keeps-the-sheets-whole** (e2e `workspace.e2e.ts`) — the chrome laid out
   588px wide with the SEO sheet open on Overview and the agent collapsed: the agent rail is
-  `AGENT_RAIL_WIDTH` wide with `WORKSPACE_GAP` to the chrome's right edge, the SEO sheet is the row
-  less the page's minimum and `workspaceRowChrome` (140px), the page `PAGE_MIN_WIDTH`; the SEO body's
+  `AGENT_RAIL_WIDTH` wide with `WORKSPACE_GAP_TIGHT` to the chrome's right edge, the gaps between the
+  sheets `WORKSPACE_GAP_TIGHT`, the SEO sheet the row less the page's minimum and `workspaceRowChrome`
+  (160px), the page `PAGE_MIN_WIDTH`; the workspace's gap is `WORKSPACE_GAP_TIGHT` at a chrome one pixel
+  under `TIGHT_WORKSPACE_BELOW` and `WORKSPACE_GAP` at it and in a 776px chrome; the SEO body's
   padding is `--space-1` (it is `--space-5` at a width the panel's minimum fits); Overview's first
   card runs past no edge of the body. The visual set's `narrow-window` capture draws the same state.
 - **Scenario: separators-sit-in-the-gap** (same file) — `.pane-separator` is `WORKSPACE_GAP` wide
   with its line centred; the SEO separator sits `WORKSPACE_GAP` past the sidebar's right edge, the
   agent's as far past its left.
+- **Scenario: tight-gaps-switch-together** (same file) — `.chrome` is the `chrome` inline-size
+  container; every `@container chrome` query in the renderer's stylesheets is
+  `(width < TIGHT_WORKSPACE_BELOW px)`, and together they set `--space-1` for each gap and inset that is
+  `--space-3` outside them: the stack's padding, the row's and the SEO sidebar's gap, the drawer's
+  margin and its `max-height`, the palette band's and a Projects run's gap, the four bands' margin, and
+  both separators' offsets, their lines centred in the 4px gap.
 - **Scenario: pane-room-counts-the-gaps** (`renderer/__tests__/sidebar-layout.test.ts`) —
-  `roomForPanes` is the row less `PAGE_MIN_WIDTH` and `workspaceRowChrome`; the shrink order and
-  `paneMax` follow.
+  `roomForPanes` is the row less `PAGE_MIN_WIDTH` and `workspaceRowChrome` with the layout's gap (the
+  tight one in a narrow workspace); the shrink order and `paneMax` follow.
 - **Scenario: drawer-keeps-the-page-gap-counted** (`renderer/__tests__/devtools-view.test.ts`) — the
-  drawer's column is its parent's height less `WORKSPACE_GAP`.
+  drawer's column is its parent's height less the workspace's gap (`WORKSPACE_GAP`, or the tight one).
 - **Scenario: page-view-is-rounded** (`main/browser/__tests__/controller.test.ts`) — with its bounds
   main sets the view's radius to `pageViewRadius`: 16 in the page area, 0 in HTML fullscreen (notice
   and full), 16 again on leaving it; one radius with each `setBounds`.

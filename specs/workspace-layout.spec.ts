@@ -21,6 +21,26 @@ import { CHROME_MIN_CONTENT_WIDTH_PX } from './tabs.spec';
  */
 export const WORKSPACE_GAP = { token: '--space-3', px: 8 } as const;
 
+/**
+ * The gap and inset in a workspace too narrow for the SEO sheet at its minimum (`workspace-layout.feature.md`,
+ * A narrow window): `--space-1`.
+ */
+export const WORKSPACE_GAP_TIGHT = { token: '--space-1', px: 4 } as const;
+
+/**
+ * Below this width of the workspace (CSS px; the `chrome` container, the window's content width,
+ * which the workspace's stack spans), the gaps and inset are `WORKSPACE_GAP_TIGHT`: with `WORKSPACE_GAP`
+ * there and the agent collapsed, the SEO sheet would fall under its minimum beside the page's
+ * (2 insets + the SEO rail + 3 gaps + the sheet's minimum + the page's + the agent's rail: 748).
+ * One rule: `@container chrome (width < 748px)`.
+ */
+export const TIGHT_WORKSPACE_BELOW = 2 * WORKSPACE_GAP.px + SIDEBAR_RAIL_WIDTH + 3 * WORKSPACE_GAP.px + SIDEBAR_PANEL_WIDTH_RANGE.min + PAGE_MIN_WIDTH + AGENT_RAIL_WIDTH;
+
+/** The gap and inset (CSS px) in a workspace `width` wide. */
+export function workspaceGap(width: number): number {
+  return width < TIGHT_WORKSPACE_BELOW ? WORKSPACE_GAP_TIGHT.px : WORKSPACE_GAP.px;
+}
+
 /** Every sheet's corner, and so the page card's and the native page view's: `--r-lg` ("sheets, rail, page card, palette"). */
 export const SHEET_RADIUS = { token: '--r-lg', px: 16 } as const;
 
@@ -31,14 +51,14 @@ export const SHEET_RADIUS = { token: '--r-lg', px: 16 } as const;
  * the SEO sidebar | the page column, the page column | the agent panel). The sheets' edges are inside
  * their own widths, so nothing else is counted.
  */
-export function workspaceRowChrome(open: { readonly sidebar: boolean; readonly agent: boolean }): number {
+export function workspaceRowChrome(open: { readonly sidebar: boolean; readonly agent: boolean }, gap: number = WORKSPACE_GAP.px): number {
   const gaps = open.sidebar ? 3 : 2;
-  return SIDEBAR_RAIL_WIDTH + (open.agent ? 0 : AGENT_RAIL_WIDTH) + gaps * WORKSPACE_GAP.px;
+  return SIDEBAR_RAIL_WIDTH + (open.agent ? 0 : AGENT_RAIL_WIDTH) + gaps * gap;
 }
 
 /** The workspace row's width in a window `contentWidth` CSS px wide: the window less the inset on either side. */
 export function workspaceRowWidth(contentWidth: number): number {
-  return contentWidth - 2 * WORKSPACE_GAP.px;
+  return contentWidth - 2 * workspaceGap(contentWidth);
 }
 
 /**
@@ -112,11 +132,11 @@ export const PAGE_AREA_COLLAPSES = [
 /**
  * A narrow window (`workspace-layout.feature.md`, A narrow window): the window's minimum content width (CSS px,
  * `CHROME_MIN_CONTENT_WIDTH_PX`, 588) and, there, the SEO sheet's width with the agent collapsed (the row less the
- * page's minimum and `workspaceRowChrome`). Below the panel's minimum the SEO body's padding is
+ * page's minimum and `workspaceRowChrome`, with the tight gaps: 160). Below the panel's minimum the SEO body's padding is
  * `SEO_BODY_NARROW_PADDING`; the query is on the panel's content box, inside its 1px border.
  */
 export const NARROW_WINDOW = {
   width: CHROME_MIN_CONTENT_WIDTH_PX,
-  seoSheet: workspaceRowWidth(CHROME_MIN_CONTENT_WIDTH_PX) - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: true, agent: false }),
+  seoSheet: workspaceRowWidth(CHROME_MIN_CONTENT_WIDTH_PX) - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: true, agent: false }, workspaceGap(CHROME_MIN_CONTENT_WIDTH_PX)),
 } as const;
 export const SEO_BODY_NARROW_PADDING = { token: '--space-1', belowContentWidth: SIDEBAR_PANEL_WIDTH_RANGE.min - 2 } as const;
