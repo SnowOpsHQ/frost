@@ -70,11 +70,12 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   **140px is not usable.** Measured at the 588px minimum with the agent collapsed, the sheet is 140px
   and its body's content box 131px (121px beside a vertical scrollbar), against 152px on `main`
   (178px sheet, `--space-4`). Overview's, Links', Images', Social's, Schema's, Indexability's,
-  Compliance's, JavaScript's, SERP's, Search Console's and Inspector's first cards fit (Overview's
-  score card clips its eyebrow's last letters inside the card, as on `main`); On-Page's needs 147px,
-  Changes' 125px, Visibility's 166px, Page Speed's 185px and Content's 196px; and the panels' tool
-  rows (the highlight toggles, Copy as CSV) need 147–217px, so the body scrolls sideways. On `main`,
-  Overview's tools fitted and the others overflowed too. No padding makes 140px usable: the row's
+  Compliance's, JavaScript's, SERP's, Search Console's and Inspector's first cards stay inside the
+  body, but that is not the same as readable: beside its 84px ring, Overview's score card leaves its
+  text a column under 10px wide that breaks inside words (about 45px on `main`, which broke between
+  words). On-Page's first card needs 147px, Changes' 125px, Visibility's 166px, Page Speed's 185px
+  and Content's 196px; the panels' tool rows (the highlight toggles, Copy as CSV) need 147–217px, so
+  the body scrolls sideways. On `main`, Overview's tools fitted and the others overflowed too. No padding makes 140px usable: the row's
   inset and gaps cost 40px more than `main`'s two edges. **Proposed, for the owner's choice** (not
   built): (a) below the SEO sheet's minimum, the workspace's inset and gaps tighten to `--space-1`,
   which gives the sheet 160px and its body about 150px, near `main`'s, Overview's tools included; or
