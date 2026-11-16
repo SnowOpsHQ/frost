@@ -2757,6 +2757,14 @@ export const BASE_TYPE = { stylesheet: 'styles.css', selector: 'body', font: '--
  * (`.panel-button.x`), which wins whatever the order of the stylesheets, as its colours do. A missing
  * value (`.seo-missing`, a modifier: its colour and italic) takes the type of the value it stands in
  * for: in a JavaScript field that is `.seo-js-value`'s `--text-small`.
+ *
+ * And three blocks whose text sets its own type but whose line box came from the body's line height (a
+ * block's strut is its own font, so lines of smaller inline text were the body's 18.2px tall): the
+ * computed-style comparison of every capture found them, grown 0.65px a line by the base face's 1.45.
+ * Each takes the type of the text it holds, so its lines are that text's: Page Speed's "Since the page
+ * loaded" header (its caps eyebrow), Content's result preview description row (its date and description,
+ * `--text-small`: three lines are 50.4px, where they were 54.6) and Help's key hints (`--text-small`, as
+ * its "or"; the hints' own boxes are taller, so nothing moves).
  */
 export interface TextTypeRule extends LoadsBefore {
   readonly stylesheet: string;
@@ -2779,6 +2787,10 @@ export const TEXT_TYPE_RULES = [
   { stylesheet: 'crawl.css', loadsBefore: ['styles.css'], element: ['.panel-button', '.panel-button.crawl-danger'], font: '--text-body', weight: '500', why: "the crawl sheet's Delete" },
   { stylesheet: 'gsc-panel.css', loadsBefore: ['styles.css'], element: ['.panel-button', '.panel-button-primary', '.gsc-notice-button'], font: '--text-body', weight: '500', why: "Search Console's notice button" },
   { stylesheet: 'rankings.css', loadsBefore: ['styles.css'], element: ['.panel-button', '.panel-button-primary', '.projects-bulk-form > .panel-button'], font: '--text-body', weight: '500', why: "Bulk add's Add" },
+  // Blocks whose line box was the body's: each takes the type of the text it holds.
+  { stylesheet: 'styles.css', element: ['.seo-speed-since'], font: '--text-caps', why: 'Page Speed\'s "Since the page loaded" header: its eyebrow\'s type' },
+  { stylesheet: 'styles.css', element: ['.seo-serp-description-row'], font: '--text-small', why: "Content's result preview: the description row, its date's and description's type" },
+  { stylesheet: 'help.css', element: ['.shortcuts-keys'], font: '--text-small', why: 'Help\'s keyboard shortcuts: a shortcut\'s key hints, the type of their "or"' },
   // JavaScript's "Not set": a field's missing value, the type of the value beside it (.seo-js-value), italic.
   { stylesheet: 'styles.css', element: ['.seo-missing', '.seo-js-field .seo-missing'], font: '--text-small', style: 'italic', why: `JavaScript's "Not set" (system text before), where a field's value is --text-small` },
 ] as const satisfies readonly TextTypeRule[];

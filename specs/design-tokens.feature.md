@@ -128,7 +128,13 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   in; a panel that wants another face for it names both classes (`.panel-button.x`), which wins whatever
   the order of the stylesheets. A missing value (`.seo-missing`, a modifier: `--text-faint`, italic)
   takes the type of the value it stands in for: in a JavaScript field `.seo-js-value`'s `--text-small`
-  (`.seo-js-field .seo-missing`, its italic restored after the shorthand). The three aliases the
+  (`.seo-js-field .seo-missing`, its italic restored after the shorthand). Comparing the computed type
+  and box of every element of every capture, before and after, found three blocks whose text sets its own
+  type but whose line box was the body's line height (a block's strut is its own font): Page Speed's
+  "Since the page loaded" header, Content's result preview description row and Help's key hints. Each
+  grew 0.65px a line; each now takes the type of the text it holds (`--text-caps`, `--text-small`,
+  `--text-small`), so the header is 15.95px (it was 18.2) and the description's lines 16.8px (18.2), and
+  the key hints, whose own boxes are taller, don't move. The three aliases the
   workspace's sheets read went in the same PR, with no pixel changed: the page card, the new-tab view,
   the error panels and Help's frame (`.page-area`, `.start`, `.panel`, `.panel-card`'s badge tint,
   `.help-sheet`) read `--bg-surface` (`--bg-page`), the agent panel's sheet (`.agent-main`) `--bg-sheet`
