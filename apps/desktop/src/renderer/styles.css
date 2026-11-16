@@ -10942,7 +10942,8 @@ input {
   }
 
   /* Changes' capture card: the Screenshot row and the Project picker put their control under their
-     label, and the screenshot kinds run as rows (as three columns their labels overlapped). */
+     label, and the screenshot kinds run as rows (as three columns their labels overlapped), their
+     group at --r-lg (the shared pill, three rows tall, drew a disc). */
   .changes-shot-row,
   .changes-project {
     flex-direction: column;
@@ -10951,5 +10952,6 @@ input {
 
   .changes-shot-kinds {
     grid-auto-flow: row;
+    border-radius: var(--r-lg);
   }
 }
