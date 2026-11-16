@@ -154,5 +154,5 @@ export const NARROW_PANEL_WRAPS = [
   // Changes' capture card: the Screenshot row and the Project picker stack, the kinds run as rows.
   { stylesheet: 'styles.css', selector: '.changes-shot-row', set: { 'flex-direction': 'column', 'align-items': 'stretch' } },
   { stylesheet: 'styles.css', selector: '.changes-project', set: { 'flex-direction': 'column', 'align-items': 'stretch' } },
-  { stylesheet: 'styles.css', selector: '.changes-shot-kinds', set: { 'grid-auto-flow': 'row' } },
+  { stylesheet: 'styles.css', selector: '.changes-shot-kinds', set: { 'grid-auto-flow': 'row', 'border-radius': 'var(--r-lg)' } },
 ] as const;

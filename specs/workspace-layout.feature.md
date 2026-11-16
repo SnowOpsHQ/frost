@@ -98,7 +98,8 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   (1); Page Speed, Content and Visibility scrolled sideways on `main` too. Measured: Overview, On-Page
   and Links no longer scroll and Overview's first card clips no word. Changes' capture card stacks too
   (round 3): its Screenshot row puts the kinds under their label and the kinds run as rows (they were
-  three columns, about 26px short, their labels overlapping), and the Project picker puts its select
+  three columns, about 26px short, their labels overlapping), their group's corner `--r-lg` in place
+  of the shared segmented control's pill (a pill three rows tall was drawn as a disc), and the Project picker puts its select
   under its label (12px short), so Changes doesn't scroll sideways either. None of this applies at a
   width the panel's minimum fits, so nothing changes at 748px and wider.
   Two consequences of the tight layout, deliberate: the SEO separator's 8px hit area covers the
