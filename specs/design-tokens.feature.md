@@ -1349,8 +1349,10 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup.
 - **The meters' "fits" fill is `--ok` on `--track` at 2.23:1 in light** (`styles.css`, `.seo-meter-fill`
   through `--meter`, and `.seo-width-meter`): under 3:1 for a graphic; the verdict word beside it carries
   the state.
-- **The native page view's rounded corner is pixel-checked on Linux only**: in
-  `specs/workspace-layout.feature.md` once the workspace's layout PR merges (not on this branch).
+- **The native page view's rounded corner is pixel-checked on Linux only**: recorded in
+  `specs/workspace-layout.feature.md` (`page-view-matches-the-card`): the e2e proves the radius main
+  passes on Linux, Windows and macOS; that the corner is drawn rounded was shown by a screen capture
+  on Linux CI only.
 - **The canvas's features the app doesn't have** (the design canvas; each would need markup or behaviour,
   not tokens): the score on the SEO sidebar toggle, "Ask frost", click-to-edit on the tab, "More tabs",
   Overview's AI-readiness, Page and AI-judgment cards as the canvas draws them, the find icon and match
