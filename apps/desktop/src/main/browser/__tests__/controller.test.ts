@@ -12,6 +12,7 @@ import {
   SEARCH_URL_TEMPLATE,
   WINDOW_TITLE_MAX_PAGE_TITLE_LENGTH,
 } from '@app/specs/browser.spec';
+import { pageViewRadius, SHEET_RADIUS } from '@app/specs/workspace-layout.spec';
 import { commit, FakeHostWindow, FakeTabContents, FakeTabView } from '../../../test/controller-fakes';
 import { fakeEvent } from '../../../test/electron-fake';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../controller';
@@ -1204,6 +1205,33 @@ describe('permissions', () => {
       vi.advanceTimersByTime(FULLSCREEN_NOTICE_MS);
       expect(tabState(a.id).fullscreen).toBeNull();
       expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('page-view-is-rounded', () => {
+    // specs/workspace-layout.feature.md: with its bounds, the view gets the page card's corner
+    // (pageViewRadius), and none while it fills the window in HTML fullscreen.
+    vi.useFakeTimers();
+    try {
+      controller.setPageBounds({ x: 8, y: 56, width: 1264, height: 716 });
+      const a = openPage('https://a.test/');
+      expect(a.view.setBorderRadius).toHaveBeenLastCalledWith(pageViewRadius({ fullscreen: false, framed: false }));
+      expect(a.view.setBorderRadius).toHaveBeenLastCalledWith(SHEET_RADIUS.px);
+      controller.setPageBounds({ x: 8, y: 56, width: 900, height: 600 });
+      expect(a.view.setBorderRadius).toHaveBeenLastCalledWith(SHEET_RADIUS.px);
+      enterFullscreen(a.view);
+      expect(tabState(a.id).fullscreen).toBe('notice');
+      expect(a.view.setBorderRadius).toHaveBeenLastCalledWith(0);
+      vi.advanceTimersByTime(FULLSCREEN_NOTICE_MS);
+      expect(tabState(a.id).fullscreen).toBe('full');
+      expect(a.view.setBorderRadius).toHaveBeenLastCalledWith(0);
+      a.view.webContents.emit('leave-html-full-screen');
+      expect(tabState(a.id).fullscreen).toBeNull();
+      expect(a.view.setBorderRadius).toHaveBeenLastCalledWith(SHEET_RADIUS.px);
+      // Set with the bounds, never after them: each setBounds comes with its radius.
+      expect(a.view.setBorderRadius.mock.calls.length).toBe(a.view.setBounds.mock.calls.length);
     } finally {
       vi.useRealTimers();
     }

@@ -39,6 +39,7 @@ import {
   type TabOverrides,
 } from '@app/specs/render-profile.spec';
 import { RenderProfileSchema, SetRenderProfileInputSchema, TabOverridesSchema } from '@app/specs/render-profile.schema.spec';
+import { pageViewRadius, SHEET_RADIUS } from '@app/specs/workspace-layout.spec';
 import { commit, FakeHostWindow, FakeTabContents, FakeTabView } from '../../../test/controller-fakes';
 import { fakeEvent, fromPartition } from '../../../test/electron-fake';
 import { createBrowserController, type BrowserController, type HostWindow, type TabView } from '../controller';
@@ -869,6 +870,24 @@ describe('render profiles in the controller', () => {
     controller.clearRenderProfile(id);
     await settle();
     expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 90, width: 300, height: 500 });
+  });
+
+  test('framed-view-is-rounded', async () => {
+    // specs/workspace-layout.feature.md: inside the frame the view's corner is the card's less the
+    // frame's inset (pageViewRadius, framed); reset, the card's own again.
+    const { id } = await openAt('https://a.example/');
+    const view = views[0]!;
+    expect(view.setBorderRadius).toHaveBeenLastCalledWith(SHEET_RADIUS.px);
+    controller.setRenderProfile(id, PHONE_BOT, false);
+    await settle();
+    expect(view.setBorderRadius).toHaveBeenLastCalledWith(pageViewRadius({ fullscreen: false, framed: true }));
+    expect(view.setBorderRadius).toHaveBeenLastCalledWith(SHEET_RADIUS.px - RENDER_FRAME.inset);
+    controller.setPageBounds({ x: 0, y: 90, width: 300, height: 500 });
+    await settle();
+    expect(view.setBorderRadius).toHaveBeenLastCalledWith(SHEET_RADIUS.px - RENDER_FRAME.inset);
+    controller.clearRenderProfile(id);
+    await settle();
+    expect(view.setBorderRadius).toHaveBeenLastCalledWith(SHEET_RADIUS.px);
   });
 });
 

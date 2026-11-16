@@ -16,8 +16,8 @@ import type { ModelId, ModelProvider, ModelRoute } from './agent-tools.spec';
 // ---- Layout ----------------------------------------------------------------------------------
 
 /**
- * The workspace row, left to right: the page column, the agent panel, the SEO sidebar (its panel,
- * then its rail at the window's edge). Both panels may be open at once; each gives way (shrinks)
+ * The workspace row, left to right: the SEO sidebar (its rail at the window's edge, then its panel),
+ * the page column, the agent panel; floating sheets `WORKSPACE_GAP` apart (`workspace-layout.spec.ts`). Both panels may be open at once; each gives way (shrinks)
  * before the page goes under `PAGE_MIN_WIDTH` (`seo-sidebar.spec.ts`), and the page area shrinks
  * to make room, so main lays the tab's view out clear of both.
  *

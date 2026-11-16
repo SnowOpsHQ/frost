@@ -28,7 +28,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
   `@media (prefers-color-scheme: dark)` in `src/renderer/*.css`); `nativeTheme.themeSource` is not
   needed. Every capture checks that `matchMedia('(prefers-color-scheme: dark)')` follows the
   emulation and that the body's computed background differs between light and dark.
-- **Each capture is the visible window only** (1280 × 800). A surface longer than its scroller gets
+- **Each capture is the visible window only** (1280 × 800; `narrow-window` 588 × 800). A surface longer than its scroller gets
   more captures of the same state with that scroller moved (`capture(name, { scroll })`): to its
   end (`-lower`) and, where the end alone would leave much of the middle out, to a fixed offset
   (`-middle`). See "What is compared".
@@ -50,6 +50,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `new-tab-jump-back-in` | jump-back-in-and-history | the new tab after five visits: "Jump back in" tiles | `browser-polish` new-tab-page-jump-back-in |
 | `history` | jump-back-in-and-history | the History sheet listing the same visits | `browser-polish` history-lists-searches-deletes-clears |
 | `seo-overview` | seo-overview | the guide page, sidebar on Overview (score, issues, AI readiness 3 of 4) | `seo-sidebar` good-page-scores-high |
+| `narrow-window` | narrow-window | the same at the window's 588px minimum (the chrome laid out 588 × 800, as `tabs` narrowest-window-keeps-the-row-whole does): the SEO sheet at 140px, the agent rail whole | `workspace` narrow-window-keeps-the-sheets-whole |
 | `seo-on-page` | seo-on-page | On-Page facts and headings | `seo-sidebar` |
 | `seo-links` | seo-links | Links: the guide's two links, their counts, tools and table | `seo-panels` |
 | `seo-images` | seo-images | Images: the guide's two images, one without alt | `seo-panels` |
@@ -88,7 +89,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `agent-empty` | agent-empty | the agent panel open, no chat yet | `agent` `launchWith` |
 | `agent-conversation` | agent-conversation | one scripted turn: a `page_text` tool card, then the answer | `agent` agent-chat-export-and-restore (scripted model seam) |
 
-41 captures, 82 images. No state is skipped. The ChatGPT route's conversation is not captured: the
+42 captures, 84 images. No state is skipped. The ChatGPT route's conversation is not captured: the
 scripted-model turn already shows the same chat surface without a sign-in.
 
 ## What is compared

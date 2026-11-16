@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { CLEAR_SITE_DATA, DEVTOOLS_HEIGHT, DEVTOOLS_MENU_ID, DEVTOOLS_STORAGE_KEYS, EXPORT_REDACTION_HINT, EXPORT_URLS_REDACTED_NOTE, HAR_NO_BODY_COMMENT, MASKED_VALUE, REDACTED_VALUE } from '@app/specs/devtools.spec';
+import { WORKSPACE_GAP } from '@app/specs/workspace-layout.spec';
 import { HarLogSchema } from '@app/specs/devtools.schema';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
@@ -186,11 +187,13 @@ test('drawer-toggles-and-page-shrinks', async () => {
   // The shortcut, from the chrome.
   await press('chrome', 'D', ['mod', 'shift']);
   await expect(drawer()).toBeVisible();
+  // A sheet WORKSPACE_GAP under the workspace row (specs/workspace-layout.feature.md): the page gives up
+  // the drawer's height and the gap.
   const band = (await drawer().boundingBox())!;
-  await expect.poll(async () => (await viewBounds())!.height).toBe(full.height - Math.round(band.height));
+  await expect.poll(async () => (await viewBounds())!.height).toBe(full.height - Math.round(band.height) - WORKSPACE_GAP.px);
   expect((await viewBounds())!.y).toBe(full.y);
-  // The page area ends where the drawer starts.
-  expect(Math.abs(full.y + (await viewBounds())!.height - band.y)).toBeLessThanOrEqual(1);
+  // The page area ends the gap above where the drawer starts.
+  expect(Math.abs(full.y + (await viewBounds())!.height + WORKSPACE_GAP.px - band.y)).toBeLessThanOrEqual(1);
   expect(await page.evaluate((key) => localStorage.getItem(key), DEVTOOLS_STORAGE_KEYS.open)).toBe('1');
   // The menu item closes it; the page gets its height back.
   await menu(DEVTOOLS_MENU_ID);
@@ -204,15 +207,15 @@ test('drawer-toggles-and-page-shrinks', async () => {
   await expect(drawer()).toBeVisible();
   await expect(page.getByTestId('command-palette')).toHaveCount(0);
   const reopened = (await drawer().boundingBox())!;
-  await expect.poll(async () => (await viewBounds())!.height).toBe(full.height - Math.round(reopened.height));
+  await expect.poll(async () => (await viewBounds())!.height).toBe(full.height - Math.round(reopened.height) - WORKSPACE_GAP.px);
   // Resizing from the keyboard moves the page's bottom edge.
   const before = (await viewBounds())!.height;
   await page.getByTestId('devtools-resize').focus();
   await page.keyboard.press('ArrowUp');
   await expect.poll(async () => (await viewBounds())!.height).toBeLessThan(before);
   // The separator states its range: the most the drawer may take of its column (without a maximum the
-  // range would default to 0–100, below any drawer height).
-  const column = await drawer().evaluate((el) => el.parentElement!.clientHeight);
+  // range would default to 0–100, below any drawer height); its column is the stack less the gap.
+  const column = await drawer().evaluate((el) => el.parentElement!.clientHeight) - WORKSPACE_GAP.px;
   await expect(page.getByTestId('devtools-resize')).toHaveAttribute('aria-valuemax', String(Math.max(DEVTOOLS_HEIGHT.min, Math.floor(column - DEVTOOLS_HEIGHT.pageMinVisible))));
   await expect(page.getByTestId('devtools-resize')).toHaveAttribute('aria-valuemin', String(DEVTOOLS_HEIGHT.min));
   await page.getByTestId('devtools-close').click();

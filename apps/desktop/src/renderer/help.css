@@ -6,6 +6,7 @@
 .page-column:has(> .help-sheet) > .page-area {
   flex: 0 0 0;
   height: 0;
+  visibility: hidden;
 }
 
 /* The find bar is hidden while a Help sheet shows (as while History does). Its slot stays: it is one of
@@ -22,7 +23,7 @@
   overflow: hidden;
   contain: inline-size;
   /* A document on the page card's --bg-surface (it also frames the Crawl and AI answers sheets, whose
-     cards are drawn for it); the floating sheet is the workspace's surface PR. */
+     cards are drawn for it); its shape is the page card's (styles.css, the page column's sheets). */
   background: var(--bg-page);
 }
 

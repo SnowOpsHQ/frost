@@ -274,3 +274,12 @@
   margin: 0;
   font: var(--text-small);
 }
+
+/* Under the SEO panel's minimum (its seo-panel query, styles.css; specs/workspace-layout.feature.md,
+   A narrow window): the score row puts its ring above its words. */
+@container seo-panel (width < 298px) {
+  .ai-score {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

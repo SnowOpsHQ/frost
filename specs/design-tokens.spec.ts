@@ -669,8 +669,8 @@ export const SIGNAL_SURFACES = [
   // header, body and footer, the pin and collapse tools), the parts every panel shares (cards, section
   // heads, badges, page text, severity icons, the link button) and its states (the pending skeleton,
   // the unavailable and empty hints). Not the panels' interiors (`.seo-toggle`, `.seo-chip-button`,
-  // `.seo-panel-tools`, …: their own surface PRs), nor `.pane-separator`, which the agent panel shares,
-  // nor `.seo-page-text`: it holds no colour or type of its own (isolation and wrapping), and the
+  // `.seo-panel-tools`, …: their own surface PRs), nor `.pane-separator`, which the agent panel shares
+  // (the chrome's entry lists it, with the workspace's layout), nor `.seo-page-text`: it holds no colour or type of its own (isolation and wrapping), and the
   // panels qualify it with theirs (`.seo-flag.seo-page-text`, Links).
   {
     name: 'SEO sidebar: frame and shared parts',
@@ -728,6 +728,8 @@ export const SIGNAL_SURFACES = [
       '.workspace',
       '.page-column',
       '.page-area',
+      // The panes' separators, in the gaps beside the page (specs/workspace-layout.feature.md)
+      '.pane-separator',
       // The chrome row (the merged tab row and toolbar): its tablist, then the toolbar's parts
       '.chrome-row',
       '.tabs',

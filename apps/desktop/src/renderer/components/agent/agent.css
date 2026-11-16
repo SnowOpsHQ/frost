@@ -4,8 +4,9 @@
    workspace row between the page column and the SEO sidebar; like the SEO panel it gives way
    (shrinks) before the page goes under --page-min-width. Light and dark follow the OS.
    Signal (specs/design-tokens.feature.md, The agent panel): every rule reads Signal tokens, its text
-   the --text-* type tokens (Geist). The collapsed rail stays on --bg-window; the open panel is a
-   --bg-sheet flush with the page. */
+   the --text-* type tokens (Geist). Collapsed or open, it is a floating sheet
+   (specs/workspace-layout.feature.md): the rail or the panel is --bg-sheet at --r-lg with --e-sheet
+   and a transparent border forced colours draw; this wrapper draws nothing of its own. */
 
 .agent {
   position: relative;
@@ -13,27 +14,48 @@
   flex: 0 1 auto;
   min-width: 0;
   min-height: 0;
-  border-left: 1px solid var(--divider);
-  background: var(--bg-window);
   color: var(--text);
   font: var(--text-body);
 }
 
-/* Phase 11 Task 10: the open panel's separator, on its left edge next to the page (`.pane-separator`
-   in styles.css draws it). */
-.agent-separator,
-.agent-separator::after {
-  left: 0;
+/* Collapsed, the wrapper is its rail's width and never shrinks: in a window too narrow for every
+   sheet, the rail stays whole with its gap to the window's edge (specs/workspace-layout.feature.md). */
+.agent[data-open='false'] {
+  flex: none;
 }
 
-/* Collapsed: the rail and its toggle. */
+/* Phase 11 Task 10: the open panel's separator, in the gap past its left edge next to the page
+   (`.pane-separator` in styles.css draws it). */
+.agent-separator {
+  left: calc(-1 * var(--space-3));
+}
+
+/* Tight gaps under TIGHT_WORKSPACE_BELOW (the chrome's query in styles.css): offset by the 4px gap, the
+   8px separator also covers the panel's own 4px edge; its line stays in the middle of the gap (this
+   sheet loads before styles.css, hence the second class). */
+@container chrome (width < 748px) {
+  .agent-separator {
+    left: calc(-1 * var(--space-1));
+  }
+
+  .pane-separator.agent-separator::after {
+    left: calc(var(--space-1) / 2 - 1px);
+  }
+}
+
+/* Collapsed: the rail and its toggle (1px less padding inside the border). It doesn't clip: its one
+   toggle never reaches the corners, and the toggle's focus ring reaches past the rail's content box. */
 .agent-rail {
   display: flex;
   flex-direction: column;
   align-items: center;
   flex: none;
   width: var(--agent-rail-width);
-  padding: var(--space-3) 0;
+  padding: calc(var(--space-3) - 1px) 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  background: var(--bg-sheet);
+  box-shadow: var(--e-sheet);
 }
 
 .agent-rail-toggle {
@@ -77,7 +99,7 @@
   height: 8px;
   border-radius: var(--r-pill);
   background: var(--accent);
-  box-shadow: 0 0 0 2px var(--bg-window);
+  box-shadow: 0 0 0 2px var(--bg-sheet);
 }
 
 .agent-rail-badge[data-badge='approval'] {
@@ -93,8 +115,11 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
   background: var(--agent-bg);
-  animation: agent-panel-in var(--dur-base) var(--ease-out) both;
+  box-shadow: var(--e-sheet);
+  animation: agent-panel-in var(--dur-base) var(--ease-out) backwards;
 }
 
 @keyframes agent-panel-in {

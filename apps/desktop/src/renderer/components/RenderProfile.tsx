@@ -30,6 +30,7 @@ import {
   type UserAgentId,
 } from '@app/specs/render-profile.spec';
 import { isWebUrl } from '@app/specs/web-url.spec';
+import { RENDER_DEVICE_OUTLINE_RADIUS } from '@app/specs/workspace-layout.spec';
 import { actions } from '../ipc';
 import { registerPaletteActions } from '../palette/registry';
 import { renderProfilePaletteSources } from '../render-profile-palette';
@@ -173,7 +174,7 @@ function Frame({ tab, state, onEdit }: { readonly tab: TabState; readonly state:
   return (
     <div ref={ref} className="render-frame" data-testid="render-frame" data-status={state.status} data-source={state.source} data-device={state.profile.device}>
       <svg className="render-frame-art" width={size.width} height={size.height} aria-hidden="true" focusable="false">
-        {outline ? <rect className="render-frame-device" x={outline.x} y={outline.y} width={Math.max(0, outline.width)} height={Math.max(0, outline.height)} rx="3" /> : null}
+        {outline ? <rect className="render-frame-device" x={outline.x} y={outline.y} width={Math.max(0, outline.width)} height={Math.max(0, outline.height)} rx={RENDER_DEVICE_OUTLINE_RADIUS} /> : null}
       </svg>
       <div className="render-frame-header" role="group" aria-label="Render profile">
         <RenderProfileIcon className="render-frame-icon" />

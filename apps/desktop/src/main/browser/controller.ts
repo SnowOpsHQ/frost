@@ -8,6 +8,7 @@ import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/pe
 import type { PageCommand } from '@app/specs/page-commands.spec';
 import { DEFAULT_TAB_OVERRIDES, type RenderProfile, type TabOverrides } from '@app/specs/render-profile.spec';
 import { isWebUrl, parseWebUrl } from '@app/specs/web-url.spec';
+import { pageViewRadius } from '@app/specs/workspace-layout.spec';
 import { displayUrl, resolveAddressInput } from './address';
 import { createFullscreen } from './fullscreen';
 import { createPageCommands } from './page-commands';
@@ -471,7 +472,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   /**
    * Lays `tab`'s view over the page area; in HTML fullscreen over the whole content area, below
-   * the chrome's notice banner while it shows (`FULLSCREEN_BANNER_HEIGHT`).
+   * the chrome's notice banner while it shows (`FULLSCREEN_BANNER_HEIGHT`). With its bounds, its
+   * corners: the page card's (`pageViewRadius`, workspace-layout.spec.ts), none in fullscreen, the
+   * card's less the frame's inset inside a render profile's frame.
    */
   const applyBounds = (tab: Tab): void => {
     const win = strip.win;
@@ -480,8 +483,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (tab.fullscreen) {
       const top = tab.fullscreen === 'notice' ? Math.min(FULLSCREEN_BANNER_HEIGHT, height) : 0;
       tab.view.setBounds({ x: 0, y: top, width, height: height - top });
+      tab.view.setBorderRadius(pageViewRadius({ fullscreen: true, framed: false }));
     } else if (strip.pageBounds !== null) {
       tab.view.setBounds(renderProfiles.viewBounds(tab, clampPageBounds(strip.pageBounds, [width, height])));
+      tab.view.setBorderRadius(pageViewRadius({ fullscreen: false, framed: renderProfiles.state(tab) !== null }));
     }
   };
 

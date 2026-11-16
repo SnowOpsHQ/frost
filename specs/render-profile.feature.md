@@ -105,7 +105,8 @@ the procedures' inputs, `TabRenderProfileSchema`). Phase 2.5 Task 1. Each line m
   frame with the profile, "Reload to apply" and Reset. A crawler user agent shows
   `CRAWLER_HONESTY_NOTE`. Main lays the tab's view out inside the frame (`fitRenderViewport`) and
   sends the device's emulated viewport again when the page area changes size; the frame draws the
-  device's outline from the same fit. The editor bar takes a row of its own under the toolbar, so
+  device's outline from the same fit, its corner the view's (the view's own corner is
+  `pageViewRadius`'s framed one, `workspace-layout.feature.md`). The editor bar takes a row of its own under the toolbar, so
   nothing is ever drawn over a tab's view. (`render-profile-view`, `outline-follows-the-fit`,
   `view-in-frame`, e2e `render-profile-is-tab-scoped`)
 

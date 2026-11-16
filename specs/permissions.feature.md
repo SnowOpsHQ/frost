@@ -93,7 +93,7 @@ named test.
   `enter-html-full-screen` the tab's `fullscreen` is `notice`: the chrome shows a frost-owned
   banner across the top ("<host> `FULLSCREEN_NOTICE_TEXT`", `FULLSCREEN_BANNER_HEIGHT` high) and
   the view covers the rest of the window below it; after `FULLSCREEN_NOTICE_MS` it is `full` and
-  the view covers the whole window. `FULLSCREEN_EXIT_KEY` (Esc) on a fullscreen tab is taken in
+  the view covers the whole window, with no corner (`pageViewRadius`, `workspace-layout.feature.md`). `FULLSCREEN_EXIT_KEY` (Esc) on a fullscreen tab is taken in
   `before-input-event` (the page never sees it) and **always** leaves fullscreen (anti-spoofing),
   from main, at once, whatever the page does: the tab's `fullscreen` is cleared (the notice goes),
   the window leaves OS fullscreen (`setFullScreen(false)`), and the view goes back into the page

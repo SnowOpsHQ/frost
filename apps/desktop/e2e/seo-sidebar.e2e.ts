@@ -23,7 +23,7 @@ import {
   SIDEBAR_TOGGLE_MENU_ID,
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from '@app/specs/seo-sidebar.spec';
-import { AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
+import { WORKSPACE_GAP, workspaceRowChrome, workspaceRowWidth } from '@app/specs/workspace-layout.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -414,15 +414,17 @@ test('sidebar-toggle-resizes-page', async () => {
     const id = await contentsIdAt(url);
     const open = await viewBounds();
     const panel = page.getByTestId('seo-panel');
-    // Docked left: the rail and the panel sit between the window's edge and the page.
+    // Docked left: the rail and the panel sit between the window's edge and the page. Collapsing
+    // gives the page the panel's width and the gap beside it (specs/workspace-layout.feature.md).
     expect(open.x).toBeGreaterThanOrEqual(SIDEBAR_RAIL_WIDTH + SIDEBAR_PANEL_WIDTH);
+    const panelRoom = SIDEBAR_PANEL_WIDTH + WORKSPACE_GAP.px;
 
     // The toolbar button.
     await page.getByTestId('seo-toggle').click();
     await expect(panel).toHaveCount(0);
     await expect(page.getByTestId('seo-toggle')).toHaveAttribute('aria-pressed', 'false');
-    await expect.poll(async () => (await viewBounds()).width).toBe(open.width + SIDEBAR_PANEL_WIDTH);
-    expect((await viewBounds()).x).toBe(open.x - SIDEBAR_PANEL_WIDTH);
+    await expect.poll(async () => (await viewBounds()).width).toBe(open.width + panelRoom);
+    expect((await viewBounds()).x).toBe(open.x - panelRoom);
     // The persistent rail keeps the page's status.
     await expect(railItem('on-page')).toHaveAttribute('data-status', 'pass');
     // Collapsing from the panel's own button leaves focus on its rail item.
@@ -441,7 +443,7 @@ test('sidebar-toggle-resizes-page', async () => {
     await run(id, `window.__keys = 0; addEventListener('keydown', () => { window.__keys += 1; }, true); true`);
     await press(id, 'S', ['mod', 'shift']);
     await expect(panel).toHaveCount(0);
-    await expect.poll(async () => (await viewBounds()).width).toBe(open.width + SIDEBAR_PANEL_WIDTH);
+    await expect.poll(async () => (await viewBounds()).width).toBe(open.width + panelRoom);
     expect(await run(id, 'window.__keys')).toBe(0);
 
     // Closed survives a relaunch on the same profile.
@@ -494,26 +496,45 @@ test('drag-resize-moves-page-view', async () => {
     await expect(separator).toHaveAttribute('aria-valuemin', String(SIDEBAR_PANEL_WIDTH_RANGE.min));
     await expect(separator).toHaveAttribute('aria-valuemax', String(SIDEBAR_PANEL_WIDTH_RANGE.max));
     await expect.poll(async () => (await viewBounds()).x).toBeGreaterThanOrEqual(SIDEBAR_RAIL_WIDTH + SIDEBAR_PANEL_WIDTH);
+    // From the default width (skipped on Windows: specs/seo-sidebar.feature.md, drag-resize-moves-page-view).
+    // The runner parks the OS cursor at the screen's centre; when the tab view's left edge, moving with
+    // the drag, crosses it, Windows gives the chrome a lostpointercapture and a trusted buttonless
+    // pointermove at that point (CI probe 43893592708), which end the drag as a release over the view must.
+    if (process.platform !== 'win32') {
+      const fromDefault = await viewBounds();
+      await dragBy(separator, 100);
+      await expect(separator).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH + 100));
+      await expect.poll(async () => (await viewBounds()).x).toBe(fromDefault.x + 100);
+      expect((await viewBounds()).width).toBe(fromDefault.width - 100);
+      expect(await page.evaluate((key) => localStorage.getItem(key), SIDEBAR_WIDTH_STORAGE_KEY)).toBe(String(SIDEBAR_PANEL_WIDTH + 100));
+    }
+    // From the minimum, on every OS: the view's left edge (372 → 472) never crosses that cursor.
+    await separator.focus();
+    await page.keyboard.press('Home');
+    const start = SIDEBAR_PANEL_WIDTH_RANGE.min;
+    await expect(separator).toHaveAttribute('aria-valuenow', String(start));
+    await expect.poll(async () => (await viewBounds()).x).toBe(Math.round((await page.getByTestId('page-area').boundingBox())!.x));
     const before = await viewBounds();
 
     // Dragged 100 px towards the page: the tab's view starts 100 px later and is 100 px narrower.
     await dragBy(separator, 100);
-    await expect(separator).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH + 100));
+    await expect(separator).toHaveAttribute('aria-valuenow', String(start + 100));
     await expect.poll(async () => (await viewBounds()).x).toBe(before.x + 100);
     expect((await viewBounds()).width).toBe(before.width - 100);
-    expect(await page.evaluate((key) => localStorage.getItem(key), SIDEBAR_WIDTH_STORAGE_KEY)).toBe(String(SIDEBAR_PANEL_WIDTH + 100));
+    expect(await page.evaluate((key) => localStorage.getItem(key), SIDEBAR_WIDTH_STORAGE_KEY)).toBe(String(start + 100));
 
     // The keyboard: Left narrows by one step, and the view follows.
     await separator.focus();
     await page.keyboard.press('ArrowLeft');
-    const stepped = SIDEBAR_PANEL_WIDTH + 100 - SIDEBAR_PANEL_WIDTH_RANGE.keyboardStep;
+    const stepped = start + 100 - SIDEBAR_PANEL_WIDTH_RANGE.keyboardStep;
     await expect(separator).toHaveAttribute('aria-valuenow', String(stepped));
     await expect.poll(async () => (await viewBounds()).x).toBe(before.x + 100 - SIDEBAR_PANEL_WIDTH_RANGE.keyboardStep);
 
     // In a narrower chrome, End stops where the page keeps its minimum.
     await page.setViewportSize({ width: 900, height: 800 });
     await page.keyboard.press('End');
-    const room = 900 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 2 - AGENT_RAIL_WIDTH;
+    // The row less the page's minimum, the rails and the gaps (specs/workspace-layout.spec.ts).
+    const room = workspaceRowWidth(900) - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: true, agent: false });
     await expect(separator).toHaveAttribute('aria-valuenow', String(room));
     await expect(separator).toHaveAttribute('aria-valuemax', String(room));
     // The page keeps its minimum (borders are one device pixel: a fraction of a CSS px on a scaled display).

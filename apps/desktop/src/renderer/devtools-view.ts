@@ -15,6 +15,7 @@ import {
   type RobotsVerdict,
 } from '@app/specs/devtools.spec';
 import { SEO_PANELS, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
+import { WORKSPACE_GAP } from '@app/specs/workspace-layout.spec';
 
 // Pure helpers behind the SEO devtools drawer (spec `devtools.spec.ts`; acceptance
 // `devtools.feature.md`, Chrome helpers): the stored state, the height clamp, the Network tab's
@@ -37,6 +38,15 @@ export function heightFromStorage(value: string | null): number {
 
 export function tabFromStorage(value: string | null): DevtoolsTabId {
   return DEVTOOLS_TABS.find((t) => t.id === value)?.id ?? DEFAULT_DEVTOOLS_TAB;
+}
+
+/**
+ * The column the drawer and the page share: its parent's (the workspace stack's) height less the
+ * gap the drawer's sheet stands under the workspace row (specs/workspace-layout.spec.ts,
+ * `WORKSPACE_GAP`, or `gap`: the tight one in a narrow workspace); 0 before layout.
+ */
+export function drawerColumn(parentHeight: number, gap: number = WORKSPACE_GAP.px): number {
+  return Math.max(0, parentHeight - gap);
 }
 
 /** The tallest the drawer may be in a `column` (never below `min`); `null` before layout (a `column` of 0 or less). */

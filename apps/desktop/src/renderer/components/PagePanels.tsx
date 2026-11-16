@@ -114,6 +114,9 @@ export function PageArea({ tab, empty, onEditProfile }: { readonly tab: TabState
     report();
     const observer = new ResizeObserver(report);
     observer.observe(el);
+    // It also moves without changing size when a pane beside it changes width while the page is held
+    // at its minimum (a narrow window; specs/workspace-layout.feature.md): the row's other sheets too.
+    for (const pane of el.closest('.workspace')?.children ?? []) if (!pane.contains(el)) observer.observe(pane);
     window.addEventListener('resize', report);
     return () => {
       observer.disconnect();

@@ -31,6 +31,7 @@ import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { GSC_PANEL_COPY } from '@app/specs/gsc-panel.spec';
 import { PERMISSION_PROMPT_ACTIONS } from '@app/specs/permissions.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
+import { NARROW_WINDOW } from '@app/specs/workspace-layout.spec';
 import { UPDATE_FEED_SWITCH, UPDATE_PREFS_FILE, UPDATE_PUBLIC_KEY_SWITCH, UPDATE_TEST_CERT_SWITCH, updateAvailableText } from '@app/specs/update-client.spec';
 import { updatePlatformKey } from '@app/specs/update-manifest.spec';
 import { artifactBytes, manifestFor, sha256Hex, signEnvelope, startFakeFeed, testSigningKey, type FakeFeed } from '../src/main/update/__tests__/fake-feed';
@@ -206,6 +207,7 @@ const CAPTURES = [
   'new-tab-jump-back-in',
   'history',
   'seo-overview',
+  'narrow-window',
   'seo-on-page',
   'seo-links',
   'seo-images',
@@ -331,7 +333,8 @@ const STRICT = process.env['VISUAL_STRICT'] === '1' ? { maxDiffPixels: 0, maxDif
  */
 async function capture(name: CaptureName, options: { readonly keepFocus?: boolean; readonly scroll?: Scroll } = {}): Promise<void> {
   if (!options.keepFocus) await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await page.mouse.move(Math.round(WINDOW.width / 2), WINDOW.height - 4);
+  // The middle of the bottom edge, at whatever width the window is (narrow-window is 588 px).
+  await page.mouse.move(Math.round((await page.evaluate(() => innerWidth)) / 2), WINDOW.height - 4);
   await settled();
   const key = await app!.evaluate(({ BrowserWindow }, css) => BrowserWindow.getAllWindows()[0]!.webContents.insertCSS(css), VISUAL_CSS);
   try {
@@ -437,6 +440,22 @@ test.describe('page surfaces', () => {
     // AI readiness scores the page once its checks are in: 3 of 4 (the visibility probes never ran).
     await expect(page.getByTestId('ai-readiness-ring')).toHaveAttribute('data-state', 'partial', { timeout: AUDIT_WAIT });
     await capture('seo-overview');
+  });
+
+  test('narrow-window', async () => {
+    // workspace.e2e.ts narrow-window-keeps-the-sheets-whole: the guide on Overview, the window at its
+    // minimum width (Electron doesn't clamp setContentSize; tabs.e2e.ts narrowest-window-keeps-the-row-whole).
+    await audit('/guide');
+    await showPanel('overview');
+    await expect(page.getByTestId('ai-readiness-ring')).toHaveAttribute('data-state', 'partial', { timeout: AUDIT_WAIT });
+    await app!.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]!.setContentSize(width, 800), NARROW_WINDOW.width);
+    try {
+      await expect.poll(() => page.evaluate(() => innerWidth)).toBe(NARROW_WINDOW.width);
+      await capture('narrow-window');
+    } finally {
+      await app!.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setContentSize(size.width, size.height), WINDOW);
+      await expect.poll(() => page.evaluate(() => innerWidth)).toBe(WINDOW.width);
+    }
   });
 
   test('seo-on-page', async () => {

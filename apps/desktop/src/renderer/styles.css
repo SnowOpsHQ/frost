@@ -65,6 +65,9 @@ input {
      the page area, so the tab's view is laid out clear of them all. */
   grid-template-rows: var(--h-chrome) auto auto auto auto minmax(0, 1fr) var(--h-status);
   height: 100%;
+  /* The workspace's own width (its stack spans the one column): under TIGHT_WORKSPACE_BELOW the
+     workspace's gaps and inset are --space-1 (end of this file; specs/workspace-layout.feature.md). */
+  container: chrome / inline-size;
 }
 
 /* The last two rows are pinned, counted from the end: if a slot above them ever leaves the layout
@@ -522,7 +525,7 @@ input {
   background: var(--accent-soft);
   color: var(--text);
   font: var(--text-body);
-  animation: prompt-in var(--dur-base) var(--ease-out) both;
+  animation: prompt-in var(--dur-base) var(--ease-out) backwards;
 }
 
 .prompt-icon {
@@ -679,36 +682,49 @@ input {
 
 /* ---- Workspace: the page area and the SEO sidebar ------------------------------------------ */
 
-/* The workspace row, with the devtools drawer's band under it while open (its max-height is a
-   share of this stack, so the page keeps some height). Its top edge is the rule between the chrome
-   (with any band under the chrome row) and the page. */
+/* The workspace row, with the devtools drawer's sheet under it while open (its max-height is a
+   share of this stack, so the page keeps some height).
+   Signal (specs/workspace-layout.feature.md): floating sheets on the window's --bg-window, --space-3
+   apart and --space-3 in from the window's left and right edges, with no rule between them (the
+   chrome row above and the status bar below leave their own room). Each sheet clips its own content;
+   the stack clips its sheets' ink 1px outside itself, so their rings show and their --e-sheet shadows
+   (whose ink reaches ~16px up) stay out of the chrome row: overlapping its composited address bar, they
+   made Chromium composite the sheets and the tab, and that text lost its LCD antialiasing. */
 .workspace-stack {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
-  border-top: 1px solid var(--divider);
+  padding: 0 var(--space-3);
+  overflow: clip;
+  overflow-clip-margin: 1px;
 }
 
 .workspace {
   display: flex;
   flex: 1 1 auto;
+  gap: var(--space-3);
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
 }
 
 /* ---- Page area ---------------------------------------------------------------------------- */
 
-/* The tab's WebContentsView is laid over exactly this box by main. */
+/* The tab's WebContentsView is laid over exactly this box by main, its corners rounded to this
+   card's (View.setBorderRadius: pageViewRadius in specs/workspace-layout.spec.ts). The page card:
+   --bg-page at --r-lg with --e-ring; its forced-colours edge is an outline outside the box, which the
+   native view (covering the whole box) never hides. What fills it instead of the view (the start
+   view, the error and crash panels, the render profile's frame) is clipped to its corners. */
 .page-area {
   position: relative;
   flex: 1 1 auto;
   min-width: min(var(--page-min-width), 100%);
   min-height: 0;
-  overflow: hidden;
+  overflow: clip;
+  border-radius: var(--r-lg);
   background: var(--bg-page);
+  box-shadow: var(--e-ring);
+  outline: 1px solid transparent;
 }
 
 /* Signal (specs/design-tokens.feature.md, The new-tab view): flat --bg-page, no gradient wash; the
@@ -735,7 +751,7 @@ input {
   height: 64px;
   margin-bottom: var(--space-3);
   color: var(--accent);
-  animation: mark-in var(--dur-slow) var(--ease-out) both;
+  animation: mark-in var(--dur-slow) var(--ease-out) backwards;
 }
 
 /* The type scale's largest step: the wordmark was 44px at weight 300, which Geist isn't bundled in. */
@@ -790,7 +806,7 @@ input {
   flex-direction: column;
   align-items: flex-start;
   width: min(100%, 460px);
-  animation: panel-in var(--dur-slow) var(--ease-out) both;
+  animation: panel-in var(--dur-slow) var(--ease-out) backwards;
 }
 
 .panel[data-error-class='certificate'] .panel-card {
@@ -955,15 +971,14 @@ input {
 
 /* ---- Status bar --------------------------------------------------------------------------- */
 
-/* --text-small on --bg-window; a --divider rule over it while the page is flush. */
+/* --text-small on the window's --bg-window (the body's), with no rule and no fill of its own, so the
+   sheets' edges and shadows above it show (specs/workspace-layout.feature.md). */
 .status-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
   padding: 0 var(--space-4);
-  border-top: 1px solid var(--divider);
-  background: var(--bg-window);
   color: var(--text-muted);
   font: var(--text-small);
 }
@@ -1019,27 +1034,28 @@ input {
 
 /* Docked left of the page area: the rail at the window's edge, then the panel. The page area
    shrinks to make room (the tab's view follows it through setPageBounds).
-   Signal (specs/design-tokens.feature.md, The SEO sidebar's frame): rail and panel are one --bg-sheet
-   flush with the page, ruled by --divider; the frame's text reads the --text-* tokens (Geist). */
+   Signal (specs/design-tokens.feature.md, The SEO sidebar's frame; specs/workspace-layout.feature.md):
+   the rail and the panel are two floating --bg-sheet sheets, --space-3 apart; this wrapper draws
+   nothing of its own. The frame's text reads the --text-* tokens (Geist). */
 .seo {
   position: relative;
   display: flex;
   flex: 0 1 auto;
+  gap: var(--space-3);
   min-width: 0;
   min-height: 0;
-  border-right: 1px solid var(--divider);
-  background: var(--bg-sheet);
 }
 
-/* Phase 11 Task 10: a resizable pane's separator (sidebar-layout.ts), a thin strip inside the pane on
-   its edge next to the page (the tab's view covers the page area, so it never reaches past it). Its
-   line shows on hover, while dragged and with keyboard focus. */
+/* Phase 11 Task 10: a resizable pane's separator (sidebar-layout.ts). It fills the gap between the
+   pane and the page (specs/workspace-layout.feature.md; the tab's view covers the page area, so it
+   never reaches into it), its 2px line in the middle. The line shows on hover, while dragged and
+   with keyboard focus. */
 .pane-separator {
   position: absolute;
   top: 0;
   bottom: 0;
   z-index: 5;
-  width: 6px;
+  width: var(--space-3);
   cursor: col-resize;
   touch-action: none;
   outline: none;
@@ -1050,6 +1066,7 @@ input {
   position: absolute;
   top: 0;
   bottom: 0;
+  left: calc(50% - 1px);
   width: 2px;
   background: transparent;
   transition: background-color 120ms ease;
@@ -1061,11 +1078,13 @@ input {
   background: var(--accent);
 }
 
-.seo-separator,
-.seo-separator::after {
-  right: 0;
+/* In the gap past the sidebar's right edge. */
+.seo-separator {
+  right: calc(-1 * var(--space-3));
 }
 
+/* A floating sheet: --bg-sheet at --r-lg with --e-sheet; the transparent border is the edge forced
+   colours draw (they drop the shadow and repaint the fill). */
 .seo-panel {
   display: flex;
   flex-direction: column;
@@ -1074,9 +1093,13 @@ input {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-left: 1px solid var(--divider);
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
   background: var(--bg-sheet);
-  animation: seo-panel-in var(--dur-base) var(--ease-out) both;
+  box-shadow: var(--e-sheet);
+  animation: seo-panel-in var(--dur-base) var(--ease-out) backwards;
+  /* Its body's padding follows its width (below). */
+  container: seo-panel / inline-size;
 }
 
 @keyframes seo-panel-in {
@@ -1147,13 +1170,15 @@ input {
   gap: var(--space-4);
   flex: 1;
   min-height: 0;
-  padding: var(--space-4);
+  /* The canvas's 16px in (specs/workspace-layout.feature.md); the panels' cards keep their own gaps. */
+  padding: var(--space-5);
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--track) transparent;
   user-select: text;
   cursor: auto;
 }
+
 
 .seo-foot {
   flex: none;
@@ -1166,6 +1191,9 @@ input {
 
 /* Rail: one icon button per panel, with the panel's status dot. A dot is cut out of what is under it
    by a halo in that fill (--seo-dot-back): the sheet, a selected item's --bg-surface, the menu's. */
+/* A floating sheet of its own at the window's edge, as the panel: --bg-sheet at --r-lg with --e-sheet
+   and a transparent border (its items keep their place inside it: 1px less padding). It clips its
+   items to its corners. */
 .seo-rail {
   --seo-dot-back: var(--bg-sheet);
   display: flex;
@@ -1174,7 +1202,12 @@ input {
   gap: var(--space-1);
   flex: none;
   width: var(--seo-rail-width);
-  padding: var(--space-3) 0;
+  padding: calc(var(--space-3) - 1px) 0;
+  overflow: clip;
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  background: var(--bg-sheet);
+  box-shadow: var(--e-sheet);
 }
 
 .seo-rail-item {
@@ -1774,7 +1807,7 @@ input {
 /* An open issue, under its title: the severity icon's width and the row's gap in from the row's edge. */
 .seo-issue-body {
   margin: 0 var(--space-2) var(--space-4) calc(var(--space-2) + var(--icon-sm) + var(--space-3));
-  animation: prompt-in var(--dur-base) var(--ease-out) both;
+  animation: prompt-in var(--dur-base) var(--ease-out) backwards;
 }
 
 .seo-issue-label {
@@ -2321,7 +2354,7 @@ input {
   margin: auto 0;
   padding: var(--space-6) var(--space-4) 12vh;
   text-align: center;
-  animation: panel-in var(--dur-base) var(--ease-out) both;
+  animation: panel-in var(--dur-base) var(--ease-out) backwards;
 }
 
 .seo-hint-art {
@@ -5317,8 +5350,9 @@ input {
   /* Never shorter than its minimum: the palette does not open in a column shorter than that. */
   height: max(min(var(--palette-sheet-height), calc(100% - var(--palette-page-min-visible))), var(--palette-sheet-min-height));
   min-height: 0;
-  padding: var(--space-4) var(--space-5);
-  border-bottom: 1px solid var(--divider);
+  /* The canvas's band (specs/workspace-layout.feature.md): the card spans the column up to
+     --palette-width, with the workspace's gap between it and the page card under it. */
+  padding: 0 0 var(--space-3);
   background: var(--bg-window);
 }
 
@@ -5335,7 +5369,7 @@ input {
   font: var(--text-body);
   overflow: hidden;
   container: palette / inline-size;
-  animation: palette-in var(--dur-base) var(--ease-out) both;
+  animation: palette-in var(--dur-base) var(--ease-out) backwards;
 }
 
 @keyframes palette-in {
@@ -5731,7 +5765,7 @@ input {
   background: var(--accent-soft);
   color: var(--text);
   font: var(--text-small);
-  animation: prompt-in var(--dur-base) var(--ease-out) both;
+  animation: prompt-in var(--dur-base) var(--ease-out) backwards;
 }
 
 .render-bar-row {
@@ -5846,6 +5880,9 @@ input {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* The card's corner (specs/workspace-layout.feature.md): the 4px band's inner corner is then the
+     framed view's 12px (pageViewRadius), with no wedge of the card's fill between them. */
+  border-radius: inherit;
   box-shadow: inset 0 0 0 4px var(--accent);
 }
 
@@ -7121,8 +7158,10 @@ input {
    through setPageBounds). Its height is the strut's SVG height attribute (DEVTOOLS_HEIGHT in
    specs/devtools.spec.ts); max-height keeps at least --devtools-page-min of the workspace in view.
    Waterfall bars are SVG rects sized by attributes.
-   Signal (specs/design-tokens.feature.md, The rest of the browser chrome): a --bg-sheet band with a
-   --divider edge, its text --text-small (Geist), status text in its -ink. */
+   Signal (specs/design-tokens.feature.md, The rest of the browser chrome): its text --text-small
+   (Geist), status text in its -ink. A floating sheet (specs/workspace-layout.feature.md) --space-3
+   under the workspace row: --bg-sheet at --r-lg with --e-sheet and a transparent border forced
+   colours draw; the gap counts in the page's minimum. */
 
 .devtools {
   --devtools-page-min: 160px;
@@ -7130,9 +7169,12 @@ input {
   flex: 0 0 auto;
   display: flex;
   min-height: 0;
-  max-height: calc(100% - var(--devtools-page-min));
+  max-height: calc(100% - var(--devtools-page-min) - var(--space-3));
+  margin-top: var(--space-3);
   overflow: hidden;
-  border-top: 1px solid var(--divider);
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  box-shadow: var(--e-sheet);
   background: var(--bg-sheet);
   color: var(--text);
   font: var(--text-small);
@@ -7702,6 +7744,15 @@ input {
   margin: var(--space-2) 0;
 }
 
+/* The drawer's gap under the row in a narrow workspace (specs/workspace-layout.feature.md, A narrow
+   window: the chrome's query, kept in this section with every .devtools rule). */
+@container chrome (width < 748px) {
+  .devtools {
+    max-height: calc(100% - var(--devtools-page-min) - var(--space-1));
+    margin-top: var(--space-1);
+  }
+}
+
 /* End of Devtools drawer */
 
 /* Browser polish (Phase 2.5 Task 6, specs/browser-polish.feature.md): the find bar, the History
@@ -7864,6 +7915,7 @@ input {
 .page-column[data-history='open'] > .page-area {
   flex: 0 0 0;
   height: 0;
+  visibility: hidden;
 }
 
 .history-sheet {
@@ -8401,7 +8453,7 @@ input {
   background: var(--accent-soft);
   color: var(--text);
   font: var(--text-body);
-  animation: prompt-in var(--dur-base) var(--ease-out) both;
+  animation: prompt-in var(--dur-base) var(--ease-out) backwards;
 }
 
 .update-bar[data-kind='error'] {
@@ -9590,12 +9642,14 @@ input {
 .page-column:has(> .projects-sheet) > .page-area {
   flex: 0 0 0;
   height: 0;
+  visibility: hidden;
 }
 
 /* A run under way: the run's tab shows below the band. */
 .page-column:has(> .projects-sheet[data-running='true']) > .page-area {
   flex: 1 1 auto;
   height: auto;
+  visibility: visible;
 }
 
 .projects-sheet {
@@ -9615,7 +9669,7 @@ input {
 .projects-sheet[data-running='true'] {
   flex: 0 0 auto;
   height: var(--projects-run-band);
-  border-bottom: 1px solid var(--divider);
+  margin-bottom: var(--space-3);
 }
 
 .projects {
@@ -10557,6 +10611,7 @@ input {
 .page-column:has(> .shot-editor-sheet) > .page-area {
   flex: 0 0 0;
   height: 0;
+  visibility: hidden;
 }
 
 .shot-editor-sheet {
@@ -10801,4 +10856,102 @@ input {
 
 .serp-search-tools:has(.serp-editor) + .serp-open-in {
   display: none;
+}
+
+/* ---- Workspace: the sheets that fill the page column ---------------------------------------- */
+
+/* specs/workspace-layout.feature.md: History, Projects (and its capture run's band), the screenshot
+   editor, Settings and Help's frame (which also holds Crawl and AI answers) take the page card's place
+   and its shape: --r-lg with --e-ring, a transparent outline outside the box as the edge forced colours
+   draw (a border would move their content). Each keeps its own fill and overflow in its own rule. Last
+   in the file: settings.css and help.css load before this sheet, and the Projects and screenshot-editor
+   sheets' own `outline: none` comes earlier. */
+.history-sheet,
+.projects-sheet,
+.shot-editor-sheet,
+.settings-sheet,
+.help-sheet {
+  border-radius: var(--r-lg);
+  box-shadow: var(--e-ring);
+  outline: 1px solid transparent;
+}
+
+/* ---- Workspace: tight gaps in a narrow window ----------------------------------------------- */
+
+/* specs/workspace-layout.feature.md, A narrow window: under TIGHT_WORKSPACE_BELOW (748px of workspace,
+   where --space-3 gaps would leave the SEO sheet under its minimum with the agent collapsed), every
+   gap and inset of the workspace is --space-1 together, the bands' too, so their edges stay on the
+   sheets' (the two gaps inside the page column, the palette's and a Projects run's, cost no width
+   and stay). The separators keep their 8px hit area: offset by the 4px gap, they also cover the pane's
+   own 4px edge beside it (never the page card), their line in the middle of the gap. The DevTools
+   drawer's section and the agent's stylesheet repeat this query for the drawer and the separator. Last in the file, after the rules it overrides. */
+@container chrome (width < 748px) {
+  .workspace-stack {
+    padding: 0 var(--space-1);
+  }
+
+  .workspace,
+  .seo {
+    gap: var(--space-1);
+  }
+
+  .seo-separator {
+    right: calc(-1 * var(--space-1));
+  }
+
+  .seo-separator::after {
+    left: auto;
+    right: calc(var(--space-1) / 2 - 1px);
+  }
+
+  .prompt-bar,
+  .find-bar,
+  .render-bar,
+  .update-bar {
+    margin: 0 var(--space-1) var(--space-1);
+  }
+}
+
+/* ---- SEO panel: under its minimum -------------------------------------------------------- */
+
+/* Under the panel's minimum (SIDEBAR_PANEL_WIDTH_RANGE.min: a 298px content box inside its 1px border),
+   only in a window too narrow for it, the body gives its content the padding back
+   (specs/workspace-layout.feature.md, A narrow window). Last in the file: at the same weight it must
+   come after the rules it overrides. */
+@container seo-panel (width < 298px) {
+  .seo-body {
+    padding: var(--space-1);
+  }
+
+  /* What keeps everything on one line wraps (NARROW_PANEL_WRAPS): the score card's ring above its
+     words, a section head's badge under its title, a long toggle or action label onto a second line. */
+  .seo-score-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .seo-section-head {
+    flex-wrap: wrap;
+  }
+
+  .seo-toggle,
+  .seo-action {
+    height: auto;
+    min-height: var(--h-chip);
+    white-space: normal;
+  }
+
+  /* Changes' capture card: the Screenshot row and the Project picker put their control under their
+     label, and the screenshot kinds run as rows (as three columns their labels overlapped), their
+     group at --r-lg (the shared pill, three rows tall, drew a disc). */
+  .changes-shot-row,
+  .changes-project {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .changes-shot-kinds {
+    grid-auto-flow: row;
+    border-radius: var(--r-lg);
+  }
 }

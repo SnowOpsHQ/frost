@@ -11,8 +11,9 @@ Code: `apps/desktop/src/renderer/agent-view.ts`, `agent-actions.ts`, `agent-pale
 to one named test.
 
 ## Decisions
-- **Layout.** The workspace row is page | agent | SEO sidebar (its panel, then its rail at the
-  window's edge). Both panels may be open; each gives way before the page goes under
+- **Layout.** The workspace row is the SEO sidebar (its rail at the window's edge, then its
+  panel) | page | agent, floating sheets `WORKSPACE_GAP` apart (`workspace-layout.feature.md`).
+  Both panels may be open; each gives way before the page goes under
   `PAGE_MIN_WIDTH`, and the page area shrinks (its box is reported to main, so the tab's view never
   covers a panel). Collapsed, the agent is a rail `AGENT_RAIL_WIDTH` wide with its toggle (and a
   badge while a turn runs or an approval waits); open, a panel `AGENT_PANEL_WIDTH` wide. It starts

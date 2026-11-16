@@ -16,8 +16,9 @@ line maps to one named test.
 ## Decisions
 - **A band under the page area.** The tab's view is a native `WebContentsView` drawn above the
   chrome's DOM, so the drawer, like the palette's sheet, takes a band of the chrome: a row under the
-  workspace (the page column and the SEO sidebar, since the Batch B integration), so the page area
-  above it shrinks, and the chrome reports the smaller area through the existing
+  workspace (the page column and the SEO sidebar, since the Batch B integration; a floating sheet
+  `WORKSPACE_GAP` under the workspace row since the workspace's layout, `workspace-layout.feature.md`,
+  the gap counted in the page's minimum), so the page area above it shrinks, and the chrome reports the smaller area through the existing
   `browser.setPageBounds`. Its height is set by an SVG strut's `height` attribute (never `style=`:
   strict CSP), clamped to `DEVTOOLS_HEIGHT` in the chrome and by `max-height` in the CSS. It is
   resized by dragging its top edge (a `separator`, also Arrow / Page Up and Down). Open, height and
