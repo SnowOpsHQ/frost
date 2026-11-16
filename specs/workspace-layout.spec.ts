@@ -11,7 +11,8 @@
  */
 import { AGENT_RAIL_WIDTH } from './agent-panel.spec';
 import { RENDER_FRAME } from './render-profile.spec';
-import { SIDEBAR_RAIL_WIDTH } from './seo-sidebar.spec';
+import { PAGE_MIN_WIDTH, SIDEBAR_PANEL_WIDTH_RANGE, SIDEBAR_RAIL_WIDTH } from './seo-sidebar.spec';
+import { CHROME_MIN_CONTENT_WIDTH_PX } from './tabs.spec';
 
 /**
  * The space between two sheets of the workspace, and between the outer sheets and the window's left
@@ -118,3 +119,15 @@ export const ENTRANCE_FILL_EXCEPTIONS = [
   { stylesheet: 'gsc-panel.css', selector: '.gsc' },
   { stylesheet: 'gsc-panel.css', selector: '.gsc-cal' },
 ] as const;
+
+/**
+ * A narrow window (`workspace-layout.feature.md`, A narrow window): the window's minimum content width (CSS px,
+ * `CHROME_MIN_CONTENT_WIDTH_PX`, 588) and, there, the SEO sheet's width with the agent collapsed (the row less the
+ * page's minimum and `workspaceRowChrome`). Below the panel's minimum the SEO body's padding is
+ * `SEO_BODY_NARROW_PADDING`; the query is on the panel's content box, inside its 1px border.
+ */
+export const NARROW_WINDOW = {
+  width: CHROME_MIN_CONTENT_WIDTH_PX,
+  seoSheet: workspaceRowWidth(CHROME_MIN_CONTENT_WIDTH_PX) - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: true, agent: false }),
+} as const;
+export const SEO_BODY_NARROW_PADDING = { token: '--space-1', belowContentWidth: SIDEBAR_PANEL_WIDTH_RANGE.min - 2 } as const;

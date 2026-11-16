@@ -2,7 +2,7 @@
 
 Spec: `specs/workspace-layout.spec.ts` (`WORKSPACE_GAP`, `SHEET_RADIUS`, `workspaceRowChrome`,
 `workspaceRowWidth`, `pageViewRadius`, `RENDER_DEVICE_OUTLINE_RADIUS`, `WORKSPACE_SHEETS`,
-`PAGE_AREA_COLLAPSES`, `ENTRANCE_FILL_EXCEPTIONS`). Signal step 3, the last surface: how the pieces sit in the window, not their
+`PAGE_AREA_COLLAPSES`, `ENTRANCE_FILL_EXCEPTIONS`, `NARROW_WINDOW`, `SEO_BODY_NARROW_PADDING`). Signal step 3, the last surface: how the pieces sit in the window, not their
 interiors (`design-tokens.feature.md`). Source: the approved canvas's light and dark main screens, its
 agent, Settings and palette screens, and its token sheet (`--r-lg`: "sheets, rail, page card,
 palette"). Code: `apps/desktop/src/renderer/styles.css` (Layout, Workspace, Page area, SEO sidebar,
@@ -43,7 +43,9 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   the workspace, 0 in HTML fullscreen (the view fills the window: no gap, no corner) and
   `SHEET_RADIUS − RENDER_FRAME.inset` (12) inside a render profile's page-area frame, concentric with
   the card at the bottom (the frame's inset band, its header and its art are HTML in the card, clipped
-  to its corners; a device preset's outline follows the view's corner, `RENDER_DEVICE_OUTLINE_RADIUS`).
+  to its corners; the band takes the card's radius, so its inner corner is the framed view's 12px and
+  no wedge of the card's fill shows between them; a device preset's outline follows the view's corner,
+  `RENDER_DEVICE_OUTLINE_RADIUS`).
   The cut-out corners still take the page's clicks (Electron's note); they lie inside the card's box.
 - **The card's box is reported whenever it changes.** The page area reports its box to main on
   every resize, and now also when it moves without changing size: in a window too narrow for the
@@ -56,10 +58,29 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   still gives way before the page goes under `PAGE_MIN_WIDTH`, in the same order (the agent panel to
   its minimum, then the SEO sheet). In the tiled 776px window with the SEO sheet open and the agent
   collapsed, the page keeps `PAGE_MIN_WIDTH` and the SEO sheet narrows from 360 to 328px (it was 360,
-  with the page at 326); at the 588px minimum the page keeps 320 and the sheet is 140px (178 before),
-  its content clipped, as a narrow window always did; with the sidebar collapsed the page is 468px
-  (498 before). The gaps never shrink and never touch the chrome row, whose width rules
-  (`tabs.feature.md`) are unchanged, so no control leaves the row.
+  with the page at 326); at the 588px minimum the page keeps 320 and the sheet is 140px (178 before);
+  with the sidebar collapsed the page is 468px (498 before). The gaps never shrink and never touch the
+  chrome row, whose width rules (`tabs.feature.md`) are unchanged, so no control leaves the row.
+- **A narrow window** (`NARROW_WINDOW`). The collapsed agent panel never shrinks (`flex: none` on
+  its wrapper): its rail stays `AGENT_RAIL_WIDTH` wide with its gap to the window's edge, where flex
+  shrink had squeezed the wrapper to 24px and cut the rail's corner and toggle. Below the panel's
+  minimum (`SIDEBAR_PANEL_WIDTH_RANGE.min`, a 298px content box inside its border; only a window too
+  narrow for it gets there) the SEO body's padding is `--space-1` (`SEO_BODY_NARROW_PADDING`, a
+  container query on the panel), not the canvas's `--space-5`.
+  **140px is not usable.** Measured at the 588px minimum with the agent collapsed, the sheet is 140px
+  and its body's content box 131px (121px beside a vertical scrollbar), against 152px on `main`
+  (178px sheet, `--space-4`). Overview's, Links', Images', Social's, Schema's, Indexability's,
+  Compliance's, JavaScript's, SERP's, Search Console's and Inspector's first cards fit (Overview's
+  score card clips its eyebrow's last letters inside the card, as on `main`); On-Page's needs 147px,
+  Changes' 125px, Visibility's 166px, Page Speed's 185px and Content's 196px; and the panels' tool
+  rows (the highlight toggles, Copy as CSV) need 147–217px, so the body scrolls sideways. On `main`,
+  Overview's tools fitted and the others overflowed too. No padding makes 140px usable: the row's
+  inset and gaps cost 40px more than `main`'s two edges. **Proposed, for the owner's choice** (not
+  built): (a) below the SEO sheet's minimum, the workspace's inset and gaps tighten to `--space-1`,
+  which gives the sheet 160px and its body about 150px, near `main`'s, Overview's tools included; or
+  (b) in a window too narrow for the SEO sheet at its minimum beside the page's (under 748px with the
+  agent collapsed), the sheet opens collapsed to its rail, as the agent does; or (c) `PAGE_MIN_WIDTH`
+  gives way before the sheet does. The window's minimum stays 588px.
 - **Resizing.** A pane's separator (`.pane-separator`) moves from the pane's own edge into the gap
   beside the page: `WORKSPACE_GAP` wide, filling it, its 2px line in the middle (still only on hover,
   drag and focus). Drag, keys, ranges and storage are unchanged.
@@ -129,8 +150,18 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
 - **Scenario: page-area-collapses-hide-it** (same file) — every rule that sets the page area's
   `height: 0` is in `PAGE_AREA_COLLAPSES` and sets `visibility: hidden`; the Projects run's rule that
   gives it back its height sets `visibility: visible`.
+- **Scenario: narrow-window-styles** (`chrome-grid-styles.test.ts`) — `.agent[data-open='false']` is
+  `flex: none`; `.seo-panel` is the `seo-panel` inline-size container, and only under
+  `SIDEBAR_PANEL_WIDTH_RANGE.min` less its 2px of border is `.seo-body`'s padding
+  `SEO_BODY_NARROW_PADDING`; `.render-frame` takes the card's radius (`border-radius: inherit`).
 - **Scenario: entrance-animations-end** (same file) — no rule in any renderer stylesheet runs an
   animation with `both` or `forwards` fill but `ENTRANCE_FILL_EXCEPTIONS`, each of which still does.
+- **Scenario: narrow-window-keeps-the-sheets-whole** (e2e `workspace.e2e.ts`) — the chrome laid out
+  588px wide with the SEO sheet open on Overview and the agent collapsed: the agent rail is
+  `AGENT_RAIL_WIDTH` wide with `WORKSPACE_GAP` to the chrome's right edge, the SEO sheet is the row
+  less the page's minimum and `workspaceRowChrome` (140px), the page `PAGE_MIN_WIDTH`; the SEO body's
+  padding is `--space-1` (it is `--space-5` at a width the panel's minimum fits); Overview's first
+  card runs past no edge of the body. The visual set's `narrow-window` capture draws the same state.
 - **Scenario: separators-sit-in-the-gap** (same file) — `.pane-separator` is `WORKSPACE_GAP` wide
   with its line centred; the SEO separator sits `WORKSPACE_GAP` past the sidebar's right edge, the
   agent's as far past its left.
@@ -151,7 +182,9 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   the agent panel opening and collapsing beside the open SEO sheet) the view's bounds equal the page card's box (`x`, `y`,
   `width`, `height` each within 1px), the sheets beside it stand `WORKSPACE_GAP` off it, and the
   radius main last set on the view is `pageViewRadius` of that state, read from a spy the test puts on
-  the `View` prototype's `setBorderRadius` (Electron has no getter); with a render profile the view
+  the `View` prototype's `setBorderRadius` (Electron has no getter: this proves the value main passed
+  on each OS, not the drawing; that the corner is drawn rounded was shown by a screen capture on Linux CI
+  only, probe 43660054663); with a render profile the view
   sits in the frame (`fitRenderViewport`) with radius 12; in HTML fullscreen it fills the window with
   radius 0, and gets 16 back on leaving. The permission prompt keeps its own e2e
   (`permissions.e2e.ts`: the view starts below the band); the update notice is a band of the same
