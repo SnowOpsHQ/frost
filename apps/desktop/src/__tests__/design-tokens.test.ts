@@ -1,4 +1,4 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS, FADES_SPARE_FOCUS, LoadsBefore)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, GRAPHICS_ONLY_COLOURS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS, FADES_SPARE_FOCUS, LoadsBefore)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -15,9 +15,9 @@ import {
   FORCED_COLOURS_PRESSED,
   PROJECTS_SHEET_NARROW,
   FORCED_COLOURS_SYSTEM_COLOURS,
+  GRAPHICS_ONLY_COLOURS,
   HOVER_OVERLAYS_SKIP_PRESSED,
   HEX_COLOUR_RATCHET,
-  KNOWN_CONTRAST_EXCEPTIONS,
   LEGACY_TOKEN_MIGRATION,
   PRESSED_EDGES,
   STATE_EDGES,
@@ -28,7 +28,6 @@ import {
   TEXT_COLOUR_RULES,
   THEMED_SIGNAL_GROUPS,
   TOKENS_STYLESHEET,
-  type ContrastException,
   type ContrastPair,
   type DisabledControl,
   type FocusRingRule,
@@ -247,10 +246,10 @@ test('signal-tokens-are-defined', () => {
       if (token.dark !== undefined) expect(DARK_VALUES.get(token.name), `${label} (dark)`).toBe(token.dark);
     }
   }
-  // The shared names are Signal tokens, and `--icon` stays a colour beside the `--icon-size` size.
+  // The shared names are Signal tokens; `--icon` (the old icon colour, `removed`) is not: the size is `--icon-size`.
   for (const name of SIGNAL_NAMES_WITH_LEGACY_VALUES) expect(SIGNAL_NAMES.has(name), name).toBe(true);
   expect(SIGNAL_NAMES.has('--icon')).toBe(false);
-  expect(LIGHT.get('--icon')).toMatch(/^#[0-9a-f]{6}$/i);
+  expect(REMOVED).toContain('--icon');
 });
 
 test('legacy-tokens-are-defined', () => {
@@ -269,7 +268,18 @@ test('legacy-tokens-are-defined', () => {
 });
 
 test('removed-legacy-tokens-are-gone', () => {
-  for (const row of MIGRATION) if (row.removed === true) expect(row.kind, `${row.legacy} is removed, so retired`).toBe('retire');
+  // A removed row is a retired name, or an alias of another Signal token: never a self-alias (a Signal
+  // token's own name) or a layout constant, which nothing replaces.
+  for (const row of MIGRATION) {
+    if (row.removed !== true) continue;
+    if (row.kind === 'alias') {
+      expect(row.signal, `${row.legacy} is a removed alias, so it names its Signal token`).not.toBeNull();
+      expect(row.signal, `${row.legacy} is a removed alias, so not a self-alias`).not.toBe(row.legacy);
+    } else {
+      expect(row.kind, row.legacy).toBe('retire');
+    }
+    expect(SIGNAL_NAMES.has(row.legacy), `${row.legacy} is removed, so not a Signal token`).toBe(false);
+  }
   // The command palette's surface PR removed its retired names (the rollout only ever adds to this).
   expect(REMOVED).toEqual(expect.arrayContaining(['--palette-edge', '--palette-shadow', '--palette-sheet', '--palette-row-active', '--palette-hit', '--palette-kbd-bg', '--palette-kbd-edge']));
   // The new-tab view's surface PR.
@@ -284,6 +294,15 @@ test('removed-legacy-tokens-are-gone', () => {
   expect(REMOVED).toEqual(expect.arrayContaining(['--serp-title', '--serp-path', '--serp-glyph', '--serp-glyph-mark']));
   // And the panel stylesheets' (Search Console's chart grid).
   expect(REMOVED).toEqual(expect.arrayContaining(['--gsc-grid']));
+  // And the cleanup's: the retired names no rule read any more, the aliases no rule read, and the aliases
+  // whose readers (their own surface's) moved to their Signal token.
+  expect(REMOVED).toEqual(
+    expect.arrayContaining(['--radius-control', '--radius-field', '--icon', '--bg-chrome-edge', '--border-field', '--shadow-card', '--caution', '--info-tone', '--seo-card-edge']),
+  );
+  expect(REMOVED).toEqual(expect.arrayContaining(['--bg-field', '--seo-bg', '--seo-card', '--seo-track', '--serp-card', '--serp-text', '--gsc-line', '--gsc-axis']));
+  expect(REMOVED).toEqual(expect.arrayContaining(['--bg-chrome', '--palette-bg', '--jump-tile-bg', '--agent-card']));
+  // The sources searched below hold the renderer's scripts too (an inline style or a setProperty can read a token).
+  for (const kind of ['.css', '.ts', '.tsx', '.html']) expect(RENDERER_SOURCES.some((name) => name.endsWith(kind)), kind).toBe(true);
   for (const name of REMOVED) {
     expect(LIGHT.has(name), `${name} (light)`).toBe(false);
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
@@ -302,8 +321,8 @@ test('legacy-token-values-are-pinned', () => {
 });
 
 test('legacy-aliases-point-at-signal-tokens', () => {
-  for (const row of LEGACY_TOKEN_MIGRATION) {
-    if (row.kind !== 'alias' || row.signal === null) continue;
+  for (const row of MIGRATION) {
+    if (row.kind !== 'alias' || row.signal === null || row.removed === true) continue;
     if (row.signal === row.legacy) continue; // a self-alias: signal-tokens-are-defined checks its value
     // One light declaration, exactly var(<signal>); dark follows the Signal token's own dark value.
     expect(LIGHT.get(row.legacy), row.legacy).toBe(`var(${row.signal})`);
@@ -373,19 +392,21 @@ function layerProblems(pair: ContrastPair, theme: (typeof THEME_NAMES)[number]):
   return problems;
 }
 
-test('known-contrast-exceptions-are-current', () => {
+test('graphics-only-colours-draw-no-text', () => {
   const pairs: readonly { fg: string; bg: string; min: number }[] = CONTRAST_PAIRS;
-  const exceptions: readonly ContrastException[] = KNOWN_CONTRAST_EXCEPTIONS;
-  for (const exception of exceptions) {
-    const label = `${exception.fg} on ${exception.bg}`;
-    const ratios = THEME_NAMES.map((theme) => contrastRatio(colourIn(theme, exception.fg), colourIn(theme, exception.bg)));
-    expect(Math.min(...ratios), `${label} still misses ${exception.min}:1 somewhere`).toBeLessThan(exception.min);
-    expect(
-      pairs.some((p) => p.fg === exception.fg && p.bg === exception.bg && p.min === exception.min),
-      `${label} is not also a CONTRAST_PAIRS pair`,
-    ).toBe(false);
-    const uses = STYLESHEETS.flatMap((name) => parse(read(name)).declarations.filter((d) => d.property === 'color' && d.value === `var(${exception.fg})`));
-    expect(uses.length, `${label}: rules drawing text in ${exception.fg}`).toBe(exception.rules);
+  expect(GRAPHICS_ONLY_COLOURS.length).toBeGreaterThan(0);
+  for (const name of GRAPHICS_ONLY_COLOURS) {
+    // Still under 4.5:1 as text on a card somewhere (else the entry is stale), and never a text pair.
+    const ratios = THEME_NAMES.map((theme) => contrastRatio(colourIn(theme, name), colourIn(theme, '--bg-surface')));
+    expect(Math.min(...ratios), `${name} on --bg-surface still misses 4.5:1 somewhere`).toBeLessThan(4.5);
+    expect(pairs.some((p) => p.fg === name && p.min === 4.5), `${name} is a text pair in CONTRAST_PAIRS`).toBe(false);
+    // No rule draws text in it.
+    const uses = STYLESHEETS.flatMap((file) =>
+      parse(read(file))
+        .declarations.filter((d) => d.property === 'color' && d.value === `var(${name})`)
+        .map((d) => `${file}: ${d.context.join(' > ')}`),
+    );
+    expect(uses, `rules drawing text in ${name}`).toEqual([]);
   }
 });
 
@@ -974,7 +995,8 @@ function forcedAdjustProblems(declarations: readonly Declaration[], stylesheet: 
  * `classes` owns only those (each exact, or a `-*` family) and only its listed `keyframes`.
  */
 function surfaceProblems(css: string, surface: SignalSurface): { problems: string[]; checked: number; typeRules: number } {
-  const aliases = new Set<string>(MIGRATION.filter((row) => row.kind === 'alias').map((row) => row.legacy));
+  // The aliases still declared: a removed one is no longer a token a rule may read.
+  const aliases = new Set<string>(MIGRATION.filter((row) => row.kind === 'alias' && row.removed !== true).map((row) => row.legacy));
   const tracking = new Map<string, string>(SIGNAL_TOKENS.type.map((token) => [token.name, token.tracking]));
   // The weights BUNDLED_FONTS has per family, and each type token's family (its shorthand's first one).
   const weightsOf = (family: string) => new Set(BUNDLED_FONTS.filter((font) => font.family === family).map((font) => String(font.weight)));
