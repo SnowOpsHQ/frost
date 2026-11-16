@@ -140,3 +140,15 @@ export const NARROW_WINDOW = {
   seoSheet: workspaceRowWidth(CHROME_MIN_CONTENT_WIDTH_PX) - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: true, agent: false }, workspaceGap(CHROME_MIN_CONTENT_WIDTH_PX)),
 } as const;
 export const SEO_BODY_NARROW_PADDING = { token: '--space-1', belowContentWidth: SIDEBAR_PANEL_WIDTH_RANGE.min - 2 } as const;
+
+/**
+ * What wraps under the panel's minimum (the `seo-panel` query; `workspace-layout.feature.md`, A narrow
+ * window): each rule's selector, the stylesheet that holds it, and the declarations it takes there.
+ */
+export const NARROW_PANEL_WRAPS = [
+  { stylesheet: 'styles.css', selector: '.seo-score-card', set: { 'flex-direction': 'column', 'align-items': 'flex-start' } },
+  { stylesheet: 'ai-readiness.css', selector: '.ai-score', set: { 'flex-direction': 'column', 'align-items': 'flex-start' } },
+  { stylesheet: 'styles.css', selector: '.seo-section-head', set: { 'flex-wrap': 'wrap' } },
+  { stylesheet: 'styles.css', selector: '.seo-toggle', set: { height: 'auto', 'min-height': 'var(--h-chip)', 'white-space': 'normal' } },
+  { stylesheet: 'styles.css', selector: '.seo-action', set: { height: 'auto', 'min-height': 'var(--h-chip)', 'white-space': 'normal' } },
+] as const;

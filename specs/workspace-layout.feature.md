@@ -3,7 +3,7 @@
 Spec: `specs/workspace-layout.spec.ts` (`WORKSPACE_GAP`, `SHEET_RADIUS`, `workspaceRowChrome`,
 `workspaceRowWidth`, `pageViewRadius`, `RENDER_DEVICE_OUTLINE_RADIUS`, `WORKSPACE_SHEETS`,
 `PAGE_AREA_COLLAPSES`, `NARROW_WINDOW`, `SEO_BODY_NARROW_PADDING`, `WORKSPACE_GAP_TIGHT`,
-`TIGHT_WORKSPACE_BELOW`, `workspaceGap`). Signal step 3, the last surface: how the pieces sit in the window, not their
+`TIGHT_WORKSPACE_BELOW`, `workspaceGap`, `NARROW_PANEL_WRAPS`). Signal step 3, the last surface: how the pieces sit in the window, not their
 interiors (`design-tokens.feature.md`). Source: the approved canvas's light and dark main screens, its
 agent, Settings and palette screens, and its token sheet (`--r-lg`: "sheets, rail, page card,
 palette"). Code: `apps/desktop/src/renderer/styles.css` (Layout, Workspace, Page area, SEO sidebar,
@@ -87,12 +87,22 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   scrollbar. `main` renders a 191px sheet there (content 156px) only because its collapsed agent
   rail is squeezed to about 27px and clipped (fixed in round 1); with a whole 40px rail it would be
   178px (content about 144px). So at 588px the body is 16px narrower than `main` renders it (4px
-  narrower than `main` with a whole rail), and Overview's, On-Page's, Links' and Changes' bodies scroll
-  sideways where `main`'s didn't (their tool rows need 147–156px); no first card's text breaks inside
-  more words than on `main` (Visibility's 7 against 6), and Page Speed, Content and Visibility scroll
-  sideways on both. Recorded, not fixed: more room would need gaps under `--space-1` or another change
-  of behaviour. Measured before this (`--space-3` gaps, a 140px sheet) Overview's score card left its
-  text a column under 10px wide that broke inside words.
+  narrower than `main` with a whole rail). The room is accepted; what costs the text is the parts that
+  keep everything on one line, so under the panel's minimum (the same `seo-panel` query) they wrap
+  (`NARROW_PANEL_WRAPS`): Overview's score card puts its ring above its words (it left them about 8px
+  beside the 84px ring), the AI-readiness tile's score row likewise (`ai-readiness.css`, which holds the
+  tile's rules and loads before `styles.css`), a section head puts its badge under its title, and the
+  panels' toggles and actions wrap a long label onto a second line, their height automatic from
+  `--h-chip` up. The bar, agent collapsed at 588px: Overview's, On-Page's, Links' and Changes' bodies
+  don't scroll sideways (as on `main`) and Overview's first card clips no more words than `main`'s
+  (1); Page Speed, Content and Visibility scrolled sideways on `main` too. None of this applies at a
+  width the panel's minimum fits, so nothing changes at 748px and wider.
+  Two consequences of the tight layout, deliberate: the SEO separator's 8px hit area covers the
+  panel's last 4px, which with classic scrollbars (Linux, Windows) is its border and about 3px of the
+  body's scrollbar, so pressing the scrollbar's right edge under 748px starts a resize (the separator
+  can't reach under the native view on the other side); and crossing 748px is a step, not a slope:
+  the tight gaps free 20px, so at 747px the SEO sheet is 19px wider than at 748px and the page card
+  starts 7px further right.
   Options that change behaviour (the sheet opening collapsed, the page giving way) were not needed.
   The window's minimum stays 588px.
 - **Resizing.** A pane's separator (`.pane-separator`) moves from the pane's own edge into the gap
@@ -179,7 +189,9 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
 - **Scenario: narrow-window-styles** (`chrome-grid-styles.test.ts`) — `.agent[data-open='false']` is
   `flex: none`; `.seo-panel` is the `seo-panel` inline-size container, and only under
   `SIDEBAR_PANEL_WIDTH_RANGE.min` less its 2px of border is `.seo-body`'s padding
-  `SEO_BODY_NARROW_PADDING`; `.render-frame` takes the card's radius (`border-radius: inherit`).
+  `SEO_BODY_NARROW_PADDING`, and each `NARROW_PANEL_WRAPS` rule wraps there (its stylesheet's
+  `seo-panel` query) and nowhere outside it; `.render-frame` takes the card's radius
+  (`border-radius: inherit`).
 - **Scenario: entrance-animations-end** (same file) — no rule in any renderer stylesheet runs an
   animation with `both` or `forwards` fill.
 - **Scenario: narrow-window-keeps-the-sheets-whole** (e2e `workspace.e2e.ts`) — the chrome laid out
@@ -188,8 +200,11 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   sheets `WORKSPACE_GAP_TIGHT`, the SEO sheet the row less the page's minimum and `workspaceRowChrome`
   (160px), the page `PAGE_MIN_WIDTH`; the workspace's gap is `WORKSPACE_GAP_TIGHT` at a chrome one pixel
   under `TIGHT_WORKSPACE_BELOW` and `WORKSPACE_GAP` at it and in a 776px chrome; the SEO body's
-  padding is `--space-1` (it is `--space-5` at a width the panel's minimum fits); Overview's first
-  card runs past no edge of the body. The visual set's `narrow-window` capture draws the same state.
+  padding is `--space-1` (it is `--space-5` at a width the panel's minimum fits); on Overview the
+  body doesn't scroll sideways, and neither the score card's text column (and each line in it) nor
+  the first toggle or action overflows its own box (`scrollWidth <= clientWidth`: text clipped inside
+  its box counts, which comparing boxes with the body's edge missed). The visual set's
+  `narrow-window` capture draws the same state.
 - **Scenario: separators-sit-in-the-gap** (same file) — `.pane-separator` is `WORKSPACE_GAP` wide
   with its line centred; the SEO separator sits `WORKSPACE_GAP` past the sidebar's right edge, the
   agent's as far past its left.
