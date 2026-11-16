@@ -82,9 +82,16 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   `@container chrome (width < 748px)` on `.chrome` (`container: chrome / inline-size`), whose width
   is the workspace's (its stack spans the chrome's one column); the agent's stylesheet repeats the
   same query for its separator. Corners stay `--r-lg` and the native view's radius is unchanged. At
-  the 588px minimum the sheet is 160px and its body's content box 150px (about 152px on `main`).
-  Measured before this (`--space-3` gaps, a 140px sheet) Overview's score card left its text a column
-  under 10px wide that broke inside words; the panel-by-panel comparison with `main` is in the PR.
+  the 588px minimum the sheet is 160px and its body's content box 150px, 140px beside its vertical
+  scrollbar. `main` renders a 191px sheet there (content 156px) only because its collapsed agent
+  rail is squeezed to about 27px and clipped (fixed in round 1); with a whole 40px rail it would be
+  178px (content about 144px). So at 588px the body is 16px narrower than `main` renders it (4px
+  narrower than `main` with a whole rail), and Overview's, On-Page's, Links' and Changes' bodies scroll
+  sideways where `main`'s didn't (their tool rows need 147–156px); no first card's text breaks inside
+  more words than on `main` (Visibility's 7 against 6), and Page Speed, Content and Visibility scroll
+  sideways on both. Recorded, not fixed: more room would need gaps under `--space-1` or another change
+  of behaviour. Measured before this (`--space-3` gaps, a 140px sheet) Overview's score card left its
+  text a column under 10px wide that broke inside words.
   Options that change behaviour (the sheet opening collapsed, the page giving way) were not needed.
   The window's minimum stays 588px.
 - **Resizing.** A pane's separator (`.pane-separator`) moves from the pane's own edge into the gap
