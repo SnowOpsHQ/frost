@@ -96,9 +96,11 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   `--h-chip` up. The bar, agent collapsed at 588px: Overview's, On-Page's, Links' and Changes' bodies
   don't scroll sideways (as on `main`) and Overview's first card clips no more words than `main`'s
   (1); Page Speed, Content and Visibility scrolled sideways on `main` too. Measured: Overview, On-Page
-  and Links no longer scroll and Overview's first card clips no word; Changes still scrolls 7px
-  sideways, from its capture card's rows that keep one line (the Screenshot kind's segmented control,
-  about 26px short, and the Project select row, 12px), left for that panel. None of this applies at a
+  and Links no longer scroll and Overview's first card clips no word. Changes' capture card stacks too
+  (round 3): its Screenshot row puts the kinds under their label and the kinds run as rows (they were
+  three columns, about 26px short, their labels overlapping), their group's corner `--r-lg` in place
+  of the shared segmented control's pill (a pill three rows tall was drawn as a disc), and the Project picker puts its select
+  under its label (12px short), so Changes doesn't scroll sideways either. None of this applies at a
   width the panel's minimum fits, so nothing changes at 748px and wider.
   Two consequences of the tight layout, deliberate: the SEO separator's 8px hit area covers the
   panel's last 4px, which with classic scrollbars (Linux, Windows) is its border and about 3px of the
@@ -208,8 +210,9 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   padding is `--space-1` (it is `--space-5` at a width the panel's minimum fits); on Overview the
   body doesn't scroll sideways, and neither the score card's text column (and each line in it) nor
   the first toggle or action overflows its own box (`scrollWidth <= clientWidth`: text clipped inside
-  its box counts, which comparing boxes with the body's edge missed). The visual set's
-  `narrow-window` capture draws the same state.
+  its box counts, which comparing boxes with the body's edge missed); on Changes the body doesn't
+  scroll sideways and neither each screenshot kind (and its label) nor the Project picker (its label
+  and select) is cut inside its own box. The visual set's `narrow-window` capture draws Overview.
 - **Scenario: separators-sit-in-the-gap** (same file) — `.pane-separator` is `WORKSPACE_GAP` wide
   with its line centred; the SEO separator sits `WORKSPACE_GAP` past the sidebar's right edge, the
   agent's as far past its left.

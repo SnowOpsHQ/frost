@@ -1356,8 +1356,6 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup or th
   (`styles.css`, `.tab-profile[data-needs-reload='true']`, `.tab-profile[data-status='failed']`: an
   `--accent` border, which forced colours repaint like the transparent one): only its accessible name
   says it.
-- **The Changes panel's screenshot kinds overlap in a 588px window** (`styles.css`, `.changes-shot-kinds`,
-  the shared `.seo-segmented`): the segments don't wrap at the window's minimum width.
 - **Page Speed's "size unavailable" overflows its column, and Compliance's tally labels cut off**
   (`styles.css`: `.seo-speed-type`'s 64px last column, `.seo-speed-num` `white-space: nowrap`; `.seo-a11y-tally`
   at the 300px panel width): their widths were kept from before Signal.
