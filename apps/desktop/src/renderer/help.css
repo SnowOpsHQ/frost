@@ -148,8 +148,10 @@
   white-space: nowrap;
 }
 
+/* The type of the hints' "or", so its line box is theirs, not the body's (TEXT_TYPE_RULES). */
 .shortcuts-keys {
   margin: 0;
+  font: var(--text-small);
   text-align: end;
 }
 

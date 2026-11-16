@@ -4816,8 +4816,11 @@ input {
 }
 
 /* "Since the page loaded" heads the metric tiles: the section heads' rule draws it (.seo-section-title). */
+/* Its eyebrow's type, so its line box is the eyebrow's, not the body's (TEXT_TYPE_RULES). */
 .seo-speed-since {
   margin: calc(var(--space-1) / 2) calc(var(--space-1) / 2) calc(-1 * var(--space-1));
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
 }
 
 .seo-speed-soft {
@@ -6338,8 +6341,10 @@ input {
   color: var(--warn);
 }
 
+/* The date's and the description's type, so its lines are theirs, not the body's (TEXT_TYPE_RULES). */
 .seo-serp-description-row {
   display: block;
+  font: var(--text-small);
 }
 
 .seo-serp-date {
