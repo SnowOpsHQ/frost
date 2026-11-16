@@ -3711,12 +3711,13 @@ input {
   height: 44px;
   border-radius: var(--r-md);
   background: var(--verdict-soft);
-  color: var(--verdict);
 }
 
+/* The icon's stroke, not the tile's text colour: --ok is a graphics colour (3:1), never text. */
 .seo-verdict-icon .icon {
   width: 26px;
   height: 26px;
+  stroke: var(--verdict);
   stroke-width: 2;
 }
 
@@ -4213,12 +4214,13 @@ input {
   height: 44px;
   border-radius: var(--r-md);
   background: var(--band-soft);
-  color: var(--band);
 }
 
+/* The icon's stroke, not the tile's text colour: --ok is a graphics colour (3:1), never text. */
 .seo-speed-verdict-icon .icon {
   width: 26px;
   height: 26px;
+  stroke: var(--band);
   stroke-width: 2;
 }
 
