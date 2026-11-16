@@ -1,7 +1,7 @@
 # Feature: Design tokens (Signal foundation and values)
 
 Spec: `specs/design-tokens.spec.ts` (`TOKENS_STYLESHEET`, `SIGNAL_TOKENS`, `THEMED_SIGNAL_GROUPS`,
-`SIGNAL_NAMES_WITH_LEGACY_VALUES`, `LEGACY_TOKEN_MIGRATION`, `CONTRAST_PAIRS`, `HEX_COLOUR_RATCHET`, `SIGNAL_SURFACES`,
+`SIGNAL_NAMES_WITH_LEGACY_VALUES`, `LEGACY_TOKEN_MIGRATION`, `CONTRAST_PAIRS`, `GRAPHICS_ONLY_COLOURS`, `HEX_COLOUR_RATCHET`, `SIGNAL_SURFACES`,
 `FONTS_STYLESHEET`, `GEIST_PACKAGE`, `GEIST_FONTS_ALIAS`, `TEXT_BODY_EMPHASIS_WEIGHT`, `BUNDLED_FONTS`). Source of truth:
 the Signal token sheet (its values and its Migration table) and the round-2 council decisions.
 Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.tsx`. Each line maps to one named test.
@@ -26,8 +26,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--accent-soft`, `--accent-hover`, `--on-accent`, `--ok`, `--warn`, `--danger`, `--bg-hover` and
   `--bg-active` (`SIGNAL_NAMES_WITH_LEGACY_VALUES`) existed before Signal with the same meaning. The
   foundation kept their old values; since the values step they take their Signal values, light and
-  dark, declared once per theme in the Signal part of `tokens.css`. `--icon` is a colour and stays
-  one; the Signal icon size is `--icon-size`.
+  dark, declared once per theme in the Signal part of `tokens.css`. `--icon`, the old icon colour, is
+  not one: no rule read it by the cleanup, so it is `removed`; the Signal icon size is `--icon-size`.
 - **Migration map: aliases point at Signal.** `LEGACY_TOKEN_MIGRATION` maps all 89 legacy names:
   `alias` (the name stays) or `retire` (replaced; removed once no rule uses it). Since the values
   step, an alias whose Signal token has another name is exactly `var(<signal>)` in light with no dark
@@ -35,7 +35,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--seo-panel-width: var(--w-panel)`). Retired names keep their values until their surface PR (but
   `--bg-strip` and `--bg-tab-hover`, retuned in the values step, see Tab row), which moves every rule off them and drops them from
   `tokens.css`: the row stays in the map, marked `removed`;
-  layout constants (aliases with `signal: null`) keep theirs. Rules outside `tokens.css` change only
+  layout constants (aliases with `signal: null`) keep theirs. An alias of another Signal token goes the
+  same way once no rule reads it (the cleanup, below): `removed`, never for a self-alias (a Signal
+  token's own name) or a layout constant, which nothing replaces. Rules outside `tokens.css` change only
   where a Signal value left text under its minimum (`TEXT_COLOUR_RULES`, below) or a review asked
   for it (the tab spinner's track).
   A retired value that reads an alias moved with it: `--palette-sheet`'s gradient started at
@@ -60,15 +62,30 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   box-shadow beside `--e-raised`), at least 3:1 off the active, inactive and hovered fills and off the
   strip under it, in both themes; a hovered active tab keeps it, a focused one shows `--focus-ring` in
   its place, and forced colours, which drop it, draw the active tab's 1px outline.
-- **Known exceptions.** `KNOWN_CONTRAST_EXCEPTIONS` records what still misses its minimum, for the
-  surface PRs: `--ok` as text (21 rules) is under 4.5:1 in light, and those rules move to `--ok-ink`
-  (only the 11px chips moved in the values step; Settings and Help moved their 4, leaving 17;
-  Overview its band label and all-clear line, leaving 15; On-Page's "Good length" drew `--ok` through
-  the meter's own property, so it never counted; the panels' all-clear line, Images' alt badge and
-  Schema's block status, leaving 12; the DevTools drawer its robots line and 2xx code, leaving 10;
-  Page Speed's "Live" source badge, leaving 9; Content's present query term and all-terms
-  mark, leaving 7; the Changes panel, Projects and Rankings their statuses, added words, captured targets
-  and rises, leaving 2).
+- **Graphics-only colours.** `--ok` is under 4.5:1 as text on a card in light (3.30:1; 3.16 on the
+  sheet): a graphics colour (3:1), so no rule draws text in it (`GRAPHICS_ONLY_COLOURS`); text in its
+  tone takes `--ok-ink`, and an icon draws it by `stroke`. The values step recorded the 21 rules that
+  drew it as text as known exceptions (`KNOWN_CONTRAST_EXCEPTIONS`, with a rule count) and the surface
+  PRs moved them (only the 11px chips moved in the values step; Settings and Help moved their 4,
+  leaving 17; Overview its band label and all-clear line, leaving 15; On-Page's "Good length" drew
+  `--ok` through the meter's own property, so it never counted; the panels' all-clear line, Images' alt
+  badge and Schema's block status, leaving 12; the DevTools drawer its robots line and 2xx code,
+  leaving 10; Page Speed's "Live" source badge, leaving 9; Content's present query term and all-terms
+  mark, leaving 7; the Changes panel, Projects and Rankings their statuses, added words, captured
+  targets and rises, leaving 2; AI readiness its pass, leaving 1). The cleanup moved the last, the
+  address bar's secure badge (a lock icon, `color: var(--ok)` on its `currentColor` stroke), to
+  `stroke: var(--ok)` on the icon, the same pixels, so the list went and `GRAPHICS_ONLY_COLOURS` took
+  its place. A rule draws text in it when its `color` or `-webkit-text-fill-color` reads it anywhere in
+  the value (spaces in `var( … )`, `!important`, inside `color-mix()`), or reads a custom property its
+  stylesheet sets to a value that reads it (one level), at any nesting. That wider match (the first
+  round of review; it had read only an exact `color: var(--ok)`) found two more icon tiles colouring
+  their icon through `color`: the verdict icon of Indexability, Compliance and JavaScript
+  (`.seo-verdict-icon`, `--verdict`) and of Page Speed (`.seo-speed-verdict-icon`, `--band`); they set
+  the icon's `stroke` now (its only `currentColor`), the same pixels. Under forced colours a mark
+  coloured by `stroke` keeps its token, where `color` gave `CanvasText`: the lock and the verdict icons
+  stay above 3:1 on the forced `Canvas` only because Chromium makes `prefers-color-scheme` follow the
+  contrast theme (`--ok` is about 3.2–3.3:1 on a light `Canvas`, about 12:1 on black), and nothing
+  verifies this on Windows.
 - **Text the Signal values left too faint.** A few rules drew text in a token whose Signal value
   falls under 4.5:1 where they use it; the values step points them at a token that passes
   (`TEXT_COLOUR_RULES`), and each pair joins `CONTRAST_PAIRS`. The status bar's failed-overrides
@@ -93,8 +110,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   hashed assets served from `app://` (the CSP's `font-src 'self'`): never a CDN, a remote URL or a
   `data:` URI, and nothing else of the package is bundled. `main.tsx` imports `fonts.css` right after
   `tokens.css`. The fonts are applied surface by surface, as each surface PR moves its text onto the
-  `--text-*` tokens (the command palette first); `--font-ui`, the rest of the chrome's face, stays the
-  system stack until its own surface PR.
+  `--text-*` tokens (the command palette first); `--font-ui`, the body's face, is still the system
+  stack (Left for later).
 - **Surface PRs.** A surface's rules (`SIGNAL_SURFACES`: its stylesheet and its class prefix, or, where
   other surfaces share the prefix or its classes share none, the exact classes and `-*` families it lists with its keyframes; a
   rule is the surface's when any selector names one of its classes, on a class boundary, or it sits in
@@ -999,6 +1016,22 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   others these sheets read stay for `styles.css` and `rankings.css` (`--seo-card-edge`, `--border-field`,
   `--bg-chrome-edge`, `--caution`, `--shadow-card`, `--radius-field`, `--radius-control`). One rule drew
   `--ok` as text (AI readiness's pass), so the exception count drops by 1; the sheets held no hex.
+- **The cleanup** (the rollout's closing PR) drops the legacy names no rule reads any more. An exact
+  count of each name's readers (`var(--name)` on a name boundary in every `.css`, `.ts` and `.tsx` under
+  `apps/desktop/src`, comments aside) found 9 retired names and 8 aliases that nothing read: they are
+  `removed` (`--radius-control`, `--radius-field`, `--icon`, `--bg-chrome-edge`, `--border-field`,
+  `--shadow-card`, `--caution`, `--info-tone`, `--seo-card-edge`; `--bg-field`, `--seo-bg`, `--seo-card`,
+  `--seo-track`, `--serp-card`, `--serp-text`, `--gsc-line`, `--gsc-axis`). Four aliases were read only
+  by their own converted surface, so their readers take the Signal token the alias named and they are
+  `removed` too: the body's fill is `--bg-window` (`--bg-chrome`), and the palette's card, a "Jump back
+  in" tile and the agent panel's six cards `--bg-surface` (`--palette-bg`, `--jump-tile-bg`,
+  `--agent-card`). Kept: the self-aliases (Signal tokens), the layout constants, `--seo-panel-width`
+  (the sidebar's resize sets it on the panel; `--w-panel` is only its default) and four names Left for
+  later: `--font-ui` (text that sets no font of its own still draws in it), and `--bg-page`, `--agent-bg`
+  and `--seo-rail-width`, whose readers are the workspace's sheets. The last rule that drew `--ok` as
+  text moved to `stroke` (Graphics-only colours). Nothing draws differently: every capture of the
+  visual baseline matches it, and the computed value of every Signal token and of every element shown in
+  those captures is the same as before, light and dark.
 
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
@@ -1025,6 +1058,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    the screenshot editor (none retired: other surfaces still read each), then the panel stylesheets (`--gsc-grid`). The palette is the first to apply Geist (a rule reading `--text-*`); a font can
    now load whenever such text is drawn, so `geist-fonts-load` records font requests from launch, not
    from the moment the test starts watching.
+5. Cleanup (done): the names no rule reads are `removed`, retired names and aliases of another Signal
+   token alike (21: `--bg-chrome`, `--palette-bg`, `--jump-tile-bg` and `--agent-card` after their
+   readers moved to their Signal tokens), and the last `--ok`-as-text rule moved to `stroke`, with no
+   pixel changed. What is left is listed under Left for later.
 
 ## Unit (`apps/desktop/src/__tests__/design-tokens.test.ts`)
 - **Scenario: tokens-stylesheet-holds-only-root-tokens** — `tokens.css` has only `:root` blocks
@@ -1032,28 +1069,38 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   a light one.
 - **Scenario: signal-tokens-are-defined** — every Signal token is in light; every colour, state and
   elevation token is in dark too, and nothing else is; every Signal token, shared names included,
-  has exactly its spec values; `--icon` stays a colour.
+  has exactly its spec values; `--icon` is not a Signal name (it is `removed`; the size is `--icon-size`).
 - **Scenario: legacy-tokens-are-defined** — the migration map has all 89 legacy names; every one not
   `removed` is in `tokens.css`, which holds nothing beyond legacy and Signal names, and every
   replacement named is a Signal token.
-- **Scenario: removed-legacy-tokens-are-gone** — only `retire` rows are `removed`; a `removed` name is
-  declared in neither theme of `tokens.css`, and no renderer source (`.css`, `.ts`, `.tsx`,
-  `index.html`) mentions it outside a comment.
+- **Scenario: removed-legacy-tokens-are-gone** — a `removed` row is a `retire` row or an `alias` of
+  another Signal token (its `signal` neither null nor its own name), and no `removed` name is a Signal
+  token; each surface PR's and the cleanup's names are among them; a `removed` name is declared in
+  neither theme of `tokens.css`, and no renderer source (`.css`, `.ts`, `.tsx`, `index.html` under
+  `src/renderer`, each kind present in the search) mentions it outside a comment. A script's comments are
+  found by a scanner that keeps string, template and regex literals whole (`'a//b var(--bg-chrome)'` is
+  still read; fixtures: double quotes, a template with `${…}`, a URL, a regex holding `//` or a quote).
+  The renderer is enough: nothing in `src/main`, `src/preload`, `src/workers` or `e2e/visual.css`
+  reads a token.
 - **Scenario: legacy-token-values-are-pinned** — the 89 legacy names' light and dark values match a
   committed snapshot (the values step updated it on purpose: the aliases became `var()`, their dark
-  entries went, and the shared names took their Signal values; each surface PR drops its `removed`
-  names from it).
-- **Scenario: legacy-aliases-point-at-signal-tokens** — every alias whose Signal token has another
-  name is exactly `var(<signal>)` in light and has no dark override; the self-aliases are exactly
+  entries went, and the shared names took their Signal values; each surface PR, and the cleanup,
+  drops its `removed` names from it).
+- **Scenario: legacy-aliases-point-at-signal-tokens** — every alias still declared whose Signal token
+  has another name is exactly `var(<signal>)` in light and has no dark override; the self-aliases are exactly
   the shared names; `--w-panel` and `--w-rail` equal `SIDEBAR_PANEL_WIDTH` / `SIDEBAR_RAIL_WIDTH`
   (`specs/seo-sidebar.spec.ts`).
 - **Scenario: signal-contrast-meets-aa** — every `CONTRAST_PAIRS` pair reaches its minimum WCAG 2.x
   contrast ratio in light and in dark, read from `tokens.css` (`var()` resolved, translucent colours
   composited, a translucent `over` on its opaque `under` first: a tinted badge over a hovered row; a pair
   whose `under` is translucent or whose `over` is opaque fails before compositing); the ratio helper matches known values (black on white 21:1, `#777` on white ≈ 4.48).
-- **Scenario: known-contrast-exceptions-are-current** — each `KNOWN_CONTRAST_EXCEPTIONS` pair still
-  misses its minimum in at least one theme, is not in `CONTRAST_PAIRS`, and exactly `rules`
-  declarations in the renderer's stylesheets draw text in its `fg` (so fixing them removes the entry).
+- **Scenario: graphics-only-colours-draw-no-text** — each `GRAPHICS_ONLY_COLOURS` name still misses
+  4.5:1 on `--bg-surface` in at least one theme (else the entry is stale) and is no text pair in
+  `CONTRAST_PAIRS`, and no declaration in the renderer's stylesheets draws text in it: `color` or
+  `-webkit-text-fill-color` reading it anywhere in the value, or through a custom property the stylesheet
+  sets to it (one level). Fixtures: a plain rule, `@media`, `@supports`, native nesting, a custom property,
+  `var( --ok )`, `!important`, `-webkit-text-fill-color` and `color-mix()` are caught; `--ok-ink`, a
+  `stroke`, a border and a custom property only a `stroke` reads are not.
 - **Scenario: tab-strip-sets-tabs-off-the-strip** — in light and dark, against the (opaque) strip
   (`TAB_STRIP.strip`), the active tab's fill reaches `TAB_STRIP.minActiveOnStrip`, an inactive tab's
   (`TAB_STRIP.idle`, composited over the strip) `minIdleOnStrip` and a hovered tab's (`TAB_STRIP.hover`,
@@ -1168,7 +1215,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   boundary, at any nesting: `@media`, `@container`; or it is in the surface's `@keyframes`; an entry's
   listed `classes` each start with its prefix, an entry with no prefix lists its classes, and its
   `keyframes` come only with them) reads only
-  Signal tokens, legacy aliases and component-scoped custom properties (declared in the same
+  Signal tokens, legacy aliases still declared (not `removed`) and component-scoped custom properties (declared in the same
   stylesheet) in `var()` (whitespace allowed, no fallback in any property); declares no Signal or
   legacy name; holds no hex colour or colour function in any property; a colour-bearing value
   (`background-image` and custom properties included) holds only those, `transparent`,
@@ -1243,3 +1290,68 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `app:` URL, so the log is known to record. (The chrome page can't be reloaded to start clean: its
   navigation guard aborts that. No `session.webRequest` listener is used: one per event per session
   would replace the app's own.)
+
+## Left for later
+What the rollout leaves, each where it lives; none is fixed by the cleanup.
+- **`--font-ui`, the body's face** (`styles.css`, `body`: `13px/1.4` in the system stack). Text that sets
+  no font of its own still draws in it: `.seo` and `.panel-button` set none, so in the visual baseline
+  the `.panel-button` labels in the SEO panels (Compliance's "Run accessibility check", JavaScript's
+  "Fetch again", SERP's "Check for selector updates", Visibility's "Enable on-device intent" and
+  "Classify") and JavaScript's "Not set" (`.seo-missing` in `.seo-js-field`) are system text. Giving
+  them, or `body`, `--text-body` changes their pixels: a PR of its own with a re-baseline, after which
+  `--font-ui` is `removed`.
+- **`--bg-page`, `--agent-bg` and `--seo-rail-width`** (aliases of `--bg-surface`, `--bg-sheet` and
+  `--w-rail`). Their readers are the workspace's sheets: `.page-area`, `.start`, `.panel` and
+  `.panel-card` in `styles.css` and `.help-sheet` in `help.css` (`--bg-page`), `.agent-main` in
+  `components/agent/agent.css` (`--agent-bg`) and `.seo-rail` in `styles.css` (`--seo-rail-width`). The
+  workspace's layout PR rewrites those rules and names `--bg-page` and `--agent-bg` as sheet fills;
+  after it, the readers take the Signal tokens and the three are `removed`.
+- **The pass dot's check glyph** (the SEO rail's `.seo-rail-dot` and Overview's checks by category,
+  `styles.css`): the screen draws a check, which needs markup; a pass is a filled `--ok` disc meanwhile.
+- **The render-profile bar's checkbox labels fade** (`styles.css`, `.render-check:has(input:disabled)`,
+  `opacity: 0.5`): a native checkbox can't take the disabled colours, so the label fades with it.
+- **A busy `.panel-button` marked `aria-disabled` shows nothing** (the crawl sheet's Export CSV,
+  `components/crawl/SitePages.tsx`; `styles.css` has `.panel-button:disabled` and `[data-busy]` rules,
+  none for `[aria-disabled]`): it stays focusable while it saves, and no state rule was written for it.
+- **Busy screenshot kinds pulse by `opacity`** (`styles.css`, `.changes-shot-kind-button[data-busy='true']`,
+  `changes-pulse`): they are disabled while busy, so they hold no focus a fade could dim; left as it was.
+- **A Projects page or search row disabled during a capture run looks enabled** (`styles.css`,
+  `.projects-entry-open`; `components/changes/Projects.tsx`, `disabled={running}`): no disabled rule,
+  and its hover still tints the label; the run's band says a run is under way.
+- **The tab's render-profile badge has no forced-colours cue for "needs reload" and "failed"**
+  (`styles.css`, `.tab-profile[data-needs-reload='true']`, `.tab-profile[data-status='failed']`: an
+  `--accent` border, which forced colours repaint like the transparent one): only its accessible name
+  says it.
+- **The Changes panel's screenshot kinds overlap in a 588px window** (`styles.css`, `.changes-shot-kinds`,
+  the shared `.seo-segmented`): the segments don't wrap at the window's minimum width.
+- **Page Speed's "size unavailable" overflows its column, and Compliance's tally labels cut off**
+  (`styles.css`: `.seo-speed-type`'s 64px last column, `.seo-speed-num` `white-space: nowrap`; `.seo-a11y-tally`
+  at the 300px panel width): their widths were kept from before Signal.
+- **A very short Page Speed timing phase can be hidden** (`components/seo/Speed.tsx`, the navigation timing
+  bars): each phase starts at its real end, so the next one covers a phase narrower than its stroke.
+- **The result preview and the width meter wrap badly when narrow** (`styles.css`: `.seo-serp-path` can
+  break inside a crumb at 360px; `.seo-width-meter`'s verdict can split a number from its unit at 300px).
+- **SERP's ownership table scrolls sideways at 300px** (`styles.css`, `.serp-table-wrap`): on purpose
+  for now (real table markup that scrolls when wider than the panel), not yet laid out for that width.
+- **Search Console's controls and Content's targets are cut at 300px** (`gsc-panel.css`: "More range…"
+  and a long country such as "United Kingd…"; `gsc-targets.css`, `.gsc-targets-row`: less of each query):
+  ellipsis, not a narrower layout.
+- **Some states have no baseline capture** (`apps/desktop/e2e/visual.e2e.ts`): the crawl and AI answers
+  sheets' run cards, picks and pills, and SERP's and Visibility's tables; their captures are the empty
+  or before-run states, so those parts are checked by the token guards only.
+- **The Help frame sets no font of its own** (`help.css`, `.help` and `.help-sheet`): its parts set
+  theirs, and anything that doesn't inherits `body`'s `--font-ui` (above).
+- **Help's setup check has a 1.5px border** (`help.css`, `.setup-check`, the setup checklist's 14px
+  `--switch-off` ring): Chromium draws it as 1px; a whole pixel would change its look.
+- **The cascade checks read only the dark and forced-colours blocks** (`apps/desktop/src/__tests__/design-tokens.test.ts`,
+  `resolveOnElement`'s `applies`): a rule nested in another `@media` or in `@supports` is not read, so
+  `TEXT_COLOUR_RULES`, `FOCUS_RING_RULES` and the like can't see one.
+- **The meters' "fits" fill is `--ok` on `--track` at 2.23:1 in light** (`styles.css`, `.seo-meter-fill`
+  through `--meter`, and `.seo-width-meter`): under 3:1 for a graphic; the verdict word beside it carries
+  the state.
+- **The native page view's rounded corner is pixel-checked on Linux only**: in
+  `specs/workspace-layout.feature.md` once the workspace's layout PR merges (not on this branch).
+- **The canvas's features the app doesn't have** (the design canvas; each would need markup or behaviour,
+  not tokens): the score on the SEO sidebar toggle, "Ask frost", click-to-edit on the tab, "More tabs",
+  Overview's AI-readiness, Page and AI-judgment cards as the canvas draws them, the find icon and match
+  count inside the find field, a check glyph for a passing mark (above), and a card per issue.

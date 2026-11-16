@@ -8,7 +8,7 @@
  * stylesheet. It holds the legacy tokens (`LEGACY_TOKEN_MIGRATION`) and the Signal tokens
  * (`SIGNAL_TOKENS`, every one at its Signal value). A legacy alias is `var()` of its Signal token; a
  * retired name and a layout constant keep their pre-Signal values until a surface PR drops the
- * retired name (`removed`). The rollout:
+ * retired name (`removed`), and an alias goes once no rule reads it (the cleanup). The rollout:
  * 1. foundation (done): one token source and the full Signal vocabulary, no pixel changed;
  * 2. values (done, this step): the legacy aliases point at their Signal tokens and the names in
  *    `SIGNAL_NAMES_WITH_LEGACY_VALUES` take their Signal values; Geist and Geist Mono are bundled
@@ -26,7 +26,13 @@
  *    nothing: every retired name they read, later panels still read; and so on, panel by panel, to the
  *    Changes panel, Projects, Rankings, Inspector and the screenshot editor, which retired nothing either; then the panel stylesheets
  *    (Search Console, the AI cards, the Crawl and AI answers sheets, the location badge), which retired
- *    `--gsc-grid`).
+ *    `--gsc-grid`);
+ * 4. cleanup (done, this step): the legacy names no rule read any more are `removed`, retired names
+ *    and aliases alike, and the aliases read only by their own converted surface (`--bg-chrome`,
+ *    `--palette-bg`, `--jump-tile-bg`, `--agent-card`) gave their readers to their Signal tokens and
+ *    went too; the last `--ok`-as-text rule moved to `stroke` (`GRAPHICS_ONLY_COLOURS`). What is
+ *    left (`--font-ui`, three aliases the workspace's layout reads, the layout constants) is in
+ *    `design-tokens.feature.md`, Left for later.
  */
 
 /** The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares every token. */
@@ -191,7 +197,7 @@ export const THEMED_SIGNAL_GROUPS = ['colour', 'state', 'elevation'] as const sa
  * Signal names that existed before Signal with the same meaning (the Migration table's self-aliases).
  * The foundation kept their pre-Signal values; since the values step they carry their
  * `SIGNAL_TOKENS` values, light and dark (they can't be `var()` of themselves). The name is kept for
- * history. (`--icon` is not one: it is a colour, and the Signal icon size is `--icon-size`.)
+ * history. (`--icon` was not one: it was a colour, now `removed`; the Signal icon size is `--icon-size`.)
  */
 export const SIGNAL_NAMES_WITH_LEGACY_VALUES = [
   '--text',
@@ -215,8 +221,16 @@ export const SIGNAL_NAMES_WITH_LEGACY_VALUES = [
  * `retire`: replaced by `signal`; the old name goes once no rule uses it. `signal` is null when
  * nothing replaces it (a layout constant that keeps its own name, or a style Signal drops), and
  * `--text-*` means the type scale. `was` is the sheet's description of the old light value.
- * `removed`: a `retire` row whose surface PR moved every rule off it, so `tokens.css` no longer declares
- * it (light or dark) and no renderer source reads it. The row stays as the record of its replacement.
+ * `removed`: `tokens.css` no longer declares the name (light or dark) and no renderer source (`.css`,
+ * `.ts`, `.tsx`, `index.html` under `apps/desktop/src/renderer`) mentions it outside a comment (a
+ * script's comments are found by a scanner that leaves string, template and regex literals whole). The
+ * renderer is enough: the tokens live on its documents' `:root`, and nothing else reads one (no
+ * `var(--…)` or legacy name in `src/main`, `src/preload`, `src/workers` or `e2e/visual.css`, the one
+ * stylesheet main inserts, which sets only its own marker). A `retire` row is `removed` once its
+ * surface PR moved every rule off it; an `alias` row once no rule reads it (the cleanup moved the last
+ * readers of an alias read only by its own surface to its Signal token), but only an alias of another
+ * Signal token: never a self-alias (a Signal token's own name) or a layout constant (`signal: null`),
+ * which have no Signal token to take their place. The row stays as the record of its replacement.
  */
 export interface LegacyTokenMigration {
   readonly legacy: TokenName;
@@ -229,7 +243,9 @@ export interface LegacyTokenMigration {
 
 /**
  * Every custom property that was declared on `:root` before Signal: 89 names, each mapped. The ones
- * not `removed` are declared in `tokens.css`.
+ * not `removed` are declared in `tokens.css`: since the cleanup, the self-aliases (Signal tokens), the
+ * layout constants, `--seo-panel-width` (the sidebar's resize sets it on the panel), `--font-ui` and the
+ * three aliases the workspace's layout still reads (`--bg-page`, `--agent-bg`, `--seo-rail-width`).
  */
 export const LEGACY_TOKEN_MIGRATION = [
   // Chrome sizes: the chrome's surface PR sized its rows from --h-control, --h-field and --h-status and
@@ -239,8 +255,8 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--toolbar-height', kind: 'retire', signal: '--h-chrome', was: '50px', note: 'buttons join the tab row', removed: true },
   { legacy: '--status-height', kind: 'retire', signal: '--h-status', was: '26px', note: '28px', removed: true },
   { legacy: '--find-height', kind: 'retire', signal: null, was: '40px', note: 'band slot: find is a band (≥ 44px)', removed: true },
-  { legacy: '--radius-control', kind: 'retire', signal: '--r-pill', was: '9px', note: '' },
-  { legacy: '--radius-field', kind: 'retire', signal: '--r-pill', was: '11px', note: '--r-sm inside cards' },
+  { legacy: '--radius-control', kind: 'retire', signal: '--r-pill', was: '9px', note: '', removed: true },
+  { legacy: '--radius-field', kind: 'retire', signal: '--r-pill', was: '11px', note: '--r-sm inside cards', removed: true },
   { legacy: '--seo-panel-width', kind: 'alias', signal: '--w-panel', was: '360px', note: '' },
   { legacy: '--seo-rail-width', kind: 'alias', signal: '--w-rail', was: '48px', note: '' },
   // Layout constants: kept, no visual token
@@ -256,20 +272,20 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--palette-sheet-height', kind: 'alias', signal: null, was: '404px', note: 'layout constant: the name stays, no visual token; the palette band' },
   { legacy: '--palette-sheet-min-height', kind: 'alias', signal: null, was: '180px', note: 'layout constant: the name stays, no visual token' },
   { legacy: '--palette-page-min-visible', kind: 'alias', signal: null, was: '96px', note: 'layout constant: the name stays, no visual token' },
-  // Type and icons
+  // Type and icons: --font-ui is still the body's face (design-tokens.feature.md, Left for later); --icon had no reader.
   { legacy: '--font-ui', kind: 'retire', signal: '--text-*', was: 'system stack', note: 'Geist, system-ui; Geist Mono' },
-  { legacy: '--icon', kind: 'retire', signal: '--text-muted', was: 'icon colour', note: 'name now means size: --icon-size' },
+  { legacy: '--icon', kind: 'retire', signal: '--text-muted', was: 'icon colour', note: 'name now means size: --icon-size', removed: true },
   { legacy: '--panel-art', kind: 'retire', signal: '--text-faint', was: '#6b7a90', note: '', removed: true },
   // Surfaces and edges
-  { legacy: '--bg-chrome', kind: 'alias', signal: '--bg-window', was: '#f3f5f8', note: '' },
+  { legacy: '--bg-chrome', kind: 'alias', signal: '--bg-window', was: '#f3f5f8', note: '', removed: true },
   { legacy: '--bg-strip', kind: 'retire', signal: '--bg-window', was: '#e4e8ee', note: 'no separate strip', removed: true },
-  { legacy: '--bg-chrome-edge', kind: 'retire', signal: '--divider', was: '#e2e6ec', note: '' },
+  { legacy: '--bg-chrome-edge', kind: 'retire', signal: '--divider', was: '#e2e6ec', note: '', removed: true },
   { legacy: '--bg-page', kind: 'alias', signal: '--bg-surface', was: '#fbfcfd', note: 'the page card' },
-  { legacy: '--bg-field', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  { legacy: '--bg-field', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '', removed: true },
   { legacy: '--bg-field-hover', kind: 'retire', signal: '--bg-hover', was: '#ffffff', note: 'over --bg-surface', removed: true },
-  { legacy: '--border-field', kind: 'retire', signal: '--e-raised', was: '#d7dce4', note: 'field outlines (ring shadow, no border); --track for scrollbar thumbs; --divider or --e-ring for other borders' },
+  { legacy: '--border-field', kind: 'retire', signal: '--e-raised', was: '#d7dce4', note: 'field outlines (ring shadow, no border); --track for scrollbar thumbs; --divider or --e-ring for other borders', removed: true },
   { legacy: '--shadow-field', kind: 'retire', signal: '--e-raised', was: 'shadow', note: '', removed: true },
-  { legacy: '--shadow-card', kind: 'retire', signal: '--e-ring', was: 'shadow', note: '' },
+  { legacy: '--shadow-card', kind: 'retire', signal: '--e-ring', was: 'shadow', note: '', removed: true },
   { legacy: '--bg-hover', kind: 'alias', signal: '--bg-hover', was: 'overlay', note: 'Signal value' },
   { legacy: '--bg-active', kind: 'alias', signal: '--bg-active', was: 'overlay', note: 'Signal value' },
   { legacy: '--bg-tab-hover', kind: 'retire', signal: '--bg-hover', was: 'overlay', note: '', removed: true },
@@ -287,19 +303,20 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--ok', kind: 'alias', signal: '--ok', was: '#1f9d63', note: '' },
   { legacy: '--warn', kind: 'alias', signal: '--warn', was: '#c2410c', note: 'ring shape' },
   { legacy: '--danger', kind: 'alias', signal: '--danger', was: '#d23f3f', note: '' },
-  { legacy: '--caution', kind: 'retire', signal: '--warn', was: '#b7791f', note: 'fair band ring' },
-  { legacy: '--info-tone', kind: 'retire', signal: '--accent', was: '#4b72b8', note: 'info = accent ring' },
+  { legacy: '--caution', kind: 'retire', signal: '--warn', was: '#b7791f', note: 'fair band ring', removed: true },
+  { legacy: '--info-tone', kind: 'retire', signal: '--accent', was: '#4b72b8', note: 'info = accent ring', removed: true },
   { legacy: '--start-mark', kind: 'retire', signal: '--accent', was: '#5b8def', note: 'FrostMark', removed: true },
   { legacy: '--start-glow', kind: 'retire', signal: null, was: 'glow', note: 'none: no gradient washes', removed: true },
-  // SEO sidebar (--seo-*): the frame's surface PR dropped the skeleton's names; the panels still read the others.
-  { legacy: '--seo-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '' },
-  { legacy: '--seo-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
-  { legacy: '--seo-card-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: 'card outlines; --divider for separator borders and guide lines' },
-  { legacy: '--seo-track', kind: 'alias', signal: '--track', was: '#e7ebf1', note: '' },
+  // SEO sidebar (--seo-*): the frame's surface PR dropped the skeleton's names; the cleanup the rest, unread.
+  { legacy: '--seo-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '', removed: true },
+  { legacy: '--seo-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '', removed: true },
+  { legacy: '--seo-card-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: 'card outlines; --divider for separator borders and guide lines', removed: true },
+  { legacy: '--seo-track', kind: 'alias', signal: '--track', was: '#e7ebf1', note: '', removed: true },
   { legacy: '--seo-skeleton', kind: 'retire', signal: '--bg-subtle', was: '#e9edf3', note: '', removed: true },
   { legacy: '--seo-skeleton-shine', kind: 'retire', signal: '--bg-sheet', was: '#f4f6f9', note: 'sweep over --bg-subtle', removed: true },
-  // Command palette (--palette-*): its surface PR moved every rule onto Signal and dropped the retired names.
-  { legacy: '--palette-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  // Command palette (--palette-*): its surface PR moved every rule onto Signal and dropped the retired names;
+  // the cleanup moved .palette's fill to --bg-surface and dropped --palette-bg.
+  { legacy: '--palette-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '', removed: true },
   { legacy: '--palette-edge', kind: 'retire', signal: '--e-ring', was: '#dfe4eb', note: 'outlines; --divider for separator borders', removed: true },
   { legacy: '--palette-shadow', kind: 'retire', signal: '--e-ring', was: 'shadow', note: 'a band, not a floating sheet', removed: true },
   { legacy: '--palette-sheet', kind: 'retire', signal: '--bg-window', was: 'gradient', note: 'no gradients', removed: true },
@@ -311,23 +328,25 @@ export const LEGACY_TOKEN_MIGRATION = [
   { legacy: '--render-accent', kind: 'retire', signal: '--accent', was: '#7a4fe0', note: 'one accent: no second hue', removed: true },
   { legacy: '--render-soft', kind: 'retire', signal: '--accent-soft', was: '.13 violet', note: '', removed: true },
   { legacy: '--render-edge', kind: 'retire', signal: '--accent', was: '.55 violet', note: '', removed: true },
-  // Content's result preview (--serp-*): its surface PR moved every rule onto Signal and dropped the retired names.
-  { legacy: '--serp-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  // Content's result preview (--serp-*): its surface PR moved every rule onto Signal and dropped the retired names;
+  // the cleanup dropped the aliases, unread since.
+  { legacy: '--serp-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '', removed: true },
   { legacy: '--serp-title', kind: 'retire', signal: '--accent', was: '#2450c8', note: 'Search preview title', removed: true },
-  { legacy: '--serp-text', kind: 'alias', signal: '--text-muted', was: '#474e5c', note: '' },
+  { legacy: '--serp-text', kind: 'alias', signal: '--text-muted', was: '#474e5c', note: '', removed: true },
   { legacy: '--serp-path', kind: 'retire', signal: '--text-muted', was: '#5d6573', note: 'URL crumbs', removed: true },
   { legacy: '--serp-glyph', kind: 'retire', signal: '--bg-subtle', was: '#e3e8f1', note: '', removed: true },
   { legacy: '--serp-glyph-mark', kind: 'retire', signal: '--text-muted', was: '#6b7a90', note: '', removed: true },
-  { legacy: '--jump-tile-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  { legacy: '--jump-tile-bg', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '', removed: true },
   { legacy: '--jump-tile-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '', removed: true },
   { legacy: '--jump-monogram-bg', kind: 'retire', signal: '--accent-soft', was: '.12 accent', note: '', removed: true },
-  { legacy: '--gsc-line', kind: 'alias', signal: '--accent', was: 'accent', note: '' },
+  { legacy: '--gsc-line', kind: 'alias', signal: '--accent', was: 'accent', note: '', removed: true },
   { legacy: '--gsc-grid', kind: 'retire', signal: '--divider', was: '#e7ebf1', note: 'the chart\'s grid lines', removed: true },
-  { legacy: '--gsc-axis', kind: 'alias', signal: '--text-faint', was: 'faint', note: '' },
+  { legacy: '--gsc-axis', kind: 'alias', signal: '--text-faint', was: 'faint', note: '', removed: true },
   { legacy: '--settings-switch-off', kind: 'retire', signal: '--switch-off', was: '#c9cfd9', note: '', removed: true },
-  // Agent panel (--agent-*): its surface PR moved every rule onto Signal and dropped the retired names.
+  // Agent panel (--agent-*): its surface PR moved every rule onto Signal and dropped the retired names; the
+  // cleanup moved the cards to --bg-surface (--agent-card); --agent-bg is the workspace's agent sheet's fill.
   { legacy: '--agent-bg', kind: 'alias', signal: '--bg-sheet', was: '#f6f7fa', note: '' },
-  { legacy: '--agent-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '' },
+  { legacy: '--agent-card', kind: 'alias', signal: '--bg-surface', was: '#ffffff', note: '', removed: true },
   { legacy: '--agent-edge', kind: 'retire', signal: '--e-ring', was: '#e3e7ee', note: '--divider for rules', removed: true },
   { legacy: '--agent-user', kind: 'retire', signal: '--accent-soft', was: '#e6eefc', note: 'your messages', removed: true },
   { legacy: '--agent-code-bg', kind: 'retire', signal: '--bg-subtle', was: '#f1f3f7', note: '', removed: true },
@@ -342,7 +361,7 @@ export const LEGACY_TOKEN_MIGRATION = [
  * on a class boundary (`.palette` covers `.palette`, `.palette-option` and `.chrome .palette-hit`,
  * never `.palettes` or `.x-palette`; `.tab` would never cover `.table-row`), or when it sits in a
  * `@keyframes` named the prefix's stem or stem-… (`palette-in`). Such a rule reads only Signal tokens,
- * legacy aliases and component-scoped custom properties (declared in the same stylesheet, e.g.
+ * legacy aliases still declared (not `removed`) and component-scoped custom properties (declared in the same stylesheet, e.g.
  * `--tone-ink`) in `var()`, never with a fallback (in any property); it declares no Signal or legacy
  * name; no value of it holds a hex colour or a colour function; its colour-bearing values
  * (`background-image` and custom properties included) hold nothing else but `transparent`,
@@ -1194,7 +1213,7 @@ export const CONTRAST_PAIRS = [
   // --text-muted on --accent-soft over a card), the avatar (--accent on --accent-soft over a card), the
   // plan chip (--text-muted on --bg-subtle), notices (--warn-ink on --warn-soft over the sheet and a
   // card), errors (--danger-ink on the sheet and a card) and the diagnostics report (--text on
-  // --bg-subtle). New with it: what drew --ok as text (KNOWN_CONTRAST_EXCEPTIONS) now draws --ok-ink.
+  // --bg-subtle). New with it: what drew --ok as text now draws --ok-ink.
   { fg: '--ok-ink', bg: '--bg-surface', min: 4.5, why: 'Settings\' key and plan status, the account\'s feature marks and the setup checklist\'s "Done" (12–13px, was --ok) on a card (4.5:1)' },
   { fg: '--ok-ink', bg: '--bg-sheet', min: 4.5, why: 'Settings\' Search Console headline when connected (15px, was --ok) on the Settings sheet (4.5:1)' },
   { fg: '--text-muted', bg: '--bg-hover', over: '--bg-sheet', min: 3, why: 'Settings\' close button, hovered: its --text-muted icon on --bg-hover over the sheet (graphics, 3:1)' },
@@ -1218,7 +1237,7 @@ export const CONTRAST_PAIRS = [
   { fg: '--text-muted', bg: '--bg-hover', over: '--bg-sheet', min: 4.5, why: 'a hovered SEO rail item: its icon (--text-muted, was --icon) on --bg-hover over the sheet (4.5:1)' },
   { fg: '--text-muted', bg: '--bg-active', over: '--bg-sheet', min: 4.5, why: 'a pressed SEO rail item: its icon on --bg-active over the sheet (4.5:1)' },
   { fg: '--text-muted', bg: '--bg-hover', over: '--bg-surface', min: 4.5, why: 'a hovered "More panels" item: its icon (--text-muted) on --bg-hover over the menu\'s --bg-surface (4.5:1)' },
-  { fg: '--accent', bg: '--accent-soft', over: '--bg-window', min: 3, why: 'the toolbar\'s SEO sidebar toggle, pressed: its --accent icon on --accent-soft over the toolbar (--bg-chrome → --bg-window) (graphics, 3:1)' },
+  { fg: '--accent', bg: '--accent-soft', over: '--bg-window', min: 3, why: 'the toolbar\'s SEO sidebar toggle, pressed: its --accent icon on --accent-soft over the toolbar (--bg-window) (graphics, 3:1)' },
   // The SEO panels' Overview and On-Page (their surface PR). Already covered above: the score card's
   // value, band and summary on --bg-surface (--text, --text-muted), its ring (--ok, --warn, --danger on
   // --bg-surface), the eyebrow (--text-muted), the not-indexable reasons (--danger-ink), the partial note
@@ -1326,7 +1345,7 @@ export const CONTRAST_PAIRS = [
   // (--text on --bg-surface, hovered over --bg-hover, disabled --text-faint), its icon (--accent on
   // --accent-soft over --bg-window), the address's secure and insecure badges (--ok, --warn on
   // --bg-surface), the loading line and the focus ring (--accent on --bg-window), the status notice
-  // (--warn-ink on --bg-chrome) and the fullscreen notice (--on-inverse on --inverse). New with it:
+  // (--warn-ink on --bg-window) and the fullscreen notice (--on-inverse on --inverse). New with it:
   { fg: '--text-muted', bg: '--bg-tab-idle', over: '--bg-window', min: 4.5, why: 'an inactive tab: its label and glyph (--text-muted) on --bg-tab-idle over the tab row (4.5:1)' },
   { fg: '--text', bg: '--bg-hover', over: '--bg-window', min: 4.5, why: 'a hovered inactive tab: its label (--text) on --bg-hover over the tab row (4.5:1)' },
   { fg: '--text-muted', bg: '--bg-hover', over: '--bg-window', min: 4.5, why: 'a hovered toolbar tool or new-tab button, and a hovered tab\'s glyph and close button: --text-muted on --bg-hover over --bg-window (4.5:1)' },
@@ -1357,9 +1376,9 @@ export const CONTRAST_PAIRS = [
   {
     fg: '--danger-ink',
     bg: '--danger-soft',
-    over: '--bg-chrome',
+    over: '--bg-window',
     min: 4.5,
-    why: `${INK}: the status bar's failed-overrides chip (11.5px), --danger-soft over --bg-chrome`,
+    why: `${INK}: the status bar's failed-overrides chip (11.5px), --danger-soft over --bg-window`,
   },
   // UI and graphics
   { fg: '--switch-off', bg: '--bg-surface', min: 3, why: '"--switch-off is a switch\'s off track (≥ 3:1 against its card)"' },
@@ -1371,9 +1390,9 @@ export const CONTRAST_PAIRS = [
   { fg: '--danger', bg: '--bg-surface', min: 3, why: RING },
   { fg: '--danger', bg: '--bg-sheet', min: 3, why: RING },
   // Rules the values step pinned (TEXT_COLOUR_RULES)
-  { fg: '--warn-ink', bg: '--bg-chrome', min: 4.5, why: 'the status bar\'s notice (.status-notice) on --bg-chrome (4.5:1)' },
-  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-surface', min: 4.5, why: 'text on its tone\'s 14% tint (no rule draws it since the SEO pills and status chips, and .agent-chip, moved to -ink on -soft; Changes\' inserted segment still draws --ok there, KNOWN_CONTRAST_EXCEPTIONS) (4.5:1)' },
-  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: 'text on its tone\'s 14% tint (no rule draws it since the SEO pills and status chips, and .agent-chip, moved to -ink on -soft; Changes\' inserted segment still draws --ok there, KNOWN_CONTRAST_EXCEPTIONS) (4.5:1)' },
+  { fg: '--warn-ink', bg: '--bg-window', min: 4.5, why: 'the status bar\'s notice (.status-notice) on --bg-window (4.5:1)' },
+  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-surface', min: 4.5, why: 'text on its tone\'s 14% tint (no rule draws it since the SEO pills and status chips, .agent-chip and Changes\' inserted segment moved to -ink on -soft) (4.5:1)' },
+  { fg: '--ok-ink', bg: '--ok', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: 'text on its tone\'s 14% tint (no rule draws it since the SEO pills and status chips, .agent-chip and Changes\' inserted segment moved to -ink on -soft) (4.5:1)' },
   { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-surface', min: 4.5, why: 'text on its tone\'s 14% tint (Changes\' deleted segment; the SEO pills and status chips, and .agent-chip, moved to -ink on -soft) (4.5:1)' },
   { fg: '--danger-ink', bg: '--danger', alpha: 0.14, over: '--bg-sheet', min: 4.5, why: 'text on its tone\'s 14% tint (Changes\' deleted segment; the SEO pills and status chips, and .agent-chip, moved to -ink on -soft) (4.5:1)' },
   // The rest of the browser chrome (its surface PR). Already covered above: text and icons on the
@@ -1381,7 +1400,7 @@ export const CONTRAST_PAIRS = [
   // .panel-button (--text on --bg-surface, hovered over --bg-hover; the primary --on-accent on --accent and
   // --accent-hover; disabled --text-faint on --bg-subtle), the drawer's text on --bg-sheet (--text,
   // --text-muted, --text-faint, --accent links, a selected row's --text on --accent-soft), History's on
-  // --bg-surface, the status chips' failed state (--danger-ink on --danger-soft over --bg-chrome). New with it:
+  // --bg-surface, the status chips' failed state (--danger-ink on --danger-soft over --bg-window). New with it:
   { fg: '--danger-ink', bg: '--accent-soft', over: '--bg-window', min: 4.5, why: `the find bar's "no matches" count and the editor bar's errors (12px, were --danger) on a band (the canvas's band slot: --accent-soft over --bg-window) (4.5:1)` },
   { fg: '--text', bg: '--danger-soft', over: '--bg-window', min: 4.5, why: 'a failed update: the notice\'s headline on its --danger-soft band (4.5:1)' },
   { fg: '--text-muted', bg: '--danger-soft', over: '--bg-window', min: 4.5, why: 'a failed update: the notice\'s text on its --danger-soft band (4.5:1)' },
@@ -1502,29 +1521,30 @@ export const CONTRAST_PAIRS = [
 ] as const satisfies readonly ContrastPair[];
 
 /**
- * Known contrast exceptions, left for the surface PRs: a token some rules still use in a way that
- * misses the pair's minimum. Each is recorded, not fixed, in the values step; a surface PR that moves
- * the rules off it removes its entry (the guard fails once the pair would pass, or once no rule uses
- * the token that way). `rules` is how many `color: var(<fg>)` declarations the renderer's stylesheets
- * hold today.
+ * Status colours that are graphics only: under 4.5:1 as text on a card in at least one theme, so no rule
+ * of a renderer stylesheet draws text in them. A rule draws text in one when its `color` or
+ * `-webkit-text-fill-color` reads it anywhere in the value (`var(`, optional space, the name on a name
+ * boundary: `!important`, `color-mix()` and the like count), or reads a custom property the same
+ * stylesheet sets, anywhere, to a value that reads it (one level: `--verdict: var(--ok)` then
+ * `color: var(--verdict)`); at any nesting (`@media`, `@supports`, native nesting). Text in their tone
+ * takes its `-ink` (`--ok-ink`), and an icon draws the tone by `stroke` or `fill` on the icon itself.
+ * `--ok` is 3.30:1 on a card in light (3.16 on the sheet): a graphics colour (3:1). The values step
+ * recorded 21 rules drawing it as text (`KNOWN_CONTRAST_EXCEPTIONS`, a list of exceptions with their rule
+ * counts); the surface PRs moved them to `--ok-ink`, and the cleanup PR the last, the address bar's secure
+ * badge, an icon now drawn by `stroke`, so the list went and this rule took its place. Its first round of
+ * review widened the match (it had read only an exact `color: var(--ok)`), which found two more rules
+ * colouring an icon tile's icon through `color`: Indexability's, Compliance's and JavaScript's verdict icon
+ * (`.seo-verdict-icon`, through `--verdict`) and Page Speed's (`.seo-speed-verdict-icon`, through
+ * `--band`). They draw their icon's `stroke` now (the icons' only `currentColor`), the same pixels.
+ *
+ * Under forced colours a mark coloured by `stroke` keeps its token (Chromium leaves SVG strokes as they
+ * are), where one coloured by `color` took `CanvasText`: the lock and the verdict icons keep `--ok` (and
+ * the verdicts' `--warn`, `--danger`, `--accent`) on the forced `Canvas`. They stay above 3:1 there only
+ * because Chromium makes `prefers-color-scheme` follow the contrast theme, so a light `Canvas` gets the
+ * light `--ok` (about 3.2–3.3:1 on it) and a black one the dark `--ok` (about 12:1). Nothing verifies
+ * this on Windows, where forced colours live.
  */
-export interface ContrastException {
-  readonly fg: TokenName;
-  readonly bg: TokenName;
-  readonly min: 4.5 | 3;
-  readonly rules: number;
-  readonly why: string;
-}
-
-export const KNOWN_CONTRAST_EXCEPTIONS = [
-  {
-    fg: '--ok',
-    bg: '--bg-surface',
-    min: 4.5,
-    rules: 1,
-    why: '--ok as body text (passing counts, …) is 3.30:1 on a card in light (3.16 on the sheet); --ok is a graphics colour (3:1). The surface PRs move those rules to --ok-ink (Settings and Help moved their 4; Overview its band label and all-clear line, and On-Page its "Good length", which read --ok through the meter\'s own property; the panels\' all-clear line, Images\' alt badge and Schema\'s block status their 3; the DevTools drawer its robots line and 2xx code, 2; Page Speed its "Live" source badge; Content its target query\'s present term, now --ok-ink on --ok-soft, and its all-terms mark, an icon now drawn by `stroke`; the Changes panel its capture and screenshot statuses and the diff\'s added words, Projects a captured target and Rankings a rise, 5; AI readiness its passing verdict, 1).',
-  },
-] as const satisfies readonly ContrastException[];
+export const GRAPHICS_ONLY_COLOURS = ['--ok'] as const satisfies readonly TokenName[];
 
 /**
  * A rule whose text colour the values step pins to a token, because the Signal value of the token it
@@ -1560,7 +1580,7 @@ export const TEXT_COLOUR_RULES = [
     stylesheet: 'styles.css',
     element: ['.status-notice'],
     color: '--warn-ink',
-    why: '--warn on --bg-chrome is 4.26:1 in light; the notice is 11.5px text',
+    why: '--warn on --bg-window is 4.26:1 in light; the notice is 11.5px text',
   },
   // The update notice's Download and Show file: the canvas's primary band button (--on-accent on --accent,
   // --accent-hover hovered), where they were outlined --accent text whose hover (--bg-field-hover, removed)
@@ -1614,13 +1634,13 @@ export const TEXT_COLOUR_RULES = [
   { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='denied']"], color: '--danger-ink', background: '--danger-soft', why: DANGER_TINT },
   { stylesheet: 'components/agent/agent.css', element: ['.agent-chip', ".agent-chip[data-tone='failed']"], color: '--danger-ink', background: '--danger-soft', why: DANGER_TINT },
   // More danger text on its 14% tint (3.7–3.9:1 on a card, light). The status bar's chip was 3.33:1
-  // over --bg-chrome, and still 4.46:1 with the ink on the tint: it takes --danger-soft as its fill.
+  // over --bg-window, and still 4.46:1 with the ink on the tint: it takes --danger-soft as its fill.
   {
     stylesheet: 'styles.css',
     element: [".status-tab-overrides[data-status='failed']"],
     color: '--danger-ink',
     background: '--danger-soft',
-    why: 'the status bar\'s failed-overrides chip: --danger on its 14% tint over --bg-chrome is 3.33:1 (light); -ink on -soft is 5.30',
+    why: 'the status bar\'s failed-overrides chip: --danger on its 14% tint over --bg-window is 3.33:1 (light); -ink on -soft is 5.30',
   },
   { stylesheet: 'styles.css', element: ['.seo-badge', ".seo-badge[data-severity='error']"], color: '--danger-ink', why: DANGER_TINT },
   // Schema's PR put the block status on the sheet's -soft fills (a badge), so the pair is -ink on -soft.
@@ -2654,8 +2674,8 @@ export const TAB_STRIP = {
  * The renderer stylesheet (relative to `apps/desktop/src/renderer/`) that declares the bundled
  * fonts: only `@font-face` rules, one per `BUNDLED_FONTS` entry. `main.tsx` imports it right after
  * `TOKENS_STYLESHEET`. It applies no font itself: a surface draws Geist once its rules read the
- * `--text-*` type tokens (the command palette first); `--font-ui`, the rest of the chrome's face,
- * stays the system stack until its own surface PR.
+ * `--text-*` type tokens (the command palette first). `--font-ui`, the body's face, is still the system
+ * stack: text that sets no font of its own draws in it (design-tokens.feature.md, Left for later).
  */
 export const FONTS_STYLESHEET = 'fonts.css';
 

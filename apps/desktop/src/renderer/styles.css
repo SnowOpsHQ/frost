@@ -20,7 +20,7 @@ body,
 
 body {
   overflow: hidden;
-  background: var(--bg-chrome);
+  background: var(--bg-window);
   color: var(--text);
   font: 13px/1.4 var(--font-ui);
   -webkit-font-smoothing: antialiased;
@@ -443,8 +443,9 @@ input {
   height: var(--icon-sm);
 }
 
-.address[data-security='secure'] .address-badge {
-  color: var(--ok);
+/* The lock's stroke, not the badge's text colour: --ok is a graphics colour (3:1), never text. */
+.address[data-security='secure'] .address-badge .icon {
+  stroke: var(--ok);
 }
 
 .address[data-security='insecure'] .address-badge {
@@ -3743,12 +3744,13 @@ input {
   height: 44px;
   border-radius: var(--r-md);
   background: var(--verdict-soft);
-  color: var(--verdict);
 }
 
+/* The icon's stroke, not the tile's text colour: --ok is a graphics colour (3:1), never text. */
 .seo-verdict-icon .icon {
   width: 26px;
   height: 26px;
+  stroke: var(--verdict);
   stroke-width: 2;
 }
 
@@ -4245,12 +4247,13 @@ input {
   height: 44px;
   border-radius: var(--r-md);
   background: var(--band-soft);
-  color: var(--band);
 }
 
+/* The icon's stroke, not the tile's text colour: --ok is a graphics colour (3:1), never text. */
 .seo-speed-verdict-icon .icon {
   width: 26px;
   height: 26px;
+  stroke: var(--band);
   stroke-width: 2;
 }
 
@@ -5360,7 +5363,7 @@ input {
   width: min(var(--palette-width), 100%);
   min-height: 0;
   border-radius: var(--r-lg);
-  background: var(--palette-bg);
+  background: var(--bg-surface);
   box-shadow: var(--e-ring);
   color: var(--text);
   font: var(--text-body);
@@ -6102,7 +6105,7 @@ input {
 
 /* The overrides' cookie or location part could not be applied (whole-branch review). */
 .status-tab-overrides[data-status='failed'] {
-  /* -ink on -soft (the token sheet's pairing): the 14% tint over --bg-chrome left the ink at 4.46:1. */
+  /* -ink on -soft (the token sheet's pairing): the 14% tint over --bg-window left the ink at 4.46:1. */
   background: var(--danger-soft);
   color: var(--danger-ink);
 }
@@ -8303,7 +8306,7 @@ input {
   padding: calc(var(--space-3) - 1px) calc(var(--space-4) - 1px);
   border: 1px solid transparent;
   border-radius: var(--r-md);
-  background: var(--jump-tile-bg);
+  background: var(--bg-surface);
   box-shadow: var(--e-ring);
   color: var(--text);
   font: var(--text-body);
