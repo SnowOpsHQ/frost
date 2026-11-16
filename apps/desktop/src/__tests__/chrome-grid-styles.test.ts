@@ -12,6 +12,7 @@ import { RENDER_FRAME } from '@app/specs/render-profile.spec';
 import { SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 import { ADDRESS_BASIS_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
 import {
+  NARROW_PANEL_WRAPS,
   NARROW_WINDOW,
   PAGE_AREA_COLLAPSES,
   pageViewRadius,
@@ -357,6 +358,17 @@ test('narrow-window-styles', () => {
   const queries = [...plain.matchAll(/@container\s+seo-panel\s*\(([^)]*)\)\s*\{([^{}]*\{[^{}]*\})*\s*\}/g)];
   expect(queries.map((q) => q[1]!.trim())).toEqual([`width < ${SEO_BODY_NARROW_PADDING.belowContentWidth}px`]);
   expect(queries[0]![0]).toMatch(new RegExp(`\\.seo-body\\s*\\{\\s*padding:\\s*var\\(${SEO_BODY_NARROW_PADDING.token}\\);\\s*\\}`));
+  // Under the panel's minimum the one-line parts wrap, in their stylesheet's seo-panel query, and only there.
+  for (const wrap of NARROW_PANEL_WRAPS) {
+    const blocks = containerBlocks(wrap.stylesheet, 'seo-panel');
+    expect(blocks.map((block) => block.condition), wrap.stylesheet).toEqual([`width < ${SEO_BODY_NARROW_PADDING.belowContentWidth}px`]);
+    const inside = blocks[0]!.rules.get(wrap.selector) ?? new Map<string, string>();
+    const outside = resolved([wrap.stylesheet], wrap.selector);
+    for (const [property, value] of Object.entries(wrap.set)) {
+      expect(inside.get(property), `${wrap.selector} { ${property} } under the minimum`).toBe(value);
+      expect(outside.get(property), `${wrap.selector} { ${property} } at a width the minimum fits`).not.toBe(value);
+    }
+  }
   // The render profile's frame takes the card's radius: its inset band's inner corner is the framed view's.
   expect(resolved(['styles.css'], '.render-frame').get('border-radius')).toBe('inherit');
 });

@@ -250,14 +250,25 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
         return (Object.keys(want) as (keyof typeof want)[]).every((k) => Math.abs(got[k] - want[k]) <= 1) ? 'ok' : JSON.stringify(got);
       })
       .toBe('ok');
-    // Under the panel's minimum the body gives its content the padding back, and Overview's first card fits it.
+    // Under the panel's minimum the body gives its content the padding back, Overview's first card fits
+    // inside the body's padding edge (boxes), and no text is cut inside its own box either: the body
+    // doesn't scroll sideways, the score card's text column and each of its lines, and the first toggle
+    // or action, are no wider inside than their boxes (scrollWidth <= clientWidth).
     await expect.poll(padding).toBe('4px');
-    const fits = await page.locator('.seo-body').evaluate((body) => {
+    const facts = await page.locator('.seo-body').evaluate((body) => {
       const limit = body.getBoundingClientRect().right - parseFloat(getComputedStyle(body).paddingRight);
       const card = body.querySelector('.seo-score-card')!;
-      return [card, ...card.querySelectorAll('*')].every((el) => el.getBoundingClientRect().right <= limit + 0.5);
+      const text = card.querySelector('.seo-score-text') as HTMLElement | null;
+      const control = body.querySelector('.seo-toggle, .seo-action') as HTMLElement | null;
+      const cut = (el: Element) => el.scrollWidth > el.clientWidth;
+      return {
+        cardInside: [card, ...card.querySelectorAll('*')].every((el) => el.getBoundingClientRect().right <= limit + 0.5),
+        bodyScrolls: body.scrollWidth > body.clientWidth,
+        textCut: text === null ? 'missing' : [text, ...text.children].filter(cut).map((el) => el.className.toString()),
+        controlCut: control === null ? 'missing' : cut(control),
+      };
     });
-    expect(fits).toBe(true);
+    expect(facts).toEqual({ cardInside: true, bodyScrolls: false, textCut: [], controlCut: false });
     // The view still lines up with the card.
     await cardMatches(PLAIN);
     // The tight gaps apply exactly under the threshold, and not in a 776px (tiled) chrome.
