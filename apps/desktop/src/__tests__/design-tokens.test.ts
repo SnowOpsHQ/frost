@@ -74,92 +74,104 @@ const REMOVED: readonly string[] = MIGRATION.filter((row) => row.removed === tru
 const DARK = '@media (prefers-color-scheme: dark)';
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 /** Words after which a `/` starts a regex literal, not a division. */
-const REGEX_AFTER_WORD = /^(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/;
+const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
+/** A character code of an identifier or number: `[0-9A-Za-z_$]`. */
+const isWordCode = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 36;
+const isSpaceCode = (c: number) => c === 32 || c === 9 || c === 10 || c === 13;
 
 /**
- * A script without its comments: `//` and block comments outside string, template and regex literals. A
- * backslash escapes the next character; a `/` starts a regex literal where an expression can begin (after
- * an operator, a bracket, a comma, `return`, … or at the start), never after a value (`a / b`). Template
- * literals nest through `${…}`, whose braces are counted.
+ * A script without its comments: `//` and block comments outside string, template and regex literals. One
+ * linear pass by character code: the text between comments is copied by slice, a word is looked at only
+ * where it ends. A backslash in a literal escapes the next character; a `/` starts a regex literal where an
+ * expression can begin (after an operator, a bracket, a comma, `return`, … or at the start), never after a
+ * value (`a / b`). Template literals nest through `${…}`, whose braces are counted.
  */
 function stripScriptComments(text: string): string {
-  let out = '';
-  let quote: "'" | '"' | '`' | null = null;
+  const pieces: string[] = [];
+  const n = text.length;
+  /** Where the text not yet copied starts. */
+  let kept = 0;
+  /** The open quote's character code; 0 in code. */
+  let quote = 0;
   /** The open `{` count of each `${…}` we are inside, innermost last. */
   const expressions: number[] = [];
   /** Whether a `/` here starts a regex literal (the last code token was not a value). */
   let regexAllowed = true;
-  /** The identifier or keyword being read. */
-  let word = '';
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i]!;
-    const next = text[i + 1];
-    if (quote !== null) {
-      if (ch === '\\') {
-        out += ch + (next ?? '');
-        i += 1;
-      } else if (quote === '`' && ch === '$' && next === '{') {
-        out += '${';
+  /** Where the word being read starts; -1 outside a word. */
+  let wordStart = -1;
+  for (let i = 0; i < n; i += 1) {
+    const c = text.charCodeAt(i);
+    if (quote !== 0) {
+      if (c === 92) i += 1;
+      else if (quote === 96 && c === 36 && text.charCodeAt(i + 1) === 123) {
         i += 1;
         expressions.push(0);
-        quote = null;
+        quote = 0;
         regexAllowed = true;
-      } else {
-        if (ch === quote) quote = null;
-        out += ch;
+      } else if (c === quote) quote = 0;
+      continue;
+    }
+    if (wordStart !== -1 && !isWordCode(c)) {
+      // A word ends: a `/` after it divides, unless it is a keyword.
+      regexAllowed = REGEX_AFTER_WORD.has(text.slice(wordStart, i));
+      wordStart = -1;
+    }
+    if (c === 47) {
+      const next = text.charCodeAt(i + 1);
+      if (next === 47 || next === 42) {
+        // A comment: copy what came before it, skip it (a line comment keeps its newline).
+        pieces.push(text.slice(kept, i));
+        let end: number;
+        if (next === 47) {
+          end = text.indexOf('\n', i);
+          if (end === -1) end = n;
+        } else {
+          end = text.indexOf('*/', i + 2);
+          end = end === -1 ? n : end + 2;
+        }
+        kept = end;
+        i = end - 1;
+        continue;
       }
-      continue;
-    }
-    if (ch === '/' && next === '/') {
-      const end = text.indexOf('\n', i);
-      i = (end === -1 ? text.length : end) - 1;
-      continue;
-    }
-    if (ch === '/' && next === '*') {
-      const end = text.indexOf('*/', i + 2);
-      i = end === -1 ? text.length : end + 1;
-      continue;
-    }
-    if (ch === "'" || ch === '"' || ch === '`') {
-      quote = ch;
-      out += ch;
-      regexAllowed = false;
-      word = '';
-      continue;
-    }
-    if (ch === '/' && regexAllowed) {
-      // A regex literal, to its closing `/` outside a character class; escapes kept.
-      let j = i + 1;
-      let inClass = false;
-      for (; j < text.length && text[j] !== '\n'; j += 1) {
-        if (text[j] === '\\') j += 1;
-        else if (text[j] === '[') inClass = true;
-        else if (text[j] === ']') inClass = false;
-        else if (text[j] === '/' && !inClass) break;
+      if (regexAllowed) {
+        // A regex literal, to its closing `/` outside a character class.
+        let j = i + 1;
+        let inClass = false;
+        for (; j < n; j += 1) {
+          const d = text.charCodeAt(j);
+          if (d === 10) break;
+          if (d === 92) j += 1;
+          else if (d === 91) inClass = true;
+          else if (d === 93) inClass = false;
+          else if (d === 47 && !inClass) break;
+        }
+        i = j;
+        regexAllowed = false;
+        continue;
       }
-      out += text.slice(i, j + 1);
-      i = j;
-      regexAllowed = false;
-      word = '';
+      regexAllowed = true;
       continue;
     }
-    if (expressions.length > 0 && ch === '}' && expressions.at(-1) === 0) {
+    if (c === 39 || c === 34 || c === 96) {
+      quote = c;
+      regexAllowed = false;
+      continue;
+    }
+    if (expressions.length > 0 && c === 125 && expressions[expressions.length - 1] === 0) {
       // The end of a template's `${…}`: back in its text.
       expressions.pop();
-      quote = '`';
-      out += ch;
+      quote = 96;
       continue;
     }
-    if (expressions.length > 0 && ch === '{') expressions[expressions.length - 1]! += 1;
-    if (expressions.length > 0 && ch === '}') expressions[expressions.length - 1]! -= 1;
-    out += ch;
-    // The word being read (code only); after it, a `/` divides, unless the word is a keyword.
-    word = /[\w$]/.test(ch) ? word + ch : '';
-    if (word !== '') regexAllowed = REGEX_AFTER_WORD.test(word);
-    else if (ch === ')' || ch === ']') regexAllowed = false;
-    else if (!/\s/.test(ch)) regexAllowed = true;
+    if (expressions.length > 0 && c === 123) expressions[expressions.length - 1]! += 1;
+    else if (expressions.length > 0 && c === 125) expressions[expressions.length - 1]! -= 1;
+    if (isWordCode(c)) {
+      if (wordStart === -1) wordStart = i;
+    } else if (c === 41 || c === 93) regexAllowed = false;
+    else if (!isSpaceCode(c)) regexAllowed = true;
   }
-  return out;
+  pieces.push(text.slice(kept));
+  return pieces.join('');
 }
 
 /** A source without its comments: a script's (`stripScriptComments`), a stylesheet's block comments, HTML comments. */
@@ -168,6 +180,12 @@ const stripSourceComments = (name: string, text: string) => {
   const blockless = stripComments(text);
   if (name.endsWith('.html')) return blockless.replace(/<!--[\s\S]*?-->/g, '');
   return blockless;
+};
+/** A renderer source without its comments, stripped once and reused. */
+const strippedSources = new Map<string, string>();
+const strippedSource = (file: string) => {
+  if (!strippedSources.has(file)) strippedSources.set(file, stripSourceComments(file, read(file)));
+  return strippedSources.get(file)!;
 };
 
 interface Declaration {
@@ -407,7 +425,7 @@ test('removed-legacy-tokens-are-gone', () => {
     expect(DARK_VALUES.has(name), `${name} (dark)`).toBe(false);
     // `--palette-sheet` must not match `--palette-sheet-height`.
     const mention = new RegExp(`${name}(?![\\w-])`);
-    for (const file of RENDERER_SOURCES) expect(mention.test(stripSourceComments(file, read(file))), `${file} mentions ${name}`).toBe(false);
+    for (const file of RENDERER_SOURCES) expect(mention.test(strippedSource(file)), `${file} mentions ${name}`).toBe(false);
   }
 });
 
