@@ -95,7 +95,10 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   panels' toggles and actions wrap a long label onto a second line, their height automatic from
   `--h-chip` up. The bar, agent collapsed at 588px: Overview's, On-Page's, Links' and Changes' bodies
   don't scroll sideways (as on `main`) and Overview's first card clips no more words than `main`'s
-  (1); Page Speed, Content and Visibility scrolled sideways on `main` too. None of this applies at a
+  (1); Page Speed, Content and Visibility scrolled sideways on `main` too. Measured: Overview, On-Page
+  and Links no longer scroll and Overview's first card clips no word; Changes still scrolls 7px
+  sideways, from its capture card's rows that keep one line (the Screenshot kind's segmented control,
+  about 26px short, and the Project select row, 12px), left for that panel. None of this applies at a
   width the panel's minimum fits, so nothing changes at 748px and wider.
   Two consequences of the tight layout, deliberate: the SEO separator's 8px hit area covers the
   panel's last 4px, which with classic scrollbars (Linux, Windows) is its border and about 3px of the
