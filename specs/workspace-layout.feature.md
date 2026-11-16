@@ -190,7 +190,9 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   `flex: none`; `.seo-panel` is the `seo-panel` inline-size container, and only under
   `SIDEBAR_PANEL_WIDTH_RANGE.min` less its 2px of border is `.seo-body`'s padding
   `SEO_BODY_NARROW_PADDING`, and each `NARROW_PANEL_WRAPS` rule wraps there (its stylesheet's
-  `seo-panel` query) and nowhere outside it; `.render-frame` takes the card's radius
+  `seo-panel` query) and nowhere outside it, the query coming after every top-level rule of each
+  selector it overrides (at the same weight the later rule wins: written before them, it had no
+  effect on the toggles); `.render-frame` takes the card's radius
   (`border-radius: inherit`).
 - **Scenario: entrance-animations-end** (same file) — no rule in any renderer stylesheet runs an
   animation with `both` or `forwards` fill.
