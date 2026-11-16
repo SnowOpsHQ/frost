@@ -80,8 +80,9 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   run's band) stay `--space-3`: they cost no width, and Projects' rules keep to its own container's
   queries (`projects-sheet-stacks-by-its-own-width`). One rule:
   `@container chrome (width < 748px)` on `.chrome` (`container: chrome / inline-size`), whose width
-  is the workspace's (its stack spans the chrome's one column); the agent's stylesheet repeats the
-  same query for its separator. Corners stay `--r-lg` and the native view's radius is unchanged. At
+  is the workspace's (its stack spans the chrome's one column); the DevTools drawer's section
+  (`devtools-styles-are-delimited`) and the agent's stylesheet repeat the same query for the drawer
+  and the separator. Corners stay `--r-lg` and the native view's radius is unchanged. At
   the 588px minimum the sheet is 160px and its body's content box 150px, 140px beside its vertical
   scrollbar. `main` renders a 191px sheet there (content 156px) only because its collapsed agent
   rail is squeezed to about 27px and clipped (fixed in round 1); with a whole 40px rail it would be
