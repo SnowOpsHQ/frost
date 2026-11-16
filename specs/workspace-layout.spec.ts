@@ -91,13 +91,15 @@ export const RENDER_DEVICE_OUTLINE_RADIUS = SHEET_RADIUS.px - RENDER_FRAME.inset
  * focus ring reaches past the rail's 38px content box (a 34px control), so clipping would cut it.
  *
  * `stylesheet` is where the sheet's fill is declared; the shape (radius, elevation, edge) of the page
- * column's sheets is one rule in `styles.css`.
+ * column's sheets is one rule in `styles.css`. A fill is a Signal surface token, never a legacy alias
+ * (the page card and Help's frame read `--bg-page` and the agent panel `--agent-bg` until the base
+ * face's PR, specs/design-tokens.feature.md, which `removed` both).
  */
 export interface WorkspaceSheet {
   readonly name: string;
   readonly selector: string;
   readonly stylesheet: string;
-  readonly fill: string;
+  readonly fill: '--bg-sheet' | '--bg-surface';
   readonly elevation: '--e-sheet' | '--e-ring';
   readonly edge: 'border' | 'outline';
   readonly clips?: false;
@@ -106,15 +108,15 @@ export interface WorkspaceSheet {
 export const WORKSPACE_SHEETS = [
   { name: 'SEO rail', selector: '.seo-rail', stylesheet: 'styles.css', fill: '--bg-sheet', elevation: '--e-sheet', edge: 'border' },
   { name: 'SEO sheet', selector: '.seo-panel', stylesheet: 'styles.css', fill: '--bg-sheet', elevation: '--e-sheet', edge: 'border' },
-  { name: 'page card', selector: '.page-area', stylesheet: 'styles.css', fill: '--bg-page', elevation: '--e-ring', edge: 'outline' },
+  { name: 'page card', selector: '.page-area', stylesheet: 'styles.css', fill: '--bg-surface', elevation: '--e-ring', edge: 'outline' },
   { name: 'agent rail', selector: '.agent-rail', stylesheet: 'components/agent/agent.css', fill: '--bg-sheet', elevation: '--e-sheet', edge: 'border', clips: false },
-  { name: 'agent panel', selector: '.agent-main', stylesheet: 'components/agent/agent.css', fill: '--agent-bg', elevation: '--e-sheet', edge: 'border' },
+  { name: 'agent panel', selector: '.agent-main', stylesheet: 'components/agent/agent.css', fill: '--bg-sheet', elevation: '--e-sheet', edge: 'border' },
   { name: 'DevTools drawer', selector: '.devtools', stylesheet: 'styles.css', fill: '--bg-sheet', elevation: '--e-sheet', edge: 'border' },
   { name: 'History', selector: '.history-sheet', stylesheet: 'styles.css', fill: '--bg-surface', elevation: '--e-ring', edge: 'outline' },
   { name: 'Projects', selector: '.projects-sheet', stylesheet: 'styles.css', fill: '--bg-surface', elevation: '--e-ring', edge: 'outline' },
   { name: 'screenshot editor', selector: '.shot-editor-sheet', stylesheet: 'styles.css', fill: '--bg-surface', elevation: '--e-ring', edge: 'outline' },
   { name: 'Settings', selector: '.settings-sheet', stylesheet: 'settings.css', fill: '--bg-sheet', elevation: '--e-ring', edge: 'outline' },
-  { name: 'Help, Crawl and AI answers', selector: '.help-sheet', stylesheet: 'help.css', fill: '--bg-page', elevation: '--e-ring', edge: 'outline' },
+  { name: 'Help, Crawl and AI answers', selector: '.help-sheet', stylesheet: 'help.css', fill: '--bg-surface', elevation: '--e-ring', edge: 'outline' },
 ] as const satisfies readonly WorkspaceSheet[];
 
 /**

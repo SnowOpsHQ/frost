@@ -18,11 +18,13 @@ body,
   margin: 0;
 }
 
+/* The base type (specs/design-tokens.spec.ts, BASE_TYPE): the canvas's, Geist 13px/1.45 (--text-body).
+   Text that sets no font of its own draws it, never the system stack. */
 body {
   overflow: hidden;
   background: var(--bg-window);
   color: var(--text);
-  font: 13px/1.4 var(--font-ui);
+  font: var(--text-body);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   cursor: default;
@@ -712,7 +714,7 @@ input {
 
 /* The tab's WebContentsView is laid over exactly this box by main, its corners rounded to this
    card's (View.setBorderRadius: pageViewRadius in specs/workspace-layout.spec.ts). The page card:
-   --bg-page at --r-lg with --e-ring; its forced-colours edge is an outline outside the box, which the
+   --bg-surface at --r-lg with --e-ring; its forced-colours edge is an outline outside the box, which the
    native view (covering the whole box) never hides. What fills it instead of the view (the start
    view, the error and crash panels, the render profile's frame) is clipped to its corners. */
 .page-area {
@@ -722,12 +724,12 @@ input {
   min-height: 0;
   overflow: clip;
   border-radius: var(--r-lg);
-  background: var(--bg-page);
+  background: var(--bg-surface);
   box-shadow: var(--e-ring);
   outline: 1px solid transparent;
 }
 
-/* Signal (specs/design-tokens.feature.md, The new-tab view): flat --bg-page, no gradient wash; the
+/* Signal (specs/design-tokens.feature.md, The new-tab view): flat --bg-surface, no gradient wash; the
    FrostMark in --accent, the wordmark and hint on the --text-* type tokens (Geist). */
 .start {
   position: absolute;
@@ -738,7 +740,7 @@ input {
   justify-content: center;
   gap: var(--space-2);
   padding-bottom: 8vh;
-  background: var(--bg-page);
+  background: var(--bg-surface);
   text-align: center;
 }
 
@@ -783,7 +785,7 @@ input {
 
 /* Shown in the page area while main has hidden the tab's view (a failed load, a crashed page).
    Signal (specs/design-tokens.feature.md, The rest of the browser chrome): on the page area's
-   --bg-page, text on the --text-* tokens (Geist). */
+   --bg-surface, text on the --text-* tokens (Geist). */
 .panel {
   position: absolute;
   inset: 0;
@@ -792,7 +794,7 @@ input {
   justify-content: center;
   padding: var(--space-7) var(--space-7) 10vh;
   overflow: auto;
-  background: var(--bg-page);
+  background: var(--bg-surface);
   font: var(--text-body);
   user-select: text;
   cursor: auto;
@@ -801,7 +803,7 @@ input {
 .panel-card {
   --panel-tone: var(--text-faint);
   /* Opaque, so the illustration's gap strokes can match it exactly. */
-  --panel-badge-bg: color-mix(in srgb, var(--panel-tone) 10%, var(--bg-page));
+  --panel-badge-bg: color-mix(in srgb, var(--panel-tone) 10%, var(--bg-surface));
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -875,7 +877,8 @@ input {
 
 /* The app's secondary button (every panel's .panel-button): an --h-control pill on --bg-surface with
    --e-raised; hover lays --bg-hover over it. The transparent border is the edge forced colours draw
-   (1px less padding). It sets no font: it keeps the face of the panel it sits in. */
+   (1px less padding). Its label is body text at the emphasis weight, the canvas's, in every panel
+   (TEXT_TYPE_RULES): a panel that wants another face for it names both classes (.panel-button.x). */
 .panel-button {
   display: inline-flex;
   align-items: center;
@@ -887,6 +890,7 @@ input {
   background: var(--bg-surface);
   box-shadow: var(--e-raised);
   color: var(--text);
+  font: var(--text-body);
   font-weight: 500;
   transition:
     background-color var(--dur-fast) var(--ease-out),
@@ -1201,7 +1205,7 @@ input {
   align-items: center;
   gap: var(--space-1);
   flex: none;
-  width: var(--seo-rail-width);
+  width: var(--w-rail);
   padding: calc(var(--space-3) - 1px) 0;
   overflow: clip;
   border: 1px solid transparent;
@@ -4812,8 +4816,12 @@ input {
 }
 
 /* "Since the page loaded" heads the metric tiles: the section heads' rule draws it (.seo-section-title). */
+/* Its eyebrow's type, so its line box is the eyebrow's, not the body's (TEXT_TYPE_RULES). The
+   letter-spacing draws nothing (the eyebrow sets its own); the surface guard wants --text-caps' tracking beside it. */
 .seo-speed-since {
   margin: calc(var(--space-1) / 2) calc(var(--space-1) / 2) calc(-1 * var(--space-1));
+  font: var(--text-caps);
+  letter-spacing: 0.06em;
 }
 
 .seo-speed-soft {
@@ -6334,8 +6342,10 @@ input {
   color: var(--warn);
 }
 
+/* The date's and the description's type, so its lines are theirs, not the body's (TEXT_TYPE_RULES). */
 .seo-serp-description-row {
   display: block;
+  font: var(--text-small);
 }
 
 .seo-serp-date {
@@ -7019,6 +7029,12 @@ input {
   --verdict-soft: var(--danger-soft);
 }
 
+/* "Served HTML unavailable": the card's first line is its eyebrow, on a line of its own, so the line is
+   the eyebrow's, not the body's (TEXT_TYPE_RULES). Only that state has an eyebrow directly in the card. */
+.seo-js-state > .seo-eyebrow {
+  display: block;
+}
+
 .seo-js-state .seo-verdict-summary {
   margin: var(--space-3) 0 0;
 }
@@ -7078,6 +7094,13 @@ input {
 .seo-js-value {
   color: var(--text-muted);
   font: var(--text-small);
+}
+
+/* "Not set" (.seo-missing) takes the type of the value it stands in for; the shorthand resets the
+   modifier's italic, so it is set again. */
+.seo-js-field .seo-missing {
+  font: var(--text-small);
+  font-style: italic;
 }
 
 .seo-js-sides {

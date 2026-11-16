@@ -24,7 +24,7 @@
   contain: inline-size;
   /* A document on the page card's --bg-surface (it also frames the Crawl and AI answers sheets, whose
      cards are drawn for it); its shape is the page card's (styles.css, the page column's sheets). */
-  background: var(--bg-page);
+  background: var(--bg-surface);
 }
 
 .help {
@@ -148,8 +148,10 @@
   white-space: nowrap;
 }
 
+/* The type of the hints' "or", so its line box is theirs, not the body's (TEXT_TYPE_RULES). */
 .shortcuts-keys {
   margin: 0;
+  font: var(--text-small);
   text-align: end;
 }
 

@@ -117,7 +117,7 @@
   overflow: hidden;
   border: 1px solid transparent;
   border-radius: var(--r-lg);
-  background: var(--agent-bg);
+  background: var(--bg-sheet);
   box-shadow: var(--e-sheet);
   animation: agent-panel-in var(--dur-base) var(--ease-out) backwards;
 }

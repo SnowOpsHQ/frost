@@ -25,9 +25,9 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
 - **Sheets** (`WORKSPACE_SHEETS`): every one has `SHEET_RADIUS` (`--r-lg`) corners and clips its
   content to them (but the agent rail, whose one toggle never reaches its corners and whose focus
   ring reaches past its content box). The SEO rail, the SEO sheet, the agent rail, the open agent panel and the DevTools
-  drawer are `--bg-sheet` (the agent's `--agent-bg`) with `--e-sheet` ("rail, sidebar, agent panel")
+  drawer are `--bg-sheet` with `--e-sheet` ("rail, sidebar, agent panel")
   and a transparent 1px border inside their own widths (forced colours drop the shadow and repaint
-  the fill, and draw the border). The page card (`.page-area`) is `--bg-page` (`--bg-surface`) with
+  the fill, and draw the border). The page card (`.page-area`) is `--bg-surface` with
   `--e-ring`, as on the canvas; the sheets that fill the page column in its place (History, Projects,
   the screenshot editor, Settings, and Help's frame, which also holds Crawl and AI answers) keep their
   own fills and take the page card's shape: `--r-lg`, `--e-ring`. Their forced-colours edge is a

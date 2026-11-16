@@ -1,6 +1,6 @@
 // Specs: specs/design-tokens.spec.ts (BUNDLED_FONTS), specs/security-policy.spec.ts (APP_CSP_DIRECTIVES: font-src 'self')
-// Acceptance: specs/design-tokens.feature.md (End to end). Surfaces draw Geist (the command palette
-// first), so a font can load whenever such text is drawn, before this test could watch the page's
+// Acceptance: specs/design-tokens.feature.md (End to end). The body draws Geist (BASE_TYPE), so a font
+// loads as soon as the chrome draws text, before this test could watch the page's
 // requests (and the chrome page can't be reloaded to start clean: its navigation guard aborts that).
 // So the font requests and the console are recorded in main from launch (`font-request-log.cjs`),
 // and the test reads them once every face has loaded, whenever that happened. Where the fonts may come

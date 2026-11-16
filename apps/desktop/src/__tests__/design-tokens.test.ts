@@ -1,14 +1,16 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, GRAPHICS_ONLY_COLOURS, SIGNAL_SURFACES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS, FADES_SPARE_FOCUS, LoadsBefore)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, GRAPHICS_ONLY_COLOURS, SIGNAL_SURFACES, BASE_TYPE, TEXT_TYPE_RULES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS, FADES_SPARE_FOCUS, LoadsBefore)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import {
+  BASE_TYPE,
   BUNDLED_FONTS,
   CONTRAST_PAIRS,
   DISABLED_CONTROLS,
   DISABLED_INK,
   FADES_SPARE_FOCUS,
+  FONTS_STYLESHEET,
   FOCUS_RING_RULES,
   FORCED_COLOURS_BUSY,
   FORCED_COLOURS_KEPT,
@@ -26,6 +28,7 @@ import {
   SIGNAL_TOKENS,
   TAB_STRIP,
   TEXT_COLOUR_RULES,
+  TEXT_TYPE_RULES,
   THEMED_SIGNAL_GROUPS,
   TOKENS_STYLESHEET,
   type ContrastPair,
@@ -40,6 +43,7 @@ import {
   type StateEdge,
   type SignalSurface,
   type TextColourRule,
+  type TextTypeRule,
   type SignalToken,
   type SignalTokenGroup,
 } from '@app/specs/design-tokens.spec';
@@ -418,6 +422,13 @@ test('removed-legacy-tokens-are-gone', () => {
   );
   expect(REMOVED).toEqual(expect.arrayContaining(['--bg-field', '--seo-bg', '--seo-card', '--seo-track', '--serp-card', '--serp-text', '--gsc-line', '--gsc-axis']));
   expect(REMOVED).toEqual(expect.arrayContaining(['--bg-chrome', '--palette-bg', '--jump-tile-bg', '--agent-card']));
+  // And the base face's: the body's system face, and the three aliases the workspace's sheets read.
+  expect(REMOVED).toEqual(expect.arrayContaining(['--font-ui', '--bg-page', '--agent-bg', '--seo-rail-width']));
+  // What is left declared: the Signal tokens' own names, the layout constants and the sidebar's dragged width.
+  for (const row of MIGRATION) {
+    if (row.removed === true) continue;
+    expect(row.kind === 'alias' && (row.signal === row.legacy || row.signal === null || row.legacy === '--seo-panel-width'), `${row.legacy} is still declared`).toBe(true);
+  }
   // The sources searched below hold the renderer's scripts too (an inline style or a setProperty can read a token).
   for (const kind of ['.css', '.ts', '.tsx', '.html']) expect(RENDERER_SOURCES.some((name) => name.endsWith(kind)), kind).toBe(true);
   for (const name of REMOVED) {
@@ -659,6 +670,9 @@ function selectorIndex(css: string): Map<string, { order: number; outer: string[
   return index;
 }
 
+/** The longhands a `font` shorthand sets (and so resets when it doesn't name them). */
+const FONT_LONGHANDS = ['font-family', 'font-size', 'font-style', 'font-variant', 'font-weight', 'font-stretch', 'line-height'];
+
 /**
  * The value `property` resolves to for an element matching exactly the selectors `element` in `css`:
  * rules whose selector list holds one of them (top level, or in the dark media block for dark),
@@ -684,6 +698,8 @@ function resolveOnElement(css: string, element: readonly string[], property: str
   matched.sort((a, b) => a.spec - b.spec || a.order - b.order);
   const own = new Map<string, string>();
   for (const m of matched) {
+    // A `font` shorthand resets the longhands it covers: a weight or style set before it is gone.
+    if (m.property === 'font') for (const longhand of FONT_LONGHANDS) own.delete(longhand);
     own.set(m.property, m.value);
     // A `border` shorthand sets `border-color` too (its colour is its last word here: `1px solid transparent`),
     // and its width and style (the words that are a length or a style keyword; unset ones reset to 0 / none).
@@ -752,6 +768,131 @@ test('text-colour-rules-resolve', () => {
       `${rule.color}${rule.background ? ` on ${rule.background}` : ''} has a CONTRAST_PAIRS entry`,
     ).toBe(true);
   }
+});
+
+/** Every selector of `css`'s rules, each normalized (whitespace collapsed), its list split. */
+const selectorsOf = (css: string) => new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
+
+/** What `property` resolves to on `element` in `css`, or `null` when no rule sets it. */
+function resolvedOrNull(css: string, element: readonly string[], property: string, theme: 'light' | 'dark'): string | null {
+  try {
+    return resolveOnElement(css, element, property, theme);
+  } catch (error) {
+    if (error instanceof Error && error.message.endsWith(`: no ${property} (${theme})`)) return null;
+    throw error;
+  }
+}
+
+/** A selector's subject: its last compound (after its last combinator outside parentheses). */
+function subjectCompound(selector: string): string {
+  let depth = 0;
+  let start = 0;
+  const text = selector.trim();
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
+    else if (depth === 0 && /[\s>+~]/.test(ch)) start = i + 1;
+  }
+  return text.slice(start);
+}
+
+/**
+ * Whether a selector can match the document's root or body itself: its subject is `:root`, `html`, `body` or
+ * the universal selector (which matches the body too), each with any classes, attributes or pseudo-classes
+ * after it, or a `:where()` or `:is()` holding one; never a pseudo-element.
+ */
+function setsRootOrBody(selector: string): boolean {
+  const subject = subjectCompound(selector);
+  if (subject.includes('::')) return false;
+  const wrapped = /^:(?:where|is)\((.*)\)/.exec(subject);
+  if (wrapped) return splitSelectors(wrapped[1]!).some(setsRootOrBody);
+  return /^(?:\*|:root|html|body)(?![\w-])/.test(subject);
+}
+
+/** The declarations of `css` that set a font (shorthand or longhand) on a selector that can match the root or body. */
+const rootFontDeclarations = (css: string) =>
+  parse(css)
+    .declarations.filter((d) => (d.property === 'font' || FONT_LONGHANDS.includes(d.property)) && splitSelectors(d.context.at(-1) ?? '').some(setsRootOrBody))
+    .map((d) => `${d.context.join(' > ')} { ${d.property}: ${d.value} }`);
+
+test('body-sets-the-base-type', () => {
+  // The matcher: the root and body by name, inside `:where()` or `:is()`, and the universal selector (which sets
+  // the body's own font too); not a descendant of them, a class, or a pseudo-element.
+  const caught: Record<string, string> = {
+    ':where(body) font': ':where(body) { font: var(--text-small); }',
+    ':where(body) line-height': ':where(body) { line-height: 2; }',
+    'the universal selector': '* { font-size: 15px; }',
+    ':is(html) font-weight': ':is(html) { font-weight: 600; }',
+    'body in a list': '.x, body { font-style: italic; }',
+  };
+  for (const [label, css] of Object.entries(caught)) expect.soft(rootFontDeclarations(css), label).not.toEqual([]);
+  const passed: Record<string, string> = {
+    'a descendant of body': 'body .x { font: var(--text-small); }',
+    'a class named body': '.body { font: var(--text-small); }',
+    'a pseudo-element of everything': '*::before { font-size: 15px; }',
+    'a descendant of everything': '* .x { font-weight: 600; }',
+    'no font': ':where(body) { color: red; }',
+  };
+  for (const [label, css] of Object.entries(passed)) expect.soft(rootFontDeclarations(css), label).toEqual([]);
+
+  const typeTokens = new Set<string>(SIGNAL_TOKENS.type.map((token) => token.name));
+  expect(typeTokens.has(BASE_TYPE.font), BASE_TYPE.font).toBe(true);
+  const css = read(BASE_TYPE.stylesheet);
+  // The body's font is exactly the token, and nothing beside it reshapes the type.
+  const body = parse(css).declarations.filter((d) => d.context.length === 1 && splitSelectors(d.context[0]!).some((s) => s.trim() === BASE_TYPE.selector));
+  const type = body.filter((d) => d.property === 'font' || FONT_LONGHANDS.includes(d.property) || d.property === 'letter-spacing');
+  expect(type.map((d) => `${d.property}: ${d.value}`)).toEqual([`font: var(${BASE_TYPE.font})`]);
+  // No other rule of any renderer stylesheet sets a font on the document's root or body.
+  const others = STYLESHEETS.flatMap((file) => rootFontDeclarations(read(file)).map((d) => `${file}: ${d}`));
+  expect(others).toEqual([`${BASE_TYPE.stylesheet}: ${BASE_TYPE.selector} { font: var(${BASE_TYPE.font}) }`]);
+  // Buttons and fields take the font around them (Chromium's own stylesheet would give them a system font).
+  const inherit = parse(css).declarations.filter((d) => d.context.length === 1 && d.property === 'font' && d.value === 'inherit');
+  const inheriting = new Set(inherit.flatMap((d) => splitSelectors(d.context[0]!).map((s) => s.trim())));
+  for (const element of BASE_TYPE.inherit) expect(inheriting.has(element), `${element} { font: inherit }`).toBe(true);
+  // A font set anywhere names a type token (or inherits): no stylesheet spells out a face, the system stack included.
+  const spelled = STYLESHEETS.filter((file) => file !== FONTS_STYLESHEET).flatMap((file) =>
+    parse(read(file))
+      .declarations.filter((d) => (d.property === 'font' && !/^var\(--text-[a-z]+\)$|^inherit$/.test(d.value)) || d.property === 'font-family')
+      .map((d) => `${file}: ${d.context.join(' > ')} { ${d.property}: ${d.value} }`),
+  );
+  expect(spelled).toEqual([]);
+});
+
+test('text-type-rules-resolve', () => {
+  // The resolver: a `font` shorthand resets a weight or style set before it, a later longhand sets it again,
+  // and a panel's own rule naming both classes wins over the shared button's, whatever the order.
+  const sample = `.b { font: var(--text-small); font-weight: 600; font-style: italic; } .b { font: var(--text-body); } .c { font-weight: 500; }`;
+  expect(resolveOnElement(sample, ['.b'], 'font', 'light')).toBe('var(--text-body)');
+  expect(resolvedOrNull(sample, ['.b'], 'font-weight', 'light')).toBeNull();
+  expect(resolvedOrNull(sample, ['.b'], 'font-style', 'light')).toBeNull();
+  expect(resolveOnElement(sample, ['.b', '.c'], 'font-weight', 'light')).toBe('500');
+  const feature = '.panel-button.x { font: var(--text-small); }';
+  const shared = '.panel-button { font: var(--text-body); font-weight: 500; }';
+  expect(resolveOnElement(`${feature}\n${shared}`, ['.panel-button', '.panel-button.x'], 'font', 'light')).toBe('var(--text-small)');
+  expect(resolvedOrNull(`${feature}\n${shared}`, ['.panel-button', '.panel-button.x'], 'font-weight', 'light')).toBeNull();
+
+  const typeTokens = new Set<string>(SIGNAL_TOKENS.type.map((token) => token.name));
+  const familyOf = (token: string) => (SIGNAL_TOKENS.type.find((t) => t.name === token)!.light.includes('Geist Mono') ? 'Geist Mono' : 'Geist');
+  const rules: readonly TextTypeRule[] = TEXT_TYPE_RULES;
+  for (const rule of rules) {
+    const css = cascade(rule);
+    const label = rule.element.at(-1)!;
+    expect(typeTokens.has(rule.font), `${label}: ${rule.font} is a type token`).toBe(true);
+    if (rule.weight !== undefined)
+      expect(BUNDLED_FONTS.some((font) => font.family === familyOf(rule.font) && String(font.weight) === rule.weight), `${label}: ${familyOf(rule.font)} ${rule.weight} is bundled`).toBe(true);
+    const selectors = selectorsOf(css);
+    for (const selector of rule.element) expect(selectors.has(selector), `${rule.stylesheet} has ${selector}`).toBe(true);
+    for (const theme of THEME_NAMES) {
+      expect(resolveOnElement(css, rule.element, 'font', theme), `${label}: font (${theme})`).toBe(`var(${rule.font})`);
+      expect(resolvedOrNull(css, rule.element, 'font-weight', theme), `${label}: font-weight (${theme})`).toBe(rule.weight ?? null);
+      expect(resolvedOrNull(css, rule.element, 'font-style', theme), `${label}: font-style (${theme})`).toBe(rule.style ?? null);
+      if (rule.display !== undefined) expect(resolvedOrNull(css, rule.element, 'display', theme), `${label}: display (${theme})`).toBe(rule.display);
+    }
+  }
+  // The six texts the visual baseline drew in the system stack are each covered.
+  const covered = rules.map((rule) => rule.why).join(' ');
+  for (const text of ['Run accessibility check', 'Fetch again', 'Check for selector updates', 'Enable on-device intent', 'Classify', 'Not set']) expect(covered, text).toContain(`"${text}"`);
 });
 
 test('focus-rings-outlast-hover-and-busy', () => {

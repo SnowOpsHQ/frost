@@ -2,7 +2,7 @@
 
 Spec: `specs/design-tokens.spec.ts` (`TOKENS_STYLESHEET`, `SIGNAL_TOKENS`, `THEMED_SIGNAL_GROUPS`,
 `SIGNAL_NAMES_WITH_LEGACY_VALUES`, `LEGACY_TOKEN_MIGRATION`, `CONTRAST_PAIRS`, `GRAPHICS_ONLY_COLOURS`, `HEX_COLOUR_RATCHET`, `SIGNAL_SURFACES`,
-`FONTS_STYLESHEET`, `GEIST_PACKAGE`, `GEIST_FONTS_ALIAS`, `TEXT_BODY_EMPHASIS_WEIGHT`, `BUNDLED_FONTS`). Source of truth:
+`FONTS_STYLESHEET`, `GEIST_PACKAGE`, `GEIST_FONTS_ALIAS`, `TEXT_BODY_EMPHASIS_WEIGHT`, `BUNDLED_FONTS`, `BASE_TYPE`, `TEXT_TYPE_RULES`). Source of truth:
 the Signal token sheet (its values and its Migration table) and the round-2 council decisions.
 Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.tsx`. Each line maps to one named test.
 
@@ -109,9 +109,48 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the installed package's `dist/fonts/` (its `exports` map hides them). Vite emits the four files as
   hashed assets served from `app://` (the CSP's `font-src 'self'`): never a CDN, a remote URL or a
   `data:` URI, and nothing else of the package is bundled. `main.tsx` imports `fonts.css` right after
-  `tokens.css`. The fonts are applied surface by surface, as each surface PR moves its text onto the
-  `--text-*` tokens (the command palette first); `--font-ui`, the body's face, is still the system
-  stack (Left for later).
+  `tokens.css`. The fonts were applied surface by surface, as each surface PR moved its text onto the
+  `--text-*` tokens (the command palette first), and since the base face (below) the body draws Geist
+  too, so Geist 400 is drawn from launch.
+- **The base face.** `body` sets `font: var(--text-body)` (`BASE_TYPE`): the canvas's base, whose boards
+  set Geist 13px/1.45 on their root and `font: inherit` on their buttons. It was `13px/1.4` in the system
+  stack (`--font-ui`, now `removed`): the same size, a line height of 1.45 for 1.4, Geist for the system
+  face. No other rule sets a font on `html`, `:root` or `body`, and no rule anywhere spells out a face: a
+  `font` names a `--text-*` token or `inherit`, and only `fonts.css` names a family. Form controls take
+  the font around them only where a rule says so (Chromium gives them a system font): `button` and
+  `input` keep `font: inherit`, a `select` or `textarea` sets its own type through its class. Text that
+  inherited the body's face because nothing around it set one sets its own now (`TEXT_TYPE_RULES`): the
+  SEO panels' wrapper (`.seo`) and `.panel-button` set no font, so six texts of the visual baseline drew
+  the system stack: the `.panel-button` labels Compliance's "Run accessibility check", JavaScript's "Fetch
+  again", SERP's "Check for selector updates", Visibility's "Enable on-device intent" and "Classify", and
+  JavaScript's "Not set". `.panel-button`, the app's secondary button, sets `font: var(--text-body)` and
+  keeps its weight 500 (the canvas's buttons: body text at the emphasis weight), in every panel it sits
+  in; a panel that wants another face for it names both classes (`.panel-button.x`), which wins whatever
+  the order of the stylesheets. Every other panel's buttons inherited `--text-body` at 500 already, but
+  one: Rankings' API-check notice (`.rankings-notice`, `--text-small`) drew its Send and Cancel at 12px;
+  they are 13px now, as AI answers' Send and Cancel already were (a secondary button is one size
+  everywhere; no exception rule). No capture shows that notice. A missing value (`.seo-missing`, a modifier: `--text-faint`, italic)
+  takes the type of the value it stands in for: in a JavaScript field `.seo-js-value`'s `--text-small`
+  (`.seo-js-field .seo-missing`, its italic restored after the shorthand). Comparing the computed type
+  and box of every element of every capture, before and after, found three blocks whose text sets its own
+  type but whose line box was the body's line height (a block's strut is its own font): Page Speed's
+  "Since the page loaded" header, Content's result preview description row and Help's key hints. Each
+  grew 0.65px a line; each now takes the type of the text it holds (`--text-caps`, `--text-small`,
+  `--text-small`), so the header is 15.95px (it was 18.2) and the description's lines 16.8px (18.2), and
+  the key hints, whose own boxes are taller, don't move. Review found a fourth by rendering, in no capture:
+  JavaScript's "Served HTML unavailable" card (`.seo-js-state[data-verdict='unavailable']`), a plain block
+  whose first line is its inline eyebrow; that eyebrow takes a line of its own (`.seo-js-state >
+  .seo-eyebrow { display: block }`), so the line is the eyebrow's 14.3px, as the other verdict cards'
+  eyebrows are (in a flex head). Not a `font` on the card: `--text-micro` needs its tracking beside it,
+  and the card's summary, facts and button would inherit that. The cascade check reads only rules that name an element, so a
+  type an element inherited from its container is invisible to it: the notice and the card were found by
+  rendering every DOM state the renderer's component tests produce under main's CSS and the branch's. The three aliases the
+  workspace's sheets read went in the same PR, with no pixel changed: the page card, the new-tab view,
+  the error panels and Help's frame (`.page-area`, `.start`, `.panel`, `.panel-card`'s badge tint,
+  `.help-sheet`) read `--bg-surface` (`--bg-page`), the agent panel's sheet (`.agent-main`) `--bg-sheet`
+  (`--agent-bg`) and the SEO rail (`.seo-rail`) `--w-rail` (`--seo-rail-width`); `WORKSPACE_SHEETS`
+  pins those fills. The Help frame (`.help`, `.help-sheet`) still sets no font: text in it that sets none
+  inherits the body's, now `--text-body`.
 - **Surface PRs.** A surface's rules (`SIGNAL_SURFACES`: its stylesheet and its class prefix, or, where
   other surfaces share the prefix or its classes share none, the exact classes and `-*` families it lists with its keyframes; a
   rule is the surface's when any selector names one of its classes, on a class boundary, or it sits in
@@ -133,7 +172,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   key hints (`help.css`), which read the palette's key-hint names, move to the same Signal tokens.
 - **The new-tab view** (the start view and "Jump back in") follows the token sheet's Migration notes;
   the approved canvas has no new-tab screen, so the rest comes from the token `use` notes. The view is
-  flat `--bg-page` (`--start-glow`: "no gradient washes"); the FrostMark is `--accent` (`--start-mark`),
+  flat `--bg-surface` (`--bg-page` until the base face; `--start-glow`: "no gradient washes"); the FrostMark is `--accent` (`--start-mark`),
   in the tab row's empty-tab glyph too; the mark eases in over `--dur-slow` with `--ease-out`. The
   wordmark is `--text-display` (the type scale's largest: it was 44px at weight 300, which Geist isn't
   bundled in) and the hint `--text-body` in `--text-muted`. "Jump back in" takes `--text-caps` for its
@@ -309,7 +348,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   button an `--h-chip` circle. The fullscreen notice is `--inverse` with `--on-inverse` text (its two
   literal hex colours and its inset edge went), still `FULLSCREEN_BANNER_HEIGHT` high. The status bar
   is `--text-muted` on `--bg-window`, the connection `--text-faint`, the zoom plain `--text-mono` (the
-  canvas's; its outlined chip went). The page area's frame keeps `--bg-page`; the rule between the
+  canvas's; its outlined chip went). The page area's frame keeps `--bg-page` (`--bg-surface` since the base face); the rule between the
   chrome and the page moved from the toolbar's foot to the top of the workspace (`--bg-chrome-edge` →
   `--divider`), so a band under the toolbar belongs to the chrome, and the status bar kept a `--divider`
   rule above it while the page was flush. The workspace's layout (`workspace-layout.feature.md`) made
@@ -587,7 +626,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   status chip an `--h-badge` pill on `--accent-soft` in `--text-small` at weight 500, `--accent` text.
   The toolbar's render toggle, while a profile is in force, is `--accent` on `--accent-soft`, as the SEO
   toggle pressed; pressed, its edge is `--accent` (`--render-edge`).
-  **Error and crash panels:** on `--bg-page` (the page area's), `--space-7` in; the art keeps its 76px
+  **Error and crash panels:** on `--bg-page` (the page area's; `--bg-surface` since the base face), `--space-7` in; the art keeps its 76px
   badge, now at `--r-lg` with no inset edge, filled with its tone at 10% over the page (opaque, so the
   art's gap strokes match it): `--text-faint` (`--panel-art`, `removed`), `--danger` for a certificate
   error, `--warn` for a crash; the title `--text-display` (it was 22px), the message `--text-body` in
@@ -887,7 +926,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   (`DISABLED_CONTROLS`); the area hint an `--accent-soft` notice at `--r-md` with a transparent border; a
   shot's thumbnail and preview at `--r-sm` edged by `--divider`, the thumbnail's empty state on
   `--bg-subtle` (`--bg-hover`) in `--text-faint`, its time `--text-faint` and size `--text-muted` in
-  `--text-small`. **Projects:** a `--bg-surface` sheet (`--bg-page`), History's: the title `--text-title`,
+  `--text-small`. **Projects:** a `--bg-surface` sheet (the page card's fill), History's: the title `--text-title`,
   `--space-5` in; Close an `--h-control` circle, a list's icon buttons (star, Remove) `--h-chip` circles in
   `--text-muted` (`--icon`, `--radius-control`) at `--icon-sm`, `--bg-hover` hovered; the sheet's buttons the
   canvas's secondary button at `--h-chip` (`--text-small` at 500 on `--bg-surface` with `--e-raised`, hover
@@ -1038,7 +1077,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 2. Foundation (done).
 3. Values (done): re-point the aliases and swap the shared names to their Signal values; Geist is
    bundled (done, its own change), applied per surface through the `--text-*` tokens from step 4 on
-   (the command palette first); `--font-ui` stays the system stack.
+   (the command palette first); `--font-ui` stays the system stack (until step 6).
 4. One PR per surface: rules move onto Signal tokens, retired names go (`removed`). The command
    palette is first (its `--palette-*` names `removed`), then the new-tab view (its `--start-*` and
    `--jump-*` names), the agent panel (its `--agent-*` names, but the aliases `--agent-bg` and
@@ -1061,7 +1100,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 5. Cleanup (done): the names no rule reads are `removed`, retired names and aliases of another Signal
    token alike (21: `--bg-chrome`, `--palette-bg`, `--jump-tile-bg` and `--agent-card` after their
    readers moved to their Signal tokens), and the last `--ok`-as-text rule moved to `stroke`, with no
-   pixel changed. What is left is listed under Left for later.
+   pixel changed.
+6. Base face (done): `body` sets `--text-body` (`BASE_TYPE`) and the six texts that inherited the system
+   face set their own type (`TEXT_TYPE_RULES`), with a re-baseline; `--font-ui`, `--bg-page`, `--agent-bg`
+   and `--seo-rail-width` are `removed`. The legacy names still declared are the Signal tokens' own names,
+   the layout constants and `--seo-panel-width`. What is left is listed under Left for later.
 
 ## Unit (`apps/desktop/src/__tests__/design-tokens.test.ts`)
 - **Scenario: tokens-stylesheet-holds-only-root-tokens** — `tokens.css` has only `:root` blocks
@@ -1075,7 +1118,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   replacement named is a Signal token.
 - **Scenario: removed-legacy-tokens-are-gone** — a `removed` row is a `retire` row or an `alias` of
   another Signal token (its `signal` neither null nor its own name), and no `removed` name is a Signal
-  token; each surface PR's and the cleanup's names are among them; a `removed` name is declared in
+  token; each surface PR's, the cleanup's and the base face's names are among them, and every name not
+  `removed` is a self-alias, a layout constant or `--seo-panel-width`; a `removed` name is declared in
   neither theme of `tokens.css`, and no renderer source (`.css`, `.ts`, `.tsx`, `index.html` under
   `src/renderer`, each kind present in the search) mentions it outside a comment. A script's comments are
   found by a scanner that keeps string, template and regex literals whole (`'a//b var(--bg-chrome)'` is
@@ -1084,8 +1128,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   reads a token.
 - **Scenario: legacy-token-values-are-pinned** — the 89 legacy names' light and dark values match a
   committed snapshot (the values step updated it on purpose: the aliases became `var()`, their dark
-  entries went, and the shared names took their Signal values; each surface PR, and the cleanup,
-  drops its `removed` names from it).
+  entries went, and the shared names took their Signal values; each surface PR, the cleanup and the
+  base face drop their `removed` names from it).
 - **Scenario: legacy-aliases-point-at-signal-tokens** — every alias still declared whose Signal token
   has another name is exactly `var(<signal>)` in light and has no dark override; the self-aliases are exactly
   the shared names; `--w-panel` and `--w-rail` equal `SIDEBAR_PANEL_WIDTH` / `SIDEBAR_RAIL_WIDTH`
@@ -1101,6 +1145,23 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   sets to it (one level). Fixtures: a plain rule, `@media`, `@supports`, native nesting, a custom property,
   `var( --ok )`, `!important`, `-webkit-text-fill-color` and `color-mix()` are caught; `--ok-ink`, a
   `stroke`, a border and a custom property only a `stroke` reads are not.
+- **Scenario: body-sets-the-base-type** — `BASE_TYPE.font` is a type token; `body`'s rule in `styles.css`
+  sets exactly `font: var(--text-body)` and no other font longhand or letter-spacing; it is the only rule
+  in any renderer stylesheet setting a font on `:root`, `html` or `body` (a selector whose subject is one of
+  them or `*`, also inside `:where()` or `:is()`, never a pseudo-element; fixtures: `:where(body)` with a
+  font and with a line height, `*` with a size, `:is(html)` and `body` in a list are caught; `body .x`, `.body`,
+  `*::before`, `* .x` and a rule with no font are not); `button` and `input` each sit in
+  a rule setting `font: inherit`; and no stylesheet but `fonts.css` sets `font-family` or a `font` that
+  is not one `var(--text-*)` or `inherit` (so nothing names the system stack).
+- **Scenario: text-type-rules-resolve** — for each `TEXT_TYPE_RULES` entry, its `font` is a type token and
+  its `weight` one `BUNDLED_FONTS` has for that token's family; each selector it names is one of its
+  stylesheets'; in light and dark the cascade over its `element` (its stylesheet, then each
+  `loadsBefore`) resolves `font` to `var(<font>)`, and `font-weight` and `font-style` to the entry's
+  `weight` and `style`, or to nothing set when it names none, and `display` to the entry's `display` when it
+  names one; a `font` shorthand resets the weight and
+  style set before it (the resolver's fixtures: a shorthand after a weight and an italic drops both; a
+  later weight sets it again; `.panel-button.x`'s font wins over `.panel-button`'s from a stylesheet
+  loaded after it, and drops its weight). The six texts are each named in an entry.
 - **Scenario: tab-strip-sets-tabs-off-the-strip** — in light and dark, against the (opaque) strip
   (`TAB_STRIP.strip`), the active tab's fill reaches `TAB_STRIP.minActiveOnStrip`, an inactive tab's
   (`TAB_STRIP.idle`, composited over the strip) `minIdleOnStrip` and a hovered tab's (`TAB_STRIP.hover`,
@@ -1292,20 +1353,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   would replace the app's own.)
 
 ## Left for later
-What the rollout leaves, each where it lives; none is fixed by the cleanup.
-- **`--font-ui`, the body's face** (`styles.css`, `body`: `13px/1.4` in the system stack). Text that sets
-  no font of its own still draws in it: `.seo` and `.panel-button` set none, so in the visual baseline
-  the `.panel-button` labels in the SEO panels (Compliance's "Run accessibility check", JavaScript's
-  "Fetch again", SERP's "Check for selector updates", Visibility's "Enable on-device intent" and
-  "Classify") and JavaScript's "Not set" (`.seo-missing` in `.seo-js-field`) are system text. Giving
-  them, or `body`, `--text-body` changes their pixels: a PR of its own with a re-baseline, after which
-  `--font-ui` is `removed`.
-- **`--bg-page`, `--agent-bg` and `--seo-rail-width`** (aliases of `--bg-surface`, `--bg-sheet` and
-  `--w-rail`). Their readers are the workspace's sheets: `.page-area`, `.start`, `.panel` and
-  `.panel-card` in `styles.css` and `.help-sheet` in `help.css` (`--bg-page`), `.agent-main` in
-  `components/agent/agent.css` (`--agent-bg`) and `.seo-rail` in `styles.css` (`--seo-rail-width`). The
-  workspace's layout PR rewrites those rules and names `--bg-page` and `--agent-bg` as sheet fills;
-  after it, the readers take the Signal tokens and the three are `removed`.
+What the rollout leaves, each where it lives; none is fixed by the cleanup or the base face.
 - **The pass dot's check glyph** (the SEO rail's `.seo-rail-dot` and Overview's checks by category,
   `styles.css`): the screen draws a check, which needs markup; a pass is a filled `--ok` disc meanwhile.
 - **The render-profile bar's checkbox labels fade** (`styles.css`, `.render-check:has(input:disabled)`,
@@ -1337,8 +1385,6 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup.
 - **Some states have no baseline capture** (`apps/desktop/e2e/visual.e2e.ts`): the crawl and AI answers
   sheets' run cards, picks and pills, and SERP's and Visibility's tables; their captures are the empty
   or before-run states, so those parts are checked by the token guards only.
-- **The Help frame sets no font of its own** (`help.css`, `.help` and `.help-sheet`): its parts set
-  theirs, and anything that doesn't inherits `body`'s `--font-ui` (above).
 - **Help's setup check has a 1.5px border** (`help.css`, `.setup-check`, the setup checklist's 14px
   `--switch-off` ring): Chromium draws it as 1px; a whole pixel would change its look.
 - **The cascade checks read only the dark and forced-colours blocks** (`apps/desktop/src/__tests__/design-tokens.test.ts`,
