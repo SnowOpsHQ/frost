@@ -217,18 +217,24 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
   if ((await page.getByTestId('seo-panel').getAttribute('data-panel')) !== 'overview') await page.locator('[data-testid="seo-rail-item"][data-panel="overview"]').click();
   await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'overview');
   await expect(page.getByTestId('agent-panel')).toHaveAttribute('data-open', 'false');
+  // The audit is in: Overview shows its score card.
+  await expect(page.locator('.seo-score-card')).toBeVisible({ timeout: 30_000 });
   const padding = () => page.locator('.seo-body').evaluate((el) => getComputedStyle(el).paddingLeft);
   try {
     // A width the panel's minimum fits: the canvas's 16px.
     await page.setViewportSize({ width: 900, height: 700 });
     await expect.poll(padding).toBe('16px');
     await page.setViewportSize({ width: NARROW_WINDOW.width, height: 700 });
+    // Each within a pixel: on a scaled display the chrome's width is a fraction off the one asked for.
+    const want = { rail: AGENT_RAIL_WIDTH, railGap: WORKSPACE_GAP.px, panel: NARROW_WINDOW.seoSheet, card: PAGE_MIN_WIDTH };
     await expect
       .poll(async () => {
-        const [rail, panel, card] = await Promise.all([box('.agent-rail'), box('.seo-panel'), box('.page-area')]);
-        return { rail: rail && [Math.round(rail.width), Math.round(NARROW_WINDOW.width - (rail.x + rail.width))], panel: panel && Math.round(panel.width), card: card && Math.round(card.width) };
+        const [width, rail, panel, card] = await Promise.all([page.evaluate(() => innerWidth), box('.agent-rail'), box('.seo-panel'), box('.page-area')]);
+        if (!rail || !panel || !card) return 'missing';
+        const got = { rail: rail.width, railGap: width - (rail.x + rail.width), panel: panel.width, card: card.width };
+        return (Object.keys(want) as (keyof typeof want)[]).every((k) => Math.abs(got[k] - want[k]) <= 1) ? 'ok' : JSON.stringify(got);
       })
-      .toEqual({ rail: [AGENT_RAIL_WIDTH, WORKSPACE_GAP.px], panel: NARROW_WINDOW.seoSheet, card: PAGE_MIN_WIDTH });
+      .toBe('ok');
     // Under the panel's minimum the body gives its content the padding back, and Overview's first card fits it.
     await expect.poll(padding).toBe('4px');
     const fits = await page.locator('.seo-body').evaluate((body) => {
