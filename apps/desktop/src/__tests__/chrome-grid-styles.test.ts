@@ -385,9 +385,14 @@ test('tight-gaps-switch-together', () => {
   expect(resolved(['styles.css'], '.chrome').get('container')).toBe('chrome / inline-size');
   // One condition, wherever it is written: the workspace's own width under the spec's threshold.
   const blocks = CSS_FILES.flatMap((file) => containerBlocks(file, 'chrome').map((block) => ({ file, ...block })));
-  expect(blocks.map((block) => block.file).sort()).toEqual(['components/agent/agent.css', 'styles.css']);
+  expect([...new Set(blocks.map((block) => block.file))].sort()).toEqual(['components/agent/agent.css', 'styles.css']);
   for (const block of blocks) expect(block.condition, block.file).toBe(`width < ${TIGHT_WORKSPACE_BELOW}px`);
-  const tight = (file: string, selector: string) => blocks.find((block) => block.file === file)!.rules.get(selector) ?? new Map<string, string>();
+  // A file's blocks together (the drawer's section repeats the query: every .devtools rule lives there).
+  const tight = (file: string, selector: string) => {
+    const own = new Map<string, string>();
+    for (const block of blocks) if (block.file === file) for (const [property, value] of block.rules.get(selector) ?? []) own.set(property, value);
+    return own;
+  };
   const T = `var(${WORKSPACE_GAP_TIGHT.token})`;
   // Each gap and inset that is --space-3 outside the query is --space-1 inside it.
   const pairs: [string, string, string, string][] = [

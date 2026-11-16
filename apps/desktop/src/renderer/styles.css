@@ -7749,6 +7749,15 @@ input {
   margin: var(--space-2) 0;
 }
 
+/* The drawer's gap under the row in a narrow workspace (specs/workspace-layout.feature.md, A narrow
+   window: the chrome's query, kept in this section with every .devtools rule). */
+@container chrome (width < 748px) {
+  .devtools {
+    max-height: calc(100% - var(--devtools-page-min) - var(--space-1));
+    margin-top: var(--space-1);
+  }
+}
+
 /* End of Devtools drawer */
 
 /* Browser polish (Phase 2.5 Task 6, specs/browser-polish.feature.md): the find bar, the History
@@ -10879,8 +10888,8 @@ input {
    gap and inset of the workspace is --space-1 together, the bands' too, so their edges stay on the
    sheets' (the two gaps inside the page column, the palette's and a Projects run's, cost no width
    and stay). The separators keep their 8px hit area: offset by the 4px gap, they also cover the pane's
-   own 4px edge beside it (never the page card), their line in the middle of the gap. The agent's
-   stylesheet repeats this query for its separator. Last in the file, after the rules it overrides. */
+   own 4px edge beside it (never the page card), their line in the middle of the gap. The DevTools
+   drawer's section and the agent's stylesheet repeat this query for the drawer and the separator. Last in the file, after the rules it overrides. */
 @container chrome (width < 748px) {
   .workspace-stack {
     padding: 0 var(--space-1);
@@ -10898,11 +10907,6 @@ input {
   .seo-separator::after {
     left: auto;
     right: calc(var(--space-1) / 2 - 1px);
-  }
-
-  .devtools {
-    max-height: calc(100% - var(--devtools-page-min) - var(--space-1));
-    margin-top: var(--space-1);
   }
 
   .prompt-bar,
