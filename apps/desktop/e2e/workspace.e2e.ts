@@ -11,7 +11,7 @@ import { DEVTOOLS_MENU_ID } from '@app/specs/devtools.spec';
 import { fitRenderViewport } from '@app/specs/render-profile.spec';
 import { AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
 import { PAGE_MIN_WIDTH } from '@app/specs/seo-sidebar.spec';
-import { NARROW_WINDOW, pageViewRadius, WORKSPACE_GAP } from '@app/specs/workspace-layout.spec';
+import { NARROW_WINDOW, pageViewRadius, TIGHT_WORKSPACE_BELOW, WORKSPACE_GAP, WORKSPACE_GAP_TIGHT, workspaceGap } from '@app/specs/workspace-layout.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -88,13 +88,15 @@ const sameBox = (a: Box, b: Box) => near(a.x, b.x) && near(a.y, b.y) && near(a.w
 async function cardMatches(radius: number, view: (card: Box) => Box = (card) => card): Promise<void> {
   await expect
     .poll(async () => {
-      const [state, card, sidebar, agent] = await Promise.all([viewState(), box('.page-area'), box('.seo'), box('.agent')]);
+      const [state, card, sidebar, agent, width] = await Promise.all([viewState(), box('.page-area'), box('.seo'), box('.agent'), page.evaluate(() => innerWidth)]);
+      // The workspace's gap at this width: tight under TIGHT_WORKSPACE_BELOW.
+      const gap = workspaceGap(width);
       if (!state.bounds || !card || !sidebar || !agent) return 'missing';
       const want = view(card);
       if (!sameBox(state.bounds, want)) return `view ${JSON.stringify(state.bounds)} card ${JSON.stringify(want)}`;
       if (state.radius !== radius) return `radius ${state.radius}`;
-      if (!near(card.x - (sidebar.x + sidebar.width), WORKSPACE_GAP.px)) return `left gap ${card.x - (sidebar.x + sidebar.width)}`;
-      if (!near(agent.x - (card.x + card.width), WORKSPACE_GAP.px)) return `right gap ${agent.x - (card.x + card.width)}`;
+      if (!near(card.x - (sidebar.x + sidebar.width), gap)) return `left gap ${card.x - (sidebar.x + sidebar.width)}`;
+      if (!near(agent.x - (card.x + card.width), gap)) return `right gap ${agent.x - (card.x + card.width)}`;
       return 'ok';
     })
     .toBe('ok');
@@ -226,12 +228,23 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
     await expect.poll(padding).toBe('16px');
     await page.setViewportSize({ width: NARROW_WINDOW.width, height: 700 });
     // Each within a pixel: on a scaled display the chrome's width is a fraction off the one asked for.
-    const want = { rail: AGENT_RAIL_WIDTH, railGap: WORKSPACE_GAP.px, panel: NARROW_WINDOW.seoSheet, card: PAGE_MIN_WIDTH };
+    // Tight gaps everywhere: the window's edges and between every two sheets.
+    const T = WORKSPACE_GAP_TIGHT.px;
+    const want = { rail: AGENT_RAIL_WIDTH, railGap: T, leftEdge: T, railToSheet: T, sheetToCard: T, cardToAgent: T, panel: NARROW_WINDOW.seoSheet, card: PAGE_MIN_WIDTH };
     await expect
       .poll(async () => {
-        const [width, rail, panel, card] = await Promise.all([page.evaluate(() => innerWidth), box('.agent-rail'), box('.seo-panel'), box('.page-area')]);
-        if (!rail || !panel || !card) return 'missing';
-        const got = { rail: rail.width, railGap: width - (rail.x + rail.width), panel: panel.width, card: card.width };
+        const [width, rail, seoRail, panel, card] = await Promise.all([page.evaluate(() => innerWidth), box('.agent-rail'), box('.seo-rail'), box('.seo-panel'), box('.page-area')]);
+        if (!rail || !seoRail || !panel || !card) return 'missing';
+        const got = {
+          rail: rail.width,
+          railGap: width - (rail.x + rail.width),
+          leftEdge: seoRail.x,
+          railToSheet: panel.x - (seoRail.x + seoRail.width),
+          sheetToCard: card.x - (panel.x + panel.width),
+          cardToAgent: rail.x - (card.x + card.width),
+          panel: panel.width,
+          card: card.width,
+        };
         return (Object.keys(want) as (keyof typeof want)[]).every((k) => Math.abs(got[k] - want[k]) <= 1) ? 'ok' : JSON.stringify(got);
       })
       .toBe('ok');
@@ -243,6 +256,17 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
       return [card, ...card.querySelectorAll('*')].every((el) => el.getBoundingClientRect().right <= limit + 0.5);
     });
     expect(fits).toBe(true);
+    // The view still lines up with the card.
+    await cardMatches(PLAIN);
+    // The tight gaps apply exactly under the threshold, and not in a 776px (tiled) chrome.
+    const gapAt = async (width: number) => {
+      await page.setViewportSize({ width, height: 700 });
+      await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width);
+      return page.locator('.workspace').evaluate((el) => getComputedStyle(el).columnGap);
+    };
+    expect(await gapAt(TIGHT_WORKSPACE_BELOW - 1)).toBe(`${WORKSPACE_GAP_TIGHT.px}px`);
+    expect(await gapAt(TIGHT_WORKSPACE_BELOW)).toBe(`${WORKSPACE_GAP.px}px`);
+    expect(await gapAt(776)).toBe(`${WORKSPACE_GAP.px}px`);
   } finally {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
   }

@@ -18,7 +18,10 @@ import {
   RENDER_DEVICE_OUTLINE_RADIUS,
   SEO_BODY_NARROW_PADDING,
   SHEET_RADIUS,
+  TIGHT_WORKSPACE_BELOW,
   WORKSPACE_GAP,
+  WORKSPACE_GAP_TIGHT,
+  workspaceGap,
   WORKSPACE_SHEETS,
   workspaceRowChrome,
   workspaceRowWidth,
@@ -250,7 +253,13 @@ test('workspace-layout-values', () => {
   expect(workspaceRowChrome({ sidebar: false, agent: true })).toBe(SIDEBAR_RAIL_WIDTH + 2 * WORKSPACE_GAP.px);
   expect(workspaceRowWidth(1280)).toBe(1280 - 2 * WORKSPACE_GAP.px);
   // The window's minimum: the SEO sheet with the agent collapsed (specs/workspace-layout.feature.md, A narrow window).
-  expect(NARROW_WINDOW).toEqual({ width: 588, seoSheet: 140 });
+  expect(NARROW_WINDOW).toEqual({ width: 588, seoSheet: 160 });
+  // Tight gaps where, with --space-3 ones and the agent collapsed, the SEO sheet would fall under its minimum.
+  expect(TIGHT_WORKSPACE_BELOW).toBe(748);
+  expect(token(WORKSPACE_GAP_TIGHT.token)).toBe(`${WORKSPACE_GAP_TIGHT.px}px`);
+  expect([workspaceGap(747), workspaceGap(748), workspaceGap(776), workspaceGap(588)]).toEqual([4, 8, 8, 4]);
+  expect(workspaceRowWidth(588)).toBe(580);
+  expect(workspaceRowChrome({ sidebar: true, agent: false }, 4)).toBe(SIDEBAR_RAIL_WIDTH + AGENT_RAIL_WIDTH + 12);
   expect(SEO_BODY_NARROW_PADDING).toEqual({ token: '--space-1', belowContentWidth: 298 });
   expect(pageViewRadius({ fullscreen: false, framed: false })).toBe(16);
   expect(pageViewRadius({ fullscreen: true, framed: false })).toBe(0);
@@ -350,6 +359,61 @@ test('narrow-window-styles', () => {
   expect(queries[0]![0]).toMatch(new RegExp(`\\.seo-body\\s*\\{\\s*padding:\\s*var\\(${SEO_BODY_NARROW_PADDING.token}\\);\\s*\\}`));
   // The render profile's frame takes the card's radius: its inset band's inner corner is the framed view's.
   expect(resolved(['styles.css'], '.render-frame').get('border-radius')).toBe('inherit');
+});
+
+/** Each `@container <name> (<condition>) { … }` block of `file`: its condition and the declarations of its rules by selector. */
+function containerBlocks(file: string, name: string): { condition: string; rules: Map<string, Map<string, string>> }[] {
+  const plain = read(file).replace(/\/\*[\s\S]*?\*\//g, '');
+  const out: { condition: string; rules: Map<string, Map<string, string>> }[] = [];
+  for (const match of plain.matchAll(new RegExp(`@container\\s+${name}\\s*\\(([^)]*)\\)\\s*\\{`, 'g'))) {
+    let depth = 1;
+    let end = match.index! + match[0].length;
+    for (; depth > 0 && end < plain.length; end += 1) depth += plain[end] === '{' ? 1 : plain[end] === '}' ? -1 : 0;
+    const rules = new Map<string, Map<string, string>>();
+    for (const [, list, body] of plain.slice(match.index! + match[0].length, end - 1).matchAll(/([^{}]+)\{([^{}]*)\}/g))
+      for (const selector of selectorsOf(list!.trim())) {
+        const own = rules.get(selector) ?? new Map<string, string>();
+        for (const [, property, value] of body!.matchAll(/([\w-]+)\s*:\s*([^;]+);/g)) own.set(property!, value!.replace(/\s+/g, ' ').trim());
+        rules.set(selector, own);
+      }
+    out.push({ condition: match[1]!.trim(), rules });
+  }
+  return out;
+}
+
+test('tight-gaps-switch-together', () => {
+  expect(resolved(['styles.css'], '.chrome').get('container')).toBe('chrome / inline-size');
+  // One condition, wherever it is written: the workspace's own width under the spec's threshold.
+  const blocks = CSS_FILES.flatMap((file) => containerBlocks(file, 'chrome').map((block) => ({ file, ...block })));
+  expect(blocks.map((block) => block.file).sort()).toEqual(['components/agent/agent.css', 'styles.css']);
+  for (const block of blocks) expect(block.condition, block.file).toBe(`width < ${TIGHT_WORKSPACE_BELOW}px`);
+  const tight = (file: string, selector: string) => blocks.find((block) => block.file === file)!.rules.get(selector) ?? new Map<string, string>();
+  const T = `var(${WORKSPACE_GAP_TIGHT.token})`;
+  // Each gap and inset that is --space-3 outside the query is --space-1 inside it.
+  const pairs: [string, string, string, string][] = [
+    ['styles.css', '.workspace-stack', 'padding', `0 ${T}`],
+    ['styles.css', '.workspace', 'gap', T],
+    ['styles.css', '.seo', 'gap', T],
+    ['styles.css', '.devtools', 'margin-top', T],
+    ['styles.css', '.devtools', 'max-height', `calc(100% - var(--devtools-page-min) - ${T})`],
+    ['styles.css', '.palette-sheet', 'padding', `0 0 ${T}`],
+    ['styles.css', ".projects-sheet[data-running='true']", 'margin-bottom', T],
+    ['styles.css', '.prompt-bar', 'margin', `0 ${T} ${T}`],
+    ['styles.css', '.find-bar', 'margin', `0 ${T} ${T}`],
+    ['styles.css', '.render-bar', 'margin', `0 ${T} ${T}`],
+    ['styles.css', '.update-bar', 'margin', `0 ${T} ${T}`],
+  ];
+  for (const [file, selector, property, value] of pairs) {
+    expect(resolved([file], selector).get(property), `${selector} outside`).toBe(value.replaceAll(T, GAP));
+    expect(tight(file, selector).get(property), `${selector} inside`).toBe(value);
+  }
+  // The separators: 8px hit areas at every width, offset by the tight gap, their lines in its middle.
+  expect(tight('styles.css', '.seo-separator').get('right')).toBe(`calc(-1 * ${T})`);
+  expect(tight('styles.css', '.seo-separator::after').get('left')).toBe('auto');
+  expect(tight('styles.css', '.seo-separator::after').get('right')).toBe(`calc(${T} / 2 - 1px)`);
+  expect(tight('components/agent/agent.css', '.agent-separator').get('left')).toBe(`calc(-1 * ${T})`);
+  expect(tight('components/agent/agent.css', '.pane-separator.agent-separator::after').get('left')).toBe(`calc(${T} / 2 - 1px)`);
+  for (const block of blocks) for (const [selector, own] of block.rules) expect(own.has('width'), `${selector} keeps its width`).toBe(false);
 });
 
 test('entrance-animations-end', () => {

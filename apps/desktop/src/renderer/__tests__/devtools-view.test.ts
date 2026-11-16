@@ -16,7 +16,7 @@ import {
 } from '@app/specs/devtools.spec';
 import { SEO_CATEGORIES } from '@app/specs/seo-rules.spec';
 import { SEO_PANELS } from '@app/specs/seo-sidebar.spec';
-import { WORKSPACE_GAP } from '@app/specs/workspace-layout.spec';
+import { WORKSPACE_GAP, WORKSPACE_GAP_TIGHT } from '@app/specs/workspace-layout.spec';
 import {
   clampHeight,
   drawerColumn,
@@ -84,6 +84,8 @@ describe('devtools drawer helpers', () => {
     expect(maxHeight(drawerColumn(800))).toBe(800 - WORKSPACE_GAP.px - DEVTOOLS_HEIGHT.pageMinVisible);
     expect(drawerColumn(0)).toBe(0);
     expect(drawerColumn(WORKSPACE_GAP.px - 1)).toBe(0);
+    // In a narrow workspace the gap is the tight one.
+    expect(drawerColumn(800, WORKSPACE_GAP_TIGHT.px)).toBe(800 - WORKSPACE_GAP_TIGHT.px);
   });
 
   test('drawer-state-from-storage', () => {

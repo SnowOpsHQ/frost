@@ -26,7 +26,7 @@ import {
   type LayoutInput,
   type SeparatorProps,
 } from '../sidebar-layout';
-import { WORKSPACE_GAP, workspaceRowChrome } from '@app/specs/workspace-layout.spec';
+import { WORKSPACE_GAP, WORKSPACE_GAP_TIGHT, workspaceRowChrome } from '@app/specs/workspace-layout.spec';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -84,6 +84,9 @@ describe('resizable panes', () => {
     // its sheet only while the sheet is open, the two beside the page always.
     expect(roomForPanes(layout(1_000, [false, 360], [true, 380]))).toBe(1_000 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 2 * WORKSPACE_GAP.px);
     expect(paneMax('sidebar', layout(800, [false, 360], [false, 380]))).toBe(800 - fixed(true, false));
+    // A narrow workspace's tight gaps: the 588px window's row (580) leaves the SEO sheet 160px.
+    expect(roomForPanes({ ...layout(580, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px })).toBe(160);
+    expect(paneWidths({ ...layout(580, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px }).sidebar).toBe(SIDEBAR_PANEL_WIDTH_RANGE.min);
     // Unmeasured: the chosen widths, any maximum.
     expect(paneWidths(layout(0, [true, 500], [true, 600]))).toEqual({ sidebar: 500, agent: 600 });
     expect(paneMax('sidebar', layout(0, [true, 500], [true, 600]))).toBe(S.max);
