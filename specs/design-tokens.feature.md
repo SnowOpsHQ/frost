@@ -1149,10 +1149,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
     "More ranges…" goes under the days and "Clear filters" under the country and device. On `main`, at
     300px, "More ranges…" was cut 12px, "United Kingdom" 49px ("United…"), "All devices" 20px and the days
     1-2px each; at 360px "United Kingdom" was cut 19px. At 360px with "All countries" and "All devices"
-    the controls are as on `main` on Linux (two equal 155px selects on one line, 34px tall; where a chosen
-    label is wider than half the row, as "All countries" beside macOS's wider menu arrow, that select takes
-    its label's width rather than cutting it); with a country and a device set, "Clear filters" takes the
-    next line there.
+    the controls are as on `main` on Linux (two equal 155px selects on one line, 34px tall); where a chosen
+    label needs more than half the row a select keeps that label's width rather than cutting it (macOS CI
+    drew the two unequal there); with a country and a device set, "Clear filters" takes the next line.
   - **Content's Search Console targets:** a suggested query wraps (the decision: the whole query shows, on
     as many lines as it needs, because its tooltip, the only way to the cut part, is out of the keyboard's
     reach, and Search Console's queries are mostly a line); where it doesn't fit beside its clicks and
@@ -1539,8 +1538,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   device chosen, no control's label is cut (a select against a copy of it holding only its chosen option),
   and at 300px the body doesn't scroll sideways; then with every country (`GSC_COUNTRY_ALPHA3`) the country
   and device selects share one line at the default width, inside the row, with no label cut and the country
-  select at least 20px narrower than its longest option would make it (not "equal halves": on macOS's
-  wider menu arrow "All countries" takes more than half), "United Kingdom" is whole at 300px, and "South
+  select at least 20px narrower than its longest option would make it (not "equal halves": macOS CI drew
+  the two unequal, a select keeping its chosen label's width), "United Kingdom" is whole at 300px, and "South
   Georgia & South Sandwich Islands" stays inside the row there.
 `atNarrowestPanel` gives the panel back the width it found (keyboard steps, then a drag under a step).
 The check (`cutText`, `e2e/helpers.ts`) reads the text itself: each box holding text of its own whose

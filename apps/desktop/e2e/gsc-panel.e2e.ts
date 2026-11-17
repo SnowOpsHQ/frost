@@ -419,7 +419,7 @@ test.describe.serial('the Search Console panel', () => {
     await expect.poll(() => country.locator('option').count()).toBeGreaterThan(200);
     // Where the filters are: on one line, inside the row, and the country select narrower than its longest
     // option would make it (a copy of it holding only that option, at its own width). Not "equal halves":
-    // where the chosen label is wider than half the row (macOS draws a wider menu arrow) it takes its width.
+    // a select keeps its chosen label's width where that needs more than half the row (macOS CI).
     const boxes = () =>
       page.locator('.gsc-filter-row').evaluate((row) => {
         const box = (el: Element | null) => el!.getBoundingClientRect();
