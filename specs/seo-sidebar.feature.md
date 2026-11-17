@@ -172,10 +172,10 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
 ## End to end (`apps/desktop/e2e/seo-sidebar.e2e.ts`, loopback pages)
 - **Scenario: good-page-scores-high** — a well-formed page scores at least 90 (band `good`) with no
   error or warning issues, and On-Page shows its title, length, description, canonical, lang, viewport
-  and heading outline.
+  and heading outline; the rail's On-Page dot is `pass`, drawn as a check (design-tokens' `PASS_CHECK`).
 - **Scenario: bad-page-shows-issues** — a page with no title, two H1s, images without alt and
   `noindex` lists `title-missing`, `h1-multiple`, `images-missing-alt` and `robots-noindex`, scores
-  below 60, and the rail's On-Page dot is `error`; an issue expands to its why and fix.
+  below 60, and the rail's On-Page dot is `error` (no check); an issue expands to its why and fix.
 - **Scenario: sidebar-toggle-resizes-page** — the toolbar button, the menu item and `Ctrl+Shift+S` in
   the page each toggle the panel (collapsing from the panel's own button leaves focus on the rail); the tab's view widens by `SIDEBAR_PANEL_WIDTH` when it closes and
   narrows again when it opens; the state survives a relaunch on the same profile.

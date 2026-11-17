@@ -2,13 +2,16 @@
 // Spec: specs/page-type.spec.ts (PAGE_TYPE_LABELS, PAGE_TYPE_SIGNAL_LABELS, PAGE_TYPE_CONFIDENCE_LABELS, PAGE_TYPE_COPY),
 // specs/intent-classifier.spec.ts (IntentState, IntentAnswer)
 // Acceptance: specs/page-type.feature.md (Overview "Page" card), specs/seo-sidebar.feature.md (Overview, "Page" card;
-// Overview's checks passed), specs/seo-rules.feature.md (passed-counts-rules-that-ran)
+// Overview's checks passed), specs/seo-rules.feature.md (passed-counts-rules-that-ran), specs/design-tokens.feature.md
+// (pass-marks-draw-a-check: Overview's half)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { TabState } from '@app/specs/browser.spec';
 import type { IntentAnswer, IntentState } from '@app/specs/intent-classifier.spec';
+import { PASS_CHECK } from '@app/specs/design-tokens.spec';
 import { PAGE_TYPE_CONFIDENCE_LABELS, PAGE_TYPE_COPY, PAGE_TYPE_LABELS, PAGE_TYPE_SIGNAL_LABELS } from '@app/specs/page-type.spec';
+import type { SeoAudit } from '@app/seo-core';
 import { audit, PAGE } from './ai-readiness-fixtures';
 
 const fake = vi.hoisted(() => ({
@@ -151,6 +154,28 @@ describe('Overview "Page" card', () => {
     fake.intentState = 'model-missing';
     await show();
     expect(one('[data-testid="page-intent"]')!.textContent).toContain(PAGE_TYPE_COPY.intentOff);
+  });
+});
+
+describe('Overview checks by category', () => {
+  test('a-passing-category-draws-a-check', async () => {
+    // One error in Title: its mark is the error square (no glyph); every other category passed and draws
+    // the check (specs/design-tokens.spec.ts PASS_CHECK), as the SEO rail's pass dot does.
+    const finding = { ruleId: 'title-missing', category: 'title', severity: 'error', title: 'No title', why: '', fix: '', details: { facts: [], samples: [] } };
+    await act(async () => root.render(createElement(Overview, { audit: { ...audit(), counts: { error: 1, warning: 0, info: 0 }, findings: [finding] } as unknown as SeoAudit, tab: TAB, onOpenPanel: () => {} })));
+    const rows = all('.seo-category');
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      const checks = [...row.querySelectorAll(`.seo-category-dot ${PASS_CHECK.selector}`)];
+      if (row.dataset.category === 'title') {
+        expect(row.dataset.status).toBe('error');
+        expect(checks).toHaveLength(0);
+      } else {
+        expect(row.dataset.status).toBe('pass');
+        expect(checks).toHaveLength(1);
+        expect(checks[0]!.querySelector('path')!.getAttribute('d')).toBe(PASS_CHECK.d);
+      }
+    }
   });
 });
 

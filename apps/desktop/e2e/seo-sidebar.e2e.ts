@@ -1,4 +1,4 @@
-// Specs: specs/seo-snapshot.spec.ts, specs/seo-limits.spec.ts, specs/seo-sidebar.spec.ts, specs/seo-rules.spec.ts
+// Specs: specs/seo-snapshot.spec.ts, specs/seo-limits.spec.ts, specs/seo-sidebar.spec.ts, specs/seo-rules.spec.ts, specs/design-tokens.spec.ts (PASS_CHECK)
 // Acceptance: specs/seo-sidebar.feature.md (End to end; Resize and pins: drag-resize-moves-page-view, unpin-into-more)
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { PASS_CHECK } from '@app/specs/design-tokens.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS, SNAPSHOT_LIMITS } from '@app/specs/seo-limits.spec';
 import { NOINDEX_SCORE_CAP, NOT_INDEXABLE_LABEL } from '@app/specs/seo-rules.spec';
 import {
@@ -227,6 +228,8 @@ test('good-page-scores-high', async () => {
   await expect(page.getByTestId('seo-count-error')).toHaveAttribute('data-count', '0');
   await expect(page.getByTestId('seo-count-warning')).toHaveAttribute('data-count', '0');
   await expect(railItem('on-page')).toHaveAttribute('data-status', 'pass');
+  // A pass is a check on its dot (design-tokens' PASS_CHECK), not a filled disc.
+  await expect(railItem('on-page').locator(`.seo-rail-dot ${PASS_CHECK.selector} path`)).toHaveAttribute('d', PASS_CHECK.d);
 });
 
 test('bad-page-shows-issues', async () => {
@@ -239,6 +242,8 @@ test('bad-page-shows-issues', async () => {
   await expect(score()).toHaveAttribute('data-band', 'poor');
   await expect(railItem('on-page')).toHaveAttribute('data-status', 'error');
   await expect(railItem('overview')).toHaveAttribute('data-status', 'error');
+  // An error is a square: no check.
+  await expect(railItem('on-page').locator(`.seo-rail-dot ${PASS_CHECK.selector}`)).toHaveCount(0);
 
   // An issue expands to why it matters, how to fix it, and the offending values.
   const missingAlt = page.locator('[data-testid="seo-issue"][data-rule-id="images-missing-alt"]');
