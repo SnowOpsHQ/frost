@@ -253,7 +253,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--text-mono` (as the palette's); What's New `--text-heading` titles over `--divider` rules;
   Export Diagnostics' Save… is a Settings button and its report `--text-mono` on `--bg-subtle` at
   `--r-sm` (the agent panel's code). The setup checklist's title is `--text-caps`, its rows
-  `--h-control` tall, its step marks `--switch-off` rings filled `--ok` (a graphic) when done, "Done"
+  `--h-control` tall, its step marks 1px `--switch-off` rings (Later states: 1.5px, drawn as 1px) filled `--ok` (a graphic) when done, kept under forced colours (`FORCED_COLOURS_KEPT`), "Done"
   `--ok-ink`, and its actions `--h-chip` pills on `--bg-surface` with `--e-raised` (hover lays
   `--bg-hover` over them; it ringed them in `--accent`). A transparent outline forced colours draw goes
   beside every `--focus-ring`. Settings' and Help's widths (`--settings-width`, `--settings-nav-width`,
@@ -276,7 +276,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   icon `--accent`, a transparent outline for forced colours) and loses the 3px side marker, as on the
   screen. Status dots say it by shape, not hue alone: an error a filled `--danger` square (corners
   half of `--r-xs`), a warning a `--warn` ring (`--caution`; a 2px border, not a shadow, so forced
-  colours keep it), a pass a filled `--ok` disc (the screen's check glyph needs markup: a later PR), each
+  colours keep it), a pass the screen's check glyph (`PASS_CHECK`, Later states: it was a filled `--ok` disc), each
   cut out by a halo in the sheet or card under it (none on a hovered or focused "More panels" row, whose
   tint the halo would ring). The dots keep their own colours in forced colours
   (`forced-color-adjust: none`), where the halo and the ring's fill turn transparent. The rail tip and
@@ -435,8 +435,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--text-muted`, the title `--text-heading` at weight 500 in `--accent` (it mixed in 12% `--text`), the
   description `--text-small` in `--text-muted`. **Checks by category:** `--text-small` rows `--space-1`
   by `--space-4` apart, as on the screen, the count `--text-muted`; the status mark is 8px and differs
-  by shape, as the rail's dots do: a filled `--ok` disc for a pass (the screen's check glyph needs
-  markup), a filled `--danger` square for an error, a `--warn` ring (a 2px border) for a warning (it was
+  by shape, as the rail's dots do: the screen's check glyph for a pass (`PASS_CHECK`, Later states: it
+  was a filled `--ok` disc), a filled `--danger` square for an error, a `--warn` ring (a 2px border) for a warning (it was
   a `--caution` disc), a hollow `--accent` diamond for a notice (the 8px box with a 2px border, as the warning ring's, turned 45°, so its
   4px hollow stays open and every side a solid run of `--accent`; no fractional border widths, which
   Chromium rounds down; an `--info-tone` disc; the screen draws
@@ -449,7 +449,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   summary `--text-small` at weight 600. **On-Page:** the measured title and description are
   `--text-body`, their sections ruled by `--divider`; a length meter is a 6px `--r-pill` bar, its track
   `--track` with the recommended range `--ok` mixed 22% into it, its fill the verdict's graphics colour
-  (`--ok`, `--warn` for short and long where it was `--caution`, `--danger`), its line `--text-small` in
+  (`--ok`, `--warn` for short and long where it was `--caution`, `--danger`) outlined by a 1px `--bg-surface`
+  boundary (Later states: as Page Speed's timing segments, so "fits" meets the card's colour), its line `--text-small` in
   `--text-faint` with the count `--text-muted` at weight 600 and the verdict in its -ink (`--ok-ink`,
   `--warn-ink`, `--danger-ink`: it drew `--ok` through the meter's property, 3.30:1); the measured width
   `--text-faint`, `--warn-ink` when a result cuts it. Label and value rows are `--text-small` (label
@@ -622,7 +623,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the same way (62%, so the controls' edge is no weaker than the static tag's; `CONTRAST_PAIRS` computes it), hovered `--accent-hover`, the primary one (Reload to apply) `--on-accent` with `--accent`
   text (its two literal whites and the bar's third went). **Tab badge and status chip:** the badge is an
   `--icon-size` square at `--r-xs` on `--accent-soft` with an `--accent` icon, edged `--accent` (a border,
-  not an inset shadow) while the tab needs a reload or the profile failed (its name says which); the
+  not an inset shadow) while the tab needs a reload (dashed) or the profile failed (solid; Later states: the
+  two were the same edge, which forced colours drew as they draw the transparent one at rest, now `Canvas`); the
   status chip an `--h-badge` pill on `--accent-soft` in `--text-small` at weight 500, `--accent` text.
   The toolbar's render toggle, while a profile is in force, is `--accent` on `--accent-soft`, as the SEO
   toggle pressed; pressed, its edge is `--accent` (`--render-edge`).
@@ -639,9 +641,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   JavaScript, Compliance and Search Console panels, the SEO sidebar's Retry) gets it too, the same
   there; it keeps their face (the rule sets no font: the error panel's own text sets `--text-body`), and
   their own rules that fade a disabled one (`.changes-capture`, `.inspector-pick`, `.seo-a11y-run`) wait
-  for their PRs. The editor bar's checkbox labels still fade while disabled
-  (`.render-check:has(input:disabled)`, `opacity: 0.5`): a native checkbox can't take the disabled colours, so
-  the label fades with it. **DevTools drawer:** a `--bg-sheet` band ("rail, sidebar, agent panel") with a
+  for their PRs. The editor bar's checkbox labels faded while disabled
+  (`.render-check:has(input:disabled)`, `opacity: 0.5`), as a native checkbox can't take the disabled colours;
+  since Later states the label takes `DISABLED_INK` (`GrayText` under forced colours) and the box keeps its
+  own disabled look. A `.panel-button` busy but still focusable (`aria-disabled`: the crawl sheet's Export
+  CSV and Start crawl, AI answers' Ask) takes the disabled colours too, keeping its focus ring (Later states). **DevTools drawer:** a `--bg-sheet` band ("rail, sidebar, agent panel") with a
   `--divider` top edge (`--bg-chrome`), its text `--text-small`; the resize edge `--accent-soft` under
   the pointer and `--accent` focused (inside it, a transparent outline forced colours draw: the drawer
   clips anything outside); tabs `--h-chip` pills in `--text-muted` at weight 500, `--bg-hover` hovered,
@@ -817,8 +821,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--bg-hover`; `--ok` on `--bg-subtle` is 2.998:1 in light, under 3:1), the label column at least as wide as its
   longest word (`minmax(min-content, 1fr)`, so at 300px the verdict wraps rather than drawing over it), each verdict "… px: fits"
   `--ok-ink`, "… px: cut" `--warn-ink` (`--caution`) and "Nothing to measure" `--text-faint`, the bar's
-  fill `--ok`, `--warn` or `--text-faint` on `--track` (the "fits" fill is 2.23:1 on `--track` in light,
-  as On-Page's length meters are: the verdict's word carries the state). A **field** (a draft's title and description,
+  fill `--ok`, `--warn` or `--text-faint` on `--track`, outlined by a 1px `--bg-surface` boundary as
+  On-Page's length meters' (Later states: the "fits" fill is 2.23:1 on `--track` in light, 3.30:1 on the
+  boundary). A **field** (a draft's title and description,
   the site name) is Settings' field inside a card: `--h-control` (a textarea from 76px) at `--r-sm` on
   `--bg-surface` with `--e-raised` and a transparent border, `--text-body`, its placeholder
   `--text-faint`; focus is `--focus-ring` with a transparent outline, where it was an `--accent` edge
@@ -938,7 +943,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the chosen one `--accent-soft` with an `--accent` edge (`PRESSED_EDGES`; it was the fill alone),
   `Highlight` under forced colours, where the others' edges take the canvas; its "Due" an 18px pill in
   `--text-micro`; section titles `--text-caps` (they were 12px at 600), counts `--text-faint`; a page's and
-  a search's rows ruled by `--divider`, a tag an `--accent-soft` pill in `--text-micro`; the capture run, a
+  a search's rows ruled by `--divider` (disabled during a capture run, `DISABLED_INK` and no hover tint: Later
+  states), a tag an `--accent-soft` pill in `--text-micro`; the capture run, a
   series, Bulk add and Compare's pickers `--bg-surface` cards at `--r-md` with `--e-ring` and a transparent
   border (`--border-field`, `--radius-field`); a run's outcomes and a blocked run's reason, Bulk add's
   outcomes `--ok-ink`, `--warn-ink`, `--danger-ink` (they drew `--ok`, `--warn`, `--danger`). The views
@@ -1195,7 +1201,16 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    face set their own type (`TEXT_TYPE_RULES`), with a re-baseline; `--font-ui`, `--bg-page`, `--agent-bg`
    and `--seo-rail-width` are `removed`. The legacy names still declared are the Signal tokens' own names,
    the layout constants and `--seo-panel-width`. What is left is listed under Left for later.
-7. The panels at 300px (done): the parts that cut their text or scrolled sideways at the panel's
+7. Later states (done): the states the rollout left with no visible cue, or one that failed a contrast or
+   forced-colours check. A pass is a check (`PASS_CHECK`); the editor bar's disabled checkbox labels, a busy
+   `.panel-button` marked `aria-disabled` (the crawl sheet's Export CSV and Start crawl, AI answers' Ask)
+   and a Projects row during a capture run take the disabled colours, `GrayText` under forced colours, with
+   no fade; the busy screenshot kind no longer pulses; the tab's render-profile badge edges "needs reload"
+   dashed and "failed" solid, with no edge at rest under forced colours (and its name says which); Help's
+   setup check is a 1px ring, its marks kept under forced colours; the meters' fill has a `--bg-surface`
+   boundary, square at its inner end. Round 1: a pass check on a hovered or focused "More panels" row sits
+   on a `--bg-surface` disc, and AI answers' busy Ask opens nothing.
+8. The panels at 300px (done): the parts that cut their text or scrolled sideways at the panel's
    narrowest width are laid out for it (`NARROW_PANEL_FITS`, The panels at 300px), and the navigation
    timing shows every phase (`NAVIGATION_PHASE_MIN_WIDTH`).
 
@@ -1287,8 +1302,13 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `background` to `var(<background>)` where the entry names one), and that pair is in
   `CONTRAST_PAIRS`; for an `unfaded` entry (a disabled button shown by its colours), `opacity` resolves to
   nothing under 1, so a fade put back in place of the colours fails; and each of a `drawn` entry's
-  declarations resolves to its value (the timing boundary's `stroke: currentColor`, `stroke-width: 2px` and
-  `paint-order: stroke`).
+  declarations resolves to its value (the timing boundary's, and the length and width meters' fill
+  boundary's, `stroke: currentColor`, `stroke-width: 2px` and `paint-order: stroke`; the meters' also
+  `shape-rendering: crispEdges`, since an anti-aliased 1px boundary split into two columns at about 2:1,
+  and `rx: 0`, since crisp, the fill's `rx="3"` drew a staircase at each end; the length meter's pill clip
+  rounds the outer end, and the width meter's fill is clipped to its track's shape, `seo-content.feature.md`'s
+  `snippet-editor-previews`, since its bar does not clip: its mark stands 1px past it). A busy `.panel-button`
+  marked `aria-disabled` is `--text-faint` on `--bg-subtle`, unfaded, hovered too and primary or not.
 - **Scenario: fades-spare-focus** — in each `FADES_SPARE_FOCUS` stylesheet, every rule setting an
   `opacity` under 1 ends each selector with `:not(:focus-within)`, and one such rule exists; it catches
   the same fade without it, and a list with one selector that lacks it.
@@ -1309,7 +1329,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   chosen Search Console tile's inner `--accent` line, required exactly) and `outline` to `2px solid
   transparent`, and sets no `opacity` under 1: a focused
   button keeps its ring, at full strength, when hovered, when busy (`aria-disabled`) and when primary;
-  so does a focused switch, and the chosen choice. The resolver itself scores
+  so does a focused switch, and the chosen choice, and a `.panel-button` busy while still focusable
+  (`aria-disabled`: the crawl sheet's Export CSV and Start crawl, AI answers' Ask), primary or not. The resolver itself scores
   `.a:hover:where(:not([x], :disabled))` as two classes.
 - **Scenario: busy-buttons-show-under-forced-colours** — for each `FORCED_COLOURS_BUSY` entry (a
   Settings button, a primary one and Export Diagnostics' Save, each busy and disabled; a disabled
@@ -1317,7 +1338,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   panel toggle, row action, segment, filter chip and Schema's open-URL button; a disabled error-panel
   button, primary or not, update notice button, find bar tool, editor bar chip or button; the
   accessibility tally's tile for an impact with no violated rule; an n-gram's place mark for a place it is not in; a disabled Projects sheet button and
-  Delete project), in light and
+  Delete project; a `.panel-button` busy while focusable (`aria-disabled`), primary or not; the editor bar's
+  checkbox label whose box is disabled; a Projects page or search row during a capture run, its label,
+  hovered, and its last-capture line), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too (a `border` shorthand counting as its colour) resolves `color` and `border-color` to `GrayText`:
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
@@ -1334,12 +1357,24 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   to `CanvasText` over its first two, a matching line that is not the current one. Every selector named is
   one of the stylesheet's.
 - **Scenario: status-marks-keep-their-colours-under-forced-colours** — for each `FORCED_COLOURS_KEPT`
-  entry (the SEO rail's dots, Overview's category marks: pass, error, warning and notice; Schema's status
+  entry (the SEO rail's dots, Overview's category marks: pass (a check), error, warning and notice; Help's
+  setup steps, done and not done; Schema's status
   mark: valid, warnings, errors; a verdict's signal marks: pass, warning, error and neutral; Page Speed's
   live line: measuring or paused, live and unavailable; its navigation timing's phase swatches), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too resolves `forced-color-adjust` to `none`, so a mark whose fill or border colour is its status keeps
   it. Every selector named is one of the stylesheet's.
+- **Scenario: pass-marks-draw-a-check** — in light and dark, in every `CASCADE_CONTEXTS` state, `PASS_CHECK.selector` resolves in
+  `styles.css` to `PASS_CHECK.size` square, `fill: none`, `stroke: var(--ok)` and `stroke-width`
+  `PASS_CHECK.strokeWidth` (2px: two device pixels at 1×, solid at this size); `CONTRAST_PAIRS` holds
+  `--ok` on `--bg-sheet` and on `--bg-surface` at 3:1. Each of `PASS_CHECK.backs` resolves `background`
+  to its value (the rail's halo `var(--seo-dot-back)`, Overview's `transparent`, a hovered or focused
+  "More panels" row's `var(--bg-surface)`), and to its `forced` value with the forced-colours rules read,
+  so a green disc put back under the check fails. `PassCheck` (`icons.tsx`) draws it: Overview's
+  passing categories hold one `aria-hidden` SVG of `PASS_CHECK.viewBox` whose path is `PASS_CHECK.d`, and
+  a category with an error none (`overview-page-type.test.ts`, `a-passing-category-draws-a-check`); the
+  SEO rail's pass dot holds that path, and its error dot none (`seo-sidebar.e2e.ts`,
+  `good-page-scores-high` and `bad-page-shows-issues`).
 - **Scenario: only-kept-marks-opt-out-of-forced-colours** — every `forced-color-adjust` declaration in
   every renderer stylesheet, whatever surface its rule belongs to and whatever its value (`auto` too:
   a rule handing an element back to forced colours is not supported yet, and none exists), sits in a
@@ -1359,8 +1394,15 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   hover that sets only `color` and `.x-danger:hover`.
 - **Scenario: disabled-controls-dim-their-text** — for each `DISABLED_CONTROLS` entry (a disabled
   filter chip and segment, and the Changes panel's screenshot kinds; the AI judgment's busy chip, the
-  Search Console calendar's arrows and days out of range, Content's "Use as target"), in light and dark,
-  the cascade over its `element` selectors resolves `color` to `DISABLED_INK` and sets no `opacity` under 1.
+  Search Console calendar's arrows and days out of range, Content's "Use as target"; the editor bar's
+  checkbox labels whose box is disabled; a Projects page or search row during a capture run, its label
+  hovered and its last-capture line), in light and dark,
+  the cascade over its `element` selectors resolves `color` to `DISABLED_INK` and sets no `opacity` under 1,
+  and no rule of its cascade whose subject names one of those selectors' classes runs an `animation` whose
+  `@keyframes` set `opacity` (a pulse is a fade). It catches the busy screenshot kind's pulse put back,
+  and passes an icon's pulse inside a button and a spin. Its limits: only rules whose subject is the
+  control are read, so a pulse on a container around it passes; and every state of its classes is
+  read, so an opacity entrance animation on a listed control would fail it (none exists).
 - **Scenario: pressed-controls-draw-an-edge** — for each `PRESSED_EDGES` entry (a pressed filter chip,
   a pressed n-gram highlight button; the chosen version, project, node,
   Inspector view and swatch),
@@ -1369,11 +1411,14 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   it catches `border: 0 solid transparent` and `border-style: none`), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or more. Every selector named is one
   of the stylesheet's.
 - **Scenario: state-edges-draw-their-shape** — for each `STATE_EDGES` entry (Content's query term,
-  present and absent), in light and dark, the cascade over its `element` selectors resolves
+  present and absent; the tab's render-profile badge, needing a reload (dashed), failed (solid) and both
+  (solid); Help's setup check not yet done, a 1px ring), in light and dark, the cascade over its `element` selectors resolves
   `border-color` to `var(<edge>)`, `border-style` to its `style` and `border-width` to its `width` (the
   shorthand and longhands alike; style and width also with the `@media (forced-colors: active)` rules
   read, where the shape is all that tells the states apart), and `CONTRAST_PAIRS` holds the edge on each of its `fills` at 3:1 or
-  more. Every selector named is one of the stylesheet's.
+  more (its `under` too: the badge on an inactive or hovered tab). An entry with `rest: 'canvas'` (the badge)
+  resolves `border-color` to `Canvas` over its first selector alone with the forced-colours rules read: at
+  rest it draws no edge there, so a solid state is not the rest's transparent border repainted. Every selector named is one of the stylesheet's.
 - **Scenario: no-other-stylesheet-declares-root-tokens** — no other renderer stylesheet declares a
   custom property in a rule whose selector starts with `:root` or `html` (`html.x`,
   `:where(:root)`, … included).
@@ -1499,27 +1544,10 @@ The check (`cutText`, `e2e/helpers.ts`) reads the text itself: each box holding 
 
 ## Left for later
 What the rollout leaves, each where it lives; none is fixed by the cleanup or the base face.
-- **The pass dot's check glyph** (the SEO rail's `.seo-rail-dot` and Overview's checks by category,
-  `styles.css`): the screen draws a check, which needs markup; a pass is a filled `--ok` disc meanwhile.
-- **The render-profile bar's checkbox labels fade** (`styles.css`, `.render-check:has(input:disabled)`,
-  `opacity: 0.5`): a native checkbox can't take the disabled colours, so the label fades with it.
-- **A busy `.panel-button` marked `aria-disabled` shows nothing** (the crawl sheet's Export CSV,
-  `components/crawl/SitePages.tsx`; `styles.css` has `.panel-button:disabled` and `[data-busy]` rules,
-  none for `[aria-disabled]`): it stays focusable while it saves, and no state rule was written for it.
-- **Busy screenshot kinds pulse by `opacity`** (`styles.css`, `.changes-shot-kind-button[data-busy='true']`,
-  `changes-pulse`): they are disabled while busy, so they hold no focus a fade could dim; left as it was.
-- **A Projects page or search row disabled during a capture run looks enabled** (`styles.css`,
-  `.projects-entry-open`; `components/changes/Projects.tsx`, `disabled={running}`): no disabled rule,
-  and its hover still tints the label; the run's band says a run is under way.
-- **The tab's render-profile badge has no forced-colours cue for "needs reload" and "failed"**
-  (`styles.css`, `.tab-profile[data-needs-reload='true']`, `.tab-profile[data-status='failed']`: an
-  `--accent` border, which forced colours repaint like the transparent one): only its accessible name
-  says it.
-- **Help's setup check has a 1.5px border** (`help.css`, `.setup-check`, the setup checklist's 14px
-  `--switch-off` ring): Chromium draws it as 1px; a whole pixel would change its look.
-- **The meters' "fits" fill is `--ok` on `--track` at 2.23:1 in light** (`styles.css`, `.seo-meter-fill`
-  through `--meter`, and `.seo-width-meter`): under 3:1 for a graphic; the verdict word beside it carries
-  the state.
+- **A disabled SEO rail item fades to 0.3** (`styles.css`, `.seo-rail-item:disabled`: a panel not yet
+  available, labelled "Soon"): natively disabled, so it holds no focus a fade could dim, but it says
+  disabled by opacity, not by the disabled colours the other controls take, and forced colours draw it
+  only faded.
 - **The Visibility table scrolls sideways at every width, and cuts its URLs** (`styles.css`,
   `.serp-table-wrap` and `.visibility-table`; `components/seo/Visibility.tsx`): real table markup with a
   column per probe field, wider than any panel. Measured after a run on the probe page: it scrolls 997px
@@ -1529,4 +1557,4 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup or th
 - **The canvas's features the app doesn't have** (the design canvas; each would need markup or behaviour,
   not tokens): the score on the SEO sidebar toggle, "Ask frost", click-to-edit on the tab, "More tabs",
   Overview's AI-readiness, Page and AI-judgment cards as the canvas draws them, the find icon and match
-  count inside the find field, a check glyph for a passing mark (above), and a card per issue.
+  count inside the find field, and a card per issue.

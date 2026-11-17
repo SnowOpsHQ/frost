@@ -405,7 +405,9 @@ this feature's own (`FEATURE_PANEL_JUMPS`), so the built-ins list no second one.
 - **Scenario: delete-all-notes-and-clear-browsing-data** — Clear Browsing Data with its box unticked
   keeps the notes, ticked removes them; the panel's "Delete all notes" removes them after confirming.
 - **Scenario: snippet-editor-previews** — the page's previews cut a wide title at the budget with an
-  ellipsis; a draft updates the previews live and persists; Copy as HTML writes escaped HTML.
+  ellipsis; a draft updates the previews live and persists; Copy as HTML writes escaped HTML. A width
+  meter's fill is clipped to its track's shape (a `<clipPath>` of the track's `rx`: the fill itself is
+  square, `design-tokens.feature.md`, so its outer end takes the track's round end).
 - **Scenario: clear-browsing-data-resets-open-content-panel** — with the panel open on a target query
   and a draft (and an edit not yet saved), Clear Browsing Data with its box ticked empties the open
   panel at once; the pending edit is not saved, and a later edit stores only itself.

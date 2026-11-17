@@ -101,7 +101,8 @@ the procedures' inputs, `TabRenderProfileSchema`). Phase 2.5 Task 1. Each line m
 
 ## Visible state
 - The overridden state is always visible: the tab shows a badge (with the profile in its tooltip and
-  accessible name), the status bar a chip with the profile and "Reload to apply", and the page area a
+  accessible name, then " · Reload to apply" while the tab needs a reload or " · not applied" when the
+  profile failed, failed first, as its edge says: dashed or solid, `design-tokens.feature.md`), the status bar a chip with the profile and "Reload to apply", and the page area a
   frame with the profile, "Reload to apply" and Reset. A crawler user agent shows
   `CRAWLER_HONESTY_NOTE`. Main lays the tab's view out inside the frame (`fitRenderViewport`) and
   sends the device's emulated viewport again when the page area changes size; the frame draws the

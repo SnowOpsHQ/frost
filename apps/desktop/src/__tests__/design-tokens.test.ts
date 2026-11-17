@@ -1,4 +1,4 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, GRAPHICS_ONLY_COLOURS, SIGNAL_SURFACES, BASE_TYPE, TEXT_TYPE_RULES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS, FADES_SPARE_FOCUS, LoadsBefore, CASCADE_CONTEXTS)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, GRAPHICS_ONLY_COLOURS, SIGNAL_SURFACES, BASE_TYPE, TEXT_TYPE_RULES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS, FADES_SPARE_FOCUS, PASS_CHECK, LoadsBefore, CASCADE_CONTEXTS)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +23,7 @@ import {
   HOVER_OVERLAYS_SKIP_PRESSED,
   HEX_COLOUR_RATCHET,
   LEGACY_TOKEN_MIGRATION,
+  PASS_CHECK,
   PRESSED_EDGES,
   STATE_EDGES,
   SIGNAL_NAMES_WITH_LEGACY_VALUES,
@@ -1216,6 +1217,28 @@ test('status-marks-keep-their-colours-under-forced-colours', () => {
   }
 });
 
+test('pass-marks-draw-a-check', () => {
+  // The glyph's markup is checked where it renders (overview-page-type.test.ts, seo-sidebar.e2e.ts). It is
+  // sized and stroked by styles.css: --ok by `stroke` (forced colours leave it, and it is no text colour),
+  // 2px, which a 1× screen draws solid at this size.
+  const css = read('styles.css');
+  const drawn = { width: PASS_CHECK.size, height: PASS_CHECK.size, fill: 'none', stroke: 'var(--ok)', 'stroke-width': PASS_CHECK.strokeWidth };
+  // In every cascade state (CASCADE_CONTEXTS: default, reduced motion, the narrowest panel), light and dark.
+  for (const { theme, context, state } of STATES) {
+    for (const [property, value] of Object.entries(drawn)) expect(resolveOnElement(css, [PASS_CHECK.selector], property, theme, context), `${property} (${state})`).toBe(value);
+  }
+  // What it sits on: never a green disc (the check would vanish), in light, dark and forced colours.
+  for (const back of PASS_CHECK.backs) {
+    for (const { theme, context, state } of STATES) {
+      expect(resolveOnElement(css, back.element, 'background', theme, context), `${back.why}: background (${state})`).toBe(back.background);
+      expect(resolveOnElement(css, back.element, 'background', theme, { ...context, forced: true }), `${back.why}: background under forced colours (${state})`).toBe(back.forced);
+    }
+  }
+  // --ok on what it sits on: the rail's halo (the sheet; a selected item's or the menu's card) and Overview's card.
+  const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
+  for (const bg of ['--bg-sheet', '--bg-surface']) expect(pairs.some((p) => p.fg === '--ok' && p.bg === bg && p.over === undefined && p.min >= 3), `--ok on ${bg}`).toBe(true);
+});
+
 test('only-kept-marks-opt-out-of-forced-colours', () => {
   const check = (css: string, stylesheet: string) => forcedAdjustProblems(parse(css).declarations, stylesheet, stylesheet);
   // The kept marks, at the top level or inside a forced-colours block, either way round.
@@ -1321,12 +1344,41 @@ function edgeProblems(css: string, element: readonly string[], edge: string): st
   return problems;
 }
 
+/** The `@keyframes` names of `css` whose frames set `opacity` (a pulse), built once per stylesheet text. */
+const FADING_KEYFRAMES = new Map<string, Set<string>>();
+function fadingKeyframes(css: string): Set<string> {
+  let names = FADING_KEYFRAMES.get(css);
+  if (names === undefined) {
+    names = new Set(
+      parse(css)
+        .declarations.filter((d) => d.property === 'opacity')
+        .flatMap((d) => d.context.map((level) => /^@keyframes\s+([\w-]+)$/.exec(level)?.[1]).filter((name): name is string => name !== undefined)),
+    );
+    FADING_KEYFRAMES.set(css, names);
+  }
+  return names;
+}
+
+/** The rules of `css` that run a fading animation on an element whose subject compound names one of `classes`. */
+function fadingAnimations(css: string, classes: readonly string[]): string[] {
+  const fading = fadingKeyframes(css);
+  if (fading.size === 0) return [];
+  const named = classes.map((name) => new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`));
+  return parse(css)
+    .declarations.filter((d) => (d.property === 'animation' || d.property === 'animation-name') && d.value.split(/[\s,]+/).some((word) => fading.has(word)))
+    .filter((d) => !(d.context.at(-1) ?? '').startsWith('@') && splitSelectors(d.context.at(-1) ?? '').some((selector) => named.some((name) => name.test(subjectCompound(selector)))))
+    .map((d) => `${d.context.at(-1)} { ${d.property}: ${d.value} }`);
+}
+
 /** What keeps a `DISABLED_CONTROLS` entry's element in `css` from showing disabled by its colour alone. */
 function disabledProblems(css: string, entry: DisabledControl): string[] {
   const problems: string[] = [];
   const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
   for (const selector of entry.element) if (!selectors.has(selector)) problems.push(`no ${selector}`);
   if (problems.length > 0) return problems;
+  // ... nor pulsed: an animation of opacity on any rule naming its classes (on the subject) is a fade too.
+  const classes = [...new Set(entry.element.flatMap((selector) => subjectCompound(selector).match(/\.[\w-]+/g) ?? []))];
+  for (const rule of fadingAnimations(css, classes)) problems.push(`pulses: ${rule}`);
   for (const { theme, context, state } of STATES) {
     const colour = resolveOnElement(css, entry.element, 'color', theme, context);
     if (colour !== DISABLED_INK) problems.push(`color ${colour} (${state})`);
@@ -1348,6 +1400,13 @@ test('disabled-controls-dim-their-text', () => {
   const targets = entries.find((entry) => entry.stylesheet === 'gsc-targets.css')!;
   const faded = `${read('gsc-targets.css')}\n.gsc-targets-use:disabled { opacity: 0.5; }\n${read('styles.css')}`;
   expect(disabledProblems(faded, targets)).toEqual(STATES.map(({ state }) => `opacity 0.5 (${state})`));
+  // A busy screenshot kind put back to pulsing fails, through its kinds' entry: an animation of opacity
+  // names one of its classes on its subject. An icon pulsing inside a button (Capture now's) does not.
+  const kinds = entries.find((entry) => entry.element.includes('.changes-shot-kind-button:disabled'))!;
+  const pulsed = `${read('styles.css')}\n.changes-shot-kind-button[data-busy='true'] { animation: changes-pulse 0.9s ease-in-out infinite alternate; }`;
+  expect(disabledProblems(pulsed, kinds)).toEqual(["pulses: .changes-shot-kind-button[data-busy='true'] { animation: changes-pulse 0.9s ease-in-out infinite alternate }"]);
+  expect(fadingAnimations('@keyframes p { to { opacity: 0.3; } } .b[x] .icon { animation: p 1s; } .b:disabled { animation-name: p; }', ['.b'])).toEqual(['.b:disabled { animation-name: p }']);
+  expect(fadingAnimations('@keyframes s { to { transform: rotate(1turn); } } .b { animation: s 1s; }', ['.b']), 'a spin is no fade').toEqual([]);
 });
 
 test('pressed-controls-draw-an-edge', () => {
@@ -1400,10 +1459,17 @@ test('state-edges-draw-their-shape', () => {
       expect.soft(resolveOnElement(css, entry.element, 'border-style', theme, { ...context, forced: true }), `${entry.why}: style under forced colours (${state})`).toBe(entry.style);
       expect.soft(resolveOnElement(css, entry.element, 'border-width', theme, { ...context, forced: true }), `${entry.why}: width under forced colours (${state})`).toBe(entry.width);
     }
-    for (const fill of entry.fills) {
+    // ... and the item at rest draws no edge of its own under forced colours (it would match a solid state).
+    if (entry.rest !== undefined) {
+      for (const { theme, context, state } of STATES) {
+        expect.soft(resolveOnElement(css, entry.element.slice(0, 1), 'border-color', theme, { ...context, forced: true }), `${entry.why}: at rest under forced colours (${state})`).toBe('Canvas');
+      }
+    }
+    const fills: StateEdge['fills'] = entry.fills;
+    for (const fill of fills) {
       expect.soft(
-        pairs.some((p) => p.fg === entry.edge && p.bg === fill.bg && p.over === fill.over && p.min >= 3),
-        `${entry.edge} on ${fill.bg}${fill.over ? ` over ${fill.over}` : ''} is a CONTRAST_PAIRS pair at 3:1 or more`,
+        pairs.some((p) => p.fg === entry.edge && p.bg === fill.bg && p.over === fill.over && p.under === fill.under && p.min >= 3),
+        `${entry.edge} on ${fill.bg}${fill.over ? ` over ${fill.over}` : ''}${fill.under ? ` over ${fill.under}` : ''} is a CONTRAST_PAIRS pair at 3:1 or more`,
       ).toBe(true);
     }
   }

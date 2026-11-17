@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useId, useMemo, useState } from 'react';
 import { measureSnippet, serpPreview, type SeoAudit, type SnippetCut } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import {
@@ -41,12 +41,17 @@ function measureDraft(title: string, description: string): Measured {
 
 function Meter({ label, cut, testId }: { readonly label: string; readonly cut: SnippetCut | null; readonly testId: string }) {
   const meter = widthMeter(cut);
+  // The fill is square (its boundary's crisp end, styles.css); this clip rounds its outer end as the track's.
+  const clip = `seo-width-clip-${useId().replace(/[^\w-]/g, '')}`;
   return (
     <div className="seo-width-meter" data-state={meter.state} data-testid={testId}>
       <span className="seo-width-meter-label">{label}</span>
       <svg className="seo-width-meter-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+        <clipPath id={clip}>
+          <rect x="0" y="0" width="100" height="6" rx="3" />
+        </clipPath>
         <rect className="seo-width-meter-track" x="0" y="0" width="100" height="6" rx="3" />
-        <rect className="seo-width-meter-fill" x="0" y="0" width={meter.fill} height="6" rx="3" />
+        <rect className="seo-width-meter-fill" clipPath={`url(#${clip})`} x="0" y="0" width={meter.fill} height="6" rx="3" />
         <rect className="seo-width-meter-mark" x={meter.mark - 0.4} y="-1" width="0.8" height="8" />
       </svg>
       <span className="seo-width-meter-text" data-testid={`${testId}-text`}>

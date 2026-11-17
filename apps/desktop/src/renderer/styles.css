@@ -931,15 +931,21 @@ input {
 }
 
 /* Disabled (or busy: Try again while it reloads): --text-faint on --bg-subtle with no shadow (it
-   faded), primary or not. It does not react to the pointer; its title, when it has one, still shows. */
-.panel-button:disabled {
+   faded), primary or not. It does not react to the pointer; its title, when it has one, still shows.
+   Busy but still focusable (aria-disabled: Export CSV while it saves, Start crawl and Ask while their
+   run is under way) the same, after the hovers and press so they give way, before the focus rule so its
+   ring stays whole. */
+.panel-button:disabled,
+.panel-button[aria-disabled='true'] {
   background: var(--bg-subtle);
   box-shadow: none;
   color: var(--text-faint);
   cursor: default;
+  transform: none;
 }
 
-.panel-button:disabled .icon {
+.panel-button:disabled .icon,
+.panel-button[aria-disabled='true'] .icon {
   color: currentColor;
 }
 
@@ -951,7 +957,8 @@ input {
 
 /* Forced colours replace the colours that say disabled (FORCED_COLOURS_BUSY). */
 @media (forced-colors: active) {
-  .panel-button:disabled {
+  .panel-button:disabled,
+  .panel-button[aria-disabled='true'] {
     border-color: GrayText;
     color: GrayText;
   }
@@ -1293,8 +1300,8 @@ input {
 }
 
 /* Status by shape, not hue alone: an error a filled --danger square, a warning a --warn ring (a
-   border, which forced colours keep), a pass a filled --ok disc. The dots keep their colours in forced
-   colours, where the halo and the ring's fill turn transparent. */
+   border, which forced colours keep), a pass a check (PASS_CHECK) on the halo's disc. The dots keep
+   their colours in forced colours, where the halo and the ring's fill turn transparent. */
 .seo-rail-dot {
   position: absolute;
   top: var(--space-2);
@@ -1315,6 +1322,25 @@ input {
 .seo-rail-dot[data-status='error'] {
   border-radius: calc(var(--r-xs) / 2);
   background: var(--danger);
+}
+
+.seo-rail-dot[data-status='pass'] {
+  background: var(--seo-dot-back);
+}
+
+/* A pass's check (PASS_CHECK): 10px, 1px past each edge of the 8px dot, so it keeps the dot's place;
+   stroked --ok, kept under forced colours by the forced-color-adjust it inherits from its dot. */
+.seo-pass-check {
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: var(--ok);
+  stroke-width: 2px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 @media (forced-colors: active) {
@@ -1387,6 +1413,18 @@ input {
 /* A dot on a tinted row: no halo (it would ring the tint). */
 .seo-more-item:is(:hover, :focus-visible) {
   --seo-dot-back: transparent;
+}
+
+/* ... but a pass's check keeps a --bg-surface disc (halo too: its tips pass the 8px dot): --ok on the tint
+   is 2.98:1 hovered, 2.84:1 focused in light, 3.30:1 on --bg-surface. None under forced colours. */
+.seo-more-item:is(:hover, :focus-visible) .seo-rail-dot[data-status='pass'] {
+  --seo-dot-back: var(--bg-surface);
+}
+
+@media (forced-colors: active) {
+  .seo-more-item:is(:hover, :focus-visible) .seo-rail-dot[data-status='pass'] {
+    --seo-dot-back: transparent;
+  }
 }
 
 .seo-more-label {
@@ -1939,10 +1977,11 @@ input {
   font: var(--text-small);
 }
 
-/* Status by shape, not hue alone, as the rail's dots: a pass a filled --ok disc, an error a filled
+/* Status by shape, not hue alone, as the rail's dots: a pass a check (PASS_CHECK), an error a filled
    --danger square, a warning a --warn ring (a border), a notice a hollow --accent diamond. They keep
    their colours in forced colours, where a fill would turn to the canvas. */
 .seo-category-dot {
+  position: relative;
   flex: none;
   box-sizing: border-box;
   width: 8px;
@@ -1950,6 +1989,10 @@ input {
   border-radius: var(--r-pill);
   background: var(--ok);
   forced-color-adjust: none;
+}
+
+.seo-category[data-status='pass'] .seo-category-dot {
+  background: transparent;
 }
 
 .seo-category[data-status='error'] .seo-category-dot {
@@ -2046,8 +2089,19 @@ input {
   fill: color-mix(in srgb, var(--ok) 22%, var(--track));
 }
 
+/* A 1px --bg-surface boundary round the fill (the stroke is currentColor, 2px painted under the fill, so
+   1px shows past it), as Page Speed's timing segments: "fits" (--ok) is 2.23:1 on --track in light. On
+   whole pixels (crispEdges): anti-aliased, the 1px split into two half-tones at about 2:1. Square (rx 0):
+   crisp, the markup's rx drew a staircase at each end; the bar's pill clip rounds the outer end. */
 .seo-meter-fill {
+  color: var(--bg-surface);
   fill: var(--meter);
+  stroke: currentColor;
+  stroke-width: 2px;
+  paint-order: stroke;
+  shape-rendering: crispEdges;
+  rx: 0;
+  vector-effect: non-scaling-stroke;
 }
 
 .seo-meter-text {
@@ -5893,8 +5947,9 @@ input {
   accent-color: var(--accent);
 }
 
+/* A label whose box is disabled: the disabled ink, not a fade (the native box keeps its own disabled look). */
 .render-check:has(input:disabled) {
-  opacity: 0.5;
+  color: color-mix(in srgb, var(--text-faint) 50%, transparent);
 }
 
 .render-bar-error {
@@ -6082,7 +6137,8 @@ input {
 /* Forced colours replace the colours that say disabled (FORCED_COLOURS_BUSY). */
 @media (forced-colors: active) {
   .render-chip:disabled,
-  .render-bar .render-frame-button:disabled {
+  .render-bar .render-frame-button:disabled,
+  .render-check:has(input:disabled) {
     border-color: GrayText;
     color: GrayText;
   }
@@ -6091,7 +6147,8 @@ input {
 /* ---- Tab badge and status chip ---- */
 
 /* An --icon-size square on --accent-soft; edged --accent (a border, not an inset shadow) while the tab
-   needs a reload or its profile failed (its accessible name says which). */
+   needs a reload (dashed) or its profile failed (solid, after it: failed wins when both hold). The
+   style tells them apart in forced colours too, where the edge at rest is the canvas (STATE_EDGES). */
 .tab-profile {
   display: grid;
   flex: none;
@@ -6104,9 +6161,20 @@ input {
   color: var(--accent);
 }
 
-.tab-profile[data-needs-reload='true'],
-.tab-profile[data-status='failed'] {
+.tab-profile[data-needs-reload='true'] {
+  border-style: dashed;
   border-color: var(--accent);
+}
+
+.tab-profile[data-status='failed'] {
+  border-style: solid;
+  border-color: var(--accent);
+}
+
+@media (forced-colors: active) {
+  .tab-profile {
+    border-color: Canvas;
+  }
 }
 
 .tab-profile-icon {
@@ -6520,8 +6588,16 @@ input {
   fill: var(--track);
 }
 
+/* The length meters' boundary (above). */
 .seo-width-meter-fill {
+  color: var(--bg-surface);
   fill: var(--meter);
+  stroke: currentColor;
+  stroke-width: 2px;
+  paint-order: stroke;
+  shape-rendering: crispEdges;
+  rx: 0;
+  vector-effect: non-scaling-stroke;
 }
 
 .seo-width-meter-mark {
@@ -9572,13 +9648,10 @@ input {
   min-width: 0;
 }
 
-/* The kinds are the shared segments: disabled, --text-faint at half strength (DISABLED_INK). */
+/* The kinds are the shared segments: disabled, --text-faint at half strength (DISABLED_INK), the busy
+   one too (its label says "Saving…"; an area's band says what to do): no pulse, which faded that word. */
 .changes-shot-kind-button:disabled {
   cursor: default;
-}
-
-.changes-shot-kind-button[data-busy='true'] {
-  animation: changes-pulse 0.9s ease-in-out infinite alternate;
 }
 
 .changes-shot-note {
@@ -9736,8 +9809,7 @@ input {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .changes-capture[data-busy='true'] .icon,
-  .changes-shot-kind-button[data-busy='true'] {
+  .changes-capture[data-busy='true'] .icon {
     animation: none;
   }
 }
@@ -10143,6 +10215,27 @@ input {
 
 .projects-entry-open:hover .projects-entry-label {
   color: var(--accent);
+}
+
+/* During a capture run (disabled; the run's band says why): the disabled ink, label and last-capture
+   line, and no hover tint (after the hover, at its weight); GrayText under forced colours. */
+.projects-entry-open:disabled,
+.projects-entry-open:disabled .projects-entry-label,
+.projects-entry-open:disabled .projects-entry-meta {
+  color: color-mix(in srgb, var(--text-faint) 50%, transparent);
+}
+
+.projects-entry-open:disabled {
+  cursor: default;
+}
+
+@media (forced-colors: active) {
+  .projects-entry-open:disabled,
+  .projects-entry-open:disabled .projects-entry-label,
+  .projects-entry-open:disabled .projects-entry-meta {
+    border-color: GrayText;
+    color: GrayText;
+  }
 }
 
 .projects-entry-meta {

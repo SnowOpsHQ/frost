@@ -526,10 +526,20 @@ export const FORCED_COLOURS_BUSY = [
   // The rest of the browser chrome: a disabled button is --text-faint on --bg-subtle with no shadow (it faded).
   { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button:disabled'], why: 'an error panel\'s button (and every panel\'s .panel-button), disabled or busy (Try again while it reloads)' },
   { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button-primary', '.panel-button:disabled'], why: 'a primary .panel-button, disabled or busy (its --accent fill must give way)' },
+  // Later states: a .panel-button busy but still focusable (aria-disabled) took no state rule at all.
+  { stylesheet: 'styles.css', element: ['.panel-button', ".panel-button[aria-disabled='true']"], why: 'the crawl sheet\'s Export CSV while it saves (aria-disabled, still focusable)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.panel-button', '.panel-button-primary', ".panel-button[aria-disabled='true']"],
+    why: 'the crawl sheet\'s Start crawl and AI answers\' Ask while their run is under way (aria-disabled primary buttons)',
+  },
   { stylesheet: 'styles.css', element: ['.update-button', '.update-button:disabled'], why: 'the update notice\'s Skip this version while its step runs' },
   { stylesheet: 'styles.css', element: ['.update-button', '.update-primary', '.update-button:disabled'], why: 'the update notice\'s Download or Show file while its step runs' },
   { stylesheet: 'styles.css', element: ['.find-tool', '.find-tool:disabled'], why: 'the find bar\'s Previous and Next with no match' },
   { stylesheet: 'styles.css', element: ['.render-chip', '.render-chip:disabled'], why: 'the editor bar\'s quick profiles with no tab' },
+  // Later states: a checkbox label whose box is disabled faded to half; it takes DISABLED_INK, GrayText here
+  // (a label draws no border, so its border-color is only what this check reads).
+  { stylesheet: 'styles.css', element: ['.render-check', '.render-check:has(input:disabled)'], why: 'the editor bar\'s checkbox labels, their box disabled (Pin to this site with no page)' },
   {
     stylesheet: 'styles.css',
     element: ['.render-frame-button', '.render-bar .render-frame-button', '.render-bar .render-frame-primary', '.render-bar .render-frame-button:disabled'],
@@ -548,6 +558,18 @@ export const FORCED_COLOURS_BUSY = [
     stylesheet: 'styles.css',
     element: ['.projects-small-button', '.projects-danger', '.projects-small-button:disabled'],
     why: 'Delete project while the sheet is busy (its --danger-ink must give way)',
+  },
+  // Later states: a project's page or search row while a capture run is under way (disabled; it looked enabled).
+  { stylesheet: 'styles.css', element: ['.projects-entry-open', '.projects-entry-open:disabled'], why: 'a Projects page or search row during a capture run' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.projects-entry-meta', '.projects-entry-open:disabled .projects-entry-meta'],
+    why: 'that row\'s last-capture line (its own --text-muted must give way)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.projects-entry-label', '.projects-entry-open:hover .projects-entry-label', '.projects-entry-open:disabled .projects-entry-label'],
+    why: 'that row\'s label under the pointer (its hover\'s --accent must give way)',
   },
   // The panel stylesheets (their surface PR): a busy chip, the calendar's arrows and the days out of range.
   {
@@ -654,10 +676,15 @@ export const FORCED_COLOURS_PRESSED = [
  * when nested in an at-rule, is named here for its stylesheet, and its value is `none`.
  */
 export const FORCED_COLOURS_KEPT = [
-  { stylesheet: 'styles.css', element: ['.seo-rail-dot'], why: 'an SEO rail dot (a pass disc)' },
+  // A pass draws PASS_CHECK (a check glyph, Later states; it was an --ok disc) on its halo's disc.
+  { stylesheet: 'styles.css', element: ['.seo-rail-dot', ".seo-rail-dot[data-status='pass']"], why: 'an SEO rail dot, pass (a check)' },
   { stylesheet: 'styles.css', element: ['.seo-rail-dot', ".seo-rail-dot[data-status='warn']"], why: 'an SEO rail dot, warning (a ring)' },
   { stylesheet: 'styles.css', element: ['.seo-rail-dot', ".seo-rail-dot[data-status='error']"], why: 'an SEO rail dot, error (a square)' },
-  { stylesheet: 'styles.css', element: ['.seo-category-dot'], why: 'Overview\'s checks by category: a category that passed (a disc)' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-category-dot', ".seo-category[data-status='pass'] .seo-category-dot"],
+    why: 'Overview\'s checks by category: a category that passed (a check)',
+  },
   {
     stylesheet: 'styles.css',
     element: ['.seo-category-dot', ".seo-category[data-status='error'] .seo-category-dot"],
@@ -691,7 +718,52 @@ export const FORCED_COLOURS_KEPT = [
   // The navigation timing's legend: each phase's swatch is its bar's shade (SVG fills, which forced
   // colours leave as they are), so the key keeps it too.
   { stylesheet: 'styles.css', element: ['.seo-speed-swatch'], why: 'Page Speed\'s navigation timing legend: a phase\'s swatch, the shade of its bar' },
+  // Later states (round 1): Help's setup checklist. Forced colours repainted the done step's --ok disc as the
+  // canvas, so a step done and one not done were the same ring; the marks keep their colours there.
+  { stylesheet: 'help.css', element: ['.setup-check'], why: 'Help\'s setup checklist: a step not done (a --switch-off ring)' },
+  { stylesheet: 'help.css', element: ['.setup-check', ".setup-item[data-done='true'] .setup-check"], why: 'Help\'s setup checklist: a step done (an --ok disc)' },
 ] as const satisfies readonly ForcedColoursBusy[];
+
+/**
+ * A passing status mark's glyph (Later states: a pass was a filled `--ok` disc, the canvas draws a check):
+ * the SEO rail's pass dot (on the rail, in "More panels" and on its button) and Overview's checks by
+ * category for a category that passed. `PassCheck` (`icons.tsx`) draws `d` in an inline SVG of `viewBox`,
+ * and `selector` in `styles.css` sizes it to `size` and strokes it `--ok` at `strokeWidth`. It keeps that
+ * colour under forced colours because it inherits `forced-color-adjust: none` from the dot it sits in
+ * (`.seo-rail-dot`, `.seo-category-dot`: `FORCED_COLOURS_KEPT`); a `PassCheck` anywhere else would be
+ * repainted. The ring, the square and the diamond are the other marks. At 1× the 2px stroke is two device
+ * pixels wide: it stays solid (a 1px one would blur to a faint line at this size). It sits in the 8px
+ * dot's box, 1px past each edge, so the rows and the rail keep their places.
+ *
+ * `backs`: what the check sits on, the cascade over `element` resolving `background` to `background` in
+ * light and dark (and to `forced` with the forced-colours rules read): on the rail the dot's halo disc
+ * (`--seo-dot-back`: the sheet, a selected item's card), in Overview nothing of its own (the card), and on
+ * a hovered or focused "More panels" row a `--bg-surface` disc, where the row's tint takes the halo away
+ * (`--ok` on that tint is 2.98:1 hovered and 2.84:1 focused in light; on `--bg-surface` 3.30:1). A green
+ * disc under it would hide it.
+ */
+export const PASS_CHECK = {
+  selector: '.seo-pass-check',
+  viewBox: '0 0 10 10',
+  d: 'M1.5 5.2l2.3 2.3L8.5 2.8',
+  size: '10px',
+  strokeWidth: '2px',
+  backs: [
+    { element: ['.seo-rail-dot', ".seo-rail-dot[data-status='pass']"], background: 'var(--seo-dot-back)', forced: 'transparent', why: 'the rail\'s pass dot: its halo disc (transparent under forced colours, as every halo)' },
+    {
+      element: ['.seo-category-dot', ".seo-category[data-status='pass'] .seo-category-dot"],
+      background: 'transparent',
+      forced: 'transparent',
+      why: 'Overview\'s passing category: the card',
+    },
+    {
+      element: ['.seo-rail-dot', ".seo-rail-dot[data-status='pass']", ".seo-more-item:is(:hover, :focus-visible) .seo-rail-dot[data-status='pass']"],
+      background: 'var(--bg-surface)',
+      forced: 'transparent',
+      why: '"More panels", a hovered or focused row\'s pass dot: a --bg-surface disc on the tint (none under forced colours, as every halo)',
+    },
+  ],
+} as const;
 
 export const SIGNAL_SURFACES = [
   // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).
@@ -737,6 +809,8 @@ export const SIGNAL_SURFACES = [
       '.seo-rail-*',
       '.seo-more-*',
       '.seo-pin',
+      // A pass's check (PASS_CHECK), on the rail's dots and Overview's category marks
+      '.seo-pass-check',
       // Shared parts
       '.seo-section-*',
       '.seo-score-card',
@@ -1632,6 +1706,24 @@ export const CONTRAST_PAIRS = [
     min: 4.5,
     why: 'a location tab\'s badge on a hovered inactive tab (--bg-hover over the tab row): --accent there is 4.18:1 in light (4.5:1)',
   },
+  // Later states. The length and width meters' fill is outlined by a 1px --bg-surface boundary (as Page
+  // Speed's timing segments), so it meets the card's colour, not the --track: "fits" (--ok) is 2.23:1 on
+  // --track in light. Every verdict's fill against that boundary (a missing or empty one draws no fill).
+  { fg: '--bg-surface', bg: '--ok', min: 3, why: 'the meters\' "fits" fill (--ok) against its --bg-surface boundary (graphics, 3:1; 2.23:1 against --track in light)' },
+  { fg: '--bg-surface', bg: '--warn', min: 3, why: 'the meters\' "too short", "too long" and "cut" fill (--warn) against its --bg-surface boundary (graphics, 3:1)' },
+  { fg: '--bg-surface', bg: '--danger', min: 3, why: 'the length meter\'s "missing" fill (--danger, drawn at no width) against its --bg-surface boundary (graphics, 3:1)' },
+  { fg: '--bg-surface', bg: '--text-faint', min: 3, why: 'the width meter\'s empty fill (--text-faint, drawn at no width) against its --bg-surface boundary (graphics, 3:1)' },
+  // Later states (round 1): the pass check on a "More panels" row under the pointer or keyboard focus sits on a
+  // --bg-surface disc (PASS_CHECK.backs): on the row's tint --ok was 2.98:1 hovered, 2.84:1 focused in light.
+  { fg: '--ok', bg: '--bg-surface', min: 3, why: 'the pass check on a hovered "More panels" row, on its --bg-surface disc (graphics, 3:1; 2.98:1 on --bg-hover over the menu in light)' },
+  { fg: '--ok', bg: '--bg-surface', min: 3, why: 'the pass check on a focused "More panels" row, on its --bg-surface disc (graphics, 3:1; 2.84:1 on --accent-soft over the menu in light)' },
+  // Later states: the tab's render-profile badge (--accent-soft, edged --accent when the tab needs a reload,
+  // dashed, or its profile failed, solid) on each tab state; the edge against the fill inside it and the
+  // tab outside it. Already covered: on the active tab (--accent on --bg-surface, and on --accent-soft over it).
+  { fg: '--accent', bg: '--bg-tab-idle', over: '--bg-window', min: 3, why: 'the tab badge\'s edge against an inactive tab (--bg-tab-idle over the tab row) (graphics, 3:1)' },
+  { fg: '--accent', bg: '--accent-soft', over: '--bg-tab-idle', under: '--bg-window', min: 3, why: 'the tab badge\'s edge against its own fill on an inactive tab (graphics, 3:1)' },
+  { fg: '--accent', bg: '--bg-hover', over: '--bg-window', min: 3, why: 'the tab badge\'s edge against a hovered inactive tab (--bg-hover over the tab row) (graphics, 3:1)' },
+  { fg: '--accent', bg: '--accent-soft', over: '--bg-hover', under: '--bg-window', min: 3, why: 'the tab badge\'s edge against its own fill on a hovered inactive tab (graphics, 3:1)' },
 ] as const satisfies readonly ContrastPair[];
 
 /**
@@ -1867,6 +1959,24 @@ export const TEXT_COLOUR_RULES = [
   // Disabled is a colour, not a fade (the token sheet's "--text-faint on --bg-subtle, no shadow"): with a fade put back these fail.
   { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'a disabled .panel-button' },
   { stylesheet: 'styles.css', element: ['.panel-button', '.panel-button-primary', '.panel-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'a disabled primary .panel-button' },
+  // Later states: busy but focusable (aria-disabled), the same colours, hovered too (its hover's --bg-hover and
+  // the primary's --accent-hover give way). The primary hover is FOCUS_RING_RULES' PANEL_PRIMARY_HOVER.
+  {
+    stylesheet: 'styles.css',
+    element: ['.panel-button', PANEL_HOVER, ".panel-button[aria-disabled='true']"],
+    color: '--text-faint',
+    background: '--bg-subtle',
+    unfaded: true,
+    why: 'the crawl sheet\'s Export CSV while it saves (aria-disabled), hovered too',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.panel-button', PANEL_HOVER, '.panel-button-primary', '.panel-button-primary:hover:where(:not(:disabled))', ".panel-button[aria-disabled='true']"],
+    color: '--text-faint',
+    background: '--bg-subtle',
+    unfaded: true,
+    why: 'the crawl sheet\'s Start crawl and AI answers\' Ask while their run is under way (aria-disabled), hovered too',
+  },
   { stylesheet: 'styles.css', element: ['.update-button', '.update-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the update notice\'s Skip this version while its step runs' },
   { stylesheet: 'styles.css', element: ['.update-button', '.update-primary', '.update-button:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the update notice\'s Download or Show file while its step runs' },
   { stylesheet: 'styles.css', element: ['.render-chip', '.render-chip:disabled'], color: '--text-faint', background: '--bg-subtle', unfaded: true, why: 'the editor bar\'s quick profiles with no tab' },
@@ -1946,6 +2056,24 @@ export const TEXT_COLOUR_RULES = [
     color: '--bg-surface',
     drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke' },
     why: 'Page Speed\'s navigation timing: the 1px boundary stroke around every phase\'s segment',
+  },
+  // Later states: the length and width meters' fill takes the same boundary (CONTRAST_PAIRS: --bg-surface
+  // against each verdict's fill), so "fits" (--ok, 2.23:1 on --track in light) meets the card's colour; on
+  // whole pixels, as the timing's: measured at 1×, an anti-aliased 1px boundary was two columns at about 2:1
+  // off the fill, crispEdges one column at 3.30:1 in every row.
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-meter-fill'],
+    color: '--bg-surface',
+    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke', 'shape-rendering': 'crispEdges', rx: '0' },
+    why: 'On-Page\'s length meters: the 1px boundary stroke around the fill, on whole pixels (anti-aliased it split into two half-tones at about 2:1), square (crisp, its rx drew a staircase at each end; the bar\'s pill clip rounds the outer end)',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.seo-width-meter-fill'],
+    color: '--bg-surface',
+    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke', 'shape-rendering': 'crispEdges', rx: '0' },
+    why: 'Content\'s width meters: the 1px boundary stroke around the fill, on whole pixels, square (as the length meters\')',
   },
   // Content, JavaScript, SERP and Visibility (their surface PR): status text takes its -ink, on its
   // -soft fill where it is a badge; no row in these panels is hoverable, so no badge lies over --bg-hover.
@@ -2163,6 +2291,13 @@ export const DISABLED_INK = 'color-mix(in srgb, var(--text-faint) 50%, transpare
  * on its track): for each entry the cascade over `element` in `stylesheet` resolves `color` to
  * `DISABLED_INK` in light and dark, and gives no `opacity` under 1 (a fade would dim the colours that say
  * it, and a busy control's focus ring). (`GrayText` marks them under forced colours: `FORCED_COLOURS_BUSY`.)
+ * Nor does any rule of the cascade whose subject names one of the classes `element` names (any state of
+ * it) run an `animation` whose `@keyframes` set `opacity`: a pulse is a fade too (Later states: the busy
+ * screenshot kind pulsed to 0.35 over its DISABLED_INK, the word "Saving…" with it; it is a disabled
+ * segment, which says it is busy by its colours and its label, as the other busy controls do). Its limits:
+ * it reads only rules whose subject is the control itself, so a pulse on a container around it (or an
+ * opacity set on an ancestor any other way) passes unseen; and it reads every state of the class, so a
+ * legitimate opacity entrance animation on a listed control would fail it (none exists).
  */
 export interface DisabledControl extends LoadsBefore {
   readonly stylesheet: string;
@@ -2176,7 +2311,17 @@ export const DISABLED_CONTROLS = [
   {
     stylesheet: 'styles.css',
     element: ['.seo-segment', '.seo-segment:disabled', '.changes-shot-kind-button:disabled'],
-    why: 'the Changes panel\'s screenshot kinds, disabled (no page, or a screenshot under way)',
+    why: 'the Changes panel\'s screenshot kinds, disabled (no page, or a screenshot under way; the busy one no longer pulses)',
+  },
+  // Later states: a checkbox label whose box is disabled (it faded to half; the native box keeps its own look),
+  // and a Projects page or search row during a capture run (it looked enabled, and its hover tinted it).
+  { stylesheet: 'styles.css', element: ['.render-check', '.render-check:has(input:disabled)'], why: 'the editor bar\'s checkbox labels, their box disabled' },
+  { stylesheet: 'styles.css', element: ['.projects-entry-open', '.projects-entry-open:disabled'], why: 'a Projects page or search row during a capture run' },
+  { stylesheet: 'styles.css', element: ['.projects-entry-meta', '.projects-entry-open:disabled .projects-entry-meta'], why: 'that row\'s last-capture line' },
+  {
+    stylesheet: 'styles.css',
+    element: ['.projects-entry-label', '.projects-entry-open:hover .projects-entry-label', '.projects-entry-open:disabled .projects-entry-label'],
+    why: 'that row\'s label under the pointer (the hover\'s --accent gives way)',
   },
   // The panel stylesheets (their surface PR): a busy chip (it faded to 0.6), the calendar's arrows and the
   // days out of range (they faded to 0.35 and 0.45), and Content's "Use as target" (it faded to half).
@@ -2320,7 +2465,11 @@ export const PRESSED_EDGES = [
  * 1.48:1 on the card, which only forced colours drew). For each entry the cascade over `element` in
  * `stylesheet` resolves `border-color` to `var(<edge>)`, `border-style` to `style` and `border-width` to
  * `width`, in light and dark and with the `@media (forced-colors: active)` rules read too, and for each of `fills` (what the edge sits on) `CONTRAST_PAIRS` holds
- * `edge` on it at 3:1 or more. Forced colours keep the style, so the shape still says which.
+ * `edge` on it at 3:1 or more (a fill's `under` matched too). Forced colours keep the style, so the shape still says which. `rest: 'canvas'`
+ * (Later states: the tab's render-profile badge): the cascade over `element[0]` alone, the item at rest,
+ * with the forced-colours rules read, resolves `border-color` to `Canvas`, since forced colours paint a
+ * transparent border and the rest would otherwise draw the same solid edge as a state. A `width` is a whole
+ * pixel: Chromium draws a border on whole device pixels (a 1.5px one is 1px at 1×).
  */
 export interface StateEdge {
   readonly stylesheet: string;
@@ -2328,9 +2477,20 @@ export interface StateEdge {
   readonly edge: TokenName;
   readonly style: 'solid' | 'dashed';
   readonly width: string;
-  readonly fills: readonly { readonly bg: TokenName; readonly over?: TokenName }[];
+  readonly fills: readonly { readonly bg: TokenName; readonly over?: TokenName; readonly under?: TokenName }[];
+  readonly rest?: 'canvas';
   readonly why: string;
 }
+
+/** What the tab's render-profile badge's edge lies on: its own --accent-soft and the tab, on each tab state. */
+const TAB_BADGE_FILLS = [
+  { bg: '--bg-surface' },
+  { bg: '--accent-soft', over: '--bg-surface' },
+  { bg: '--bg-tab-idle', over: '--bg-window' },
+  { bg: '--accent-soft', over: '--bg-tab-idle', under: '--bg-window' },
+  { bg: '--bg-hover', over: '--bg-window' },
+  { bg: '--accent-soft', over: '--bg-hover', under: '--bg-window' },
+] as const satisfies StateEdge['fills'];
 
 export const STATE_EDGES = [
   {
@@ -2350,6 +2510,51 @@ export const STATE_EDGES = [
     width: '1px',
     fills: [{ bg: '--bg-surface' }],
     why: 'Content: a target query\'s term not found there, a dashed --text-faint edge (5.53:1 light, 5.03:1 dark on the card)',
+  },
+  // Later states: the tab's render-profile badge. At rest no edge (Canvas under forced colours); a tab that
+  // needs a reload a dashed --accent edge; a profile that failed a solid one (failed wins when both hold, as
+  // the status chip says "not applied" then). The edge lies on every tab state (TAB_STRIP: active, inactive,
+  // hovered inactive), against the badge's own --accent-soft inside and the tab outside.
+  {
+    stylesheet: 'styles.css',
+    element: ['.tab-profile', ".tab-profile[data-needs-reload='true']"],
+    edge: '--accent',
+    style: 'dashed',
+    width: '1px',
+    fills: TAB_BADGE_FILLS,
+    rest: 'canvas',
+    why: 'a profiled tab that needs a reload: a dashed --accent edge round its badge',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.tab-profile', ".tab-profile[data-status='failed']"],
+    edge: '--accent',
+    style: 'solid',
+    width: '1px',
+    fills: TAB_BADGE_FILLS,
+    rest: 'canvas',
+    why: 'a profiled tab whose profile failed: a solid --accent edge round its badge',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.tab-profile', ".tab-profile[data-needs-reload='true']", ".tab-profile[data-status='failed']"],
+    edge: '--accent',
+    style: 'solid',
+    width: '1px',
+    fills: TAB_BADGE_FILLS,
+    rest: 'canvas',
+    why: 'a profiled tab that needs a reload and whose profile failed: failed (solid) wins',
+  },
+  // Later states: Help's setup checklist, a step not done yet: a whole-pixel --switch-off ring (it was 1.5px,
+  // which Chromium drew as 1px at 1× and 1.5px, three device pixels, at 2×); done, an --ok disc.
+  {
+    stylesheet: 'help.css',
+    element: ['.setup-check'],
+    edge: '--switch-off',
+    style: 'solid',
+    width: '1px',
+    fills: [{ bg: '--bg-surface' }],
+    why: 'Help\'s setup checklist: a step not done yet, a 1px --switch-off ring on its card',
   },
 ] as const satisfies readonly StateEdge[];
 
@@ -2529,6 +2734,17 @@ export const FOCUS_RING_RULES = [
     stylesheet: 'styles.css',
     element: ['.panel-button', PANEL_BUTTON_HOVER, '.panel-button-primary', PANEL_PRIMARY_HOVER, '.panel-button:focus-visible'],
     why: 'a primary .panel-button (Try again, Reload), focused and hovered: its hover sets box-shadow: none',
+  },
+  // Later states: busy but focusable (aria-disabled), a .panel-button keeps its ring at full strength.
+  {
+    stylesheet: 'styles.css',
+    element: ['.panel-button', PANEL_BUTTON_HOVER, ".panel-button[aria-disabled='true']", '.panel-button:focus-visible'],
+    why: 'the crawl sheet\'s Export CSV while it saves (aria-disabled, still focusable), focused and hovered: its busy rule sets box-shadow: none',
+  },
+  {
+    stylesheet: 'styles.css',
+    element: ['.panel-button', PANEL_BUTTON_HOVER, '.panel-button-primary', PANEL_PRIMARY_HOVER, ".panel-button[aria-disabled='true']", '.panel-button:focus-visible'],
+    why: 'the crawl sheet\'s Start crawl and AI answers\' Ask while their run is under way (aria-disabled), focused and hovered',
   },
   { stylesheet: 'styles.css', element: ['.update-button', UPDATE_BUTTON_HOVER, '.update-button:focus-visible'], why: 'the update notice\'s Skip this version, focused and hovered' },
   {

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { PASS_CHECK } from '@app/specs/design-tokens.spec';
 
 // frost's own toolbar icons: simple stroked shapes on a 24×24 grid, drawn for this app. They
 // inherit `currentColor`; sizing and colour come from styles.css (no inline styles: strict CSP).
@@ -443,6 +444,15 @@ export function CheckCircleIcon(props: IconProps) {
       <circle cx="12" cy="12" r="8.2" />
       <path d="M8.4 12.3l2.5 2.5 4.8-5" />
     </Icon>
+  );
+}
+
+/** A passing status mark's check (PASS_CHECK): sized and stroked `--ok` by `.seo-pass-check`, inside a dot. */
+export function PassCheck() {
+  return (
+    <svg className="seo-pass-check" viewBox={PASS_CHECK.viewBox} aria-hidden="true" focusable="false">
+      <path d={PASS_CHECK.d} />
+    </svg>
   );
 }
 

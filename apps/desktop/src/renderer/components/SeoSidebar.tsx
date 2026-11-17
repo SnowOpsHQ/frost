@@ -15,7 +15,7 @@ import {
   type PanelStatus,
   type SeoPanelId,
 } from '@app/specs/seo-sidebar.spec';
-import { AuditArt, ChevronIcon, ComplianceIcon, ImagesIcon, IndexabilityIcon, LinksIcon, MorePanelsIcon, OnPageIcon, OverviewIcon, PinIcon, ReloadIcon, SchemaIcon, SocialIcon, SpeedIcon } from '../icons';
+import { AuditArt, ChevronIcon, ComplianceIcon, ImagesIcon, IndexabilityIcon, LinksIcon, MorePanelsIcon, OnPageIcon, OverviewIcon, PassCheck, PinIcon, ReloadIcon, SchemaIcon, SocialIcon, SpeedIcon } from '../icons';
 import { actions } from '../ipc';
 import type { PanelJump } from '../palette/registry';
 import { highlightToClear, isolatedTooltip, railStatuses } from '../seo-view';
@@ -133,7 +133,11 @@ function MoreMenu({
           <button key={id} type="button" role="menuitem" tabIndex={-1} className="seo-more-item" data-testid="seo-more-item" data-panel={id} data-status={status} onClick={() => onSelect(id)}>
             <Icon />
             <span className="seo-more-label">{PANEL_LABELS.get(id)}</span>
-            {status ? <span className="seo-more-dot seo-rail-dot" data-status={status} aria-hidden="true" /> : null}
+            {status ? (
+              <span className="seo-more-dot seo-rail-dot" data-status={status} aria-hidden="true">
+                {status === 'pass' ? <PassCheck /> : null}
+              </span>
+            ) : null}
           </button>
         );
       })}
@@ -243,7 +247,11 @@ function Rail({
             }}
           >
             <Icon />
-            {status ? <span className="seo-rail-dot" data-status={status} aria-hidden="true" /> : null}
+            {status ? (
+              <span className="seo-rail-dot" data-status={status} aria-hidden="true">
+                {status === 'pass' ? <PassCheck /> : null}
+              </span>
+            ) : null}
             <span className="seo-rail-label">{item.available ? item.label : 'Soon'}</span>
           </button>
         );
@@ -271,7 +279,11 @@ function Rail({
           }}
         >
           <MorePanelsIcon />
-          {moreStatus ? <span className="seo-rail-dot" data-status={moreStatus} aria-hidden="true" /> : null}
+          {moreStatus ? (
+            <span className="seo-rail-dot" data-status={moreStatus} aria-hidden="true">
+              {moreStatus === 'pass' ? <PassCheck /> : null}
+            </span>
+          ) : null}
           <span className="seo-rail-label">{MORE_PANELS_LABEL}</span>
         </button>
       ) : null}

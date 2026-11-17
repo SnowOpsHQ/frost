@@ -19,6 +19,10 @@ describe('render-profile view', () => {
   test('render-profile-view', () => {
     expect(badgeLabel(state())).toBe('Render profile: Phone 412×915 · Googlebot smartphone');
     expect(badgeLabel(state({ source: 'site', pinned: true }))).toBe('Render profile: Phone 412×915 · Googlebot smartphone (pinned to this site)');
+    // The badge's name says what its edge does: needs a reload (dashed), not applied (solid; failed wins).
+    expect(badgeLabel(state({ needsReload: true }))).toBe('Render profile: Phone 412×915 · Googlebot smartphone · Reload to apply');
+    expect(badgeLabel(state({ status: 'failed' }))).toBe('Render profile: Phone 412×915 · Googlebot smartphone · not applied');
+    expect(badgeLabel(state({ status: 'failed', needsReload: true, source: 'site', pinned: true }))).toBe('Render profile: Phone 412×915 · Googlebot smartphone (pinned to this site) · not applied');
     expect(chipText(state())).toBe('Phone 412×915 · Googlebot smartphone');
     expect(chipText(state({ needsReload: true }))).toBe('Phone 412×915 · Googlebot smartphone · Reload to apply');
     expect(chipText(state({ status: 'failed', needsReload: true }))).toBe('Phone 412×915 · Googlebot smartphone · not applied');
