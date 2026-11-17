@@ -1711,7 +1711,7 @@ test('narrow-panel-fits-resolve', () => {
         // the same container (a larger `width <` bound): at the same weight the later rule wins.
         const bound = (query: string) => Number(/^@container (\S+) \(width < (\d+)px\)$/.exec(collapse(query))?.[2] ?? NaN);
         const query = fit.query;
-        const wider = (d: { outer: string[] }) => d.outer.length === 1 && collapse(d.outer[0]!).split(' (')[0] === query.split(' (')[0] && bound(d.outer[0]!) > bound(query);
+        const wider = (d: { readonly outer: readonly string[] }) => d.outer.length === 1 && collapse(d.outer[0]!).split(' (')[0] === query.split(' (')[0] && bound(d.outer[0]!) > bound(query);
         const outside = own.filter((d) => d.property === property && (d.outer.length === 0 || wider(d)));
         const lastOutside = Math.max(-1, ...outside.map((d) => d.order));
         expect(last!.order, `${fit.selector} { ${property} }: its ${fit.query} after the rules it overrides`).toBeGreaterThan(lastOutside);
