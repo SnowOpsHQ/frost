@@ -1396,9 +1396,6 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup or th
 - **Search Console's controls and Content's targets are cut at 300px** (`gsc-panel.css`: "More range…"
   and a long country such as "United Kingd…"; `gsc-targets.css`, `.gsc-targets-row`: less of each query):
   ellipsis, not a narrower layout.
-- **Some states have no baseline capture** (`apps/desktop/e2e/visual.e2e.ts`): the crawl and AI answers
-  sheets' run cards, picks and pills, and SERP's and Visibility's tables; their captures are the empty
-  or before-run states, so those parts are checked by the token guards only.
 - **Help's setup check has a 1.5px border** (`help.css`, `.setup-check`, the setup checklist's 14px
   `--switch-off` ring): Chromium draws it as 1px; a whole pixel would change its look.
 - **The meters' "fits" fill is `--ok` on `--track` at 2.23:1 in light** (`styles.css`, `.seo-meter-fill`

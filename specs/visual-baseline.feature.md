@@ -31,7 +31,10 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 - **Each capture is the visible window only** (1280 × 800; `narrow-window` 588 × 800). A surface longer than its scroller gets
   more captures of the same state with that scroller moved (`capture(name, { scroll })`): to its
   end (`-lower`) and, where the end alone would leave much of the middle out, to a fixed offset
-  (`-middle`). See "What is compared".
+  (`-middle`). A state whose subject lies below the fold (a run's results under a form or a long
+  disclosure) is captured with its scroller moved until the element it is about sits at the top
+  (`into`; the offset is read from where the element is drawn, in whole pixels, and must not pass the
+  scroller's end). See "What is compared".
 - **Comparator**: `threshold: 0` (any change of a pixel's colour counts; Playwright's default 0.2
   would let a subtle token colour shift pass) and `maxDiffPixelRatio: 0.002`: up to 0.2 % of the
   pixels, 2,048 at 1280 × 800, may differ, for anti-aliasing noise (seen: the Search Console range
@@ -69,7 +72,9 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `seo-content-lower` | seo-content | the same at its end: readability, a long difficult sentence, the notes | |
 | `seo-javascript` | seo-javascript | JavaScript: the guide served and rendered alike | `seo-javascript` |
 | `seo-serp` | seo-serp | SERP: the guide is no result page (the bundled selectors) | `serp` serp-not-a-result-page |
+| `seo-serp-ownership` | seo-serp-ownership | SERP on the synthetic engine's "green tea" page, read with the signed test pack (installed once through "Check for selector updates"), `.seo-body` from the composition down: the bar and counts, Who owns page 1's table, the results' start | `serp` serp-composition-and-ownership |
 | `seo-visibility` | seo-visibility | Visibility before a run, `.seo-body` at its end: the disclosure, the run button, the query box (AI readiness above) | `visibility` |
+| `seo-visibility-table` | seo-visibility-table | Visibility after a probe run on the probe site's page, `.seo-body` from the run's summary down: the table (one column per agent, the cells that differ marked), its notes | `visibility` visibility-probes-per-agent |
 | `seo-inspector` | seo-inspector | the Inspector on the guide: the DOM tree, its root open (head and body) | `inspector` inspector-tree-expands-to-h1 |
 | `devtools-drawer` | devtools-drawer | the SEO devtools drawer on Console | `devtools` |
 | `find-bar` | find-bar | the find bar, "tea", 1 of 3 | `browser-polish` find-counts-steps-and-clears |
@@ -78,7 +83,9 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `settings-lower` | settings | the same, `.settings-content` at its end: AI checks' end, Telemetry | |
 | `help-shortcuts` | help-shortcuts | Help › Keyboard Shortcuts over the guide page | `browser-polish` help-shortcuts-sheet |
 | `crawl-sheet` | crawl-sheet | the site crawl sheet as shipped (Start gated off), its form from the guide's site, no runs | `crawl` crawl-gate-closed-as-shipped |
+| `crawl-sheet-run` | crawl-run | a crawl of the fixture site from the guide run to its end (its gate open with the e2e switch, its own app), `.help-body` from Runs down: the run card (Done, its counts and bytes), the Pages and Site structure segments, the filters, the Pages table (the guide and the two pages it links to, 404 here) | `crawl` crawl-runs-pauses-across-a-restart-and-resumes, crawl-pages-and-structure-show-the-site |
 | `ai-answers-sheet` | ai-answers-sheet | the AI answers sheet with no key set and no answers | `ai-answers` (the view, before any key) |
+| `ai-answers-sheet-answers` | ai-answers-run | the same app, both data-source keys set in Settings (the stand-in keychain), two answers asked from the sheet (Perplexity, then OpenAI web search; the fake data API's fixed answers) and the watched domain typed: the two picks, the second shown and pressed, its cited domains and citations, the watched ones marked | `ai-answers` ai-answers-keys-set-in-settings, ai-answers-agent-and-view-end-to-end |
 | `projects` | projects | the Projects sheet: a project with two pages | `projects` projects-create-and-add-pages |
 | `projects-lower` | projects | the same, `.projects-main` at its end: search queries, Retention and disk usage, Purge log | |
 | `projects-rankings` | projects | the same project's Rankings view: no site and no reading yet: its toolbar and two notices | `rankings` |
@@ -89,7 +96,7 @@ screenshot-only stylesheet `apps/desktop/e2e/visual.css`; config: `apps/desktop/
 | `agent-empty` | agent-empty | the agent panel open, no chat yet | `agent` `launchWith` |
 | `agent-conversation` | agent-conversation | one scripted turn: a `page_text` tool card, then the answer | `agent` agent-chat-export-and-restore (scripted model seam) |
 
-42 captures, 84 images. No state is skipped. The ChatGPT route's conversation is not captured: the
+46 captures, 92 images. No state is skipped. The ChatGPT route's conversation is not captured: the
 scripted-model turn already shows the same chat surface without a sign-in.
 
 ## What is compared
@@ -107,7 +114,9 @@ Only what each capture's window shows (measured locally at 1280 × 800):
 
 ## Determinism
 - **Fixed names, no ports.** The fixture site answers on `visual.frost-e2e.net` (and
-  `permissions.frost-e2e.net`, treated as a secure origin so a page may ask for a permission) via
+  `permissions.frost-e2e.net`, treated as a secure origin so a page may ask for a permission), the
+  probe site (`probe-site.ts`) on `probes.frost-e2e.net` and its synthetic engine on
+  `search.frost-e2e.net`, via
   `--host-resolver-rules=MAP <host> 127.0.0.1:<port>`: every URL the chrome shows (address bar,
   status bar, On-Page, Schema, Projects, History) is the same in every run, though the server's
   port is random. The site's pages are frost's own fixed text, never cached (`no-store`); nothing
@@ -128,6 +137,15 @@ fails by name rather than as an image difference. Then every capture waits until
 - **Order independence.** In the shared app each state starts from one tab, every sheet, bar and
   drawer closed, the sidebar open, and the SEO panel's scroller (`.seo-body`) back at the top (the
   Settings and Projects sheets are closed, so their scrollers start at the top when reopened).
+- **Runs end before capture.** The crawl runs to Done on a fixed site, one fetch at a time (so its
+  order, counts and bytes are fixed); the AI answers come from `fake-data-api.ts`'s fixed answers;
+  the visibility probes run to Done against the probe site's fixed pages; the SERP state is read
+  with the signed test pack (`serp-fixtures.ts`) from the synthetic engine's fixed page. On-device
+  intent stays off (its model is never downloaded), so the SERP and Visibility panels show its
+  enable prompt, not a model's guess. Nothing in them follows the clock but the answers' and the
+  robots.txt files' times (hidden, below). The states whose gates the e2e switch opens (crawl, the
+  AI answers' providers) have their own app, so the shipped `crawl-sheet` and `ai-answers-sheet`
+  keep their closed gates.
 - **Distinct sizes.** The guide's two images are valid PNGs of different byte sizes (each padded
   with a `tEXt` chunk of its own length): Page Speed's Largest requests sorts by size and keeps equal sizes in load
   order, which would follow timing.
@@ -155,6 +173,10 @@ fails by name rather than as an image difference. Then every capture waits until
     sizes, Hosts and DOM are compared;
   - Projects: Retention's "Database file (all projects)" size, which grows with whatever the app
     has stored (the value column of a two-column grid).
+  - AI answers: a pick's line and the shown answer's line ("<engine> · <date> <time> · …"), each
+    clipped to one line, as either could wrap differently from one day to the next;
+  - Visibility: "· read <time>" beside each robots.txt file's URL, left out (`display: none`) so the
+    URL, which takes the room it leaves, keeps one width.
 
 ## Baseline procedure
 `updateSnapshots` is `'missing'`, in CI too. For a missing baseline Playwright renders the state,
@@ -213,6 +235,8 @@ scrolled capture's scroller has something below the fold and reached its offset.
   **devtools-drawer**, **find-bar**, **command-palette**, **settings**, **projects**,
   **render-profile**, **permission-bar**, **page-error** (one app; each starts from one tab, everything closed).
 - **Scenario: agent-empty**, **agent-conversation** (the scripted model seam).
+- **Scenario: crawl-run**, **ai-answers-run** (gates opened by the e2e switch; the fake data API; the stand-in keychain).
+- **Scenario: seo-serp-ownership**, **seo-visibility-table** (the probe site and its synthetic engine; the signed test pack).
 - **Scenario: seo-search-console** (fake backend and Google).
 - **Scenario: update-bar** (fake feed).
 - **Scenario: every capture has a baseline** — every `CAPTURES` name has a `capture('<name>'` call;
