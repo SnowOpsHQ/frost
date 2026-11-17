@@ -190,9 +190,9 @@ test('serp-composition-and-ownership', async () => {
   });
   // In the 588px window (the panel about 160px) a row takes three lines: every header and cell whole, nothing
   // scrolling, and each count under its header (the same track's edges).
-  const height = await page.evaluate(() => Math.min(700, innerHeight));
+  const before = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
   try {
-    await page.setViewportSize({ width: NARROW_WINDOW.width, height });
+    await page.setViewportSize({ width: NARROW_WINDOW.width, height: Math.min(700, before.height) });
     await expect.poll(() => table.locator('tr').first().evaluate((row) => getComputedStyle(row).gridTemplateColumns.split(' ').length)).toBe(2);
     expect(await sidewaysScroll(wrap)).toBe(0);
     expect(await cutText(table)).toEqual([]);
@@ -208,7 +208,9 @@ test('serp-composition-and-ownership', async () => {
     });
     expect(misplaced).toEqual([]);
   } finally {
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
+    // Back to the chrome's own size (dropping the emulation instead left the Visibility panel's query box
+    // with no box in the next test, on CI and locally).
+    await page.setViewportSize(before);
   }
 });
 
