@@ -1194,8 +1194,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   declarations resolves to its value (the timing boundary's, and the length and width meters' fill
   boundary's, `stroke: currentColor`, `stroke-width: 2px` and `paint-order: stroke`; the meters' also
   `shape-rendering: crispEdges`, since an anti-aliased 1px boundary split into two columns at about 2:1,
-  and `rx: 0`, since crisp, the fill's `rx="3"` drew a staircase at each end; the bar's pill clip rounds
-  the outer end). A busy `.panel-button`
+  and `rx: 0`, since crisp, the fill's `rx="3"` drew a staircase at each end; the length meter's pill clip
+  rounds the outer end, and the width meter's fill is clipped to its track's shape, `seo-content.feature.md`'s
+  `snippet-editor-previews`, since its bar does not clip: its mark stands 1px past it). A busy `.panel-button`
   marked `aria-disabled` is `--text-faint` on `--bg-subtle`, unfaded, hovered too and primary or not.
 - **Scenario: fades-spare-focus** — in each `FADES_SPARE_FOCUS` stylesheet, every rule setting an
   `opacity` under 1 ends each selector with `:not(:focus-within)`, and one such rule exists; it catches
