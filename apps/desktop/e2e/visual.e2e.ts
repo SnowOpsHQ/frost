@@ -979,7 +979,8 @@ test.describe('crawl and AI answers runs', () => {
     await page.getByTestId('ai-answers-watch').fill(AI_FIXTURE_WATCHED_DOMAIN);
     await expect(shown.locator('[data-testid="ai-answer-domain"][data-watched="true"]')).toHaveCount(1);
     expect(fake.refused).toEqual([]);
-    await capture('ai-answers-sheet-answers');
+    // From the Answers section down: the picks, the answer card with both its citations whole (the watched one marked).
+    await capture('ai-answers-sheet-answers', { scroll: { selector: '.help-body', into: '.ai-answers-section:has(#ai-answers-list-title)' } });
     await page.getByTestId('ai-answers-view-close').click();
     await expect(page.getByTestId('ai-answers-view')).toHaveCount(0);
   });
