@@ -414,7 +414,8 @@ test.describe.serial('the Search Console panel', () => {
     // filters share the row equally at the default width, as before; at 300px "United Kingdom" is whole,
     // and the longest name stays inside the row (it ends in an ellipsis).
     google.countryRows = () => Object.keys(GSC_COUNTRY_ALPHA3).map((code, i) => ({ keys: [code], clicks: 1_000 - i, impressions: 10_000, ctr: 0.1, position: 3 }));
-    await device.selectOption('MOBILE');
+    // A device not chosen before in this test, so main reads the countries again (it keeps each answer).
+    await device.selectOption('TABLET');
     await expect.poll(() => country.locator('option').count()).toBeGreaterThan(200);
     const boxes = () =>
       page.locator('.gsc-filter-row').evaluate((row) => {
