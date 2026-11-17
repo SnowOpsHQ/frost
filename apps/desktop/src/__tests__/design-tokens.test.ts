@@ -694,10 +694,30 @@ function atRuleApplies(prelude: string, theme: 'light' | 'dark', options: Resolv
     return media.split(/\s+and\s+/).map((feature) => mediaFeatureApplies(feature.trim(), prelude, theme, options)).every(Boolean);
   }
   const supports = /^@supports\s+(.+)$/.exec(prelude)?.[1];
-  if (supports !== undefined) return !/^not\b/.test(supports);
+  if (supports !== undefined) {
+    // One declaration in parentheses, or a leading `not` before one: nothing else (`and`, `or`, a `not` inside, `selector()`).
+    const [, negated, group] = /^(not\s+)?(\(.*\))$/.exec(supports) ?? [];
+    if (group !== undefined && oneGroup(group) && /^\(\s*[a-z-]+\s*:/i.test(group)) return negated === undefined;
+    throw new Error(`the cascade check can't apply ${prelude}`);
+  }
   const [, container, condition] = /^@container\s+([a-z][\w-]*)\s+(\(.+\))$/i.exec(prelude) ?? [];
-  if (container !== undefined && UPPER_WIDTH.test(condition!)) return narrowIn(options, container);
+  // `not`, `and`, `or` and `none` are never a container's name: `@container not (…)` is a condition.
+  if (container !== undefined && !CONTAINER_KEYWORDS.has(container.toLowerCase()) && UPPER_WIDTH.test(condition!)) return narrowIn(options, container);
   throw new Error(`the cascade check can't apply ${prelude}`);
+}
+
+/** Words a `@container` prelude can start with that are not a container's name. */
+const CONTAINER_KEYWORDS = new Set(['not', 'and', 'or', 'none']);
+
+/** Whether `text`, which starts with `(` and ends with `)`, is one parenthesised group (not `(a) and (b)`). */
+function oneGroup(text: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '(') depth += 1;
+    else if (text[i] === ')') depth -= 1;
+    if (depth === 0 && i < text.length - 1) return false;
+  }
+  return depth === 0;
 }
 
 /** A declaration's context as the cascade reads it: its rule's selectors, native nesting resolved (`&` replaced
@@ -708,11 +728,18 @@ function nestedContext(context: readonly string[]): { selectors: string[]; condi
   let nested = false;
   const conditions: string[] = [];
   for (const level of context) {
+    // Under a parent that is a selector list, a nested rule (or at-rule) takes `:is()` of the whole list: its
+    // highest specificity, and an `&` matching any member. Not modelled: refused.
+    if (nested && selectors.length > 1) throw new Error(`the cascade check can't apply nesting under the selector list ${context.filter((l) => !l.startsWith('@')).at(0)}`);
     if (level.startsWith('@')) {
       conditions.push(level);
       continue;
     }
     const parts = splitSelectors(level).map((s) => s.replace(/\s+/g, ' ').trim());
+    // An `&` inside a quoted string is text, not the parent: refused rather than replaced.
+    if (nested && parts.some((part) => part.includes('&') && part.replace(/'[^']*'|"[^"]*"/g, '').split('&').length !== part.split('&').length)) {
+      throw new Error(`the cascade check can't apply an & inside a string in ${level}`);
+    }
     selectors = nested ? selectors.flatMap((parent) => parts.map((part) => (part.includes('&') ? part.replaceAll('&', parent) : `${parent} ${part}`))) : parts;
     nested = true;
   }
@@ -843,13 +870,18 @@ test('cascade-checks-read-every-at-rule', () => {
   expect(at(inside, ['.a'], 'color', { narrow: ['chrome'] })).toBe('var(--base)');
   expect(at(inside, ['.a'], 'color', { forced: true, narrow: ['chrome'] })).toBe('Canvas');
   expect(at(`${base} @media screen and (prefers-color-scheme: dark) { .a { color: var(--night); } }`, ['.a'], 'color', {}, 'dark')).toBe('var(--night)');
-  // Native nesting: `&` replaced by each parent selector, a descendant without it, an at-rule nested in a rule.
-  const nested = `.a, .b { color: var(--base); &:hover { color: var(--hover); } &[x] { color: var(--x); } .c { color: var(--child); } @media (forced-colors: active) { color: GrayText; } }`;
+  // Native nesting under one parent selector: each `&` replaced by it, a descendant without it, an at-rule nested in a rule.
+  const nested = `.a { color: var(--base); &:hover { color: var(--hover); } &[x] { color: var(--x); } .c { color: var(--child); } & + & { color: var(--next); } @media (forced-colors: active) { color: GrayText; } }`;
   expect(at(nested, ['.a', '.a:hover'], 'color')).toBe('var(--hover)');
-  expect(at(nested, ['.b', '.b[x]'], 'color')).toBe('var(--x)');
+  expect(at(nested, ['.a', '.a[x]'], 'color')).toBe('var(--x)');
   expect(at(nested, ['.a .c'], 'color')).toBe('var(--child)');
+  expect(at(nested, ['.a + .a'], 'color')).toBe('var(--next)');
   expect(at(nested, ['.a'], 'color')).toBe('var(--base)');
-  expect(at(nested, ['.b'], 'color', { forced: true })).toBe('GrayText');
+  expect(at(nested, ['.a'], 'color', { forced: true })).toBe('GrayText');
+  // ... at the parent's specificity and its own: `.a.b:hover` beats a later `.a:hover`, as in Chromium.
+  expect(at('.a.b { &:hover { color: var(--nested); } } .a:hover { color: var(--later); }', ['.a.b:hover', '.a:hover'], 'color')).toBe('var(--nested)');
+  // A positive feature query and a leading `not`, each over one declaration.
+  expect(at(`${base} @supports (color: rgb(0 0 0)) { .a { color: var(--fn); } }`, ['.a'], 'color')).toBe('var(--fn)');
   // What it can't apply, it refuses: nothing is skipped unread.
   const refused = {
     '@layer': `${base} @layer x { .a { color: var(--l); } }`,
@@ -860,8 +892,19 @@ test('cascade-checks-read-every-at-rule', () => {
     'or in a media query': `${base} @media (forced-colors: active) or (prefers-reduced-motion: reduce) { .a { color: var(--l); } }`,
     'an unknown media feature': `${base} @media (hover: hover) { .a { color: var(--l); } }`,
     'an unnamed container': `${base} @container (max-width: 300px) { .a { color: var(--l); } }`,
+    'a container named by a keyword': `${base} @container not (width < 300px) { .a { color: var(--l); } }`,
+    'a not inside a feature query': `${base} @supports (not (display: grid)) { .a { color: var(--l); } }`,
+    'a not joined in a feature query': `${base} @supports (display: grid) and (not (display: flex)) { .a { color: var(--l); } }`,
+    'a selector() feature query': `${base} @supports selector(:has(a)) { .a { color: var(--l); } }`,
+    // Nesting under a selector list takes :is() of the whole list (its highest specificity, an & matching any member): not modelled.
+    'nesting under a list (Sol)': '.a, .b.c { &:hover { color: red; } } .a:hover { color: green; }',
+    'nesting under a list (Opus)': '.k:hover { color: blue; } div, .a { &:hover { color: red; } }',
+    'a repeated & under a list': '.a, .b { & + & { color: red; } }',
+    'a descendant under a list': '.a, .b { .c { color: red; } }',
+    'an at-rule under a list': '.a, .b { @media (forced-colors: active) { color: GrayText; } }',
+    'an & inside a string': `.a { &[title='&'] { color: red; } }`,
   };
-  for (const [label, css] of Object.entries(refused)) expect(() => at(css, ['.a'], 'color'), label).toThrow("can't apply");
+  for (const [label, css] of Object.entries(refused)) expect.soft(() => at(css, ['.a'], 'color'), label).toThrow("can't apply");
   // A guarded property a width or motion rule undoes now fails in that state.
   const ring = '.t:focus-visible { box-shadow: var(--focus-ring); outline: 2px solid transparent; } @container chrome (width < 748px) { .t:focus-visible { box-shadow: none; } }';
   expect(at(ring, ['.t:focus-visible'], 'box-shadow')).toBe('var(--focus-ring)');
