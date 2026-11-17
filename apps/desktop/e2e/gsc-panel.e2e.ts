@@ -417,13 +417,28 @@ test.describe.serial('the Search Console panel', () => {
     // A device not chosen before in this test, so main reads the countries again (it keeps each answer).
     await device.selectOption('TABLET');
     await expect.poll(() => country.locator('option').count()).toBeGreaterThan(200);
+    // Where the filters are: on one line, inside the row, and the country select narrower than its longest
+    // option would make it (a copy of it holding only that option, at its own width). Not "equal halves":
+    // where the chosen label is wider than half the row (macOS draws a wider menu arrow) it takes its width.
     const boxes = () =>
       page.locator('.gsc-filter-row').evaluate((row) => {
         const box = (el: Element | null) => el!.getBoundingClientRect();
-        const [r, c, d] = [box(row), box(row.querySelector('[data-testid="gsc-country"]')), box(row.querySelector('[data-testid="gsc-device"]'))];
-        return { sameLine: Math.abs(c.top - d.top) <= 1, equal: Math.abs(c.width - d.width) <= 1, inside: c.right <= r.right + 0.5 && c.width <= r.width + 0.5 };
+        const select = row.querySelector<HTMLSelectElement>('[data-testid="gsc-country"]')!;
+        const [r, c, d] = [box(row), box(select), box(row.querySelector('[data-testid="gsc-device"]'))];
+        const longest = [...select.options].reduce((a, b) => (b.text.length > a.text.length ? b : a));
+        const copy = select.cloneNode(false) as HTMLSelectElement;
+        copy.append(new Option(longest.text));
+        copy.style.position = 'absolute';
+        copy.style.width = 'auto';
+        copy.style.maxWidth = 'none';
+        copy.style.setProperty('field-sizing', 'content');
+        row.append(copy);
+        const needed = copy.getBoundingClientRect().width;
+        copy.remove();
+        return { sameLine: Math.abs(c.top - d.top) <= 1, notByLongest: c.width < needed - 20, inside: c.right <= r.right + 0.5 && c.width <= r.width + 0.5 };
       });
-    expect(await boxes()).toEqual({ sameLine: true, equal: true, inside: true });
+    expect(await boxes()).toEqual({ sameLine: true, notByLongest: true, inside: true });
+    expect(await cutText(controls)).toEqual([]);
     await atNarrowestPanel(page, async () => {
       await country.selectOption('gbr');
       await expect(panel()).toHaveAttribute('data-pending', 'false');
