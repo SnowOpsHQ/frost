@@ -1,4 +1,4 @@
-// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, GRAPHICS_ONLY_COLOURS, SIGNAL_SURFACES, BASE_TYPE, TEXT_TYPE_RULES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS, FADES_SPARE_FOCUS, LoadsBefore)
+// Spec: specs/design-tokens.spec.ts (SIGNAL_TOKENS, LEGACY_TOKEN_MIGRATION, CONTRAST_PAIRS, GRAPHICS_ONLY_COLOURS, SIGNAL_SURFACES, BASE_TYPE, TEXT_TYPE_RULES, HEX_COLOUR_RATCHET, HOVER_OVERLAYS_SKIP_PRESSED, PRESSED_EDGES, STATE_EDGES, DISABLED_CONTROLS, FADES_SPARE_FOCUS, LoadsBefore, CASCADE_CONTEXTS)
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +6,7 @@ import { expect, test } from 'vitest';
 import {
   BASE_TYPE,
   BUNDLED_FONTS,
+  CASCADE_CONTEXTS,
   CONTRAST_PAIRS,
   DISABLED_CONTROLS,
   DISABLED_INK,
@@ -32,6 +33,7 @@ import {
   TEXT_TYPE_RULES,
   THEMED_SIGNAL_GROUPS,
   TOKENS_STYLESHEET,
+  type CascadeContext,
   type ContrastPair,
   type DisabledControl,
   type FocusRingRule,
@@ -305,6 +307,9 @@ function contrastRatio(a: Rgba, b: Rgba): number {
 /** Each theme's declared values: dark is light with the dark block's overrides. */
 const THEMES = { light: LIGHT, dark: new Map([...LIGHT, ...DARK_VALUES]) };
 const THEME_NAMES = ['light', 'dark'] as const;
+const CONTEXTS: readonly CascadeContext[] = CASCADE_CONTEXTS;
+/** Every state a cascade check resolves in: each theme in each `CASCADE_CONTEXTS` state, labelled for messages. */
+const STATES = THEME_NAMES.flatMap((theme) => CONTEXTS.map((context) => ({ theme, context, state: context.name === 'default' ? theme : `${theme}, ${context.name}` })));
 
 /** A token's colour in a theme, following `var()` references in the same theme. */
 function colourIn(theme: keyof typeof THEMES, name: string): Rgba {
@@ -597,8 +602,10 @@ test('tab-strip-sets-tabs-off-the-strip', () => {
     // ... and the active tab really draws it, its whole term, also under the pointer.
     const css = read('styles.css');
     expect(TAB_STRIP.activeIndicatorShadow).toContain(`var(${TAB_STRIP.activeIndicator})`);
-    for (const [state, element] of [['active', TAB_STRIP.activeTab], ['active and hovered', TAB_STRIP.activeTabHovered]] as const) {
-      expect(resolveOnElement(css, element, 'box-shadow', theme), `the ${state} tab's box-shadow (${theme})`).toContain(TAB_STRIP.activeIndicatorShadow);
+    for (const [tab, element] of [['active', TAB_STRIP.activeTab], ['active and hovered', TAB_STRIP.activeTabHovered]] as const) {
+      for (const context of CONTEXTS) {
+        expect(resolveOnElement(css, element, 'box-shadow', theme, context), `the ${tab} tab's box-shadow (${theme}, ${context.name})`).toContain(TAB_STRIP.activeIndicatorShadow);
+      }
     }
   }
 });
@@ -642,8 +649,6 @@ function splitSelectors(list: string): string[] {
   return [...parts, current];
 }
 
-/** `@media (forced-colors: active)`, as the parser writes the at-rule. */
-const FORCED_COLOURS_MEDIA = /^@media\s*\(\s*forced-colors\s*:\s*active\s*\)$/;
 
 /** A selector's specificity as one number (ids aside: the renderer's rules use none; `:where()` adds none). */
 function specificity(raw: string): number {
@@ -653,17 +658,125 @@ function specificity(raw: string): number {
   return classes * 1000 + types;
 }
 
-/** `css`'s declarations by each selector of their rule's list (normalized), with their source order and
- * the at-rules around the rule: built once per stylesheet text, for `resolveOnElement`. */
-const SELECTOR_INDEX = new Map<string, Map<string, { order: number; outer: string[]; property: string; value: string }[]>>();
-function selectorIndex(css: string): Map<string, { order: number; outer: string[]; property: string; value: string }[]> {
+/** `@media (forced-colors: active)`, as the parser writes the at-rule. */
+const FORCED_COLOURS_MEDIA = /^@media\s*\(\s*forced-colors\s*:\s*active\s*\)$/;
+
+/** A cascade check's state besides its theme: a `CASCADE_CONTEXTS` state, and whether forced colours are on. */
+interface ResolveOptions extends Partial<CascadeContext> {
+  readonly forced?: boolean;
+}
+
+/** An upper-bound width condition: `(max-width: 760px)`, `(width < 298px)`, `(width <= 300px)`. */
+const UPPER_WIDTH = /^\(\s*(?:max-width\s*:|width\s*<=?)\s*\d+(?:\.\d+)?px\s*\)$/;
+const narrowIn = (options: ResolveOptions, name: string) => (options.narrow ?? []).includes(name) || (options.narrow ?? []).includes('*');
+
+/** Whether one `@media` feature (or media type) holds in `theme` and `options`; throws on one the checks can't apply. */
+function mediaFeatureApplies(feature: string, prelude: string, theme: 'light' | 'dark', options: ResolveOptions): boolean {
+  if (feature === 'screen' || feature === 'all') return true;
+  const [, name, value] = /^\(\s*([a-z-]+)\s*:\s*([a-z-]+)\s*\)$/.exec(feature) ?? [];
+  if (name === 'prefers-color-scheme' && (value === 'dark' || value === 'light')) return theme === value;
+  if (name === 'forced-colors' && (value === 'active' || value === 'none')) return (options.forced === true) === (value === 'active');
+  if (name === 'prefers-reduced-motion' && (value === 'reduce' || value === 'no-preference')) return (options.reducedMotion === true) === (value === 'reduce');
+  if (UPPER_WIDTH.test(feature)) return narrowIn(options, 'viewport');
+  throw new Error(`the cascade check can't apply ${prelude}`);
+}
+
+/**
+ * Whether the block of the at-rule `prelude` (as the parser writes it) applies in `theme` and `options`
+ * (`CascadeContext`): the dark, forced-colours and reduced-motion blocks by the state; an upper-bound width
+ * when its container (or the viewport) is narrow; `@supports` unless `not`; `@keyframes` never. Anything
+ * else throws, so no rule is skipped unread.
+ */
+function atRuleApplies(prelude: string, theme: 'light' | 'dark', options: ResolveOptions): boolean {
+  if (/^@keyframes\s/.test(prelude)) return false;
+  const media = /^@media\s+(.+)$/.exec(prelude)?.[1];
+  if (media !== undefined) {
+    if (/,|^not\b|\s(?:or|not|only)\s/.test(media)) throw new Error(`the cascade check can't apply ${prelude}`);
+    // Every feature is read (so an unknown one throws even after one that fails), then all must hold.
+    return media.split(/\s+and\s+/).map((feature) => mediaFeatureApplies(feature.trim(), prelude, theme, options)).every(Boolean);
+  }
+  const supports = /^@supports\s+(.+)$/.exec(prelude)?.[1];
+  if (supports !== undefined) {
+    // One declaration in parentheses, or a leading `not` before one: nothing else (`and`, `or`, a `not` inside, `selector()`).
+    const [, negated, group] = /^(not\s+)?(\(.*\))$/.exec(supports) ?? [];
+    if (group !== undefined && oneGroup(group) && /^\(\s*[a-z-]+\s*:/i.test(group)) return negated === undefined;
+    throw new Error(`the cascade check can't apply ${prelude}`);
+  }
+  const [, container, condition] = /^@container\s+([a-z][\w-]*)\s+(\(.+\))$/i.exec(prelude) ?? [];
+  // `not`, `and`, `or` and `none` are never a container's name: `@container not (…)` is a condition.
+  if (container !== undefined && !CONTAINER_KEYWORDS.has(container.toLowerCase()) && UPPER_WIDTH.test(condition!)) return narrowIn(options, container);
+  throw new Error(`the cascade check can't apply ${prelude}`);
+}
+
+/** Words a `@container` prelude can start with that are not a container's name. */
+const CONTAINER_KEYWORDS = new Set(['not', 'and', 'or', 'none']);
+
+/** Whether `text`, which starts with `(` and ends with `)`, is one parenthesised group (not `(a) and (b)`). */
+function oneGroup(text: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '(') depth += 1;
+    else if (text[i] === ')') depth -= 1;
+    if (depth === 0 && i < text.length - 1) return false;
+  }
+  return depth === 0;
+}
+
+/** A declaration's context as the cascade reads it: its rule's selectors, native nesting resolved (`&` replaced
+ * by each parent selector, or a descendant of it with no `&`), and the at-rules around it, outermost first.
+ * No selectors: an at-rule's own descriptors (`@font-face`), never an element's. */
+function nestedContext(context: readonly string[]): { selectors: string[]; conditions: string[] } {
+  let selectors: string[] = [];
+  let nested = false;
+  const conditions: string[] = [];
+  for (const level of context) {
+    // Under a parent that is a selector list, a nested rule (or at-rule) takes `:is()` of the whole list: its
+    // highest specificity, and an `&` matching any member. Not modelled: refused.
+    if (nested && selectors.length > 1) throw new Error(`the cascade check can't apply nesting under the selector list ${context.filter((l) => !l.startsWith('@')).at(0)}`);
+    if (level.startsWith('@')) {
+      conditions.push(level);
+      continue;
+    }
+    const parts = splitSelectors(level).map((s) => s.replace(/\s+/g, ' ').trim());
+    // An `&` inside a quoted string is text, not the parent: refused rather than replaced.
+    if (nested && parts.some((part) => part.includes('&') && part.replace(/'[^']*'|"[^"]*"/g, '').split('&').length !== part.split('&').length)) {
+      throw new Error(`the cascade check can't apply an & inside a string in ${level}`);
+    }
+    selectors = nested ? selectors.flatMap((parent) => parts.map((part) => (part.includes('&') ? part.replaceAll('&', parent) : `${parent} ${part}`))) : parts;
+    nested = true;
+  }
+  return { selectors, conditions };
+}
+
+/** Throws if a block of `css` holding a rule is one the cascade checks can't apply in `theme` and `options`. */
+function cascadeBlocksApply(css: string, theme: 'light' | 'dark', options: ResolveOptions): void {
+  for (const preludes of new Set(parse(css).declarations.map((d) => nestedContext(d.context)).filter((c) => c.selectors.length > 0).map((c) => c.conditions.join('\n')))) {
+    for (const prelude of preludes.split('\n').filter(Boolean)) atRuleApplies(prelude, theme, options);
+  }
+}
+
+/** `css`'s declarations by each selector of their rule's list (normalized, nesting resolved), with their source
+ * order and the at-rules around the rule: built once per stylesheet text, for `resolveOnElement`. */
+interface IndexedDeclaration {
+  readonly order: number;
+  /** The levels around the rule as written (at-rules and, nested, parent selectors), outermost first. */
+  readonly outer: readonly string[];
+  readonly conditions: readonly string[];
+  readonly property: string;
+  readonly value: string;
+}
+const SELECTOR_INDEX = new Map<string, Map<string, IndexedDeclaration[]>>();
+function selectorIndex(css: string): Map<string, IndexedDeclaration[]> {
   let index = SELECTOR_INDEX.get(css);
   if (index === undefined) {
-    const built = new Map<string, { order: number; outer: string[]; property: string; value: string }[]>();
+    const built = new Map<string, IndexedDeclaration[]>();
     parse(css).declarations.forEach((d, order) => {
-      const entry = { order, outer: d.context.slice(0, -1), property: d.property, value: d.value };
-      for (const selector of new Set(splitSelectors(d.context.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim()))) {
-        built.set(selector, [...(built.get(selector) ?? []), entry]);
+      const { selectors, conditions } = nestedContext(d.context);
+      const entry = { order, outer: d.context.slice(0, -1), conditions, property: d.property, value: d.value };
+      for (const selector of new Set(selectors)) {
+        const list = built.get(selector);
+        if (list === undefined) built.set(selector, [entry]);
+        else list.push(entry);
       }
     });
     index = built;
@@ -677,20 +790,20 @@ const FONT_LONGHANDS = ['font-family', 'font-size', 'font-style', 'font-variant'
 
 /**
  * The value `property` resolves to for an element matching exactly the selectors `element` in `css`:
- * rules whose selector list holds one of them (top level, or in the dark media block for dark),
- * ordered by specificity then source order; custom properties set by those rules followed through
- * `var()`. Returns the final value (a `var(--token)` that the element itself does not set).
+ * rules whose selector list holds one of them (nesting resolved), at the top level or in at-rules that all
+ * apply in `theme` and `options` (`atRuleApplies`: the dark block in dark, the forced-colours block with
+ * `forced`, a reduced-motion or width block in the `CASCADE_CONTEXTS` state that asks for it), ordered by
+ * specificity then source order; custom properties set by those rules followed through `var()`. Returns the
+ * final value (a `var(--token)` that the element itself does not set).
  */
-function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark', options: { readonly forced?: boolean } = {}): string {
+function resolveOnElement(css: string, element: readonly string[], property: string, theme: 'light' | 'dark', options: ResolveOptions = {}): string {
   const wanted = new Set(element.map((s) => s.replace(/\s+/g, ' ').trim()));
-  // Top level; the dark block in dark; and with `forced`, the forced-colours block (forced colours on).
-  const applies = (level: string) => (theme === 'dark' && level === DARK) || (options.forced === true && FORCED_COLOURS_MEDIA.test(level));
   // Each declaration once, at the highest specificity among the wanted selectors of its list.
   const byOrder = new Map<number, { order: number; spec: number; property: string; value: string }>();
   const index = selectorIndex(css);
   for (const selector of wanted) {
     for (const d of index.get(selector) ?? []) {
-      if (!(d.outer.length === 0 || (d.outer.length === 1 && applies(d.outer[0]!)))) continue;
+      if (!d.conditions.map((prelude) => atRuleApplies(prelude, theme, options)).every(Boolean)) continue;
       const spec = specificity(selector);
       const seen = byOrder.get(d.order);
       if (seen === undefined || spec > seen.spec) byOrder.set(d.order, { order: d.order, spec, property: d.property, value: d.value });
@@ -723,6 +836,91 @@ function resolveOnElement(css: string, element: readonly string[], property: str
   return value;
 }
 
+test('cascade-checks-read-every-at-rule', () => {
+  const at = (css: string, element: readonly string[], property: string, options: ResolveOptions = {}, theme: 'light' | 'dark' = 'light') =>
+    resolveOnElement(css, element, property, theme, options);
+  const base = '.a { color: var(--base); }';
+  // Reduced motion: only when asked.
+  const motion = `${base} @media (prefers-reduced-motion: reduce) { .a { color: var(--still); } }`;
+  expect(at(motion, ['.a'], 'color')).toBe('var(--base)');
+  expect(at(motion, ['.a'], 'color', { reducedMotion: true })).toBe('var(--still)');
+  expect(at(`${base} @media (prefers-reduced-motion: no-preference) { .a { color: var(--moving); } }`, ['.a'], 'color')).toBe('var(--moving)');
+  // A viewport width: only with the viewport narrow.
+  const wide = `${base} @media (max-width: 760px) { .a { color: var(--narrow); } }`;
+  expect(at(wide, ['.a'], 'color')).toBe('var(--base)');
+  expect(at(wide, ['.a'], 'color', { narrow: ['seo-panel'] })).toBe('var(--base)');
+  expect(at(wide, ['.a'], 'color', { narrow: ['viewport'] })).toBe('var(--narrow)');
+  expect(at(wide, ['.a'], 'color', { narrow: ['*'] })).toBe('var(--narrow)');
+  // A container: only with that container narrow.
+  const contained = `${base} @container seo-panel (width < 298px) { .a { color: var(--tight); } }`;
+  expect(at(contained, ['.a'], 'color')).toBe('var(--base)');
+  expect(at(contained, ['.a'], 'color', { narrow: ['chrome', 'viewport'] })).toBe('var(--base)');
+  expect(at(contained, ['.a'], 'color', { narrow: ['seo-panel'] })).toBe('var(--tight)');
+  expect(at(contained, ['.a'], 'color', { narrow: ['*'] })).toBe('var(--tight)');
+  expect(at(`${base} @container gsc (max-width: 324px) { .a { color: var(--tight); } }`, ['.a'], 'color', { narrow: ['gsc'] })).toBe('var(--tight)');
+  // Feature queries: a positive one always, `not` never.
+  expect(at(`${base} @supports (display: grid) { .a { color: var(--grid); } }`, ['.a'], 'color')).toBe('var(--grid)');
+  expect(at(`${base} @supports not (display: grid) { .a { color: var(--old); } }`, ['.a'], 'color')).toBe('var(--base)');
+  // Keyframes are never an element's rule.
+  expect(at(`${base} @keyframes k { from { color: var(--frame); } }`, ['.a'], 'color')).toBe('var(--base)');
+  // `and`, and an at-rule inside another: all must hold.
+  const both = `${base} @media (forced-colors: active) and (prefers-reduced-motion: reduce) { .a { color: GrayText; } }`;
+  expect(at(both, ['.a'], 'color', { forced: true })).toBe('var(--base)');
+  expect(at(both, ['.a'], 'color', { forced: true, reducedMotion: true })).toBe('GrayText');
+  const inside = `${base} @media (forced-colors: active) { @container chrome (width < 748px) { .a { color: Canvas; } } }`;
+  expect(at(inside, ['.a'], 'color', { forced: true })).toBe('var(--base)');
+  expect(at(inside, ['.a'], 'color', { narrow: ['chrome'] })).toBe('var(--base)');
+  expect(at(inside, ['.a'], 'color', { forced: true, narrow: ['chrome'] })).toBe('Canvas');
+  expect(at(`${base} @media screen and (prefers-color-scheme: dark) { .a { color: var(--night); } }`, ['.a'], 'color', {}, 'dark')).toBe('var(--night)');
+  // Native nesting under one parent selector: each `&` replaced by it, a descendant without it, an at-rule nested in a rule.
+  const nested = `.a { color: var(--base); &:hover { color: var(--hover); } &[x] { color: var(--x); } .c { color: var(--child); } & + & { color: var(--next); } @media (forced-colors: active) { color: GrayText; } }`;
+  expect(at(nested, ['.a', '.a:hover'], 'color')).toBe('var(--hover)');
+  expect(at(nested, ['.a', '.a[x]'], 'color')).toBe('var(--x)');
+  expect(at(nested, ['.a .c'], 'color')).toBe('var(--child)');
+  expect(at(nested, ['.a + .a'], 'color')).toBe('var(--next)');
+  expect(at(nested, ['.a'], 'color')).toBe('var(--base)');
+  expect(at(nested, ['.a'], 'color', { forced: true })).toBe('GrayText');
+  // ... at the parent's specificity and its own: `.a.b:hover` beats a later `.a:hover`, as in Chromium.
+  expect(at('.a.b { &:hover { color: var(--nested); } } .a:hover { color: var(--later); }', ['.a.b:hover', '.a:hover'], 'color')).toBe('var(--nested)');
+  // A positive feature query and a leading `not`, each over one declaration.
+  expect(at(`${base} @supports (color: rgb(0 0 0)) { .a { color: var(--fn); } }`, ['.a'], 'color')).toBe('var(--fn)');
+  // What it can't apply, it refuses: nothing is skipped unread.
+  const refused = {
+    '@layer': `${base} @layer x { .a { color: var(--l); } }`,
+    'a lower-bound width': `${base} @media (min-width: 600px) { .a { color: var(--l); } }`,
+    'a lower-bound container width': `${base} @container chrome (width > 748px) { .a { color: var(--l); } }`,
+    'a comma list': `${base} @media print, (max-width: 600px) { .a { color: var(--l); } }`,
+    'not in a media query': `${base} @media not (forced-colors: active) { .a { color: var(--l); } }`,
+    'or in a media query': `${base} @media (forced-colors: active) or (prefers-reduced-motion: reduce) { .a { color: var(--l); } }`,
+    'an unknown media feature': `${base} @media (hover: hover) { .a { color: var(--l); } }`,
+    'an unnamed container': `${base} @container (max-width: 300px) { .a { color: var(--l); } }`,
+    'a container named by a keyword': `${base} @container not (width < 300px) { .a { color: var(--l); } }`,
+    'a not inside a feature query': `${base} @supports (not (display: grid)) { .a { color: var(--l); } }`,
+    'a not joined in a feature query': `${base} @supports (display: grid) and (not (display: flex)) { .a { color: var(--l); } }`,
+    'a selector() feature query': `${base} @supports selector(:has(a)) { .a { color: var(--l); } }`,
+    // Nesting under a selector list takes :is() of the whole list (its highest specificity, an & matching any member): not modelled.
+    'nesting under a list (Sol)': '.a, .b.c { &:hover { color: red; } } .a:hover { color: green; }',
+    'nesting under a list (Opus)': '.k:hover { color: blue; } div, .a { &:hover { color: red; } }',
+    'a repeated & under a list': '.a, .b { & + & { color: red; } }',
+    'a descendant under a list': '.a, .b { .c { color: red; } }',
+    'an at-rule under a list': '.a, .b { @media (forced-colors: active) { color: GrayText; } }',
+    'an & inside a string': `.a { &[title='&'] { color: red; } }`,
+  };
+  for (const [label, css] of Object.entries(refused)) expect.soft(() => at(css, ['.a'], 'color'), label).toThrow("can't apply");
+  // A guarded property a width or motion rule undoes now fails in that state.
+  const ring = '.t:focus-visible { box-shadow: var(--focus-ring); outline: 2px solid transparent; } @container chrome (width < 748px) { .t:focus-visible { box-shadow: none; } }';
+  expect(at(ring, ['.t:focus-visible'], 'box-shadow')).toBe('var(--focus-ring)');
+  expect(at(ring, ['.t:focus-visible'], 'box-shadow', CASCADE_CONTEXTS[2])).toBe('none');
+  // Every renderer stylesheet's at-rules are ones it applies, in every state.
+  for (const name of STYLESHEETS) {
+    for (const context of CASCADE_CONTEXTS) {
+      for (const theme of THEME_NAMES) {
+        for (const forced of [false, true]) expect(() => cascadeBlocksApply(read(name), theme, { ...context, forced }), `${name} (${context.name}, ${theme})`).not.toThrow();
+      }
+    }
+  }
+});
+
 test('text-colour-rules-resolve', () => {
   // The resolver itself: specificity, then source order; a component property followed.
   const sample = `.a { color: var(--x); --t: var(--one); } .a[data-k='v'] { --t: var(--two); } .a { color: var(--t); }
@@ -741,28 +939,28 @@ test('text-colour-rules-resolve', () => {
   const pairs: readonly { fg: string; bg: string }[] = CONTRAST_PAIRS;
   const rules: readonly TextColourRule[] = TEXT_COLOUR_RULES;
   for (const rule of rules) {
-    for (const theme of THEME_NAMES) {
+    for (const { theme, context, state } of STATES) {
       const css = cascade(rule);
-      expect(resolveOnElement(css, rule.element, 'color', theme), `${rule.element.at(-1)} (${theme})`).toBe(`var(${rule.color})`);
+      expect(resolveOnElement(css, rule.element, 'color', theme, context), `${rule.element.at(-1)} (${state})`).toBe(`var(${rule.color})`);
       if (rule.background !== undefined) {
-        expect(resolveOnElement(css, rule.element, 'background', theme), `${rule.element.at(-1)} background (${theme})`).toBe(`var(${rule.background})`);
+        expect(resolveOnElement(css, rule.element, 'background', theme, context), `${rule.element.at(-1)} background (${state})`).toBe(`var(${rule.background})`);
       }
       // A disabled button shown by its colours is never faded as well (or instead).
       if (rule.unfaded) {
         // Only "no opacity" is swallowed, as the focus-ring check does.
         const faded = (() => {
           try {
-            return resolveOnElement(css, rule.element, 'opacity', theme);
+            return resolveOnElement(css, rule.element, 'opacity', theme, context);
           } catch (error) {
             if (error instanceof Error && error.message.endsWith(`: no opacity (${theme})`)) return '1';
             throw error;
           }
         })();
-        expect(faded, `${rule.element.at(-1)}: opacity (${theme})`).toBe('1');
+        expect(faded, `${rule.element.at(-1)}: opacity (${state})`).toBe('1');
       }
       // The declarations the colour only works with (an SVG stroke drawn in currentColor).
       for (const [property, value] of Object.entries(rule.drawn ?? {})) {
-        expect(resolveOnElement(css, rule.element, property, theme), `${rule.element.at(-1)} ${property} (${theme})`).toBe(value);
+        expect(resolveOnElement(css, rule.element, property, theme, context), `${rule.element.at(-1)} ${property} (${state})`).toBe(value);
       }
     }
     expect(
@@ -776,9 +974,9 @@ test('text-colour-rules-resolve', () => {
 const selectorsOf = (css: string) => new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
 
 /** What `property` resolves to on `element` in `css`, or `null` when no rule sets it. */
-function resolvedOrNull(css: string, element: readonly string[], property: string, theme: 'light' | 'dark'): string | null {
+function resolvedOrNull(css: string, element: readonly string[], property: string, theme: 'light' | 'dark', options: ResolveOptions = {}): string | null {
   try {
-    return resolveOnElement(css, element, property, theme);
+    return resolveOnElement(css, element, property, theme, options);
   } catch (error) {
     if (error instanceof Error && error.message.endsWith(`: no ${property} (${theme})`)) return null;
     throw error;
@@ -885,11 +1083,11 @@ test('text-type-rules-resolve', () => {
       expect(BUNDLED_FONTS.some((font) => font.family === familyOf(rule.font) && String(font.weight) === rule.weight), `${label}: ${familyOf(rule.font)} ${rule.weight} is bundled`).toBe(true);
     const selectors = selectorsOf(css);
     for (const selector of rule.element) expect(selectors.has(selector), `${rule.stylesheet} has ${selector}`).toBe(true);
-    for (const theme of THEME_NAMES) {
-      expect(resolveOnElement(css, rule.element, 'font', theme), `${label}: font (${theme})`).toBe(`var(${rule.font})`);
-      expect(resolvedOrNull(css, rule.element, 'font-weight', theme), `${label}: font-weight (${theme})`).toBe(rule.weight ?? null);
-      expect(resolvedOrNull(css, rule.element, 'font-style', theme), `${label}: font-style (${theme})`).toBe(rule.style ?? null);
-      if (rule.display !== undefined) expect(resolvedOrNull(css, rule.element, 'display', theme), `${label}: display (${theme})`).toBe(rule.display);
+    for (const { theme, context, state } of STATES) {
+      expect(resolveOnElement(css, rule.element, 'font', theme, context), `${label}: font (${state})`).toBe(`var(${rule.font})`);
+      expect(resolvedOrNull(css, rule.element, 'font-weight', theme, context), `${label}: font-weight (${state})`).toBe(rule.weight ?? null);
+      expect(resolvedOrNull(css, rule.element, 'font-style', theme, context), `${label}: font-style (${state})`).toBe(rule.style ?? null);
+      if (rule.display !== undefined) expect(resolvedOrNull(css, rule.element, 'display', theme, context), `${label}: display (${state})`).toBe(rule.display);
     }
   }
   // The six texts the visual baseline drew in the system stack are each covered.
@@ -916,22 +1114,22 @@ test('focus-rings-outlast-hover-and-busy', () => {
     // Every selector named is one of the stylesheet's (a typo would quietly drop out of the cascade).
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of rule.element) expect(selectors.has(selector), `${rule.stylesheet} has ${selector}`).toBe(true);
-    for (const theme of THEME_NAMES) {
-      const shadow = resolveOnElement(css, rule.element, 'box-shadow', theme);
-      expect(isFocusRing(shadow), `${rule.why}: box-shadow ${shadow} (${theme})`).toBe(true);
+    for (const { theme, context, state } of STATES) {
+      const shadow = resolveOnElement(css, rule.element, 'box-shadow', theme, context);
+      expect(isFocusRing(shadow), `${rule.why}: box-shadow ${shadow} (${state})`).toBe(true);
       // ... and an entry that keeps an inner line has it, exactly, before the ring.
-      if (rule.insetBefore !== undefined) expect(shadow, `${rule.why}: its inset line (${theme})`).toBe(`${rule.insetBefore}, var(--focus-ring)`);
-      expect(resolveOnElement(css, rule.element, 'outline', theme), `${rule.why}: outline (${theme})`).toBe('2px solid transparent');
+      if (rule.insetBefore !== undefined) expect(shadow, `${rule.why}: its inset line (${state})`).toBe(`${rule.insetBefore}, var(--focus-ring)`);
+      expect(resolveOnElement(css, rule.element, 'outline', theme, context), `${rule.why}: outline (${state})`).toBe('2px solid transparent');
       // Nothing fades the ring: an opacity, if the element's rules set one, is 1 (only "no opacity" is swallowed).
       const faded = (() => {
         try {
-          return resolveOnElement(css, rule.element, 'opacity', theme);
+          return resolveOnElement(css, rule.element, 'opacity', theme, context);
         } catch (error) {
           if (error instanceof Error && error.message.endsWith(`: no opacity (${theme})`)) return '1';
           throw error;
         }
       })();
-      expect(faded, `${rule.why}: opacity (${theme})`).toBe('1');
+      expect(faded, `${rule.why}: opacity (${state})`).toBe('1');
     }
   }
 });
@@ -974,9 +1172,9 @@ test('busy-buttons-show-under-forced-colours', () => {
     const css = cascade(entry);
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
-    for (const theme of THEME_NAMES) {
+    for (const { theme, context, state } of STATES) {
       for (const property of ['color', 'border-color']) {
-        expect(resolveOnElement(css, entry.element, property, theme, { forced: true }).toLowerCase(), `${entry.why}: ${property} under forced colours (${theme})`).toBe('graytext');
+        expect(resolveOnElement(css, entry.element, property, theme, { ...context, forced: true }).toLowerCase(), `${entry.why}: ${property} under forced colours (${state})`).toBe('graytext');
       }
     }
   }
@@ -988,12 +1186,12 @@ test('pressed-toggles-show-under-forced-colours', () => {
     const css = cascade(entry);
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
-    for (const theme of THEME_NAMES) {
-      const edge = (element: readonly string[]) => resolveOnElement(css, element, 'border-color', theme, { forced: true }).toLowerCase();
-      expect(edge(entry.element), `${entry.why}: border-color under forced colours (${theme})`).toBe('highlight');
+    for (const { theme, context, state } of STATES) {
+      const edge = (element: readonly string[]) => resolveOnElement(css, element, 'border-color', theme, { ...context, forced: true }).toLowerCase();
+      expect(edge(entry.element), `${entry.why}: border-color under forced colours (${state})`).toBe('highlight');
       // The unchosen item resets the transparent border forced colours would paint, so only the chosen one draws an edge.
-      if (entry.rest !== undefined) expect(edge(entry.element.slice(0, 1)), `${entry.why}: the unchosen item's edge under forced colours (${theme})`).toBe(entry.rest);
-      if (entry.match !== undefined) expect(edge(entry.element.slice(0, 2)), `${entry.why}: a match's edge under forced colours (${theme})`).toBe(entry.match);
+      if (entry.rest !== undefined) expect(edge(entry.element.slice(0, 1)), `${entry.why}: the unchosen item's edge under forced colours (${state})`).toBe(entry.rest);
+      if (entry.match !== undefined) expect(edge(entry.element.slice(0, 2)), `${entry.why}: a match's edge under forced colours (${state})`).toBe(entry.match);
     }
   }
   // At least the four the Changes panel's PR added keep their unchosen items at the canvas.
@@ -1012,8 +1210,8 @@ test('status-marks-keep-their-colours-under-forced-colours', () => {
     const css = cascade(entry);
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
-    for (const theme of THEME_NAMES) {
-      expect(resolveOnElement(css, entry.element, 'forced-color-adjust', theme, { forced: true }), `${entry.why}: forced-color-adjust (${theme})`).toBe('none');
+    for (const { theme, context, state } of STATES) {
+      expect(resolveOnElement(css, entry.element, 'forced-color-adjust', theme, { ...context, forced: true }), `${entry.why}: forced-color-adjust (${state})`).toBe('none');
     }
   }
 });
@@ -1111,14 +1309,14 @@ test('hover-overlays-skip-pressed-controls', () => {
 /** What keeps `element`'s pressed edge in `css` from being `var(<edge>)` drawn on a visible border. */
 function edgeProblems(css: string, element: readonly string[], edge: string): string[] {
   const problems: string[] = [];
-  for (const theme of THEME_NAMES) {
-    const colour = resolveOnElement(css, element, 'border-color', theme);
-    if (colour !== `var(${edge})`) problems.push(`border-color ${colour} (${theme})`);
+  for (const { theme, context, state } of STATES) {
+    const colour = resolveOnElement(css, element, 'border-color', theme, context);
+    if (colour !== `var(${edge})`) problems.push(`border-color ${colour} (${state})`);
     // ... on a border that draws: a non-zero width and a visible style (the shorthand counts).
-    const width = resolveOnElement(css, element, 'border-width', theme);
-    if (!(Number.parseFloat(width) > 0)) problems.push(`border-width ${width} (${theme})`);
-    const style = resolveOnElement(css, element, 'border-style', theme);
-    if (style === 'none' || style === 'hidden') problems.push(`border-style ${style} (${theme})`);
+    const width = resolveOnElement(css, element, 'border-width', theme, context);
+    if (!(Number.parseFloat(width) > 0)) problems.push(`border-width ${width} (${state})`);
+    const style = resolveOnElement(css, element, 'border-style', theme, context);
+    if (style === 'none' || style === 'hidden') problems.push(`border-style ${style} (${state})`);
   }
   return problems;
 }
@@ -1129,13 +1327,13 @@ function disabledProblems(css: string, entry: DisabledControl): string[] {
   const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
   for (const selector of entry.element) if (!selectors.has(selector)) problems.push(`no ${selector}`);
   if (problems.length > 0) return problems;
-  for (const theme of THEME_NAMES) {
-    const colour = resolveOnElement(css, entry.element, 'color', theme);
-    if (colour !== DISABLED_INK) problems.push(`color ${colour} (${theme})`);
+  for (const { theme, context, state } of STATES) {
+    const colour = resolveOnElement(css, entry.element, 'color', theme, context);
+    if (colour !== DISABLED_INK) problems.push(`color ${colour} (${state})`);
     // ... by its colour alone, never faded as well (only "no opacity" is swallowed, as the focus-ring check does).
     try {
-      const opacity = resolveOnElement(css, entry.element, 'opacity', theme);
-      if (opacity !== '1') problems.push(`opacity ${opacity} (${theme})`);
+      const opacity = resolveOnElement(css, entry.element, 'opacity', theme, context);
+      if (opacity !== '1') problems.push(`opacity ${opacity} (${state})`);
     } catch (error) {
       if (!(error instanceof Error && error.message.endsWith(`: no opacity (${theme})`))) throw error;
     }
@@ -1149,7 +1347,7 @@ test('disabled-controls-dim-their-text', () => {
   // Content's "Use as target" with main's fade put back in its own sheet fails (its entry reads that rule).
   const targets = entries.find((entry) => entry.stylesheet === 'gsc-targets.css')!;
   const faded = `${read('gsc-targets.css')}\n.gsc-targets-use:disabled { opacity: 0.5; }\n${read('styles.css')}`;
-  expect(disabledProblems(faded, targets)).toEqual(['opacity 0.5 (light)', 'opacity 0.5 (dark)']);
+  expect(disabledProblems(faded, targets)).toEqual(STATES.map(({ state }) => `opacity 0.5 (${state})`));
 });
 
 test('pressed-controls-draw-an-edge', () => {
@@ -1195,12 +1393,12 @@ test('state-edges-draw-their-shape', () => {
     const selectors = new Set(parse(css).blocks.flatMap((block) => splitSelectors(block.at(-1) ?? '').map((s) => s.replace(/\s+/g, ' ').trim())));
     for (const selector of entry.element) expect(selectors.has(selector), `${entry.stylesheet} has ${selector}`).toBe(true);
     expect.soft(edgeProblems(css, entry.element, entry.edge), entry.why).toEqual([]);
-    for (const theme of THEME_NAMES) {
-      expect.soft(resolveOnElement(css, entry.element, 'border-style', theme), `${entry.why}: style (${theme})`).toBe(entry.style);
-      expect.soft(resolveOnElement(css, entry.element, 'border-width', theme), `${entry.why}: width (${theme})`).toBe(entry.width);
+    for (const { theme, context, state } of STATES) {
+      expect.soft(resolveOnElement(css, entry.element, 'border-style', theme, context), `${entry.why}: style (${state})`).toBe(entry.style);
+      expect.soft(resolveOnElement(css, entry.element, 'border-width', theme, context), `${entry.why}: width (${state})`).toBe(entry.width);
       // ... and under forced colours too (their rules read), where the style is all that says it.
-      expect.soft(resolveOnElement(css, entry.element, 'border-style', theme, { forced: true }), `${entry.why}: style under forced colours (${theme})`).toBe(entry.style);
-      expect.soft(resolveOnElement(css, entry.element, 'border-width', theme, { forced: true }), `${entry.why}: width under forced colours (${theme})`).toBe(entry.width);
+      expect.soft(resolveOnElement(css, entry.element, 'border-style', theme, { ...context, forced: true }), `${entry.why}: style under forced colours (${state})`).toBe(entry.style);
+      expect.soft(resolveOnElement(css, entry.element, 'border-width', theme, { ...context, forced: true }), `${entry.why}: width under forced colours (${state})`).toBe(entry.width);
     }
     for (const fill of entry.fills) {
       expect.soft(
