@@ -1,8 +1,7 @@
 // Specs: specs/workspace-layout.spec.ts (WORKSPACE_GAP, pageViewRadius) · Acceptance: specs/workspace-layout.feature.md
-// (page-view-matches-the-card, narrow-window-keeps-the-sheets-whole). It runs on Linux, Windows and macOS and
-// proves, on each, the view's bounds against the page card and the radius main passed to setBorderRadius
-// (a spy: Electron has no getter). It does not prove the corner is drawn rounded: that was shown by a
-// screen capture on Linux CI only (workspace-layout.feature.md).
+// (page-view-matches-the-card, narrow-window-keeps-the-sheets-whole, page-view-corner-is-drawn-rounded). It runs on
+// Linux, Windows and macOS and proves, on each, the view's bounds against the page card, the radius main passed to
+// setBorderRadius (a spy: Electron has no getter), and, from a screen capture, that the corner is drawn rounded.
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
@@ -23,11 +22,18 @@ const { go, menu, press, realClick, run, contentsIdAt } = chromeHelpers(
 );
 
 const html = (title: string, body = '') => `<!doctype html><title>${title}</title><body style="margin:0"><button id="go" style="margin:24px" onclick="document.documentElement.requestFullscreen()">Fullscreen</button><h1>${title}</h1>${body}</body>`;
+/** The corner test's page colour: magenta reads the same in an RGBA and a BGRA bitmap. */
+const CORNER_PAGE = '#ff00ff';
 let server: ReturnType<typeof createServer>;
 let origin = '';
 
 test.beforeAll(async () => {
-  server = createServer((request, response) => response.writeHead(200, { 'Content-Type': 'text/html' }).end(html(new URL(request.url ?? '/', 'http://x').pathname === '/' ? 'Home' : 'Page')));
+  server = createServer((request, response) => {
+    const pathname = new URL(request.url ?? '/', 'http://x').pathname;
+    // page-view-corner-is-drawn-rounded: one flat colour no chrome sheet uses, so each screen pixel says whether it is the page's.
+    if (pathname === '/corner') return response.writeHead(200, { 'Content-Type': 'text/html' }).end(`<!doctype html><title>Corner</title><body style="margin:0;background:${CORNER_PAGE}">`);
+    response.writeHead(200, { 'Content-Type': 'text/html' }).end(html(pathname === '/' ? 'Home' : 'Page'));
+  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   ({ app, page } = await launchApp());
@@ -304,5 +310,94 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
     }
   } finally {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
+  }
+});
+
+/**
+ * The view's corners as the screen shows them (`page-view-corner-is-drawn-rounded`): the screen captured by
+ * main (`desktopCapturer`, `types: ['screen']`, at the display's device pixels), sampled at each corner of
+ * the view's bounds. Per corner, in device pixels from the corner along its diagonal: whether the pixel one
+ * in is the page's colour, whether the pixel `radius / 2` in is, and the first pixel that is.
+ */
+async function cornerPixels(): Promise<{ scale: number; size: { width: number; height: number }; radius: number | null; corners: { corner: string; oneIn: string; halfRadiusIn: string; firstPage: number | null }[]; png: string }> {
+  return app.evaluate(async ({ BrowserWindow, desktopCapturer, screen }) => {
+    const win = BrowserWindow.getAllWindows()[0]!;
+    const view = win.contentView.children[0] as Electron.WebContentsView;
+    const radius = (globalThis as { __frostRadii?: WeakMap<object, number> }).__frostRadii?.get(view) ?? null;
+    const content = win.getContentBounds();
+    const bounds = view.getBounds();
+    const display = screen.getDisplayMatching(content);
+    const scale = display.scaleFactor;
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: Math.round(display.size.width * scale), height: Math.round(display.size.height * scale) } });
+    const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]!;
+    const image = source.thumbnail;
+    const size = image.getSize();
+    const bitmap = image.toBitmap();
+    // Device pixels per DIP in the capture (the display's scale when the thumbnail is full size).
+    const ratio = size.width / display.size.width;
+    const left = (content.x - display.bounds.x + bounds.x) * ratio;
+    const top = (content.y - display.bounds.y + bounds.y) * ratio;
+    const right = left + bounds.width * ratio - 1;
+    const bottom = top + bounds.height * ratio - 1;
+    const at = (x: number, y: number) => {
+      const i = (Math.round(y) * size.width + Math.round(x)) * 4;
+      return [bitmap[i]!, bitmap[i + 1]!, bitmap[i + 2]!];
+    };
+    // Magenta in either byte order: the red and blue channels high, green low.
+    const isPage = ([a, g, b]: number[]) => a! > 200 && b! > 200 && g! < 80;
+    const hex = (px: number[]) => px.map((c) => c.toString(16).padStart(2, '0')).join('');
+    const corners = (
+      [
+        ['top-left', left, top, 1, 1],
+        ['top-right', right, top, -1, 1],
+        ['bottom-left', left, bottom, 1, -1],
+        ['bottom-right', right, bottom, -1, -1],
+      ] as const
+    ).map(([corner, x, y, dx, dy]) => {
+      const along = (d: number) => at(x + dx * d, y + dy * d);
+      let firstPage: number | null = null;
+      for (let d = 0; d <= 16 * ratio && firstPage === null; d += 1) if (isPage(along(d))) firstPage = d;
+      return { corner, oneIn: `${hex(along(1))}${isPage(along(1)) ? ' page' : ''}`, halfRadiusIn: `${hex(along(8 * ratio))}${isPage(along(8 * ratio)) ? ' page' : ''}`, firstPage };
+    });
+    // The view and a margin round it, for the report.
+    const margin = 8 * ratio;
+    const crop = { x: Math.max(0, Math.round(left - margin)), y: Math.max(0, Math.round(top - margin)), width: 0, height: 0 };
+    crop.width = Math.min(size.width - crop.x, Math.round(right - left + 1 + 2 * margin));
+    crop.height = Math.min(size.height - crop.y, Math.round(bottom - top + 1 + 2 * margin));
+    return { scale: ratio, size, radius, corners, png: image.crop(crop).toPNG().toString('base64') };
+  });
+}
+
+test('page-view-corner-is-drawn-rounded', async () => {
+  // The screen of a Linux desktop under Wayland is read through a portal, which waits for a person: CI's xvfb has none.
+  test.skip(process.platform === 'linux' && Boolean(process.env['WAYLAND_DISPLAY']), 'a Wayland desktop asks the user before a screen capture');
+  await go(`${origin}/corner`);
+  await contentsIdAt(`${origin}/corner`);
+  // The whole window on the screen, in front, the chrome laid out at its own size.
+  await app.evaluate(({ BrowserWindow, screen }) => {
+    const win = BrowserWindow.getAllWindows()[0]!;
+    const area = screen.getDisplayMatching(win.getBounds()).workArea;
+    win.setBounds({ x: area.x + 20, y: area.y + 20, width: Math.min(1100, area.width - 40), height: Math.min(720, area.height - 40) });
+    win.webContents.disableDeviceEmulation();
+    win.moveTop();
+    win.focus();
+  });
+  await cardMatches(PLAIN);
+  // A frame or two for the compositor after the last bounds change.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const shot = await cornerPixels();
+  const { png, ...pixels } = shot;
+  test.info().annotations.push({ type: 'corners', description: JSON.stringify(pixels) });
+  await test.info().attach('page-view-on-screen.png', { body: Buffer.from(png, 'base64'), contentType: 'image/png' });
+  expect(shot.radius).toBe(PLAIN);
+  for (const corner of shot.corners) {
+    // One pixel in from the corner is outside a 16px arc: never the page's colour (a square corner would be).
+    expect(corner.oneIn, `${corner.corner}: one pixel in`).not.toContain('page');
+    // Half the radius in along the diagonal is inside it: the page.
+    expect(corner.halfRadiusIn, `${corner.corner}: half the radius in`).toContain('page');
+    // The arc crosses the diagonal at radius × (1 − 1/√2), 4.7px for 16px: the first page pixel is there, within a pixel or two.
+    const crossing = PLAIN * (1 - Math.SQRT1_2) * shot.scale;
+    expect(corner.firstPage, `${corner.corner}: where the arc crosses the diagonal`).not.toBeNull();
+    expect(Math.abs(corner.firstPage! - crossing), `${corner.corner}: first page pixel ${corner.firstPage}, arc at ${crossing.toFixed(1)}`).toBeLessThanOrEqual(2 * shot.scale);
   }
 });
