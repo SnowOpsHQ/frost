@@ -44,6 +44,22 @@
   white-space: nowrap !important;
 }
 
+/* AI answers: a pick's line and the shown answer's line name the answer's date and time (its engine, how
+   it was asked and its sources beside them), so either could wrap to a different number of lines from
+   one day to the next: one clipped line each (a block row of its own). */
+.ai-answers-pick .ai-answers-note,
+[data-testid='ai-answer-meta'] {
+  overflow: hidden !important;
+  color: transparent !important;
+  white-space: nowrap !important;
+}
+
+/* Visibility: when each robots.txt was read, "· read <clock time>" (the last item of its flex row, beside
+   the file's URL, which takes the room it leaves): left out, so the URL keeps one width. */
+.visibility-robots-file .seo-note {
+  display: none !important;
+}
+
 /* Search Console: the chart's date ticks (SVG labels, anchored start / middle / end). */
 [data-testid='gsc-x-tick'] {
   fill: transparent !important;
