@@ -8,7 +8,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import { INP_HINT, LOADED_HIDDEN_HINT, NAVIGATION_PHASE_MIN_WIDTH, PAGE_WEIGHT_WARN_BYTES, REQUEST_COUNT_WARN, SPEED_MEASURE_TIMEOUT_MS, SPEED_POLL_MS, SPEED_STATE_KEY, VITAL_THRESHOLDS } from '@app/specs/seo-speed.spec';
 import { closeApp, launchApp } from './harness';
-import { chromeHelpers } from './helpers';
+import { atNarrowestPanel, chromeHelpers, cutText } from './helpers';
 
 const AUDIT_WAIT = AUDIT_DEBOUNCE_MS + EXTRACT_TIMEOUT_MS + 8_000;
 
@@ -213,6 +213,15 @@ test('lcp-late-image-e2e', async () => {
     drawnTo = bar.x + bar.width;
   }
   expect(drawnTo).toBeLessThanOrEqual(100 + 1e-6);
+  // At the default width and at 300px no text in the requests by type or the tiles is cut (the tiles take
+  // two columns there: design-tokens.feature.md, The panels at 300px).
+  const texts = chrome.locator('.seo-speed-types, .seo-speed-milestones, .seo-speed-totals');
+  const cutIn = async () => (await Promise.all((await texts.all()).map((part) => cutText(part)))).flat();
+  expect(await cutIn()).toEqual([]);
+  await atNarrowestPanel(chrome, async () => {
+    expect(await cutIn()).toEqual([]);
+    expect(await chrome.locator('.seo-speed-totals').first().evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(2);
+  });
   await expect(chrome.locator('[data-testid="seo-speed-type"][data-type="image"]')).toHaveAttribute('data-requests', '1');
   await expect(chrome.locator('[data-testid="seo-speed-type"][data-type="document"]')).toHaveAttribute('data-requests', '1');
   const hero = chrome.locator('[data-testid="seo-speed-large"][data-type="image"]').first();

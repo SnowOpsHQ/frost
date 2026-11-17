@@ -1509,9 +1509,18 @@ test('narrow-panel-fits-resolve', () => {
       const last = inside.filter((d) => d.property === property).at(-1);
       expect(last?.value, `${fit.stylesheet}: ${fit.selector} { ${property} }${fit.query === null ? '' : ` in ${fit.query}`}`).toBe(value);
       if (fit.query !== null) {
-        // After every top-level rule of the selector: at the same weight the later rule wins.
-        const lastTop = Math.max(-1, ...top.map((d) => d.order));
-        expect(last!.order, `${fit.selector}: its ${fit.query} after its top-level rules`).toBeGreaterThan(lastTop);
+        // After every declaration of the property on the selector at the top level or in a wider query of
+        // the same container (a larger `width <` bound): at the same weight the later rule wins.
+        const bound = (query: string) => Number(/^@container (\S+) \(width < (\d+)px\)$/.exec(collapse(query))?.[2] ?? NaN);
+        const query = fit.query;
+        const wider = (d: { outer: string[] }) => d.outer.length === 1 && collapse(d.outer[0]!).split(' (')[0] === query.split(' (')[0] && bound(d.outer[0]!) > bound(query);
+        const outside = own.filter((d) => d.property === property && (d.outer.length === 0 || wider(d)));
+        const lastOutside = Math.max(-1, ...outside.map((d) => d.order));
+        expect(last!.order, `${fit.selector} { ${property} }: its ${fit.query} after the rules it overrides`).toBeGreaterThan(lastOutside);
+      }
+      for (const before of fit.after ?? []) {
+        const theirs = (index.get(before) ?? []).filter((d) => d.outer.length === 0 && d.property === property);
+        expect(last!.order, `${fit.selector} { ${property} } after ${before}'s`).toBeGreaterThan(Math.max(-1, ...theirs.map((d) => d.order)));
       }
     }
     for (const property of fit.absent ?? []) expect(top.filter((d) => d.property === property), `${fit.stylesheet}: ${fit.selector} sets no ${property}`).toEqual([]);

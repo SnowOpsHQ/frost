@@ -11,6 +11,7 @@ import { INTENT_E2E_FAKE_SWITCH, INTENT_LABEL_NAMES } from '@app/specs/intent-cl
 import { PACK_UPDATE_MESSAGES, SERP_E2E_PACK_KEY_SWITCH, SERP_E2E_PACK_URL_SWITCH, packSignatureUrl } from '@app/specs/serp-selector-pack.spec';
 import { SERP_NOT_SERP_MESSAGE, SERP_OUTLINE_KEY } from '@app/specs/serp-service.spec';
 import { SERP_UNREADABLE_MESSAGES, SERP_WORLD_ID } from '@app/specs/serp.spec';
+import { NARROW_WINDOW } from '@app/specs/workspace-layout.spec';
 import { closeApp, launchApp } from './harness';
 import { atNarrowestPanel, chromeHelpers, cutText, sidewaysScroll } from './helpers';
 import { PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
@@ -187,6 +188,28 @@ test('serp-composition-and-ownership', async () => {
     expect(await table.locator('tr').first().evaluate((row) => getComputedStyle(row).display)).toBe('grid');
     expect(await axRoles(table)).toEqual({ table: 1, columnheader: 4, rowheader: 2, cell: 6 });
   });
+  // In the 588px window (the panel about 160px) a row takes three lines: every header and cell whole, nothing
+  // scrolling, and each count under its header (the same track's edges).
+  const height = await page.evaluate(() => Math.min(700, innerHeight));
+  try {
+    await page.setViewportSize({ width: NARROW_WINDOW.width, height });
+    await expect.poll(() => table.locator('tr').first().evaluate((row) => getComputedStyle(row).gridTemplateColumns.split(' ').length)).toBe(2);
+    expect(await sidewaysScroll(wrap)).toBe(0);
+    expect(await cutText(table)).toEqual([]);
+    const misplaced = await table.evaluate((t) => {
+      const heads = [...t.querySelectorAll('thead th')].map((th) => th.getBoundingClientRect());
+      const off: string[] = [];
+      for (const row of t.querySelectorAll('tbody tr'))
+        [...row.children].forEach((cell, i) => {
+          const [c, h] = [cell.getBoundingClientRect(), heads[i]!];
+          if (i > 0 && (Math.abs(c.left - h.left) > 1 || Math.abs(c.right - h.right) > 1)) off.push(`${row.getAttribute('data-domain')} ${i}`);
+        });
+      return off;
+    });
+    expect(misplaced).toEqual([]);
+  } finally {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
+  }
 });
 
 /** The table, header and cell roles Chromium's accessibility tree holds for `table` and under it. */

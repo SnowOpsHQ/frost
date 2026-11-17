@@ -1073,7 +1073,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   those captures is the same as before, light and dark.
 
 - **The panels at 300px.** The SEO panel is 300px at its narrowest (`SIDEBAR_PANEL_WIDTH_RANGE.min`): a
-  card's content is about 226px there. Six parts, kept from before Signal, cut their text or scrolled
+  card's content is about 226px there. Seven parts, kept from before Signal, cut their text or scrolled
   sideways at that width (Left for later); each is laid out for it now, by its own width or by none
   (`NARROW_PANEL_FITS`), never by the `seo-panel` query, which applies only under the panel's minimum
   (`NARROW_PANEL_WRAPS`, `workspace-layout.feature.md`), and none changes the 300px minimum, the
@@ -1092,11 +1092,23 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
     drawn at it, and the phase after it starts where it is drawn to end, not at its real start, and ends
     at its real end. On `main` the next phase started at the short one's real end and its fill and 1px
     boundary covered it: a loopback page's Connect phase showed 0px at 300px, 360px and 560px; now each
-    of its three phases shows 2px or more at 300px and 6px or more at 560px. This moves a phase's start,
-    on purpose: the alternative that keeps every start can't show two short phases in a row (they start
-    under a pixel apart). A start moves only after a widened phase, by less than the minimum each, so the
-    markers and every long phase's end stay where they are. A row pushed past the axis's end is pulled
-    back from there. The minimum was 0.8 (1.8px at 300px, under 1px past the next one's boundary).
+    of its three phases shows 2px or more at 300px and 6px or more at 560px. This moves phases, on
+    purpose: the alternative that keeps every start can't show two short phases in a row (they start
+    under a pixel apart). What moves, and by how much (`waterfall-shows-every-phase` tests each): near short
+    phases and at the axis's end a phase's start and end move by up to n × the minimum, n the number of
+    phases (a long redirect then five short phases before the load event: starts move by up to 7.1 and the
+    redirect's end by 6.9); a phase between the minimum and about twice it, after a widened one, has its
+    end pushed (Connect at 1–17ms of 1,000 is drawn to 3.0, not 1.7); and a row pushed past the axis's end
+    is pulled back from there, which moves a long phase's end too (a 999ms request ends at 98.5, not 99.9).
+    The DOMContentLoaded and load markers stay at their real times, so a pushed bar can pass one (a 3–5ms
+    response drawn from 4.5 to 6.0 beside DOMContentLoaded at 4.0). The bars show the order and rough
+    share of the phases; the legend under them gives each phase's real duration. The minimum was 0.8
+    (1.8px at 300px, under 1px past the next one's boundary).
+  - **Page Speed's timing and totals tiles:** three tiles need about 270px to hold "Page weight" and "DOM
+    ready" whole; where a card is narrower (227px at 300px, 251px at 324px) they take two columns
+    (`@container speed-card`, the card's own width). On the branch's first round "DOM ready" was cut 13px,
+    "Page weight" 14px and "Transferred" 8px at 300px, and the first two 5–6px at 324px; at 360px and wider
+    nothing changes.
   - **Compliance's tally:** four tiles need about 280px to hold "Moderate" whole; where the results are
     narrower (227px at 300px) the tiles take two columns, two rows (`@container a11y-results`, the
     results' own width). On `main` "Moderate" was cut 14px, "Serious" 3px and "Critical" 1px at 300px.
@@ -1107,20 +1119,32 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   - **Content's width meters:** a verdict's number and its unit are joined by a no-break space
     (`widthMeter`'s label), so a narrow meter wraps between words, never inside "12,345 px": on `main`,
     at 324px, "12,345 px of about 920 | px: cut".
-  - **SERP's Who owns page 1:** a domain wraps (it was cut by an ellipsis), and where four columns don't
-    fit (`@container serp-table (width < 280px)` on the tables' wrap; 227px at 300px, where it scrolled
-    60px) the table stacks: each row two lines, the domain across the row and its counts under it in three
-    columns under their headers, the head likewise. It stays table markup with its header cells, and
+  - **SERP's Who owns page 1:** a domain wraps (it was cut by an ellipsis), and where four columns leave
+    the domain under about 115px (`@container serp-table (width < 300px)` on the tables' wrap: 227px at
+    300px, where it scrolled 60px, and 287px at the default 360px, where "brewguide.example" broke
+    mid-word) the table stacks: each row two lines, the domain across the row and its counts under it in
+    three columns under their headers, the head likewise. Where three counts can't hold their headers
+    (`width < 180px`: the 588px window's 111px, where "Results" ran 12px and "Positions" 22px past their
+    columns and the wrap scrolled 22px) a row takes three lines: the domain, then Results and Share under
+    their headers, then Positions across the row, only the last line ruled. From the 588px window's 160px
+    panel to 560px every width either stacks or leaves the domain at least 124px (one line for
+    "brewguide.example"), and nothing scrolls or is cut. It stays table markup with its header cells, and
     Chromium's accessibility tree still holds a table of 4 column headers, 2 row headers and 6 cells. The
     probe table (Visibility) shares the wrap but none of these rules: it is not one of these parts. The
     parameter grid above it holds at 300px (it broke twice in #49).
   - **Search Console's controls:** the range and filter rows wrap (`flex-wrap`), and a select is never
-    narrower than its options (no `min-width: 0`; "More ranges…" no longer capped at 45% of the row) nor
-    wider than the row. Where they don't fit, a control takes the next line: at 300px "More ranges…"
-    goes under the days and "Clear filters" under the country and device. On `main`, at 300px, "More
-    ranges…" was cut 12px, "United Kingdom" 49px ("United…"), "All devices" 20px and the days 1-2px each;
-    at 360px "United Kingdom" was cut 19px. At 360px the scope, range and custom-range rows are unchanged
-    (0px apart); with a country and a device set, "Clear filters" takes the next line there.
+    narrower than the label it shows nor wider than the row. "More ranges…" is its own width, its longest
+    preset's (no longer capped at 45% of the row; no `min-width: 0`). The country and device share the
+    filter row equally, each at least its chosen option's width (`field-sizing: content`): with every
+    country Search Console names (`GSC_COUNTRY_ALPHA3`, about 240) a select's own width would be its
+    longest option's, and on the first round "South Georgia & South Sandwich Islands" made the country
+    select take the whole row at 360px with "All countries" chosen. A name longer than the row ends in an
+    ellipsis inside it (`text-overflow`). Where they don't fit, a control takes the next line: at 300px
+    "More ranges…" goes under the days and "Clear filters" under the country and device. On `main`, at
+    300px, "More ranges…" was cut 12px, "United Kingdom" 49px ("United…"), "All devices" 20px and the days
+    1-2px each; at 360px "United Kingdom" was cut 19px. At 360px with "All countries" and "All devices"
+    the controls are as on `main` (two equal 155px selects on one line, 34px tall); with a country and a
+    device set, "Clear filters" takes the next line there.
   - **Content's Search Console targets:** a suggested query wraps (the decision: the whole query shows, on
     as many lines as it needs, because its tooltip, the only way to the cut part, is out of the keyboard's
     reach, and Search Console's queries are mostly a line); where it doesn't fit beside its clicks and
@@ -1130,8 +1154,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
     every URL in the panels.
   - **Not here:** the Changes panel's capture card at the 588px window, which `workspace-layout.feature.md`
     records as fixed (round 3 of the layout PR: the Screenshot row and the Project picker stack; its e2e
-    checks they are whole); and the Visibility table, the totals' and milestones' labels in Page Speed
-    ("Page weight", "Transferred", "DOM ready" are cut at 300px), which no item named.
+    checks they are whole); and the Visibility table, which no item named (Left for later). Under the
+    panel's minimum, in the 588px window, Search Console's scope and day segments are cut ("Whole
+    property" 12px) and its body scrolls 9px: that width is `NARROW_PANEL_WRAPS`', not these parts'.
 
 ## Rollout
 1. Screenshot baseline (Playwright, light and dark).
@@ -1381,10 +1406,13 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   names `projects`; and `.projects-bulk-group` keeps `min-inline-size: 0`.
 - **Scenario: narrow-panel-fits-resolve** — each `NARROW_PANEL_FITS` entry's declarations resolve on
   exactly its selector in its stylesheet: the last top-level one (`query` null), or the last inside its
-  `@container` query, which comes after every top-level declaration of that selector and names the
-  container its `container` rule declares (`container: <name> / inline-size`); and no top-level rule of
-  the selector sets an `absent` property (`min-width` on Search Console's selects, `max-width` on "More
-  ranges…"). Reverting any fix fails it.
+  `@container` query, which comes after every declaration of that property on that selector at the top
+  level or in a wider query of the same container (a larger `width <` bound) and names the container its
+  `container` rule declares (`container: <name> / inline-size`); an `after` entry's declaration comes after
+  every top-level one of those selectors setting the same property (`.seo-speed-bytes` after
+  `.seo-speed-num`'s `nowrap`); and no top-level rule of the selector sets an `absent` property
+  (`min-width` on Search Console's selects, `max-width` on "More ranges…"). Reverting any fix, or moving
+  a rule above the one it overrides, fails it.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
 
@@ -1424,7 +1452,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 
 ## End to end, the panels at 300px (each in its panel's suite, at the default width and after Home on the separator)
 - **Scenario: lcp-late-image-e2e** (`seo-speed.e2e.ts`) — every navigation phase is at least
-  `NAVIGATION_PHASE_MIN_WIDTH` wide, in order, none starting before the one before it ends, inside the axis.
+  `NAVIGATION_PHASE_MIN_WIDTH` wide, in order, none starting before the one before it ends, inside the axis;
+  no text in the requests by type or the tiles is cut, and at 300px the tiles have two columns.
 - **Scenario: accessibility-check-reports-violations-e2e** (`seo-compliance.e2e.ts`) — no tally label is
   cut; at 300px the tally has two columns.
 - **Scenario: snippet-editor-previews** (`seo-content.e2e.ts`) — at 300px each of the trail's three crumbs
@@ -1435,10 +1464,14 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: serp-composition-and-ownership** (`serp.e2e.ts`) — the ownership table's wrap doesn't scroll;
   at 300px neither it nor the body does, no text in the table or the parameter grid is cut, its rows are
   grids, and the accessibility tree (CDP `Accessibility.queryAXTree`) holds 1 table, 4 column headers, 2
-  row headers and 6 cells.
+  row headers and 6 cells; in the 588px window (`NARROW_WINDOW`) its rows have two columns, its wrap
+  doesn't scroll, no header or cell is cut, and each count's cell has its header's edges.
 - **Scenario: gsc-panel-country-device-filters** (`gsc-panel.e2e.ts`) — with "United Kingdom" and a
   device chosen, no control's label is cut (a select against a copy of it holding only its chosen option),
-  and at 300px the body doesn't scroll sideways.
+  and at 300px the body doesn't scroll sideways; then with every country (`GSC_COUNTRY_ALPHA3`) the country
+  and device selects share one line equally at the default width, "United Kingdom" is whole at 300px, and
+  "South Georgia & South Sandwich Islands" stays inside the row there.
+`atNarrowestPanel` gives the panel back the width it found (keyboard steps, then a drag under a step).
 The check (`cutText`, `e2e/helpers.ts`) reads the text itself: each box holding text of its own whose
 `scrollWidth` passes its `clientWidth`, and each select narrower than its chosen option needs.
 
@@ -1475,6 +1508,12 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup or th
   `specs/workspace-layout.feature.md` (`page-view-matches-the-card`): the e2e proves the radius main
   passes on Linux, Windows and macOS; that the corner is drawn rounded was shown by a screen capture
   on Linux CI only.
+- **The Visibility table scrolls sideways at every width, and cuts its URLs** (`styles.css`,
+  `.serp-table-wrap` and `.visibility-table`; `components/seo/Visibility.tsx`): real table markup with a
+  column per probe field, wider than any panel. Measured after a run on the probe page: it scrolls 997px
+  at the default 360px, 1,057px at 300px and 1,173px in the 588px window (where the panel body also
+  scrolls 37px sideways), and each of its 8 URL cells is cut 134px by an ellipsis (the URL is in its
+  title). The panels-at-300px work left it: no item named it.
 - **The canvas's features the app doesn't have** (the design canvas; each would need markup or behaviour,
   not tokens): the score on the SEO sidebar toggle, "Ask frost", click-to-edit on the tab, "More tabs",
   Overview's AI-readiness, Page and AI-judgment cards as the canvas draws them, the find icon and match

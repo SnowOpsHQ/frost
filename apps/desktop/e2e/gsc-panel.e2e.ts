@@ -6,10 +6,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { GSC_DEVICE_LABELS, GSC_FILTER_TEXT, GSC_PANEL_COPY, GSC_RANGE_PRESET_LABELS, gscPresetRange } from '@app/specs/gsc-panel.spec';
-import { GSC_LIMITS, gscDateRange, gscRetentionStart, type GscQueryScope, type GscRangeDays } from '@app/specs/gsc.spec';
+import { GSC_COUNTRY_ALPHA3, GSC_LIMITS, gscDateRange, gscRetentionStart, type GscQueryScope, type GscRangeDays } from '@app/specs/gsc.spec';
 import { accountHelpers, fakeAccountEnv } from './account-helpers';
 import { startFakeBackend, type FakeBackend } from './fake-backend';
-import { fakeDateRows, fakeFilterEcho, fakeFiltersOf, startFakeGoogle, type FakeGoogle, type FakeQuery } from './fake-google';
+import { fakeCountryRows, fakeDateRows, fakeFilterEcho, fakeFiltersOf, startFakeGoogle, type FakeGoogle, type FakeQuery } from './fake-google';
 import { closeApp, launchApp, startLoopbackServer } from './harness';
 import { atNarrowestPanel, chromeHelpers, cutText } from './helpers';
 
@@ -406,6 +406,33 @@ test.describe.serial('the Search Console panel', () => {
     });
 
     // Leaves no filter for the other tests.
+    await page.getByTestId('gsc-clear-filters').click();
+    await expect(page.getByTestId('gsc-total-clicks')).toHaveText('60');
+
+    // Every country Search Console names (GSC_COUNTRY_ALPHA3, some 240): a select is as wide as its chosen
+    // option, never its longest ("South Georgia & South Sandwich Islands"). With "All countries" the two
+    // filters share the row equally at the default width, as before; at 300px "United Kingdom" is whole,
+    // and the longest name stays inside the row (it ends in an ellipsis).
+    google.countryRows = () => Object.keys(GSC_COUNTRY_ALPHA3).map((code, i) => ({ keys: [code], clicks: 1_000 - i, impressions: 10_000, ctr: 0.1, position: 3 }));
+    await device.selectOption('MOBILE');
+    await expect.poll(() => country.locator('option').count()).toBeGreaterThan(200);
+    const boxes = () =>
+      page.locator('.gsc-filter-row').evaluate((row) => {
+        const box = (el: Element | null) => el!.getBoundingClientRect();
+        const [r, c, d] = [box(row), box(row.querySelector('[data-testid="gsc-country"]')), box(row.querySelector('[data-testid="gsc-device"]'))];
+        return { sameLine: Math.abs(c.top - d.top) <= 1, equal: Math.abs(c.width - d.width) <= 1, inside: c.right <= r.right + 0.5 && c.width <= r.width + 0.5 };
+      });
+    expect(await boxes()).toEqual({ sameLine: true, equal: true, inside: true });
+    await atNarrowestPanel(page, async () => {
+      await country.selectOption('gbr');
+      await expect(panel()).toHaveAttribute('data-pending', 'false');
+      expect(await cutText(controls)).toEqual([]);
+      await country.selectOption('sgs');
+      await expect(panel()).toHaveAttribute('data-pending', 'false');
+      expect((await boxes()).inside).toBe(true);
+      expect(await page.locator('.seo-body').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+    });
+    google.countryRows = () => fakeCountryRows();
     await page.getByTestId('gsc-clear-filters').click();
     await expect(page.getByTestId('gsc-total-clicks')).toHaveText('60');
   });

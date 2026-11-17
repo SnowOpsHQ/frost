@@ -173,20 +173,36 @@ export function cutText(root: Locator): Promise<string[]> {
 export const sidewaysScroll = (scroller: Locator): Promise<number> => scroller.evaluate((el) => el.scrollWidth - el.clientWidth);
 
 /**
- * Sets the SEO panel to its narrowest width (Home on its separator) for `body`, then gives it back the
- * width three keyboard steps above that (the default isn't a whole number of steps from either end).
+ * Sets the SEO panel to its narrowest width (Home on its separator) for `body`, then gives it back the width
+ * it had: keyboard steps up to the last one under it, then a drag for the rest (the default, 360px, isn't a
+ * whole number of steps from either end). The drag is under a step and starts at the minimum, so the tab
+ * view's edge never crosses a parked cursor (seo-sidebar.e2e.ts, drag-resize-moves-page-view).
  */
 export async function atNarrowestPanel(page: Page, body: () => Promise<void>): Promise<void> {
   const separator = page.getByTestId('seo-resize');
+  const found = Number(await separator.getAttribute('aria-valuenow'));
+  const { min, keyboardStep } = SIDEBAR_PANEL_WIDTH_RANGE;
   await separator.focus();
   await page.keyboard.press('Home');
-  await expect(separator).toHaveAttribute('aria-valuenow', String(SIDEBAR_PANEL_WIDTH_RANGE.min));
+  await expect(separator).toHaveAttribute('aria-valuenow', String(min));
   await separator.blur();
   try {
     await body();
   } finally {
+    const steps = Math.floor((found - min) / keyboardStep);
     await separator.focus();
-    for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
+    for (let i = 0; i < steps; i++) await page.keyboard.press('ArrowRight');
     await separator.blur();
+    const rest = found - (min + steps * keyboardStep);
+    if (rest > 0) {
+      const box = (await separator.boundingBox())!;
+      const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + rest / 2, y, { steps: 4 });
+      await page.mouse.move(x + rest, y, { steps: 4 });
+      await page.mouse.up();
+    }
+    await expect(separator).toHaveAttribute('aria-valuenow', String(found));
   }
 }

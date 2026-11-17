@@ -443,8 +443,11 @@ export const SIZE_UNAVAILABLE_LABEL = 'size unavailable';
 /**
  * The navigation timing row's shortest phase, in its 0…100 axis (1.5: 3.4px in the 300px panel's row, 7.3px
  * at the widest): a phase with any duration is drawn at least this wide, so it shows past the next phase's
- * 1px boundary. The phase after a widened one starts where it is drawn to end (no phase covers another),
- * and ends at its real end; at the axis's end the row is pulled back inside it (`waterfall`).
+ * 1px boundary. The phase after a widened one starts where it is drawn to end (no phase covers another);
+ * at the axis's end the row is pulled back inside it (`waterfall`). So near short phases and at the axis's
+ * end a start or end moves by up to n × this (n phases), a short phase's neighbour can have its end
+ * pushed, and the markers, at their real times, can fall inside a pushed bar: the bars give order and
+ * rough share, the legend each phase's real duration.
  */
 export const NAVIGATION_PHASE_MIN_WIDTH = 1.5;
 /**
