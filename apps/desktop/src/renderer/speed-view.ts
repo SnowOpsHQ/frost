@@ -84,12 +84,13 @@ export interface WaterfallMarker {
 
 /**
  * The navigation timing row: each phase as a bar on one 0…100 axis that ends at the load event (or,
- * before it, the last milestone or phase), and the DOMContentLoaded and load markers. A phase is at least
- * `NAVIGATION_PHASE_MIN_WIDTH` wide, so every phase with a duration shows; the next one starts at its real
- * start or where the one before it is drawn to end, whichever is later (it used to start at its real start
- * and cover a widened phase), and ends at its real end unless it is itself under the minimum. A row pushed
- * past the axis's end is pulled back from there: the last phase ends at 100, each one before it where the
- * next starts.
+ * before it, the last milestone or phase), and the DOMContentLoaded and load markers at their real times.
+ * A phase is at least `NAVIGATION_PHASE_MIN_WIDTH` wide, so every phase with a duration shows; the next one
+ * starts at its real start or where the one before it is drawn to end, whichever is later, and ends at its
+ * real end or the minimum past its start, whichever is later. A row pushed past the axis's end is pulled
+ * back from there: the last phase ends at 100, each one before it where the next starts. So starts and
+ * ends move by up to n × the minimum near short phases and at the axis's end, and a pushed bar can pass a
+ * marker; the legend gives each phase's real duration.
  */
 export function waterfall(nav: NavigationReport): { readonly end: number; readonly bars: readonly WaterfallBar[]; readonly markers: readonly WaterfallMarker[] } {
   const end = Math.max(nav.load ?? 0, nav.domContentLoaded ?? 0, ...nav.spans.map((s) => s.end), 1);

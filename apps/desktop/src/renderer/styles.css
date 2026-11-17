@@ -4639,6 +4639,11 @@ input {
   margin-bottom: 0;
 }
 
+/* A card is its tiles' container: they lay themselves out by its width (below). */
+.seo-speed-card {
+  container: speed-card / inline-size;
+}
+
 .seo-speed-milestones div,
 .seo-speed-totals div {
   min-width: 0;
@@ -4663,6 +4668,15 @@ input {
   font: var(--text-body);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* Three tiles need about 270px to hold "Page weight" and "DOM ready" whole; narrower (the 300px panel's
+   227px cut them 8 to 14px) they take two columns. After the rules they override. */
+@container speed-card (width < 270px) {
+  .seo-speed-milestones,
+  .seo-speed-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* The marks' key: a 2px edge (a border, which forced colours draw) in the mark's colour. */
@@ -8907,11 +8921,12 @@ input {
   white-space: normal;
 }
 
-/* Who owns page 1 where its four columns don't fit (the 300px panel, where it scrolled 60px sideways):
+/* Who owns page 1 where its four columns leave the domain too little room (under 300px: the 300px panel,
+   where it scrolled 60px sideways, and the default 360px, where "brewguide.example" broke mid-word):
    each row takes two lines, the domain across the row and its counts under it in three columns under
    their headers, the head likewise. Still a table: every cell keeps its header. After the rules it
    overrides. */
-@container serp-table (width < 280px) {
+@container serp-table (width < 300px) {
   .serp-owners,
   .serp-owners thead,
   .serp-owners tbody {
@@ -8926,6 +8941,25 @@ input {
   .serp-owners tr > :first-child {
     grid-column: 1 / -1;
     max-width: none;
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+}
+
+/* Where three counts can't hold their headers (under 180px: the 588px window's 111px, where "Positions"
+   ran 22px past its column), a row takes three lines: the domain, Results and Share under their headers,
+   then Positions across the row; only the last line draws the row's rule. After the query above. */
+@container serp-table (width < 180px) {
+  .serp-owners tr {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .serp-owners tr > :last-child {
+    grid-column: 1 / -1;
+  }
+
+  .serp-owners tr > :nth-child(2),
+  .serp-owners tr > :nth-child(3) {
     padding-bottom: 0;
     border-bottom: 0;
   }
