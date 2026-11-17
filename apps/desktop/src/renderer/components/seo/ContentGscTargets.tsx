@@ -22,16 +22,18 @@ function Suggestions({ view, loaded, onUse }: { readonly view: GscSuggestionsVie
             {view.items.map((item) => (
               <li key={item.query} className="gsc-targets-row" data-testid="gsc-target-suggestion" data-target={item.isTarget}>
                 <PageText value={item.query} className="gsc-targets-text" testId="gsc-target-suggestion-query" />
-                <span className="gsc-targets-metric">{item.clicks} clicks</span>
-                {item.isTarget ? (
-                  <span className="gsc-targets-current" data-testid="gsc-target-current">
-                    {GSC_TARGETS_COPY.currentTarget}
-                  </span>
-                ) : (
-                  <button type="button" className="seo-chip-button gsc-targets-use" data-testid="gsc-target-use" aria-label={item.label} disabled={!loaded} onClick={() => onUse(item.target)}>
-                    {GSC_TARGETS_COPY.useAsTarget}
-                  </button>
-                )}
+                <span className="gsc-targets-end">
+                  <span className="gsc-targets-metric">{item.clicks} clicks</span>
+                  {item.isTarget ? (
+                    <span className="gsc-targets-current" data-testid="gsc-target-current">
+                      {GSC_TARGETS_COPY.currentTarget}
+                    </span>
+                  ) : (
+                    <button type="button" className="seo-chip-button gsc-targets-use" data-testid="gsc-target-use" aria-label={item.label} disabled={!loaded} onClick={() => onUse(item.target)}>
+                      {GSC_TARGETS_COPY.useAsTarget}
+                    </button>
+                  )}
+                </span>
               </li>
             ))}
           </ul>

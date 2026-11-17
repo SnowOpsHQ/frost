@@ -51,6 +51,28 @@
   border-top: 0;
 }
 
+/* A suggested query (a row with "Use as target") wraps, so the whole query shows: a title (the cut query's
+   tooltip) is out of reach of the keyboard, and Search Console's queries are mostly a line. Where it
+   doesn't fit beside its clicks and button (the 300px panel left it about 40px) those two go under it
+   together, at the row's end. A page's URL keeps its one line: its title holds the whole URL, as
+   everywhere in the panels. */
+.gsc-targets-row[data-target] {
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
+}
+
+.gsc-targets-row[data-target] .gsc-targets-text {
+  white-space: normal;
+}
+
+.gsc-targets-end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  margin-inline-start: auto;
+}
+
 .gsc-targets-text {
   flex: 1 1 auto;
   color: var(--text);

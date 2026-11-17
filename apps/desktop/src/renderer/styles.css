@@ -4541,7 +4541,8 @@ input {
    close to tell apart by their shade alone. The 2px stroke is painted under the fill, so only its outer
    1px shows, over the previous segment's end, and never over its own fill; on whole pixels (crispEdges)
    and 2px at any scale, so it is a solid column, not two anti-aliased halves. It never covers a segment's
-   own fill when nothing follows within its width (the next phase starts at a short one's real end). */
+   own fill: a short phase is drawn at the minimum and the next one starts where it ends (speed-view.ts,
+   waterfall), where it used to start at the short one's real end and cover it. */
 .seo-speed-phase {
   color: var(--bg-surface);
   stroke: currentColor;
@@ -4701,6 +4702,13 @@ input {
   color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A type's size wraps between its words: "size unavailable" (cross-origin requests without
+   Timing-Allow-Origin) takes two lines in the 64px column, where it ran 23px past it on one; a size
+   ("123.4 kB") is narrower than the column and stays on one line. */
+.seo-speed-bytes {
+  white-space: normal;
 }
 
 /* A type with no request: --text-faint (it faded to half). */
@@ -5101,6 +5109,7 @@ input {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  container: a11y-results / inline-size;
 }
 
 .seo-a11y-tally {
@@ -5150,6 +5159,14 @@ input {
   .seo-a11y-tally-item[data-count='0'] .seo-a11y-tally-value {
     border-color: GrayText;
     color: GrayText;
+  }
+}
+
+/* Four tiles need about 280px to hold "Moderate" whole; narrower (the 300px panel's 226px), they take two
+   columns, two rows. Its own container (the results' width), after the rule it overrides. */
+@container a11y-results (width < 280px) {
+  .seo-a11y-tally {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -6291,6 +6308,13 @@ input {
 .seo-serp-path {
   color: var(--text-muted);
   font: var(--text-small);
+}
+
+/* A crumb (with its separator) is one box: the trail breaks between crumbs, so "cold-brew-coffee" is never
+   split at a hyphen; one wider than the card wraps inside itself (the card's overflow-wrap). */
+.seo-serp-crumb {
+  display: inline-block;
+  max-width: 100%;
 }
 
 /* The title reads as a link, as Overview's preview: --accent. */
@@ -8829,11 +8853,13 @@ input {
 }
 
 /* Tables (ownership, probes): real table markup, scrolling sideways when wider than the panel; rows ruled
-   by --divider (border-spacing, not border-collapse: each cell draws its own rule). */
+   by --divider (border-spacing, not border-collapse: each cell draws its own rule). The wrap is the
+   tables' container: Who owns page 1 lays itself out by its own width (below). */
 .serp-table-wrap {
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: thin;
+  container: serp-table / inline-size;
 }
 
 .serp-table {
@@ -8873,6 +8899,36 @@ input {
 
 .serp-domain {
   max-width: 150px;
+}
+
+/* A domain wraps (it was cut with an ellipsis): the whole name shows, and the column never forces the
+   table wider than the panel. */
+.serp-owners .serp-domain .seo-page-text {
+  white-space: normal;
+}
+
+/* Who owns page 1 where its four columns don't fit (the 300px panel, where it scrolled 60px sideways):
+   each row takes two lines, the domain across the row and its counts under it in three columns under
+   their headers, the head likewise. Still a table: every cell keeps its header. After the rules it
+   overrides. */
+@container serp-table (width < 280px) {
+  .serp-owners,
+  .serp-owners thead,
+  .serp-owners tbody {
+    display: block;
+  }
+
+  .serp-owners tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .serp-owners tr > :first-child {
+    grid-column: 1 / -1;
+    max-width: none;
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
 }
 
 /* The results list. */

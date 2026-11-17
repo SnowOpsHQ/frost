@@ -54,6 +54,7 @@
 .gsc-range-row,
 .gsc-filter-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   width: 100%;
@@ -65,15 +66,17 @@
   min-width: 0;
 }
 
-/* The panels' select (--h-control at --r-sm), at --text-small so "More ranges…" fits beside the days. */
+/* The panels' select (--h-control at --r-sm), at --text-small so "More ranges…" fits beside the days. A
+   select is never narrower than its options (its own width, the longest one's), so its label shows whole:
+   where the controls don't fit on one line (the 300px panel cut "More ranges…" and "United Kingdom") the
+   row wraps and a control takes the next line. Never wider than the row. */
 .gsc .gsc-select {
-  min-width: 0;
+  max-width: 100%;
   font: var(--text-small);
 }
 
 .gsc-range-row .gsc-select {
   flex: 0 1 auto;
-  max-width: 45%;
 }
 
 .gsc-filter-row .gsc-select {

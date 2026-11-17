@@ -177,7 +177,7 @@ function Ownership({ snapshot }: { readonly snapshot: SerpReady }) {
         <p className="seo-empty-line">No organic results with a link on this page.</p>
       ) : (
         <div className="serp-table-wrap">
-          <table className="serp-table" data-testid="serp-ownership-table">
+          <table className="serp-table serp-owners" data-testid="serp-ownership-table">
             <caption className="visually-hidden">Organic results per domain, ads not counted</caption>
             <thead>
               <tr>
