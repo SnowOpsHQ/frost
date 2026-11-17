@@ -1329,7 +1329,7 @@ input {
 }
 
 /* A pass's check (PASS_CHECK): 10px, 1px past each edge of the 8px dot, so it keeps the dot's place;
-   stroked --ok (an SVG stroke, which forced colours leave as it is). */
+   stroked --ok, kept under forced colours by the forced-color-adjust it inherits from its dot. */
 .seo-pass-check {
   position: absolute;
   top: -1px;
@@ -1413,6 +1413,18 @@ input {
 /* A dot on a tinted row: no halo (it would ring the tint). */
 .seo-more-item:is(:hover, :focus-visible) {
   --seo-dot-back: transparent;
+}
+
+/* ... but a pass's check keeps a --bg-surface disc (halo too: its tips pass the 8px dot): --ok on the tint
+   is 2.98:1 hovered, 2.84:1 focused in light, 3.30:1 on --bg-surface. None under forced colours. */
+.seo-more-item:is(:hover, :focus-visible) .seo-rail-dot[data-status='pass'] {
+  --seo-dot-back: var(--bg-surface);
+}
+
+@media (forced-colors: active) {
+  .seo-more-item:is(:hover, :focus-visible) .seo-rail-dot[data-status='pass'] {
+    --seo-dot-back: transparent;
+  }
 }
 
 .seo-more-label {
@@ -2079,7 +2091,8 @@ input {
 
 /* A 1px --bg-surface boundary round the fill (the stroke is currentColor, 2px painted under the fill, so
    1px shows past it), as Page Speed's timing segments: "fits" (--ok) is 2.23:1 on --track in light. On
-   whole pixels (crispEdges): anti-aliased, the 1px split into two half-tones at about 2:1. */
+   whole pixels (crispEdges): anti-aliased, the 1px split into two half-tones at about 2:1. Square (rx 0):
+   crisp, the markup's rx drew a staircase at each end; the bar's pill clip rounds the outer end. */
 .seo-meter-fill {
   color: var(--bg-surface);
   fill: var(--meter);
@@ -2087,6 +2100,7 @@ input {
   stroke-width: 2px;
   paint-order: stroke;
   shape-rendering: crispEdges;
+  rx: 0;
   vector-effect: non-scaling-stroke;
 }
 
@@ -6544,6 +6558,7 @@ input {
   stroke-width: 2px;
   paint-order: stroke;
   shape-rendering: crispEdges;
+  rx: 0;
   vector-effect: non-scaling-stroke;
 }
 

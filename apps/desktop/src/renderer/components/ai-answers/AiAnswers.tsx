@@ -115,7 +115,10 @@ function AskForm({ view, focusSeq, say, onAnswer }: { readonly view: AiAnswersVi
         {TEXT.costNote}
       </p>
       <div className="ai-answers-row">
-        <button type="button" className="panel-button panel-button-primary" data-testid="ai-answers-ask" disabled={control.disabled} aria-describedby={noteId} aria-disabled={busy || undefined} onClick={() => setConfirming(true)}>
+        <button type="button" className="panel-button panel-button-primary" data-testid="ai-answers-ask" disabled={control.disabled} aria-describedby={noteId} aria-disabled={busy || undefined} onClick={() => {
+            // Busy (aria-disabled, still focusable): drawn disabled, so it asks nothing.
+            if (!busy) setConfirming(true);
+          }}>
           <span>{TEXT.ask}</span>
         </button>
         <p className="ai-answers-note" id={noteId} data-testid="ai-answers-ask-note">

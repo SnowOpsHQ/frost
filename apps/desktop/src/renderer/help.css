@@ -285,6 +285,9 @@
   height: 14px;
   border: 1px solid var(--switch-off);
   border-radius: 50%;
+  /* Kept under forced colours (FORCED_COLOURS_KEPT): they would repaint the done disc as the canvas,
+     and a step done would look like one not done. */
+  forced-color-adjust: none;
 }
 
 .setup-item[data-done='true'] .setup-check {

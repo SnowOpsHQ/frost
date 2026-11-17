@@ -300,7 +300,8 @@ test('snippet-editor-previews', async () => {
   await expect(page.getByTestId('seo-width-title')).toHaveAttribute('data-state', 'fits');
   // The fill is square (design-tokens' meter boundary): a clip of the track's shape rounds its outer end.
   expect(
-    await page.getByTestId('seo-width-title').locator('.seo-width-meter-fill').evaluate((fill) => {
+    await page.getByTestId('seo-width-title').locator('.seo-width-meter-fill').evaluate((element) => {
+      const fill = element as unknown as SVGRectElement;
       const track = fill.ownerSVGElement!.querySelector('.seo-width-meter-track')!;
       const clip = fill.ownerSVGElement!.querySelector('clipPath');
       const shape = clip?.querySelector('rect');
