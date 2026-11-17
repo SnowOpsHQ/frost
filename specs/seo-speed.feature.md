@@ -235,7 +235,15 @@ many visits on many devices), which can be very different. The panel says so und
 - **Scenario: paused-line-age-keeps-counting** (`speed-live-line.test.ts`, the line in a DOM) — paused
   at the poll limit, with no poll left to re-render it, the line's "last … ago" follows the clock, already true on the render that pauses it; a paused line that shows no age (no
   live report) keeps no clock.
-- **Scenario: meter-geometry**, **missing-vital-text**, **waterfall-geometry**, **bars-and-shares**,
+- **Scenario: waterfall-geometry** — each phase on one 0…100 axis that ends at the load event (before it,
+  the last milestone or phase), the markers where their milestones are.
+- **Scenario: waterfall-shows-every-phase** — a phase shorter than `NAVIGATION_PHASE_MIN_WIDTH` is drawn at
+  it and the next one starts where it ends (four 1ms phases in a row are four bars of 1.5, one after
+  another), a phase ends at its real end unless it is itself under the minimum, and a row pushed past the
+  axis's end is pulled back inside it (a short last phase ends at 100, the one before it where it starts);
+  no bar is narrower than the minimum, none starts before the one before it ends
+  (`design-tokens.feature.md`, The panels at 300px).
+- **Scenario: meter-geometry**, **missing-vital-text**, **bars-and-shares**,
   **shown-speed-prefers-live-for-this-url**, **speed-issues-merge-measured-and-snapshot-rules**,
   **openable-resources-and-ago**, **speed-notes** (Wayland, route change, too few requests, a full
   buffer, iframes; the source labels).

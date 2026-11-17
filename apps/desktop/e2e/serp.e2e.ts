@@ -5,14 +5,14 @@
 // Acceptance: specs/serp-panels.feature.md (End to end)
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { INTENT_E2E_FAKE_SWITCH, INTENT_LABEL_NAMES } from '@app/specs/intent-classifier.spec';
 import { PACK_UPDATE_MESSAGES, SERP_E2E_PACK_KEY_SWITCH, SERP_E2E_PACK_URL_SWITCH, packSignatureUrl } from '@app/specs/serp-selector-pack.spec';
 import { SERP_NOT_SERP_MESSAGE, SERP_OUTLINE_KEY } from '@app/specs/serp-service.spec';
 import { SERP_UNREADABLE_MESSAGES, SERP_WORLD_ID } from '@app/specs/serp.spec';
 import { closeApp, launchApp } from './harness';
-import { chromeHelpers } from './helpers';
+import { atNarrowestPanel, chromeHelpers, cutText, sidewaysScroll } from './helpers';
 import { PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
 
 const READ_WAIT = 20_000;
@@ -173,7 +173,38 @@ test('serp-composition-and-ownership', async () => {
   // The tables are real table markup with header cells.
   await expect(page.getByTestId('serp-ownership-table').locator('thead th')).toHaveCount(4);
   await expect(page.getByTestId('serp-ownership-table').locator('tbody th[scope="row"]')).toHaveCount(2);
+  // At 300px (design-tokens.feature.md, The panels at 300px) the table stacks: nothing scrolls sideways and
+  // no cell's text is cut; Chromium's accessibility tree still holds a table, its headers and its cells.
+  // The parameter grid holds too (it broke twice at 300px).
+  const table = page.getByTestId('serp-ownership-table');
+  const wrap = page.locator('.serp-table-wrap').first();
+  expect(await sidewaysScroll(wrap)).toBe(0);
+  await atNarrowestPanel(page, async () => {
+    expect(await sidewaysScroll(wrap)).toBe(0);
+    expect(await sidewaysScroll(page.locator('.seo-body'))).toBe(0);
+    expect(await cutText(page.getByTestId('serp-ownership'))).toEqual([]);
+    expect(await cutText(page.locator('.serp-params'))).toEqual([]);
+    expect(await table.locator('tr').first().evaluate((row) => getComputedStyle(row).display)).toBe('grid');
+    expect(await axRoles(table)).toEqual({ table: 1, columnheader: 4, rowheader: 2, cell: 6 });
+  });
 });
+
+/** The table, header and cell roles Chromium's accessibility tree holds for `table` and under it. */
+async function axRoles(table: Locator): Promise<Record<string, number>> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+    const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: `[data-testid="${await table.getAttribute('data-testid')}"]` });
+    const counts: Record<string, number> = {};
+    for (const role of ['table', 'columnheader', 'rowheader', 'cell']) {
+      const { nodes } = await cdp.send('Accessibility.queryAXTree', { nodeId, role });
+      counts[role] = nodes.filter((node) => !node.ignored).length;
+    }
+    return counts;
+  } finally {
+    await cdp.detach();
+  }
+}
 
 test('serp-params-per-tab', async () => {
   await ensurePack();

@@ -15,6 +15,7 @@ import {
   FORCED_COLOURS_BUSY,
   FORCED_COLOURS_KEPT,
   FORCED_COLOURS_PRESSED,
+  NARROW_PANEL_FITS,
   PROJECTS_SHEET_NARROW,
   FORCED_COLOURS_SYSTEM_COLOURS,
   GRAPHICS_ONLY_COLOURS,
@@ -39,6 +40,7 @@ import {
   type HoverSkipsPressed,
   type LegacyTokenMigration,
   type LoadsBefore,
+  type NarrowPanelFit,
   type PressedEdge,
   type StateEdge,
   type SignalSurface,
@@ -1492,6 +1494,32 @@ test('surface-rules-read-signal-tokens', () => {
     expect(result.checked, surface.name).toBeGreaterThan(0);
     expect(result.problems, surface.name).toEqual([]);
     expect(result.typeRules, `${surface.name} reads the --text-* tokens`).toBeGreaterThan(0);
+  }
+});
+
+test('narrow-panel-fits-resolve', () => {
+  const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const fits: readonly NarrowPanelFit[] = NARROW_PANEL_FITS;
+  for (const fit of fits) {
+    const index = selectorIndex(read(fit.stylesheet));
+    const own = index.get(fit.selector) ?? [];
+    const top = own.filter((d) => d.outer.length === 0);
+    const inside = fit.query === null ? top : own.filter((d) => d.outer.length === 1 && collapse(d.outer[0]!) === fit.query);
+    for (const [property, value] of Object.entries(fit.set)) {
+      const last = inside.filter((d) => d.property === property).at(-1);
+      expect(last?.value, `${fit.stylesheet}: ${fit.selector} { ${property} }${fit.query === null ? '' : ` in ${fit.query}`}`).toBe(value);
+      if (fit.query !== null) {
+        // After every top-level rule of the selector: at the same weight the later rule wins.
+        const lastTop = Math.max(-1, ...top.map((d) => d.order));
+        expect(last!.order, `${fit.selector}: its ${fit.query} after its top-level rules`).toBeGreaterThan(lastTop);
+      }
+    }
+    for (const property of fit.absent ?? []) expect(top.filter((d) => d.property === property), `${fit.stylesheet}: ${fit.selector} sets no ${property}`).toEqual([]);
+    if (fit.container !== undefined) {
+      const declared = (index.get(fit.container.selector) ?? []).filter((d) => d.outer.length === 0 && d.property === 'container');
+      expect(declared.at(-1)?.value, `${fit.container.selector} is the query's container`).toBe(fit.container.value);
+      expect(fit.query, `${fit.selector}: the query names that container`).toMatch(new RegExp(`^@container ${fit.container.value.split(' / ')[0]} \\(`));
+    }
   }
 });
 

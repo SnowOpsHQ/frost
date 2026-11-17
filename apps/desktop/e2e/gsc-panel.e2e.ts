@@ -11,7 +11,7 @@ import { accountHelpers, fakeAccountEnv } from './account-helpers';
 import { startFakeBackend, type FakeBackend } from './fake-backend';
 import { fakeDateRows, fakeFilterEcho, fakeFiltersOf, startFakeGoogle, type FakeGoogle, type FakeQuery } from './fake-google';
 import { closeApp, launchApp, startLoopbackServer } from './harness';
-import { chromeHelpers } from './helpers';
+import { atNarrowestPanel, chromeHelpers, cutText } from './helpers';
 
 let backend: FakeBackend;
 let google: FakeGoogle;
@@ -396,6 +396,14 @@ test.describe.serial('the Search Console panel', () => {
     // The chosen country stays chosen while the countries are read again.
     await expect(country).toHaveValue('gbr');
     await expect(page.getByTestId('gsc-clear-filters')).toHaveText(GSC_FILTER_TEXT.clear);
+    // Every control's label whole ("United Kingdom", "More ranges…", the days), at the default width and at
+    // 300px, where the rows wrap (design-tokens.feature.md, The panels at 300px).
+    const controls = page.locator('.gsc-controls');
+    expect(await cutText(controls)).toEqual([]);
+    await atNarrowestPanel(page, async () => {
+      expect(await cutText(controls)).toEqual([]);
+      expect(await page.locator('.seo-body').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+    });
 
     // Leaves no filter for the other tests.
     await page.getByTestId('gsc-clear-filters').click();

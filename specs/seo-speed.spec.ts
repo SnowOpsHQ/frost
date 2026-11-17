@@ -439,6 +439,14 @@ export const LAB_DATA_NOTE =
   'Lab data: one visit, measured in this tab on this machine, with its cache, network and CPU. Real visitors’ experience (field data) can be very different.';
 export const INP_HINT = 'Interact with the page to measure INP';
 export const SIZE_UNAVAILABLE_LABEL = 'size unavailable';
+
+/**
+ * The navigation timing row's shortest phase, in its 0…100 axis (1.5: 3.4px in the 300px panel's row, 7.3px
+ * at the widest): a phase with any duration is drawn at least this wide, so it shows past the next phase's
+ * 1px boundary. The phase after a widened one starts where it is drawn to end (no phase covers another),
+ * and ends at its real end; at the axis's end the row is pulled back inside it (`waterfall`).
+ */
+export const NAVIGATION_PHASE_MIN_WIDTH = 1.5;
 /**
  * Cross-origin responses report sizes (and most timings) only when the server sends
  * `Timing-Allow-Origin`; without it the Performance API gives 0, which frost shows as "size

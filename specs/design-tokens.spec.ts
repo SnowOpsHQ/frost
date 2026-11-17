@@ -1080,6 +1080,54 @@ export const PROJECTS_SHEET_NARROW = {
 } as const;
 
 /**
+ * The panels' parts laid out for the SEO panel at its narrowest (`SIDEBAR_PANEL_WIDTH_RANGE.min`, 300px:
+ * a card's content is about 226px there), where each was cut or scrolled sideways (Left for later, now
+ * closed; `design-tokens.feature.md`, The panels at 300px). Each entry is declarations that must resolve on
+ * exactly `selector` in `stylesheet`: at the top level (`query` null: at every width), or inside a named
+ * container's `query`, written after every top-level rule of that selector (a query before them lost to
+ * them at the same weight) and on an element that `container` declares. `absent`: properties no top-level
+ * rule of the selector may set any more (a floor or cap that cut the text). Not the `seo-panel` query
+ * (`NARROW_PANEL_WRAPS`, under the panel's minimum only): these hold at 300px, so they key on the part's
+ * own width, or on none.
+ */
+export interface NarrowPanelFit {
+  readonly stylesheet: string;
+  readonly selector: string;
+  readonly query: string | null;
+  readonly container?: { readonly selector: string; readonly value: string };
+  readonly set: Readonly<Record<string, string>>;
+  readonly absent?: readonly string[];
+  readonly why: string;
+}
+
+const A11Y_RESULTS = { selector: '.seo-a11y-results', value: 'a11y-results / inline-size' } as const;
+const SERP_TABLE = { selector: '.serp-table-wrap', value: 'serp-table / inline-size' } as const;
+const SERP_TABLE_QUERY = '@container serp-table (width < 280px)';
+
+export const NARROW_PANEL_FITS = [
+  // Page Speed: a type's size in its 64px column.
+  { stylesheet: 'styles.css', selector: '.seo-speed-bytes', query: null, set: { 'white-space': 'normal' }, why: 'Page Speed\'s requests by type: "size unavailable" takes two lines in the 64px column (one line ran 23px past it); a size ("123.4 kB") is narrower and stays on one' },
+  // Compliance: the tally's tiles.
+  { stylesheet: 'styles.css', selector: '.seo-a11y-tally', query: '@container a11y-results (width < 280px)', container: A11Y_RESULTS, set: { 'grid-template-columns': 'repeat(2, minmax(0, 1fr))' }, why: 'Compliance\'s tally: two columns, two rows where four tiles can\'t hold "Moderate" (14px short in the 300px panel\'s 227px)' },
+  // Content: the result preview's address line, crumb by crumb.
+  { stylesheet: 'styles.css', selector: '.seo-serp-crumb', query: null, set: { display: 'inline-block', 'max-width': '100%' }, why: "Content's result preview: a crumb is one box, so the trail breaks between crumbs, never at a hyphen inside one (it did at 348px and 300px)" },
+  // SERP: Who owns page 1.
+  { stylesheet: 'styles.css', selector: '.serp-owners .serp-domain .seo-page-text', query: null, set: { 'white-space': 'normal' }, why: "SERP's ownership table: a domain wraps (it was cut by an ellipsis), so the column never widens the table past the panel" },
+  { stylesheet: 'styles.css', selector: '.serp-owners', query: SERP_TABLE_QUERY, container: SERP_TABLE, set: { display: 'block' }, why: "SERP's ownership table where four columns don't fit (it scrolled 60px sideways at 300px): its rows lay out as grids" },
+  { stylesheet: 'styles.css', selector: '.serp-owners tr', query: SERP_TABLE_QUERY, container: SERP_TABLE, set: { display: 'grid', 'grid-template-columns': 'repeat(3, minmax(0, 1fr))' }, why: "SERP's ownership table, stacked: a row's counts in three columns under their headers" },
+  { stylesheet: 'styles.css', selector: '.serp-owners tr > :first-child', query: SERP_TABLE_QUERY, container: SERP_TABLE, set: { 'grid-column': '1 / -1', 'border-bottom': '0' }, why: "SERP's ownership table, stacked: the domain (and the Domain header) across the row, above its counts" },
+  // Search Console's controls.
+  { stylesheet: 'gsc-panel.css', selector: '.gsc-range-row', query: null, set: { 'flex-wrap': 'wrap' }, why: 'Search Console\'s range row: "More ranges…" takes the next line where it doesn\'t fit beside the days (it was cut to "More range…", and the days 1–2px each)' },
+  { stylesheet: 'gsc-panel.css', selector: '.gsc-filter-row', query: null, set: { 'flex-wrap': 'wrap' }, why: 'Search Console\'s filters: a control takes the next line where they don\'t fit (the country was cut to "United…")' },
+  { stylesheet: 'gsc-panel.css', selector: '.gsc .gsc-select', query: null, set: { 'max-width': '100%' }, absent: ['min-width'], why: "Search Console's selects: never narrower than their options (no `min-width: 0`), never wider than the row" },
+  { stylesheet: 'gsc-panel.css', selector: '.gsc-range-row .gsc-select', query: null, set: { flex: '0 1 auto' }, absent: ['max-width'], why: 'Search Console\'s "More ranges…": its own width, not 45% of the row' },
+  // Content's Search Console targets.
+  { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-row[data-target]', query: null, set: { 'flex-wrap': 'wrap' }, why: "Content's suggested queries: the clicks and \"Use as target\" go under a query that doesn't fit beside them (the query had about 40px at 300px)" },
+  { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-row[data-target] .gsc-targets-text', query: null, set: { 'white-space': 'normal' }, why: "Content's suggested queries: the whole query shows, on as many lines as it needs (it was cut, its tooltip out of the keyboard's reach)" },
+  { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-end', query: null, set: { flex: 'none', 'margin-inline-start': 'auto' }, why: "Content's suggested queries: the clicks and the button wrap together, at the row's end" },
+] as const satisfies readonly NarrowPanelFit[];
+
+/**
  * The most literal hex colours (`#rgb`, `#rrggbb`, …, outside comments) the renderer's stylesheets
  * other than `TOKENS_STYLESHEET` may hold. A ratchet: lower it as surfaces move onto tokens, never
  * raise it. Counted when every `:root` token moved into `tokens.css`. It counts hex only: a colour

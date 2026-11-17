@@ -1,8 +1,8 @@
-// Spec: specs/seo-speed.spec.ts (VITAL_THRESHOLDS, INP_HINT, SNAPSHOT_PERFORMANCE_RULES)
+// Spec: specs/seo-speed.spec.ts (VITAL_THRESHOLDS, INP_HINT, SNAPSHOT_PERFORMANCE_RULES, NAVIGATION_PHASE_MIN_WIDTH)
 // Acceptance: specs/seo-speed.feature.md (Renderer helpers)
 import { describe, expect, test } from 'vitest';
 import type { Finding, NavigationReport, SeoAudit, SpeedReport } from '@app/seo-core';
-import { INP_HINT, LOADED_HIDDEN_HINT, SPEED_SOURCE_LABELS, WAYLAND_HINT, WAYLAND_PAINT_NOTE } from '@app/specs/seo-speed.spec';
+import { INP_HINT, LOADED_HIDDEN_HINT, NAVIGATION_PHASE_MIN_WIDTH, SPEED_SOURCE_LABELS, WAYLAND_HINT, WAYLAND_PAINT_NOTE } from '@app/specs/seo-speed.spec';
 import { agoText, barWidth, meterGeometry, missingVitalText, speedNotes, openableResource, shareText, shownSpeed, speedIssues, waterfall } from '../speed-view';
 
 const finding = (ruleId: string, severity: Finding['severity']): Finding => ({ ruleId: ruleId as Finding['ruleId'], category: 'performance', severity, title: ruleId, why: '', fix: '', details: { facts: [], samples: [] } });
@@ -55,9 +55,12 @@ describe('speed view helpers', () => {
     };
     const row = waterfall(nav);
     expect(row.end).toBe(1_000);
+    // DNS (0.1 of the axis) is drawn at the minimum; the request starts where it ends (1.5, not its real 1)
+    // and ends at its real end; the response is where it is.
+    expect(NAVIGATION_PHASE_MIN_WIDTH).toBe(1.5);
     expect(row.bars).toEqual([
-      { phase: 'dns', x: 0, width: 0.8 },
-      { phase: 'request', x: 1, width: 9 },
+      { phase: 'dns', x: 0, width: 1.5 },
+      { phase: 'request', x: 1.5, width: 8.5 },
       { phase: 'response', x: 10, width: 10 },
     ]);
     expect(row.markers).toEqual([
@@ -66,6 +69,56 @@ describe('speed view helpers', () => {
     ]);
     // Before the load event the row ends at the last phase.
     expect(waterfall({ ...nav, domContentLoaded: null, load: null }).end).toBe(200);
+  });
+
+  test('waterfall-shows-every-phase', () => {
+    const at = (spans: NavigationReport['spans'], load: number | null): NavigationReport => ({ type: 'navigate', redirectCount: 0, spans, durations: { redirect: 0, dns: 0, connect: 0, tls: 0, request: 0, response: 0 }, ttfb: 0, domInteractive: null, domContentLoaded: null, load });
+    // Four short phases in a row (a local page): each is drawn at the minimum, one after another, and the
+    // long one after them keeps its real end; none covers another.
+    const short = waterfall(
+      at(
+        [
+          { phase: 'dns', start: 0, end: 1 },
+          { phase: 'connect', start: 1, end: 2 },
+          { phase: 'tls', start: 2, end: 3 },
+          { phase: 'request', start: 3, end: 4 },
+          { phase: 'response', start: 4, end: 500 },
+        ],
+        1_000,
+      ),
+    );
+    expect(short.bars).toEqual([
+      { phase: 'dns', x: 0, width: 1.5 },
+      { phase: 'connect', x: 1.5, width: 1.5 },
+      { phase: 'tls', x: 3, width: 1.5 },
+      { phase: 'request', x: 4.5, width: 1.5 },
+      { phase: 'response', x: 6, width: 44 },
+    ]);
+    // A short last phase at the axis's end (before the load event): pulled back inside it, the phase
+    // before it ending where it starts.
+    const late = waterfall(
+      at(
+        [
+          { phase: 'request', start: 0, end: 999 },
+          { phase: 'response', start: 999, end: 1_000 },
+        ],
+        null,
+      ),
+    );
+    expect(late.bars).toEqual([
+      { phase: 'request', x: 0, width: 98.5 },
+      { phase: 'response', x: 98.5, width: 1.5 },
+    ]);
+    // Any row: every phase at least the minimum, in order, none overlapping, all inside the axis.
+    for (const row of [short, late]) {
+      let right = 0;
+      for (const bar of row.bars) {
+        expect(bar.width).toBeGreaterThanOrEqual(NAVIGATION_PHASE_MIN_WIDTH);
+        expect(bar.x).toBeGreaterThanOrEqual(right - 1e-9);
+        right = bar.x + bar.width;
+      }
+      expect(right).toBeLessThanOrEqual(100 + 1e-9);
+    }
   });
 
   test('bars-and-shares', () => {

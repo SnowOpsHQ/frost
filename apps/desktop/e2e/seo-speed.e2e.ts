@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { crc32, deflateSync } from 'node:zlib';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
-import { INP_HINT, LOADED_HIDDEN_HINT, PAGE_WEIGHT_WARN_BYTES, REQUEST_COUNT_WARN, SPEED_MEASURE_TIMEOUT_MS, SPEED_POLL_MS, SPEED_STATE_KEY, VITAL_THRESHOLDS } from '@app/specs/seo-speed.spec';
+import { INP_HINT, LOADED_HIDDEN_HINT, NAVIGATION_PHASE_MIN_WIDTH, PAGE_WEIGHT_WARN_BYTES, REQUEST_COUNT_WARN, SPEED_MEASURE_TIMEOUT_MS, SPEED_POLL_MS, SPEED_STATE_KEY, VITAL_THRESHOLDS } from '@app/specs/seo-speed.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -203,6 +203,16 @@ test('lcp-late-image-e2e', async () => {
   await expect(chrome.getByTestId('seo-speed-live')).toHaveAttribute('data-state', 'live');
   // Navigation timing and the requests: the document and the image.
   await expect(chrome.getByTestId('seo-speed-phase').first()).toBeAttached();
+  // Every phase shows: at least NAVIGATION_PHASE_MIN_WIDTH wide, none covering another (a loopback page's
+  // phases are a millisecond or less: design-tokens.feature.md, The panels at 300px).
+  const phases = await chrome.getByTestId('seo-speed-phase').evaluateAll((bars) => bars.map((bar) => ({ x: Number(bar.getAttribute('x')), width: Number(bar.getAttribute('width')) })));
+  let drawnTo = 0;
+  for (const bar of phases) {
+    expect(bar.width).toBeGreaterThanOrEqual(NAVIGATION_PHASE_MIN_WIDTH);
+    expect(bar.x).toBeGreaterThanOrEqual(drawnTo - 1e-6);
+    drawnTo = bar.x + bar.width;
+  }
+  expect(drawnTo).toBeLessThanOrEqual(100 + 1e-6);
   await expect(chrome.locator('[data-testid="seo-speed-type"][data-type="image"]')).toHaveAttribute('data-requests', '1');
   await expect(chrome.locator('[data-testid="seo-speed-type"][data-type="document"]')).toHaveAttribute('data-requests', '1');
   const hero = chrome.locator('[data-testid="seo-speed-large"][data-type="image"]').first();
