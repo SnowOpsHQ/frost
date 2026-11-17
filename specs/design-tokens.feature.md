@@ -1174,13 +1174,17 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   inside any at-rule, and applies its block by the state it resolves in (`CASCADE_CONTEXTS`, `CascadeContext`):
   the dark and forced-colours blocks as before; a `prefers-reduced-motion: reduce` block only in reduced motion;
   an upper-bound width `@media` (`max-width: 760px`) only with the viewport narrow; a `@container` block only
-  with that container narrow (`seo-panel`, not `chrome`; `*` names every container); `@supports (…)` always and
-  `@supports not (…)` never; `@keyframes` never; features joined by `and` all must hold, and an at-rule inside
-  another applies when both do. Native nesting is read: `.a { &:hover { … } }` is `.a:hover`, `.a { .b { … } }`
-  is `.a .b`, `.a, .b { &[x] { … } }` is `.a[x]` and `.b[x]`, and `.a { @media (forced-colors: active) { … } }`
-  sets `.a` under forced colours. It throws on what it can't apply (`@layer`, `min-width`, `width >`, a comma
-  list, `not` or `or` in a query, an unknown media feature, an unnamed `@container`), so nothing is skipped
-  unread. Every renderer stylesheet's at-rules are among those it applies: each stylesheet's rules resolve in
+  with that container narrow (`seo-panel`, not `chrome`; `*` names every container); `@supports (display: grid)`
+  always and `@supports not (display: grid)` never; `@keyframes` never; features joined by `and` all must hold,
+  and an at-rule inside another applies when both do. Native nesting under one parent selector is read:
+  `.a { &:hover { … } }` is `.a:hover`, `.a { .b { … } }` is `.a .b`, `.a { & + & { … } }` is `.a + .a`, and
+  `.a { @media (forced-colors: active) { … } }` sets `.a` under forced colours. It throws on what it can't
+  apply (`@layer`, `min-width`, `width >`, a comma list, `not` or `or` in a `@media` query, an unknown media
+  feature, an unnamed `@container`, `@container not (width < 300px)`, `@supports (not (display: grid))`,
+  `@supports (display: grid) and (not (display: flex))`, nesting under a selector list such as
+  `.a, .b.c { &:hover { … } }`, `div, .a { &:hover { … } }`, `.a, .b { & + & { … } }` or `.a, .b { .c { … } }`
+  (each takes `:is()` of the whole list, which is not modelled), and `.a { &[title='&'] { … } }`), so nothing
+  is skipped unread. Every renderer stylesheet's at-rules are among those it applies: each stylesheet's rules resolve in
   every `CASCADE_CONTEXTS` state without a throw. A focus ring a `@container chrome (width < 748px)` rule takes
   away, or a colour a reduced-motion rule changes, fails its check in that state. Each check below runs in light
   and dark in every `CASCADE_CONTEXTS` state.

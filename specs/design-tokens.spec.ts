@@ -446,15 +446,20 @@ export interface LoadsBefore {
  *   check reads forced colours (`none` when it doesn't); `(prefers-reduced-motion: reduce)` when
  *   `reducedMotion` (`no-preference` when not); an upper-bound width (`max-width`, `width <`, `width <=`) when
  *   `narrow` names `viewport` or `*`; `screen` and `all` always; features joined by `and` must all hold;
- * - `@container <name> (<upper-bound width>)`: when `narrow` names the container or `*`;
- * - `@supports (…)`: always (the renderer runs in one engine, Electron's Chromium, which a feature query is
- *   written for); `@supports not (…)`: never;
+ * - `@container <name> (<upper-bound width>)`: when `narrow` names the container or `*` (`not`, `and`, `or` and
+ *   `none` are never a container's name);
+ * - `@supports (<property>: <value>)`: always (the renderer runs in one engine, Electron's Chromium, which a
+ *   feature query is written for); `@supports not (<property>: <value>)`: never;
  * - `@keyframes`: never (its blocks are keyframes, not elements);
- * - native nesting: a nested rule's selector is each of its parent's with `&` replaced by it (or, with no `&`,
- *   a descendant of it); an at-rule nested in a rule applies its declarations to that rule's selector; an
- *   at-rule inside another applies when both do.
- * Anything else (`@layer`, a lower-bound width, `not`, `or` or a comma list in a query, an unknown media
- * feature, an unnamed `@container`) makes the check throw, so no rule is skipped unread.
+ * - native nesting under one parent selector: a nested rule's selector is the parent's with each `&` replaced
+ *   by it (or, with no `&`, a descendant of it), which has the specificity of `:is(<parent>)`; an at-rule
+ *   nested in a rule applies its declarations to that rule's selector; an at-rule inside another applies when
+ *   both do.
+ * Anything else makes the check throw, so no rule is skipped unread: `@layer`, a lower-bound width, `not`, `or`
+ * or a comma list in a `@media` query, an unknown media feature, an unnamed `@container` or one whose name is a
+ * keyword, any other `@supports` condition (a `not` inside parentheses, `and`, `or`, `selector()`), and nesting
+ * under a parent that is a list of selectors (its rules take the specificity of `:is()` of the whole list, and
+ * an `&` there matches any of them; none is modelled) or an `&` inside a quoted string.
  */
 export interface CascadeContext {
   readonly name: string;
