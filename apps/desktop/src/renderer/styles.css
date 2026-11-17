@@ -2078,13 +2078,15 @@ input {
 }
 
 /* A 1px --bg-surface boundary round the fill (the stroke is currentColor, 2px painted under the fill, so
-   1px shows past it), as Page Speed's timing segments: "fits" (--ok) is 2.23:1 on --track in light. */
+   1px shows past it), as Page Speed's timing segments: "fits" (--ok) is 2.23:1 on --track in light. On
+   whole pixels (crispEdges): anti-aliased, the 1px split into two half-tones at about 2:1. */
 .seo-meter-fill {
   color: var(--bg-surface);
   fill: var(--meter);
   stroke: currentColor;
   stroke-width: 2px;
   paint-order: stroke;
+  shape-rendering: crispEdges;
   vector-effect: non-scaling-stroke;
 }
 
@@ -6541,6 +6543,7 @@ input {
   stroke: currentColor;
   stroke-width: 2px;
   paint-order: stroke;
+  shape-rendering: crispEdges;
   vector-effect: non-scaling-stroke;
 }
 

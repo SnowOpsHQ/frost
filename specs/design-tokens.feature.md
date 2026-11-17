@@ -1190,7 +1190,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `CONTRAST_PAIRS`; for an `unfaded` entry (a disabled button shown by its colours), `opacity` resolves to
   nothing under 1, so a fade put back in place of the colours fails; and each of a `drawn` entry's
   declarations resolves to its value (the timing boundary's, and the length and width meters' fill
-  boundary's, `stroke: currentColor`, `stroke-width: 2px` and `paint-order: stroke`). A busy `.panel-button`
+  boundary's, `stroke: currentColor`, `stroke-width: 2px` and `paint-order: stroke`; the meters' also
+  `shape-rendering: crispEdges`, since an anti-aliased 1px boundary split into two columns at about 2:1). A busy `.panel-button`
   marked `aria-disabled` is `--text-faint` on `--bg-subtle`, unfaded, hovered too and primary or not.
 - **Scenario: fades-spare-focus** — in each `FADES_SPARE_FOCUS` stylesheet, every rule setting an
   `opacity` under 1 ends each selector with `:not(:focus-within)`, and one such rule exists; it catches

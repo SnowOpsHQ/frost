@@ -1916,20 +1916,22 @@ export const TEXT_COLOUR_RULES = [
     why: 'Page Speed\'s navigation timing: the 1px boundary stroke around every phase\'s segment',
   },
   // Later states: the length and width meters' fill takes the same boundary (CONTRAST_PAIRS: --bg-surface
-  // against each verdict's fill), so "fits" (--ok, 2.23:1 on --track in light) meets the card's colour.
+  // against each verdict's fill), so "fits" (--ok, 2.23:1 on --track in light) meets the card's colour; on
+  // whole pixels, as the timing's: measured at 1×, an anti-aliased 1px boundary was two columns at about 2:1
+  // off the fill, crispEdges one column at 3.30:1 in every row.
   {
     stylesheet: 'styles.css',
     element: ['.seo-meter-fill'],
     color: '--bg-surface',
-    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke' },
-    why: 'On-Page\'s length meters: the 1px boundary stroke around the fill',
+    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke', 'shape-rendering': 'crispEdges' },
+    why: 'On-Page\'s length meters: the 1px boundary stroke around the fill, on whole pixels (anti-aliased it split into two half-tones at about 2:1)',
   },
   {
     stylesheet: 'styles.css',
     element: ['.seo-width-meter-fill'],
     color: '--bg-surface',
-    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke' },
-    why: 'Content\'s width meters: the 1px boundary stroke around the fill',
+    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke', 'shape-rendering': 'crispEdges' },
+    why: 'Content\'s width meters: the 1px boundary stroke around the fill, on whole pixels',
   },
   // Content, JavaScript, SERP and Visibility (their surface PR): status text takes its -ink, on its
   // -soft fill where it is a badge; no row in these panels is hoverable, so no badge lies over --bg-hover.
