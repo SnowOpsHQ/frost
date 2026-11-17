@@ -1152,6 +1152,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
     end (`.gsc-targets-end`, the one markup change besides the crumbs and the table's class). A page's URL
     in the target pages list keeps its one line with an ellipsis: its title holds the whole URL, as for
     every URL in the panels.
+  - **The AI answers sheet's citations** (found by #55's review, not a panel): a citation is a flex row
+    of its title and URL beside "Open in tab", and the URL (`overflow-wrap: anywhere`) asked for the
+    whole row, so the button wrapped onto two lines beside a long URL. The button keeps its own width
+    (`.ai-answer-citation .panel-button { flex: none }`); the URL wraps beside it.
   - **Not here:** the Changes panel's capture card at the 588px window, which `workspace-layout.feature.md`
     records as fixed (round 3 of the layout PR: the Screenshot row and the Project picker stack; its e2e
     checks they are whole); and the Visibility table, which no item named (Left for later). Under the

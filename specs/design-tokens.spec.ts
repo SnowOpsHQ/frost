@@ -1186,6 +1186,8 @@ export const NARROW_PANEL_FITS = [
   { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-row[data-target]', query: null, set: { 'flex-wrap': 'wrap' }, why: "Content's suggested queries: the clicks and \"Use as target\" go under a query that doesn't fit beside them (the query had about 40px at 300px)" },
   { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-row[data-target] .gsc-targets-text', query: null, set: { 'white-space': 'normal' }, why: "Content's suggested queries: the whole query shows, on as many lines as it needs (it was cut, its tooltip out of the keyboard's reach)" },
   { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-end', query: null, set: { flex: 'none', 'margin-inline-start': 'auto' }, why: "Content's suggested queries: the clicks and the button wrap together, at the row's end" },
+  // The AI answers sheet (found by #55's review): a citation's button beside a long URL.
+  { stylesheet: 'ai-answers.css', selector: '.ai-answer-citation .panel-button', query: null, set: { flex: 'none' }, why: 'AI answers: a citation\'s "Open in tab" keeps its one line; the URL beside it (`overflow-wrap: anywhere`) wraps instead (it asked for the whole row and squeezed the button onto two lines)' },
 ] as const satisfies readonly NarrowPanelFit[];
 
 /**
