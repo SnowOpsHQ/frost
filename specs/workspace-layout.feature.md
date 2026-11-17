@@ -240,9 +240,20 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   `width`, `height` each within 1px), the sheets beside it stand `WORKSPACE_GAP` off it, and the
   radius main last set on the view is `pageViewRadius` of that state, read from a spy the test puts on
   the `View` prototype's `setBorderRadius` (Electron has no getter: this proves the value main passed
-  on each OS, not the drawing; that the corner is drawn rounded was shown by a screen capture on Linux CI
-  only, probe 43660054663); with a render profile the view
+  on each OS, not the drawing, which `page-view-corner-is-drawn-rounded` checks); with a render profile the view
   sits in the frame (`fitRenderViewport`) with radius 12; in HTML fullscreen it fills the window with
   radius 0, and gets 16 back on leaving. The permission prompt keeps its own e2e
   (`permissions.e2e.ts`: the view starts below the band); the update notice is a band of the same
   slot, so it moves the card as the find bar does.
+- **Scenario: page-view-corner-is-drawn-rounded** (e2e `workspace.e2e.ts`; Linux, Windows and macOS; skipped on
+  a Wayland desktop, whose screen capture waits for a person through a portal) — that the corner is drawn
+  rounded, not only asked for: a page of one flat colour (`#ff00ff`, the same in an RGBA and a BGRA bitmap) in
+  the default state, the window inside its display's work area and in front, the view lined up with the card
+  (as above, radius 16). Main captures the screen (`desktopCapturer`, `types: ['screen']`, at the display's
+  device pixels) and, at each of the view's four corners, along the diagonal into the view: the pixel one in
+  is not the page's colour (a square corner's would be), the pixel half the radius in is, and the first page
+  pixel is within two pixels of where a 16px arc crosses the diagonal (`16 × (1 − 1/√2)`, 4.7px, times the
+  scale). The capture of the view and a margin is attached to the report. First run, CI probe 44184038657:
+  on the Linux (xvfb), Windows and macOS runners alike, at 1×, the first page pixel is 5px in at every corner
+  and one pixel in is the window's background; with the radius forced to 0 under the spy (probe 44184888383),
+  it fails on each, one pixel in the page's colour.
