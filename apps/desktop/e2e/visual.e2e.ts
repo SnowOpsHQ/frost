@@ -23,6 +23,7 @@ import { crc32 } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { ACCOUNT_SETTINGS_TEXT, SETTINGS_MENU } from '@app/specs/account-settings.spec';
+import { DATA_API_E2E_SWITCH, DATA_SOURCES_SETTINGS_TEXT, LEGAL_GATES_E2E_SWITCH } from '@app/specs/data-sources.spec';
 import { AGENT_E2E_SCRIPT_SWITCH } from '@app/specs/agent-session.spec';
 import { HISTORY_MENU_ID, JUMP_BACK_IN_TITLE } from '@app/specs/browser-polish.spec';
 import { COMMAND_PALETTE_MENU_ID } from '@app/specs/command-palette.spec';
@@ -30,16 +31,22 @@ import { DEVTOOLS_MENU_ID } from '@app/specs/devtools.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { GSC_PANEL_COPY } from '@app/specs/gsc-panel.spec';
 import { PERMISSION_PROMPT_ACTIONS } from '@app/specs/permissions.spec';
+import { SERP_E2E_PACK_KEY_SWITCH, SERP_E2E_PACK_URL_SWITCH } from '@app/specs/serp-selector-pack.spec';
+import { CRAWL_INTERVAL_MS } from '@app/specs/site-crawl.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import { NARROW_WINDOW } from '@app/specs/workspace-layout.spec';
 import { UPDATE_FEED_SWITCH, UPDATE_PREFS_FILE, UPDATE_PUBLIC_KEY_SWITCH, UPDATE_TEST_CERT_SWITCH, updateAvailableText } from '@app/specs/update-client.spec';
 import { updatePlatformKey } from '@app/specs/update-manifest.spec';
 import { artifactBytes, manifestFor, sha256Hex, signEnvelope, startFakeFeed, testSigningKey, type FakeFeed } from '../src/main/update/__tests__/fake-feed';
 import { accountHelpers, fakeAccountEnv } from './account-helpers';
+import { AI_FIXTURE_WATCHED_DOMAIN, OPENAI_FIXTURE, PERPLEXITY_FIXTURE } from './ai-answer-fixtures';
+import { startFakeDataApi, type FakeDataApi } from './fake-data-api';
 import { startFakeBackend, type FakeBackend } from './fake-backend';
 import { startFakeGoogle, type FakeGoogle } from './fake-google';
-import { closeApp, launchApp } from './harness';
+import { APP_DIR, closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
+import { SITE_HOST, startProbeSite, type ProbeSite } from './probe-site';
+import { PACK_PATH, PACK_VERSION, SEARCH_HOST, signedTestPack } from './serp-fixtures';
 import { selfSignedCertificate } from './tls';
 
 test.skip(process.platform !== 'linux', 'The screenshot baseline is Linux-only (CI renders it under xvfb); macOS and Windows skip it.');
@@ -226,7 +233,9 @@ const CAPTURES = [
   'seo-content-lower',
   'seo-javascript',
   'seo-serp',
+  'seo-serp-ownership',
   'seo-visibility',
+  'seo-visibility-table',
   'seo-inspector',
   'devtools-drawer',
   'find-bar',
@@ -235,7 +244,9 @@ const CAPTURES = [
   'settings-lower',
   'help-shortcuts',
   'crawl-sheet',
+  'crawl-sheet-run',
   'ai-answers-sheet',
+  'ai-answers-sheet-answers',
   'projects',
   'projects-lower',
   'projects-rankings',
@@ -362,23 +373,31 @@ async function capture(name: CaptureName, options: { readonly keepFocus?: boolea
 
 /**
  * Where a "-lower" capture looks: `selector`'s scroller (the SEO panel's `.seo-body`, the Settings
- * content, the Projects sheet) scrolled to its end (`'end'`), or to `top` px. Each capture is the
- * visible window only; the scroll brings what lies below it into view.
+ * content, the Projects sheet, a Help-frame sheet's `.help-body`) scrolled to its end (`'end'`), to `top`
+ * px, or until the element `into` names (inside it) sits at its top (the part of a state the capture is
+ * about, wherever the content above it ends). Each capture is the visible window only; the scroll brings
+ * what lies below it into view.
  */
-type Scroll = { readonly selector: string; readonly to: 'end' } | { readonly selector: string; readonly top: number };
+type Scroll = { readonly selector: string; readonly to: 'end' } | { readonly selector: string; readonly top: number } | { readonly selector: string; readonly into: string };
 
 /** Scrolls `scroll.selector` (instantly) and checks it got there. */
 async function scrollTo(scroll: Scroll): Promise<void> {
   const target = page.locator(scroll.selector);
   await expect(target).toHaveCount(1);
-  const reached = await target.evaluate((el, top) => {
-    const wanted = top ?? el.scrollHeight;
-    el.scrollTo({ top: wanted, behavior: 'instant' });
-    return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight, wanted };
-  }, 'top' in scroll ? scroll.top : null);
+  if ('into' in scroll) await expect(target.locator(scroll.into)).toHaveCount(1);
+  const reached = await target.evaluate(
+    (el, { top, into }) => {
+      const inside = into === null ? null : el.querySelector(into);
+      // Whole pixels: the element's top in the scroller's content, from where it is drawn now.
+      const wanted = inside === null ? (top ?? el.scrollHeight) : Math.round(el.scrollTop + inside.getBoundingClientRect().top - el.getBoundingClientRect().top);
+      el.scrollTo({ top: wanted, behavior: 'instant' });
+      return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight, wanted };
+    },
+    { top: 'top' in scroll ? scroll.top : null, into: 'into' in scroll ? scroll.into : null },
+  );
   expect(reached.max, `${scroll.selector} has something below the fold`).toBeGreaterThan(0);
-  // A fixed offset is really below the end: a shorter scroller would quietly capture its end instead.
-  if ('top' in scroll) expect(reached.wanted, `${scroll.selector} reaches ${reached.wanted} px`).toBeLessThanOrEqual(reached.max);
+  // A fixed offset (or the element's) is really below the end: a shorter scroller would quietly capture its end instead.
+  if (!('to' in scroll)) expect(reached.wanted, `${scroll.selector} reaches ${reached.wanted} px`).toBeLessThanOrEqual(reached.max);
   // Within a pixel: a fractional device scale (a local run) rounds the scroll position.
   expect(Math.abs(reached.top - Math.min(reached.wanted, reached.max)), `${scroll.selector} scrolled to ${reached.wanted}`).toBeLessThanOrEqual(1);
 }
@@ -402,6 +421,15 @@ async function audit(pathname: string, origin = ORIGIN): Promise<number> {
   await showPanel('on-page');
   await expect(page.getByTestId('seo-fact-url')).toHaveText(url, { timeout: AUDIT_WAIT });
   return contentsIdAt(url);
+}
+
+/** Opens a Help-frame sheet from the palette by its action (crawl.e2e.ts, ai-answers.e2e.ts). */
+async function paletteSheet(query: string, action: string, view: string): Promise<void> {
+  await menu(COMMAND_PALETTE_MENU_ID);
+  await expect(page.getByTestId('command-palette')).toBeVisible();
+  await page.getByTestId('command-palette-input').fill(query);
+  await page.locator(`[data-testid="command-palette-option"][data-action="${action}"]`).click();
+  await expect(page.getByTestId(view)).toBeVisible();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -682,15 +710,6 @@ test.describe('page surfaces', () => {
     await expect(page.getByTestId('shortcuts-view')).toHaveCount(0);
   });
 
-  /** Opens a Help-frame sheet from the palette by its action (crawl.e2e.ts, ai-answers.e2e.ts). */
-  async function paletteSheet(query: string, action: string, view: string): Promise<void> {
-    await menu(COMMAND_PALETTE_MENU_ID);
-    await expect(page.getByTestId('command-palette')).toBeVisible();
-    await page.getByTestId('command-palette-input').fill(query);
-    await page.locator(`[data-testid="command-palette-option"][data-action="${action}"]`).click();
-    await expect(page.getByTestId(view)).toBeVisible();
-  }
-
   test('crawl-sheet', async () => {
     // crawl.e2e.ts (crawl-gate-closed-as-shipped): the sheet as shipped, its form from the active tab's site, no runs.
     await audit('/guide');
@@ -874,6 +893,161 @@ test.describe('agent panel', () => {
     await expect(page.getByTestId('agent-assistant-text').last()).toHaveText('The page says where the agent begins.');
     await expect(page.getByTestId('agent-send')).toBeVisible();
     await capture('agent-conversation');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The crawl and AI answers sheets with runs in them (crawl.e2e.ts, ai-answers.e2e.ts): their gates open
+// with the unpackaged-only switch, the data API answered by `fake-data-api.ts`, keys kept in the stand-in
+// keychain. Their own app, so the shipped sheets' captures above keep their closed gates.
+
+test.describe('crawl and AI answers runs', () => {
+  /** Linux only (as this file): a stand-in OS keychain, so data-source keys can be stored under Playwright. */
+  const FAKE_KEYCHAIN = path.join(APP_DIR, 'e2e', 'fake-keychain.cjs');
+  const RUN_WAIT = 60_000;
+  let fake: FakeDataApi;
+
+  test.beforeAll(async () => {
+    fake = await startFakeDataApi();
+    await launch([...siteArgs(), `--${LEGAL_GATES_E2E_SWITCH}=crawl,perplexity,openai-search`, `--${DATA_API_E2E_SWITCH}=${fake.seamFile}`], { mainPreload: [FAKE_KEYCHAIN] });
+    await chromeCaughtUp();
+  });
+
+  test.afterAll(async () => {
+    await closeApp(app);
+    app = undefined;
+    await fake?.close();
+  });
+
+  test('crawl-run', async () => {
+    // crawl.e2e.ts (crawl-runs-pauses-across-a-restart-and-resumes, crawl-pages-and-structure-show-the-site): a
+    // crawl of the fixture site from the guide, run to its end: the guide and the two pages its navigation
+    // links to (404 here), one at a time at the sheet's fastest interval; the sitemap is asked for (404).
+    await audit('/guide');
+    await paletteSheet('Show site crawl', 'crawl.show', 'crawl-view');
+    await expect(page.getByTestId('crawl-start')).toBeEnabled();
+    await page.getByTestId('crawl-start-url').fill(`${ORIGIN}/guide`);
+    await page.getByTestId('crawl-scope').selectOption('host');
+    await page.getByTestId('crawl-interval').selectOption(String(CRAWL_INTERVAL_MS.min));
+    await page.getByTestId('crawl-start').click();
+    const run = page.getByTestId('crawl-run');
+    await expect(run).toHaveCount(1);
+    await expect(run.getByTestId('crawl-run-state')).toHaveText('Done', { timeout: RUN_WAIT });
+    await expect(page.getByTestId('crawl-tab-pages')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('crawl-page')).toHaveCount(3, { timeout: RUN_WAIT });
+    // The runs section at the top of the sheet's scroller: the run card, the Pages and Site structure segments, the table.
+    await capture('crawl-sheet-run', { scroll: { selector: '.help-body', into: '.crawl-section:has(#crawl-runs-title)' } });
+    await page.getByTestId('crawl-view-close').click();
+    await expect(page.getByTestId('crawl-view')).toHaveCount(0);
+  });
+
+  test('ai-answers-run', async () => {
+    // ai-answers.e2e.ts (ai-answers-keys-set-in-settings, ai-answers-agent-and-view-end-to-end): both keys set
+    // in Settings, then two answers asked from the sheet itself, Perplexity's and ChatGPT's (the fake data
+    // API's fixed answers), and the watched domain typed: the picks, the second answer shown, its cited
+    // domains and citations marked. Their times follow the clock: visual.css hides them.
+    await menu(SETTINGS_MENU.id);
+    await expect(page.getByTestId('settings-view')).toBeVisible();
+    await page.getByTestId('settings-nav-data-sources').click();
+    for (const provider of ['perplexity', 'openai-search'] as const) {
+      const row = page.locator(`[data-testid="data-source"][data-provider="${provider}"]`);
+      await expect(row).toHaveAttribute('data-disabled', 'false', { timeout: RUN_WAIT });
+      await row.getByTestId('data-source-input').fill(`e2e-visual-${provider}-key`);
+      await row.getByTestId('data-source-save').click();
+      await expect(row.getByTestId('data-source-key-state')).toHaveText(DATA_SOURCES_SETTINGS_TEXT.keySet, { timeout: RUN_WAIT });
+    }
+    await page.getByTestId('settings-close').click();
+    await expect(page.getByTestId('settings-view')).toHaveCount(0);
+    await audit('/guide');
+    await paletteSheet('show ai answers', 'ai-answers.show', 'ai-answers-view');
+    const shown = page.getByTestId('ai-answer');
+    for (const [engine, query, fixture] of [
+      ['perplexity', 'best green tea for beginners', PERPLEXITY_FIXTURE],
+      ['chatgpt', 'how much matcha per cup', OPENAI_FIXTURE],
+    ] as const) {
+      await page.getByTestId('ai-answers-query').fill(query);
+      await page.getByTestId('ai-answers-engine').selectOption(engine);
+      await expect(page.getByTestId('ai-answers-ask')).toBeEnabled({ timeout: RUN_WAIT });
+      await page.getByTestId('ai-answers-ask').click();
+      await expect(page.getByTestId('ai-answers-confirm')).toBeVisible();
+      await page.getByTestId('ai-answers-send').click();
+      await expect(shown.getByTestId('ai-answer-query')).toHaveText(query, { timeout: RUN_WAIT });
+      await expect(shown.getByTestId('ai-answer-text')).toHaveText(fixture.text);
+    }
+    await expect(page.getByTestId('ai-answers-pick')).toHaveCount(2, { timeout: RUN_WAIT });
+    await page.getByTestId('ai-answers-query').fill('');
+    await page.getByTestId('ai-answers-watch').fill(AI_FIXTURE_WATCHED_DOMAIN);
+    await expect(shown.locator('[data-testid="ai-answer-domain"][data-watched="true"]')).toHaveCount(1);
+    expect(fake.refused).toEqual([]);
+    // From the Answers section down: the picks, the answer card with both its citations whole (the watched one marked).
+    await capture('ai-answers-sheet-answers', { scroll: { selector: '.help-body', into: '.ai-answers-section:has(#ai-answers-list-title)' } });
+    await page.getByTestId('ai-answers-view-close').click();
+    await expect(page.getByTestId('ai-answers-view')).toHaveCount(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// SERP on a result page and Visibility after a probe run (serp.e2e.ts, visibility.e2e.ts): the probe
+// site (`probe-site.ts`) answers the shop's pages and the synthetic engine, both on fixed names; the
+// signed test pack is installed once, through the panel's own check, before the states.
+
+test.describe('search results and probes', () => {
+  let probes: ProbeSite;
+  const SITE_ORIGIN = `http://${SITE_HOST}`;
+  const SEARCH_ORIGIN = `http://${SEARCH_HOST}`;
+  const READ_WAIT = 30_000;
+
+  test.beforeAll(async () => {
+    const pack = signedTestPack();
+    probes = await startProbeSite({ pack });
+    const port = new URL(probes.origin).port;
+    // No intent fake: on-device intent stays off (its model is never downloaded), as visibility.e2e.ts.
+    await launch([
+      `--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1:${port},MAP ${SEARCH_HOST} 127.0.0.1:${port}`,
+      `--${E2E_PUBLIC_HOSTS_SWITCH}=${SITE_HOST},${SEARCH_HOST}`,
+      `--${SERP_E2E_PACK_URL_SWITCH}=${SEARCH_ORIGIN}${PACK_PATH}`,
+      `--${SERP_E2E_PACK_KEY_SWITCH}=${pack.spki}`,
+    ]);
+    await chromeCaughtUp();
+    // serp.e2e.ts serp-pack-update-installs: the pack through "Check for selector updates".
+    await go(`${SEARCH_ORIGIN}/search?q=green+tea`);
+    await showPanel('serp');
+    await page.getByTestId('serp-pack-update').click();
+    await expect(page.getByTestId('serp-pack-status')).toHaveAttribute('data-version', String(PACK_VERSION), { timeout: READ_WAIT });
+  });
+
+  test.afterAll(async () => {
+    await closeApp(app);
+    app = undefined;
+    await probes?.close();
+  });
+
+  test.beforeEach(async () => {
+    await closeAllTabs();
+    if ((await sidebar().getAttribute('data-open')) !== 'true') await page.getByTestId('seo-toggle').click();
+    await page.evaluate(() => document.querySelector('.seo-body')?.scrollTo({ top: 0, behavior: 'instant' }));
+  });
+
+  test('seo-serp-ownership', async () => {
+    // serp.e2e.ts serp-composition-and-ownership: "green tea" on the synthetic engine, read with the test pack.
+    await audit('/search?q=green+tea', SEARCH_ORIGIN);
+    await showPanel('serp');
+    await expect(page.getByTestId('serp-panel')).toHaveAttribute('data-state', 'ready', { timeout: READ_WAIT });
+    await expect(page.getByTestId('serp-ownership-row')).toHaveCount(2);
+    await expect(page.getByTestId('serp-result')).toHaveCount(7);
+    // From the composition down: its bar and counts, Who owns page 1, the results' start.
+    await capture('seo-serp-ownership', { scroll: { selector: '.seo-body', into: '[data-testid="serp-composition"]' } });
+  });
+
+  test('seo-visibility-table', async () => {
+    // visibility.e2e.ts visibility-probes-per-agent: the probes run on the shop's page, to their end.
+    await audit('/page', SITE_ORIGIN);
+    await showPanel('visibility');
+    await page.getByTestId('visibility-run').click();
+    await expect(page.getByTestId('visibility-summary')).toHaveAttribute('data-status', 'done', { timeout: READ_WAIT });
+    await expect(page.getByTestId('visibility-table')).toBeVisible();
+    // From the run's summary line down: the table, its notes, robots.txt as read.
+    await capture('seo-visibility-table', { scroll: { selector: '.seo-body', into: '[data-testid="visibility-summary"]' } });
   });
 });
 

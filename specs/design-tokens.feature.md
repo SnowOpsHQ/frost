@@ -1185,6 +1185,24 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   and the cascades over `TAB_STRIP.activeTab` and `TAB_STRIP.activeTabHovered` in `styles.css` each give
   the active tab a `box-shadow` holding `TAB_STRIP.activeIndicatorShadow` (`inset 0 -2px 0
   var(--accent)`, the whole term), so the cue is really drawn, under the pointer too.
+- **Scenario: cascade-checks-read-every-at-rule** — the cascade resolver every check below uses reads a rule
+  inside any at-rule, and applies its block by the state it resolves in (`CASCADE_CONTEXTS`, `CascadeContext`):
+  the dark and forced-colours blocks as before; a `prefers-reduced-motion: reduce` block only in reduced motion;
+  an upper-bound width `@media` (`max-width: 760px`) only with the viewport narrow; a `@container` block only
+  with that container narrow (`seo-panel`, not `chrome`; `*` names every container); `@supports (display: grid)`
+  always and `@supports not (display: grid)` never; `@keyframes` never; features joined by `and` all must hold,
+  and an at-rule inside another applies when both do. Native nesting under one parent selector is read:
+  `.a { &:hover { … } }` is `.a:hover`, `.a { .b { … } }` is `.a .b`, `.a { & + & { … } }` is `.a + .a`, and
+  `.a { @media (forced-colors: active) { … } }` sets `.a` under forced colours. It throws on what it can't
+  apply (`@layer`, `min-width`, `width >`, a comma list, `not` or `or` in a `@media` query, an unknown media
+  feature, an unnamed `@container`, `@container not (width < 300px)`, `@supports (not (display: grid))`,
+  `@supports (display: grid) and (not (display: flex))`, nesting under a selector list such as
+  `.a, .b.c { &:hover { … } }`, `div, .a { &:hover { … } }`, `.a, .b { & + & { … } }` or `.a, .b { .c { … } }`
+  (each takes `:is()` of the whole list, which is not modelled), and `.a { &[title='&'] { … } }`), so nothing
+  is skipped unread. Every renderer stylesheet's at-rules are among those it applies: each stylesheet's rules resolve in
+  every `CASCADE_CONTEXTS` state without a throw. A focus ring a `@container chrome (width < 748px)` rule takes
+  away, or a colour a reduced-motion rule changes, fails its check in that state. Each check below runs in light
+  and dark in every `CASCADE_CONTEXTS` state.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
   the cascade over its `element` selectors in its stylesheet (and then each of its `loadsBefore`, read
   after it: a later sheet's rule wins a tie, two classes win whatever the order) resolves `color` to `var(<color>)` (and
@@ -1253,7 +1271,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too resolves `forced-color-adjust` to `none`, so a mark whose fill or border colour is its status keeps
   it. Every selector named is one of the stylesheet's.
-- **Scenario: pass-marks-draw-a-check** — in light and dark `PASS_CHECK.selector` resolves in
+- **Scenario: pass-marks-draw-a-check** — in light and dark, in every `CASCADE_CONTEXTS` state, `PASS_CHECK.selector` resolves in
   `styles.css` to `PASS_CHECK.size` square, `fill: none`, `stroke: var(--ok)` and `stroke-width`
   `PASS_CHECK.strokeWidth` (2px: two device pixels at 1×, solid at this size); `CONTRAST_PAIRS` holds
   `--ok` on `--bg-sheet` and on `--bg-surface` at 3:1. Each of `PASS_CHECK.backs` resolves `background`
@@ -1411,16 +1429,6 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup or th
 - **Search Console's controls and Content's targets are cut at 300px** (`gsc-panel.css`: "More range…"
   and a long country such as "United Kingd…"; `gsc-targets.css`, `.gsc-targets-row`: less of each query):
   ellipsis, not a narrower layout.
-- **Some states have no baseline capture** (`apps/desktop/e2e/visual.e2e.ts`): the crawl and AI answers
-  sheets' run cards, picks and pills, and SERP's and Visibility's tables; their captures are the empty
-  or before-run states, so those parts are checked by the token guards only.
-- **The cascade checks read only the dark and forced-colours blocks** (`apps/desktop/src/__tests__/design-tokens.test.ts`,
-  `resolveOnElement`'s `applies`): a rule nested in another `@media` or in `@supports` is not read, so
-  `TEXT_COLOUR_RULES`, `FOCUS_RING_RULES` and the like can't see one.
-- **The native page view's rounded corner is pixel-checked on Linux only**: recorded in
-  `specs/workspace-layout.feature.md` (`page-view-matches-the-card`): the e2e proves the radius main
-  passes on Linux, Windows and macOS; that the corner is drawn rounded was shown by a screen capture
-  on Linux CI only.
 - **A disabled SEO rail item fades to 0.3** (`styles.css`, `.seo-rail-item:disabled`: a panel not yet
   available, labelled "Soon"): natively disabled, so it holds no focus a fade could dim, but it says
   disabled by opacity, not by the disabled colours the other controls take, and forced colours draw it
