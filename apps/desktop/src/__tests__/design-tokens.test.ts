@@ -1026,6 +1026,13 @@ test('pass-marks-draw-a-check', () => {
   for (const theme of THEME_NAMES) {
     for (const [property, value] of Object.entries(drawn)) expect(resolveOnElement(css, [PASS_CHECK.selector], property, theme), `${property} (${theme})`).toBe(value);
   }
+  // What it sits on: never a green disc (the check would vanish), in light, dark and forced colours.
+  for (const back of PASS_CHECK.backs) {
+    for (const theme of THEME_NAMES) {
+      expect(resolveOnElement(css, back.element, 'background', theme), `${back.why}: background (${theme})`).toBe(back.background);
+      expect(resolveOnElement(css, back.element, 'background', theme, { forced: true }), `${back.why}: background under forced colours (${theme})`).toBe(back.forced);
+    }
+  }
   // --ok on what it sits on: the rail's halo (the sheet; a selected item's or the menu's card) and Overview's card.
   const pairs: readonly ContrastPair[] = CONTRAST_PAIRS;
   for (const bg of ['--bg-sheet', '--bg-surface']) expect(pairs.some((p) => p.fg === '--ok' && p.bg === bg && p.over === undefined && p.min >= 3), `--ok on ${bg}`).toBe(true);

@@ -371,6 +371,27 @@ describe('the AI answers sheet', () => {
     expect(q('ai-answers-status')!.textContent).toBe(LEGAL_GATE_NOTE);
   });
 
+  test('ai-answers-busy-ask-opens-nothing', async () => {
+    let finish: (answer: AiAnswersRunAnswer) => void = () => undefined;
+    ipcMock.run.mockImplementation(() => new Promise<AiAnswersRunAnswer>((resolve) => (finish = resolve)));
+    await show(view(true), 'ask');
+    await act(async () => type(q<HTMLInputElement>('ai-answers-query')!, 'green tea'));
+    await act(async () => q('ai-answers-ask')!.click());
+    await act(async () => q('ai-answers-send')!.click());
+    // While it runs: Ask is busy (aria-disabled, still focusable) and a click on it asks nothing.
+    expect(q('ai-answers-ask')!.getAttribute('aria-disabled')).toBe('true');
+    expect(q<HTMLButtonElement>('ai-answers-ask')!.disabled).toBe(false);
+    await act(async () => q('ai-answers-ask')!.click());
+    expect(q('ai-answers-confirm')).toBeNull();
+    expect(ipcMock.run).toHaveBeenCalledTimes(1);
+    // Once the answer is in, Ask asks again.
+    await act(async () => finish({ status: 'ok', answer: { ...RECORD, id: 9, origin: 'view', query: 'green tea' } }));
+    for (let i = 0; i < 3; i++) await act(async () => undefined);
+    expect(q('ai-answers-ask')!.getAttribute('aria-disabled')).toBeNull();
+    await act(async () => q('ai-answers-ask')!.click());
+    expect(q('ai-answers-confirm')).not.toBeNull();
+  });
+
   test('ai-answers-delete-asks-first', async () => {
     await show(view());
     // Delete asks first.

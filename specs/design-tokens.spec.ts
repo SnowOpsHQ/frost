@@ -672,17 +672,29 @@ export const FORCED_COLOURS_KEPT = [
   // The navigation timing's legend: each phase's swatch is its bar's shade (SVG fills, which forced
   // colours leave as they are), so the key keeps it too.
   { stylesheet: 'styles.css', element: ['.seo-speed-swatch'], why: 'Page Speed\'s navigation timing legend: a phase\'s swatch, the shade of its bar' },
+  // Later states (round 1): Help's setup checklist. Forced colours repainted the done step's --ok disc as the
+  // canvas, so a step done and one not done were the same ring; the marks keep their colours there.
+  { stylesheet: 'help.css', element: ['.setup-check'], why: 'Help\'s setup checklist: a step not done (a --switch-off ring)' },
+  { stylesheet: 'help.css', element: ['.setup-check', ".setup-item[data-done='true'] .setup-check"], why: 'Help\'s setup checklist: a step done (an --ok disc)' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
  * A passing status mark's glyph (Later states: a pass was a filled `--ok` disc, the canvas draws a check):
  * the SEO rail's pass dot (on the rail, in "More panels" and on its button) and Overview's checks by
  * category for a category that passed. `PassCheck` (`icons.tsx`) draws `d` in an inline SVG of `viewBox`,
- * and `selector` in `styles.css` sizes it to `size` and strokes it `--ok` at `strokeWidth` (by `stroke`,
- * which forced colours leave alone, so the check keeps its colour and its shape there; the ring, the
- * square and the diamond are the other marks). At 1× the 2px stroke is two device pixels wide: it stays
- * solid (a 1px one would blur to a faint line at this size). It sits in the 8px dot's box, 1px past each
- * edge, so the rows and the rail keep their places; on the rail it sits on the dot's halo disc.
+ * and `selector` in `styles.css` sizes it to `size` and strokes it `--ok` at `strokeWidth`. It keeps that
+ * colour under forced colours because it inherits `forced-color-adjust: none` from the dot it sits in
+ * (`.seo-rail-dot`, `.seo-category-dot`: `FORCED_COLOURS_KEPT`); a `PassCheck` anywhere else would be
+ * repainted. The ring, the square and the diamond are the other marks. At 1× the 2px stroke is two device
+ * pixels wide: it stays solid (a 1px one would blur to a faint line at this size). It sits in the 8px
+ * dot's box, 1px past each edge, so the rows and the rail keep their places.
+ *
+ * `backs`: what the check sits on, the cascade over `element` resolving `background` to `background` in
+ * light and dark (and to `forced` with the forced-colours rules read): on the rail the dot's halo disc
+ * (`--seo-dot-back`: the sheet, a selected item's card), in Overview nothing of its own (the card), and on
+ * a hovered or focused "More panels" row a `--bg-surface` disc, where the row's tint takes the halo away
+ * (`--ok` on that tint is 2.98:1 hovered and 2.84:1 focused in light; on `--bg-surface` 3.30:1). A green
+ * disc under it would hide it.
  */
 export const PASS_CHECK = {
   selector: '.seo-pass-check',
@@ -690,6 +702,21 @@ export const PASS_CHECK = {
   d: 'M1.5 5.2l2.3 2.3L8.5 2.8',
   size: '10px',
   strokeWidth: '2px',
+  backs: [
+    { element: ['.seo-rail-dot', ".seo-rail-dot[data-status='pass']"], background: 'var(--seo-dot-back)', forced: 'transparent', why: 'the rail\'s pass dot: its halo disc (transparent under forced colours, as every halo)' },
+    {
+      element: ['.seo-category-dot', ".seo-category[data-status='pass'] .seo-category-dot"],
+      background: 'transparent',
+      forced: 'transparent',
+      why: 'Overview\'s passing category: the card',
+    },
+    {
+      element: ['.seo-rail-dot', ".seo-rail-dot[data-status='pass']", ".seo-more-item:is(:hover, :focus-visible) .seo-rail-dot[data-status='pass']"],
+      background: 'var(--bg-surface)',
+      forced: 'transparent',
+      why: '"More panels", a hovered or focused row\'s pass dot: a --bg-surface disc on the tint (none under forced colours, as every halo)',
+    },
+  ],
 } as const;
 
 export const SIGNAL_SURFACES = [
@@ -1575,6 +1602,10 @@ export const CONTRAST_PAIRS = [
   { fg: '--bg-surface', bg: '--warn', min: 3, why: 'the meters\' "too short", "too long" and "cut" fill (--warn) against its --bg-surface boundary (graphics, 3:1)' },
   { fg: '--bg-surface', bg: '--danger', min: 3, why: 'the length meter\'s "missing" fill (--danger, drawn at no width) against its --bg-surface boundary (graphics, 3:1)' },
   { fg: '--bg-surface', bg: '--text-faint', min: 3, why: 'the width meter\'s empty fill (--text-faint, drawn at no width) against its --bg-surface boundary (graphics, 3:1)' },
+  // Later states (round 1): the pass check on a "More panels" row under the pointer or keyboard focus sits on a
+  // --bg-surface disc (PASS_CHECK.backs): on the row's tint --ok was 2.98:1 hovered, 2.84:1 focused in light.
+  { fg: '--ok', bg: '--bg-surface', min: 3, why: 'the pass check on a hovered "More panels" row, on its --bg-surface disc (graphics, 3:1; 2.98:1 on --bg-hover over the menu in light)' },
+  { fg: '--ok', bg: '--bg-surface', min: 3, why: 'the pass check on a focused "More panels" row, on its --bg-surface disc (graphics, 3:1; 2.84:1 on --accent-soft over the menu in light)' },
   // Later states: the tab's render-profile badge (--accent-soft, edged --accent when the tab needs a reload,
   // dashed, or its profile failed, solid) on each tab state; the edge against the fill inside it and the
   // tab outside it. Already covered: on the active tab (--accent on --bg-surface, and on --accent-soft over it).
@@ -1923,15 +1954,15 @@ export const TEXT_COLOUR_RULES = [
     stylesheet: 'styles.css',
     element: ['.seo-meter-fill'],
     color: '--bg-surface',
-    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke', 'shape-rendering': 'crispEdges' },
-    why: 'On-Page\'s length meters: the 1px boundary stroke around the fill, on whole pixels (anti-aliased it split into two half-tones at about 2:1)',
+    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke', 'shape-rendering': 'crispEdges', rx: '0' },
+    why: 'On-Page\'s length meters: the 1px boundary stroke around the fill, on whole pixels (anti-aliased it split into two half-tones at about 2:1), square (crisp, its rx drew a staircase at each end; the bar\'s pill clip rounds the outer end)',
   },
   {
     stylesheet: 'styles.css',
     element: ['.seo-width-meter-fill'],
     color: '--bg-surface',
-    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke', 'shape-rendering': 'crispEdges' },
-    why: 'Content\'s width meters: the 1px boundary stroke around the fill, on whole pixels',
+    drawn: { stroke: 'currentColor', 'stroke-width': '2px', 'paint-order': 'stroke', 'shape-rendering': 'crispEdges', rx: '0' },
+    why: 'Content\'s width meters: the 1px boundary stroke around the fill, on whole pixels, square (as the length meters\')',
   },
   // Content, JavaScript, SERP and Visibility (their surface PR): status text takes its -ink, on its
   // -soft fill where it is a badge; no row in these panels is hoverable, so no badge lies over --bg-hover.
@@ -2152,7 +2183,10 @@ export const DISABLED_INK = 'color-mix(in srgb, var(--text-faint) 50%, transpare
  * Nor does any rule of the cascade whose subject names one of the classes `element` names (any state of
  * it) run an `animation` whose `@keyframes` set `opacity`: a pulse is a fade too (Later states: the busy
  * screenshot kind pulsed to 0.35 over its DISABLED_INK, the word "Saving…" with it; it is a disabled
- * segment, which says it is busy by its colours and its label, as the other busy controls do).
+ * segment, which says it is busy by its colours and its label, as the other busy controls do). Its limits:
+ * it reads only rules whose subject is the control itself, so a pulse on a container around it (or an
+ * opacity set on an ancestor any other way) passes unseen; and it reads every state of the class, so a
+ * legitimate opacity entrance animation on a listed control would fail it (none exists).
  */
 export interface DisabledControl extends LoadsBefore {
   readonly stylesheet: string;

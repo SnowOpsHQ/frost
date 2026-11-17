@@ -253,7 +253,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--text-mono` (as the palette's); What's New `--text-heading` titles over `--divider` rules;
   Export Diagnostics' Save… is a Settings button and its report `--text-mono` on `--bg-subtle` at
   `--r-sm` (the agent panel's code). The setup checklist's title is `--text-caps`, its rows
-  `--h-control` tall, its step marks 1px `--switch-off` rings (Later states: 1.5px, drawn as 1px) filled `--ok` (a graphic) when done, "Done"
+  `--h-control` tall, its step marks 1px `--switch-off` rings (Later states: 1.5px, drawn as 1px) filled `--ok` (a graphic) when done, kept under forced colours (`FORCED_COLOURS_KEPT`), "Done"
   `--ok-ink`, and its actions `--h-chip` pills on `--bg-surface` with `--e-raised` (hover lays
   `--bg-hover` over them; it ringed them in `--accent`). A transparent outline forced colours draw goes
   beside every `--focus-ring`. Settings' and Help's widths (`--settings-width`, `--settings-nav-width`,
@@ -1116,8 +1116,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
    `.panel-button` marked `aria-disabled` (the crawl sheet's Export CSV and Start crawl, AI answers' Ask)
    and a Projects row during a capture run take the disabled colours, `GrayText` under forced colours, with
    no fade; the busy screenshot kind no longer pulses; the tab's render-profile badge edges "needs reload"
-   dashed and "failed" solid, with no edge at rest under forced colours; Help's setup check is a 1px ring;
-   the meters' fill has a `--bg-surface` boundary.
+   dashed and "failed" solid, with no edge at rest under forced colours (and its name says which); Help's
+   setup check is a 1px ring, its marks kept under forced colours; the meters' fill has a `--bg-surface`
+   boundary, square at its inner end. Round 1: a pass check on a hovered or focused "More panels" row sits
+   on a `--bg-surface` disc, and AI answers' busy Ask opens nothing.
 
 ## Unit (`apps/desktop/src/__tests__/design-tokens.test.ts`)
 - **Scenario: tokens-stylesheet-holds-only-root-tokens** — `tokens.css` has only `:root` blocks
@@ -1191,7 +1193,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   nothing under 1, so a fade put back in place of the colours fails; and each of a `drawn` entry's
   declarations resolves to its value (the timing boundary's, and the length and width meters' fill
   boundary's, `stroke: currentColor`, `stroke-width: 2px` and `paint-order: stroke`; the meters' also
-  `shape-rendering: crispEdges`, since an anti-aliased 1px boundary split into two columns at about 2:1). A busy `.panel-button`
+  `shape-rendering: crispEdges`, since an anti-aliased 1px boundary split into two columns at about 2:1,
+  and `rx: 0`, since crisp, the fill's `rx="3"` drew a staircase at each end; the bar's pill clip rounds
+  the outer end). A busy `.panel-button`
   marked `aria-disabled` is `--text-faint` on `--bg-subtle`, unfaded, hovered too and primary or not.
 - **Scenario: fades-spare-focus** — in each `FADES_SPARE_FOCUS` stylesheet, every rule setting an
   `opacity` under 1 ends each selector with `:not(:focus-within)`, and one such rule exists; it catches
@@ -1241,7 +1245,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   to `CanvasText` over its first two, a matching line that is not the current one. Every selector named is
   one of the stylesheet's.
 - **Scenario: status-marks-keep-their-colours-under-forced-colours** — for each `FORCED_COLOURS_KEPT`
-  entry (the SEO rail's dots, Overview's category marks: pass (a check), error, warning and notice; Schema's status
+  entry (the SEO rail's dots, Overview's category marks: pass (a check), error, warning and notice; Help's
+  setup steps, done and not done; Schema's status
   mark: valid, warnings, errors; a verdict's signal marks: pass, warning, error and neutral; Page Speed's
   live line: measuring or paused, live and unavailable; its navigation timing's phase swatches), in light and
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
@@ -1250,7 +1255,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 - **Scenario: pass-marks-draw-a-check** — in light and dark `PASS_CHECK.selector` resolves in
   `styles.css` to `PASS_CHECK.size` square, `fill: none`, `stroke: var(--ok)` and `stroke-width`
   `PASS_CHECK.strokeWidth` (2px: two device pixels at 1×, solid at this size); `CONTRAST_PAIRS` holds
-  `--ok` on `--bg-sheet` and on `--bg-surface` at 3:1. `PassCheck` (`icons.tsx`) draws it: Overview's
+  `--ok` on `--bg-sheet` and on `--bg-surface` at 3:1. Each of `PASS_CHECK.backs` resolves `background`
+  to its value (the rail's halo `var(--seo-dot-back)`, Overview's `transparent`, a hovered or focused
+  "More panels" row's `var(--bg-surface)`), and to its `forced` value with the forced-colours rules read,
+  so a green disc put back under the check fails. `PassCheck` (`icons.tsx`) draws it: Overview's
   passing categories hold one `aria-hidden` SVG of `PASS_CHECK.viewBox` whose path is `PASS_CHECK.d`, and
   a category with an error none (`overview-page-type.test.ts`, `a-passing-category-draws-a-check`); the
   SEO rail's pass dot holds that path, and its error dot none (`seo-sidebar.e2e.ts`,
@@ -1280,7 +1288,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   the cascade over its `element` selectors resolves `color` to `DISABLED_INK` and sets no `opacity` under 1,
   and no rule of its cascade whose subject names one of those selectors' classes runs an `animation` whose
   `@keyframes` set `opacity` (a pulse is a fade). It catches the busy screenshot kind's pulse put back,
-  and passes an icon's pulse inside a button and a spin.
+  and passes an icon's pulse inside a button and a spin. Its limits: only rules whose subject is the
+  control are read, so a pulse on a container around it passes; and every state of its classes is
+  read, so an opacity entrance animation on a listed control would fail it (none exists).
 - **Scenario: pressed-controls-draw-an-edge** — for each `PRESSED_EDGES` entry (a pressed filter chip,
   a pressed n-gram highlight button; the chosen version, project, node,
   Inspector view and swatch),
@@ -1410,6 +1420,10 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup or th
   `specs/workspace-layout.feature.md` (`page-view-matches-the-card`): the e2e proves the radius main
   passes on Linux, Windows and macOS; that the corner is drawn rounded was shown by a screen capture
   on Linux CI only.
+- **A disabled SEO rail item fades to 0.3** (`styles.css`, `.seo-rail-item:disabled`: a panel not yet
+  available, labelled "Soon"): natively disabled, so it holds no focus a fade could dim, but it says
+  disabled by opacity, not by the disabled colours the other controls take, and forced colours draw it
+  only faded.
 - **The canvas's features the app doesn't have** (the design canvas; each would need markup or behaviour,
   not tokens): the score on the SEO sidebar toggle, "Ask frost", click-to-edit on the tab, "More tabs",
   Overview's AI-readiness, Page and AI-judgment cards as the canvas draws them, the find icon and match

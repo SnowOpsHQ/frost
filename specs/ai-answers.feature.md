@@ -95,6 +95,8 @@ the composition), Task 8's `main/ai-search/service.ts` (`answer`: the view's run
 - **Scenario: ai-answers-watched-domain-highlighted** — the watched domain's citations and group marked.
 - **Scenario: ai-answers-view-shows-cost-note-first** — Ask shows the cost note and Send; only Send
   calls `run`.
+- **Scenario: ai-answers-busy-ask-opens-nothing** — while a question runs, Ask is `aria-disabled` (it
+  keeps focus, drawn disabled) and a click on it opens no confirmation; once the answer is in it asks again.
 - **Scenario: ai-answers-gated-providers-disabled** — main's view says unavailable: engines disabled
   with `LEGAL_GATE_NOTE`, Ask disabled.
 - **Scenario: ai-answers-engine-caveat-beside-the-select** — selects and list rows name an engine only
