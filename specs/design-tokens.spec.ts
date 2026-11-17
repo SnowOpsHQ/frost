@@ -438,6 +438,47 @@ export interface LoadsBefore {
 }
 
 /**
+ * A state the cascade checks resolve in, besides light or dark and (for the `FORCED_COLOURS_*` checks and
+ * `STATE_EDGES`) forced colours. The resolver reads a rule inside any at-rule the renderer's stylesheets use
+ * (they hold `@media` and `@container` blocks, no `@supports` and no native nesting, but the resolver reads
+ * those too), and whether a block applies follows from the state:
+ * - `@media`: `(prefers-color-scheme: dark)` in dark (`light` in light); `(forced-colors: active)` when the
+ *   check reads forced colours (`none` when it doesn't); `(prefers-reduced-motion: reduce)` when
+ *   `reducedMotion` (`no-preference` when not); an upper-bound width (`max-width`, `width <`, `width <=`) when
+ *   `narrow` names `viewport` or `*`; `screen` and `all` always; features joined by `and` must all hold;
+ * - `@container <name> (<upper-bound width>)`: when `narrow` names the container or `*`;
+ * - `@supports (…)`: always (the renderer runs in one engine, Electron's Chromium, which a feature query is
+ *   written for); `@supports not (…)`: never;
+ * - `@keyframes`: never (its blocks are keyframes, not elements);
+ * - native nesting: a nested rule's selector is each of its parent's with `&` replaced by it (or, with no `&`,
+ *   a descendant of it); an at-rule nested in a rule applies its declarations to that rule's selector; an
+ *   at-rule inside another applies when both do.
+ * Anything else (`@layer`, a lower-bound width, `not`, `or` or a comma list in a query, an unknown media
+ * feature, an unnamed `@container`) makes the check throw, so no rule is skipped unread.
+ */
+export interface CascadeContext {
+  readonly name: string;
+  readonly reducedMotion?: boolean;
+  /** The containers (by name; `viewport` for `@media` widths; `*` for all) narrower than every query on them. */
+  readonly narrow?: readonly string[];
+}
+
+/**
+ * The states every cascade check runs in (`TEXT_COLOUR_RULES`, `TEXT_TYPE_RULES`, `FOCUS_RING_RULES`,
+ * `FORCED_COLOURS_BUSY`, `FORCED_COLOURS_PRESSED`, `FORCED_COLOURS_KEPT`, `DISABLED_CONTROLS`, `PRESSED_EDGES`,
+ * `STATE_EDGES` and `TAB_STRIP`'s active tab), each in light and dark: the default window, where every container
+ * is wider than its queries and motion is allowed; reduced motion; and the narrowest window (588px,
+ * `workspace-layout.spec.ts` `NARROW_WINDOW`), where every width query the stylesheets hold (each an upper
+ * bound) applies at once. A rule in a reduced-motion or width block that undid a guarded colour, ring, edge,
+ * type or `forced-color-adjust` fails its check there.
+ */
+export const CASCADE_CONTEXTS = [
+  { name: 'default' },
+  { name: 'reduced motion', reducedMotion: true },
+  { name: 'narrowest', narrow: ['viewport', '*'] },
+] as const satisfies readonly CascadeContext[];
+
+/**
  * Busy or disabled controls that show it only by colour (`FOCUS_RING_RULES`: fading would dim their
  * focus ring), and an empty count shown dimmed (Overview's zero-count pill). Forced colours replace those colours, so for each entry the cascade over its `element`
  * selectors in `stylesheet`, with the rules inside `@media (forced-colors: active)` read too (as the

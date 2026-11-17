@@ -1170,6 +1170,20 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   and the cascades over `TAB_STRIP.activeTab` and `TAB_STRIP.activeTabHovered` in `styles.css` each give
   the active tab a `box-shadow` holding `TAB_STRIP.activeIndicatorShadow` (`inset 0 -2px 0
   var(--accent)`, the whole term), so the cue is really drawn, under the pointer too.
+- **Scenario: cascade-checks-read-every-at-rule** — the cascade resolver every check below uses reads a rule
+  inside any at-rule, and applies its block by the state it resolves in (`CASCADE_CONTEXTS`, `CascadeContext`):
+  the dark and forced-colours blocks as before; a `prefers-reduced-motion: reduce` block only in reduced motion;
+  an upper-bound width `@media` (`max-width: 760px`) only with the viewport narrow; a `@container` block only
+  with that container narrow (`seo-panel`, not `chrome`; `*` names every container); `@supports (…)` always and
+  `@supports not (…)` never; `@keyframes` never; features joined by `and` all must hold, and an at-rule inside
+  another applies when both do. Native nesting is read: `.a { &:hover { … } }` is `.a:hover`, `.a { .b { … } }`
+  is `.a .b`, `.a, .b { &[x] { … } }` is `.a[x]` and `.b[x]`, and `.a { @media (forced-colors: active) { … } }`
+  sets `.a` under forced colours. It throws on what it can't apply (`@layer`, `min-width`, `width >`, a comma
+  list, `not` or `or` in a query, an unknown media feature, an unnamed `@container`), so nothing is skipped
+  unread. Every renderer stylesheet's at-rules are among those it applies: each stylesheet's rules resolve in
+  every `CASCADE_CONTEXTS` state without a throw. A focus ring a `@container chrome (width < 748px)` rule takes
+  away, or a colour a reduced-motion rule changes, fails its check in that state. Each check below runs in light
+  and dark in every `CASCADE_CONTEXTS` state.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
   the cascade over its `element` selectors in its stylesheet (and then each of its `loadsBefore`, read
   after it: a later sheet's rule wins a tie, two classes win whatever the order) resolves `color` to `var(<color>)` (and
@@ -1387,9 +1401,6 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup or th
   or before-run states, so those parts are checked by the token guards only.
 - **Help's setup check has a 1.5px border** (`help.css`, `.setup-check`, the setup checklist's 14px
   `--switch-off` ring): Chromium draws it as 1px; a whole pixel would change its look.
-- **The cascade checks read only the dark and forced-colours blocks** (`apps/desktop/src/__tests__/design-tokens.test.ts`,
-  `resolveOnElement`'s `applies`): a rule nested in another `@media` or in `@supports` is not read, so
-  `TEXT_COLOUR_RULES`, `FOCUS_RING_RULES` and the like can't see one.
 - **The meters' "fits" fill is `--ok` on `--track` at 2.23:1 in light** (`styles.css`, `.seo-meter-fill`
   through `--meter`, and `.seo-width-meter`): under 3:1 for a graphic; the verdict word beside it carries
   the state.
