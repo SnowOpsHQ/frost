@@ -2,10 +2,7 @@
 // Acceptance: specs/design-tokens.feature.md
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, test } from 'vitest';
-import { PassCheck } from '../renderer/icons';
 import {
   BASE_TYPE,
   BUNDLED_FONTS,
@@ -1021,13 +1018,8 @@ test('status-marks-keep-their-colours-under-forced-colours', () => {
 });
 
 test('pass-marks-draw-a-check', () => {
-  // The glyph: PassCheck draws PASS_CHECK's path in its viewBox, under the selector's class, hidden from the tree.
-  const markup = renderToStaticMarkup(createElement(PassCheck));
-  expect(markup).toContain(`class="${PASS_CHECK.selector.slice(1)}"`);
-  expect(markup).toContain(`viewBox="${PASS_CHECK.viewBox}"`);
-  expect(markup).toContain(`d="${PASS_CHECK.d}"`);
-  expect(markup).toContain('aria-hidden="true"');
-  // ... sized and stroked by styles.css: --ok by `stroke` (forced colours leave it, and it is no text colour),
+  // The glyph's markup is checked where it renders (overview-page-type.test.ts, seo-sidebar.e2e.ts). It is
+  // sized and stroked by styles.css: --ok by `stroke` (forced colours leave it, and it is no text colour),
   // 2px, which a 1× screen draws solid at this size.
   const css = read('styles.css');
   const drawn = { width: PASS_CHECK.size, height: PASS_CHECK.size, fill: 'none', stroke: 'var(--ok)', 'stroke-width': PASS_CHECK.strokeWidth };

@@ -1246,14 +1246,14 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   dark, the cascade over its `element` selectors with the `@media (forced-colors: active)` rules read
   too resolves `forced-color-adjust` to `none`, so a mark whose fill or border colour is its status keeps
   it. Every selector named is one of the stylesheet's.
-- **Scenario: pass-marks-draw-a-check** — `PassCheck` (`icons.tsx`) renders an `aria-hidden` SVG of
-  `PASS_CHECK.viewBox` whose path is `PASS_CHECK.d`, under the class `PASS_CHECK.selector`; in light and
-  dark that selector resolves in `styles.css` to `PASS_CHECK.size` square, `fill: none`, `stroke:
-  var(--ok)` and `stroke-width` `PASS_CHECK.strokeWidth` (2px: two device pixels at 1×, solid at this size);
-  `CONTRAST_PAIRS` holds `--ok` on `--bg-sheet` and on `--bg-surface` at 3:1. The SEO rail's pass dot and
-  Overview's passing categories draw it, and an error or a warning draws none (`overview-page-type.test.ts`:
-  `a-passing-category-draws-a-check`; `seo-sidebar.e2e.ts`: `good-page-scores-high`,
-  `bad-page-shows-issues`).
+- **Scenario: pass-marks-draw-a-check** — in light and dark `PASS_CHECK.selector` resolves in
+  `styles.css` to `PASS_CHECK.size` square, `fill: none`, `stroke: var(--ok)` and `stroke-width`
+  `PASS_CHECK.strokeWidth` (2px: two device pixels at 1×, solid at this size); `CONTRAST_PAIRS` holds
+  `--ok` on `--bg-sheet` and on `--bg-surface` at 3:1. `PassCheck` (`icons.tsx`) draws it: Overview's
+  passing categories hold one `aria-hidden` SVG of `PASS_CHECK.viewBox` whose path is `PASS_CHECK.d`, and
+  a category with an error none (`overview-page-type.test.ts`, `a-passing-category-draws-a-check`); the
+  SEO rail's pass dot holds that path, and its error dot none (`seo-sidebar.e2e.ts`,
+  `good-page-scores-high` and `bad-page-shows-issues`).
 - **Scenario: only-kept-marks-opt-out-of-forced-colours** — every `forced-color-adjust` declaration in
   every renderer stylesheet, whatever surface its rule belongs to and whatever its value (`auto` too:
   a rule handing an element back to forced colours is not supported yet, and none exists), sits in a

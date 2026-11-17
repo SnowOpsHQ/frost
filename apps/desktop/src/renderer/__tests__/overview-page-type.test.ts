@@ -173,6 +173,8 @@ describe('Overview checks by category', () => {
       } else {
         expect(row.dataset.status).toBe('pass');
         expect(checks).toHaveLength(1);
+        expect(checks[0]!.getAttribute('viewBox')).toBe(PASS_CHECK.viewBox);
+        expect(checks[0]!.getAttribute('aria-hidden')).toBe('true');
         expect(checks[0]!.querySelector('path')!.getAttribute('d')).toBe(PASS_CHECK.d);
       }
     }
