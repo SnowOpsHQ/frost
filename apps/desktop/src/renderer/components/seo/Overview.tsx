@@ -8,7 +8,7 @@ import { OVERVIEW_TOP_ISSUES, type SeoPanelId } from '@app/specs/seo-sidebar.spe
 import { aiTileView } from '../../ai-readiness-view';
 import { usePageIntent } from '../../hooks/usePageIntent';
 import { useProbes } from '../../hooks/useSerp';
-import { CheckCircleIcon, ChevronIcon } from '../../icons';
+import { CheckCircleIcon, ChevronIcon, PassCheck } from '../../icons';
 import { intentNote, pageTypeView } from '../../page-type-view';
 import { intentChip } from '../../serp-view';
 import { formatCount } from '../../seo-view';
@@ -89,7 +89,9 @@ function CategoryGrid({ audit }: { readonly audit: SeoAudit }) {
       <ul className="seo-categories" data-testid="seo-categories">
         {rows.map((row) => (
           <li key={row.category} className="seo-category" data-status={row.worst ?? 'pass'} data-category={row.category} data-count={row.findings}>
-            <span className="seo-category-dot" aria-hidden="true" />
+            <span className="seo-category-dot" aria-hidden="true">
+              {row.worst ? null : <PassCheck />}
+            </span>
             <span className="seo-category-name">{SEO_CATEGORY_LABELS[row.category]}</span>
             {row.worst ? <span className="seo-category-state">{plural(row.findings, ['issue', 'issues'])}</span> : <span className="visually-hidden">passed</span>}
           </li>

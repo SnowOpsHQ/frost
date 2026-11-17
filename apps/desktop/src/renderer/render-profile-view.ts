@@ -33,7 +33,9 @@ import {
 /** The badge's accessible text and tooltip. */
 export function badgeLabel(state: TabRenderProfile): string {
   const where = state.source === 'site' ? ' (pinned to this site)' : '';
-  return `Render profile: ${renderProfileSummary(state.profile)}${where}`;
+  // What its edge says (dashed, solid): failed first, as the status chip.
+  const status = state.status === 'failed' ? ` · ${TAB_OVERRIDES_NOT_APPLIED}` : state.needsReload ? ` · ${RELOAD_TO_APPLY_LABEL}` : '';
+  return `Render profile: ${renderProfileSummary(state.profile)}${where}${status}`;
 }
 
 /** The status-bar chip: the profile, then what it still needs. */

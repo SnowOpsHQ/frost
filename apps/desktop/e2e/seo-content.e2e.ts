@@ -298,6 +298,20 @@ test('snippet-editor-previews', async () => {
   await expect(desktopTitle).toHaveAttribute('data-truncated', 'false');
   await expect(page.getByTestId('seo-serp-mobile-title')).toHaveText('Green tea & <biscuits>: a short guide');
   await expect(page.getByTestId('seo-width-title')).toHaveAttribute('data-state', 'fits');
+  // The fill is square (design-tokens' meter boundary): a clip of the track's shape rounds its outer end.
+  expect(
+    await page.getByTestId('seo-width-title').locator('.seo-width-meter-fill').evaluate((element) => {
+      const fill = element as unknown as SVGRectElement;
+      const track = fill.ownerSVGElement!.querySelector('.seo-width-meter-track')!;
+      const clip = fill.ownerSVGElement!.querySelector('clipPath');
+      const shape = clip?.querySelector('rect');
+      return {
+        refersToIt: clip !== null && fill.getAttribute('clip-path') === `url(#${clip.id})`,
+        shape: shape ? ['x', 'y', 'width', 'height', 'rx'].map((a) => shape.getAttribute(a)) : null,
+        track: ['x', 'y', 'width', 'height', 'rx'].map((a) => track.getAttribute(a)),
+      };
+    }),
+  ).toEqual({ refersToIt: true, shape: ['0', '0', '100', '6', '3'], track: ['0', '0', '100', '6', '3'] });
   await page.getByTestId('seo-draft-description').fill('Short "quoted" text.');
   await expect(page.getByTestId('seo-serp-mobile-description')).toHaveText('Short "quoted" text.');
   // Copy as HTML of the draft: saved first, escaped by main.
