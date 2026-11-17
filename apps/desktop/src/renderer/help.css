@@ -277,12 +277,13 @@
   min-height: var(--h-control);
 }
 
-/* A 14px circle: a --switch-off ring, filled --ok (a graphic, 3:1) when done. */
+/* A 14px circle: a 1px --switch-off ring (a whole pixel: Chromium drew the 1.5px it was as 1px at 1×),
+   filled --ok (a graphic, 3:1) when done. */
 .setup-check {
   flex: none;
   width: 14px;
   height: 14px;
-  border: 1.5px solid var(--switch-off);
+  border: 1px solid var(--switch-off);
   border-radius: 50%;
 }
 

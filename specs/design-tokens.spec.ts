@@ -736,6 +736,8 @@ export const SIGNAL_SURFACES = [
       '.seo-rail-*',
       '.seo-more-*',
       '.seo-pin',
+      // A pass's check (PASS_CHECK), on the rail's dots and Overview's category marks
+      '.seo-pass-check',
       // Shared parts
       '.seo-section-*',
       '.seo-score-card',
