@@ -8991,18 +8991,33 @@ input {
   max-width: 150px;
 }
 
-/* A domain wraps (it was cut with an ellipsis): the whole name shows, and the column never forces the
-   table wider than the panel. */
-.serp-owners .serp-domain .seo-page-text {
-  white-space: normal;
+/* Who owns page 1 has no inline padding at its outer edges (the card has its own): at the default 360px
+   panel the four columns left "brewguide.example" 0.5px short of one line (120.5px of 121px); the 16px goes
+   to the domain. */
+.serp-owners th:first-child,
+.serp-owners td:first-child {
+  padding-inline-start: 0;
 }
 
-/* Who owns page 1 where its four columns leave the domain too little room (under 300px: the 300px panel,
-   where it scrolled 60px sideways, and the default 360px, where "brewguide.example" broke mid-word):
-   each row takes two lines, the domain across the row and its counts under it in three columns under
-   their headers, the head likewise. Still a table: every cell keeps its header. After the rules it
-   overrides. */
-@container serp-table (width < 300px) {
+.serp-owners th:last-child,
+.serp-owners td:last-child {
+  padding-inline-end: 0;
+}
+
+/* A domain wraps (it was cut with an ellipsis), at its dots (a <wbr> after each, domainLabels) and hyphens,
+   never inside a label: `break-word`, not the page text's `anywhere`, so the column is never narrower than
+   its longest label and the table's auto layout can't squeeze it to break "brewguide.exam|ple". Only a
+   single label wider than the column would scroll. (Stacked, below, it has the row and breaks anywhere.) */
+.serp-owners .serp-domain .seo-page-text {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* Who owns page 1 where its four columns don't fit (under 280px: the 300px panel's 227px, where it
+   scrolled 60px sideways; the default 360px panel's 287px keeps the four columns): each row takes two
+   lines, the domain across the row and its counts under it in three columns under their headers, the
+   head likewise. Still a table: every cell keeps its header. After the rules it overrides. */
+@container serp-table (width < 280px) {
   .serp-owners,
   .serp-owners thead,
   .serp-owners tbody {
@@ -9019,6 +9034,10 @@ input {
     max-width: none;
     padding-bottom: 0;
     border-bottom: 0;
+  }
+
+  .serp-owners .serp-domain .seo-page-text {
+    overflow-wrap: anywhere;
   }
 }
 

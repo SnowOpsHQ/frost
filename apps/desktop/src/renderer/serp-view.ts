@@ -102,6 +102,15 @@ export function ownershipRows(ownership: SerpOwnership): OwnershipRow[] {
   return ownership.domains.map((domain) => ({ domain: domain.domain, count: domain.count, share: percent(domain.share), positions: domain.positions.join(', ') }));
 }
 
+/**
+ * A domain as its labels, each but the last with its dot (`shop.`, `example.`, `uk`): the ownership table
+ * puts a break opportunity (`<wbr>`) between them, so a long domain wraps at its dots (and its hyphens),
+ * never inside a label. Joined, they are the domain.
+ */
+export function domainLabels(domain: string): string[] {
+  return domain.split(/(?<=\.)/);
+}
+
 export function ownershipTitle(ownership: SerpOwnership): string {
   return `Who owns page ${ownership.page}`;
 }

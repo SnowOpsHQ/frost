@@ -14,6 +14,7 @@ import { serpPaletteSources } from '../../serp-palette';
 import {
   compositionSegments,
   compositionSummary,
+  domainLabels,
   forgetSerp,
   intentChip,
   knownIntent,
@@ -195,7 +196,7 @@ function Ownership({ snapshot }: { readonly snapshot: SerpReady }) {
               {rows.map((row) => (
                 <tr key={row.domain} data-testid="serp-ownership-row" data-domain={row.domain}>
                   <th scope="row" className="serp-domain">
-                    <PageText value={row.domain} />
+                    <PageText value={row.domain} parts={domainLabels(row.domain)} />
                   </th>
                   <td className="serp-num" data-testid="serp-ownership-count">
                     {formatCount(row.count)}
