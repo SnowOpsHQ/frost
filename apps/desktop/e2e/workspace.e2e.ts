@@ -122,7 +122,11 @@ test('default-width-keeps-its-layout', async () => {
   if ((await page.getByTestId('seo-sidebar').getAttribute('data-open')) !== 'true') await page.getByTestId('seo-toggle').click();
   await expect(page.getByTestId('seo-panel')).toBeVisible();
   await expect(page.getByTestId('agent-panel')).toHaveCount(0);
-  const height = Math.min(700, (await viewState()).content.height);
+  const { content } = await viewState();
+  const height = Math.min(700, content.height);
+  // Main clamps the view to the window: where the window is narrower than 1280px (a tiled one), only
+  // the chrome's layout is checked, the view against the card in page-view-matches-the-card.
+  const viewMatchesIfItFits = () => (content.width >= 1280 ? cardMatches(PLAIN) : Promise.resolve());
   const G = WORKSPACE_GAP.px;
   const measure = async () => {
     const [width, seoRail, panel, card, agent] = await Promise.all([page.evaluate(() => innerWidth), box('.seo-rail'), box('.seo-panel'), box('.page-area'), box('.agent')]);
@@ -141,7 +145,7 @@ test('default-width-keeps-its-layout', async () => {
         return (Object.keys(collapsed) as (keyof typeof collapsed)[]).every((k) => Math.abs(got[k] - collapsed[k]) <= 1) ? 'ok' : JSON.stringify(got);
       })
       .toBe('ok');
-    await cardMatches(PLAIN);
+    await viewMatchesIfItFits();
     // Open, the agent panel is its default width, the gap past the card and from the window's edge; the
     // card is as much narrower as the panel and its gap.
     await page.getByTestId('agent-toggle').click();
@@ -155,10 +159,10 @@ test('default-width-keeps-its-layout', async () => {
         return (Object.keys(open) as (keyof typeof open)[]).every((k) => Math.abs(got[k] - open[k]) <= 1) ? 'ok' : JSON.stringify(got);
       })
       .toBe('ok');
-    await cardMatches(PLAIN);
+    await viewMatchesIfItFits();
     await page.getByTestId('agent-collapse').click();
     await expect(page.getByTestId('agent-panel')).toHaveCount(0);
-    await cardMatches(PLAIN);
+    await viewMatchesIfItFits();
   } finally {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
   }
