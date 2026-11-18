@@ -4,7 +4,7 @@ import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { CHROME_MIN_CONTENT_WIDTH_PX } from '@app/specs/tabs.spec';
 import { isLocationPartition, LOCATION_WEBRTC_POLICY } from '@app/specs/location-profiles.spec';
-import { chromeRowInset, PAGE_NO_DRAG_CSS, titleBarOverlayColours, titleBarWindowOptions, type TitleBarPlatform } from '@app/specs/title-bar.spec';
+import { chromeRowInset, PAGE_NO_DRAG_CSS, rowIsTitleBar, titleBarOverlayColours, titleBarWindowOptions, type TitleBarPlatform } from '@app/specs/title-bar.spec';
 
 /**
  * Creates the app's main window. The four security-critical webPreferences are set explicitly
@@ -96,8 +96,10 @@ export function createTabView(partition: string = BROWSE_PARTITION): WebContents
   // Only the chrome drags the window (`tabs.feature.md`, Dragging): without a native title bar
   // Electron takes drag regions from this view too, so every document the page commits gets
   // `PAGE_NO_DRAG_CSS` in the user origin, over the page's own `app-region`.
-  const { webContents } = view;
-  webContents.on('did-navigate', () => void webContents.insertCSS(PAGE_NO_DRAG_CSS, { cssOrigin: 'user' }).catch(() => {}));
+  if (rowIsTitleBar(process.platform as TitleBarPlatform)) {
+    const { webContents } = view;
+    webContents.on('did-navigate', () => void webContents.insertCSS(PAGE_NO_DRAG_CSS, { cssOrigin: 'user' }).catch(() => {}));
+  }
   return view;
 }
 

@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { BROWSE_PARTITION, TAB_VIEW_WEB_PREFERENCES } from '@app/specs/browser.spec';
 import { HARDENED_WEB_PREFERENCES } from '@app/specs/window-hardening.spec';
 import { LOCATION_WEBRTC_POLICY, locationPartition } from '@app/specs/location-profiles.spec';
-import { PAGE_NO_DRAG_CSS } from '@app/specs/title-bar.spec';
+import { PAGE_NO_DRAG_CSS, PAGE_NO_DRAG_SELECTORS } from '@app/specs/title-bar.spec';
 import type { FakeWebContentsView } from '../../../test/electron-fake';
 import { createTabView } from '../../window';
 
@@ -35,23 +35,30 @@ describe('createTabView', () => {
   });
 
   // Acceptance: specs/tabs.feature.md (Dragging: only the chrome drags, never a page)
-  test('tab-view-pages-cannot-drag-the-window', async () => {
-    const view = createTabView() as unknown as FakeWebContentsView;
-    const insertCSS = vi.fn(async (_css: string, _options?: { cssOrigin?: string }) => 'key');
-    Object.assign(view.webContents, { insertCSS });
-    // Nothing before a document commits; then once per main-frame navigation, in the user origin.
-    expect(insertCSS).not.toHaveBeenCalled();
-    view.webContents.emit('did-navigate', {}, 'https://example.com/');
-    view.webContents.emit('did-navigate', {}, 'https://example.com/next');
-    expect(insertCSS.mock.calls).toEqual([
-      [PAGE_NO_DRAG_CSS, { cssOrigin: 'user' }],
-      [PAGE_NO_DRAG_CSS, { cssOrigin: 'user' }],
-    ]);
-    expect(PAGE_NO_DRAG_CSS).toMatch(/^\*, \*::before, \*::after, \*::backdrop \{ app-region: no-drag !important; \}$/);
-    // A page that is gone by then rejects the insert: swallowed, never an unhandled rejection.
-    insertCSS.mockRejectedValueOnce(new Error('gone'));
-    view.webContents.emit('did-navigate', {}, 'https://example.com/gone');
-    await Promise.resolve();
+  test.each(['darwin', 'win32', 'linux'] as const)('tab-view-pages-cannot-drag-the-window (%s)', async (platform) => {
+    const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: platform });
+    try {
+      const view = createTabView() as unknown as FakeWebContentsView;
+      const insertCSS = vi.fn(async (_css: string, _options?: { cssOrigin?: string }) => 'key');
+      Object.assign(view.webContents, { insertCSS });
+      // Nothing before a document commits; then once per main-frame navigation, in the user origin.
+      expect(insertCSS).not.toHaveBeenCalled();
+      view.webContents.emit('did-navigate', {}, 'https://example.com/');
+      view.webContents.emit('did-navigate', {}, 'https://example.com/next');
+      // Linux keeps its native frame, which makes Electron ignore every region: nothing to insert.
+      const inserted = platform === 'linux' ? [] : [[PAGE_NO_DRAG_CSS, { cssOrigin: 'user' }], [PAGE_NO_DRAG_CSS, { cssOrigin: 'user' }]];
+      expect(insertCSS.mock.calls).toEqual(inserted);
+      // A page that is gone by then rejects the insert: swallowed, never an unhandled rejection.
+      insertCSS.mockRejectedValueOnce(new Error('gone'));
+      view.webContents.emit('did-navigate', {}, 'https://example.com/gone');
+      await Promise.resolve();
+    } finally {
+      Object.defineProperty(process, 'platform', original);
+    }
+    // One rule per selector (an unknown one voids only its own), every one no region at all.
+    expect(PAGE_NO_DRAG_CSS.split('\n')).toEqual(PAGE_NO_DRAG_SELECTORS.map((selector) => `${selector} { app-region: initial !important; }`));
+    expect(PAGE_NO_DRAG_SELECTORS).toEqual(expect.arrayContaining(['*', '*::before', '*::after', '*::backdrop', '*::scroll-button(*)']));
   });
 });
 

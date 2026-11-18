@@ -4,7 +4,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { ADDRESS_BASIS_PX, ADDRESS_MIN_WIDTH_PX, CHROME_MIN_CONTENT_WIDTH_PX, CHROME_ROW, CHROME_ROW_HEIGHT_PX, MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, TAB_MIN_WIDTH_PX } from '@app/specs/browser.spec';
-import { CAPTION_BUTTONS_WIDTH_PX, chromeRowInset, TRAFFIC_LIGHT_POSITION, TRAFFIC_LIGHTS_ZONE_PX, WINDOW_DRAG_STRIP_PX, type TitleBarPlatform } from '@app/specs/title-bar.spec';
+import { CAPTION_BUTTONS_WIDTH_PX, chromeRowInset, rowIsTitleBar, TRAFFIC_LIGHT_POSITION, TRAFFIC_LIGHTS_ZONE_PX, WINDOW_DRAG_STRIP_PX, type TitleBarPlatform } from '@app/specs/title-bar.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -25,7 +25,9 @@ async function startSiteServer() {
       </script>`);
     else if (path === '/dragger')
       // A page that claims the window's drag area for itself, every way it can (page-cannot-drag-the-window).
-      html(`<title>Dragger</title><style>html, body, button { app-region: drag !important; }</style><button id="b" style="app-region: drag !important">Click me</button>`);
+      html(`<title>Dragger</title><style>html, body, button, button::before { app-region: drag !important; } button::before { content: 'x'; }</style>
+        <button id="b" style="app-region: drag !important">Click me</button><div id="host"></div>
+        <script>document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = '<style>span { app-region: drag !important; }</style><span id="s">shadow</span>';</script>`);
     else if (path === '/slow') held.push(response);
     else {
       const name = path.slice(1).toUpperCase() || 'ROOT';
@@ -663,14 +665,24 @@ test('chrome-row-is-the-title-bar', async () => {
 
 // Acceptance: specs/tabs.feature.md (Dragging: only the chrome drags, never a page)
 test('page-cannot-drag-the-window', async () => {
-  await go(`${site.origin}/dragger`);
-  const id = await contentsIdAt(`${site.origin}/dragger`);
-  // The page's own `app-region: drag !important` (style sheet and inline) loses to the user sheet main inserts.
-  const regions = () => run(id, `['html', 'body', '#b'].map((s) => getComputedStyle(document.querySelector(s)).getPropertyValue('app-region').trim())`);
-  await expect.poll(regions).toEqual(['no-drag', 'no-drag', 'no-drag']);
-  // And in the next document the tab commits.
-  await run(id, 'location.reload()').catch(() => undefined);
-  await expect.poll(regions).toEqual(['no-drag', 'no-drag', 'no-drag']);
+  // The page's own `app-region: drag !important` (style sheet, inline, a pseudo-element, a shadow tree) loses to
+  // the user sheet main inserts where the row is the title bar; Linux's frame ignores regions, so nothing is inserted.
+  const expected = Array<string>(5).fill(rowIsTitleBar(process.platform as TitleBarPlatform) ? 'none' : 'drag');
+  const regions = (id: number) =>
+    run(
+      id,
+      `(() => {
+        const region = (el, pseudo) => getComputedStyle(el, pseudo).getPropertyValue('app-region').trim();
+        const button = document.getElementById('b');
+        return [region(document.documentElement), region(document.body), region(button), region(button, '::before'), region(document.getElementById('host').shadowRoot.getElementById('s'))];
+      })()`,
+    );
+  for (const url of [`${site.origin}/dragger`, `${site.origin}/dragger?next`]) {
+    // Each a new document in the same tab (its URL names it, so the check never reads the one before).
+    await go(url);
+    const id = await contentsIdAt(url);
+    await expect.poll(() => regions(id)).toEqual(expected);
+  }
 });
 
 test('fullscreen-row-takes-the-full-width', async () => {

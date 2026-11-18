@@ -75,15 +75,50 @@ export function titleBarWindowOptions(platform: TitleBarPlatform, dark: boolean)
   return {};
 }
 
+/** Whether the chrome row is the window's title bar on `platform` (the native one hidden): macOS and Windows. */
+export function rowIsTitleBar(platform: TitleBarPlatform): boolean {
+  return platform === 'darwin' || platform === 'win32';
+}
+
 /**
  * A browsed page never drags the window (`tabs.feature.md`, Dragging). Without a native title bar
  * Electron takes drag regions from every WebContentsView of the window, a tab's page view included
- * (`WebContentsView::NonClientHitTest`, Electron 45), so a page that styles `app-region: drag` would
- * move the window and lose its own clicks there. Each tab view's main-frame document gets this style
- * sheet in the user origin, where `!important` beats the page's own; child frames give Electron no
- * regions.
+ * (`WebContentsView::NonClientHitTest`, Electron 45, which has no switch per WebContents), so a page
+ * that styles `app-region: drag` would move the window and lose its own clicks there. Where the row is
+ * the title bar, each tab view's main-frame document gets `PAGE_NO_DRAG_CSS` in the user origin, where
+ * `!important` beats the page's own (in shadow trees too); child frames give Electron no regions.
+ *
+ * The value is `initial` (no region at all), not `no-drag`: Blink sends a rectangle for every box whose
+ * region is set, drag or not. The selectors are every element and each pseudo-element Chromium 156
+ * gives a box of its own; a rule each, so one a later Chromium drops cannot void the others. A
+ * pseudo-element Chromium adds later is not covered until it is listed here.
  */
-export const PAGE_NO_DRAG_CSS = '*, *::before, *::after, *::backdrop { app-region: no-drag !important; }';
+export const PAGE_NO_DRAG_SELECTORS = [
+  '*',
+  '*::before',
+  '*::after',
+  '*::marker',
+  '*::first-letter',
+  '*::backdrop',
+  '*::placeholder',
+  '*::file-selector-button',
+  '*::details-content',
+  '*::checkmark',
+  '*::picker-icon',
+  '*::interest-button',
+  '*::column',
+  '*::scroll-button(*)',
+  '*::scroll-marker',
+  '*::scroll-marker-group',
+  '::view-transition',
+  '::view-transition-group(*)',
+  '::view-transition-group-children(*)',
+  '::view-transition-image-pair(*)',
+  '::view-transition-old(*)',
+  '::view-transition-new(*)',
+] as const;
+
+export const PAGE_NO_DRAG_CSS = PAGE_NO_DRAG_SELECTORS.map((selector) => `${selector} { app-region: initial !important; }`).join('\n');
 
 /**
  * The room the chrome row gives the window's controls on `platform`, on top of
