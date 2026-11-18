@@ -682,8 +682,9 @@ test('focus-never-scrolls-the-row', async () => {
   // A test-only width, narrower than the row's contents (the window's minimum keeps a real one whole).
   await row().evaluate((el) => el.style.setProperty('width', '300px'));
   try {
-    await page.getByTestId('render-profile-toggle').focus();
-    await expect(page.getByTestId('render-profile-toggle')).toBeFocused();
+    // The row's last control, the furthest past its clipped right end.
+    await page.getByTestId(CHROME_ROW.at(-1)!).focus();
+    await expect(page.getByTestId(CHROME_ROW.at(-1)!)).toBeFocused();
     const facts = await row().evaluate((el) => ({
       scrollLeft: el.scrollLeft,
       back: el.querySelector('[data-testid="back"]')!.getBoundingClientRect().left - el.getBoundingClientRect().left,
@@ -824,7 +825,7 @@ test('below-the-minimum-the-address-bar-gives-way', async () => {
     await activeTab().focus();
     await expect.poll(focusedPillInside).toBe(true);
   });
-  // The address bar keeps its padding and border (24px), so the tools stay whole down to 372px.
+  // The address bar keeps its padding and border (24px), so the tools stay whole down to 410px.
   await withRowWidth(CHROME_MIN_CONTENT_WIDTH_PX - ADDRESS_MIN_WIDTH_PX + 24, async () => {
     const facts = await rowFacts();
     expect(facts.inside).toBe(true);

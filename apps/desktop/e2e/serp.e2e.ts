@@ -191,25 +191,32 @@ test('serp-composition-and-ownership', async () => {
     expect(await table.locator('tr').first().evaluate((row) => getComputedStyle(row).display)).toBe('grid');
     expect(await axRoles(table)).toEqual({ table: 1, columnheader: 4, rowheader: 2, cell: 6 });
   });
-  // In the 588px window (the panel about 160px) a row takes three lines: every header and cell whole, nothing
-  // scrolling, and each count under its header (the same track's edges).
+  // In the window's minimum (NARROW_WINDOW: the panel 242px) a row is a three-column grid; in a 544px chrome (a
+  // tiled window: the panel 160px, what the old 588px minimum left it beside the agent's rail) it takes three lines
+  // of two columns. Either way every header and cell is whole, nothing scrolls, and each count is under its header
+  // (the same track's edges).
   const before = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
   try {
-    await page.setViewportSize({ width: NARROW_WINDOW.width, height: Math.min(700, before.height) });
-    await expect.poll(() => table.locator('tr').first().evaluate((row) => getComputedStyle(row).gridTemplateColumns.split(' ').length)).toBe(2);
-    expect(await sidewaysScroll(wrap)).toBe(0);
-    expect(await cutText(table)).toEqual([]);
-    const misplaced = await table.evaluate((t) => {
-      const heads = [...t.querySelectorAll('thead th')].map((th) => th.getBoundingClientRect());
-      const off: string[] = [];
-      for (const row of t.querySelectorAll('tbody tr'))
-        [...row.children].forEach((cell, i) => {
-          const [c, h] = [cell.getBoundingClientRect(), heads[i]!];
-          if (i > 0 && (Math.abs(c.left - h.left) > 1 || Math.abs(c.right - h.right) > 1)) off.push(`${row.getAttribute('data-domain')} ${i}`);
-        });
-      return off;
-    });
-    expect(misplaced).toEqual([]);
+    for (const [width, columns] of [
+      [NARROW_WINDOW.width, 3],
+      [544, 2],
+    ] as const) {
+      await page.setViewportSize({ width, height: Math.min(700, before.height) });
+      await expect.poll(() => table.locator('tr').first().evaluate((row) => getComputedStyle(row).gridTemplateColumns.split(' ').length), `${width}px`).toBe(columns);
+      expect(await sidewaysScroll(wrap), `${width}px`).toBe(0);
+      expect(await cutText(table), `${width}px`).toEqual([]);
+      const misplaced = await table.evaluate((t) => {
+        const heads = [...t.querySelectorAll('thead th')].map((th) => th.getBoundingClientRect());
+        const off: string[] = [];
+        for (const row of t.querySelectorAll('tbody tr'))
+          [...row.children].forEach((cell, i) => {
+            const [c, h] = [cell.getBoundingClientRect(), heads[i]!];
+            if (i > 0 && (Math.abs(c.left - h.left) > 1 || Math.abs(c.right - h.right) > 1)) off.push(`${row.getAttribute('data-domain')} ${i}`);
+          });
+        return off;
+      });
+      expect(misplaced, `${width}px`).toEqual([]);
+    }
   } finally {
     // Back to the chrome's own size (dropping the emulation instead left the Visibility panel's query box
     // with no box in the next test, on CI and locally).

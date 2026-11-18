@@ -72,13 +72,14 @@ export type TabCommand = keyof typeof RESERVED_TAB_SHORTCUTS;
 /**
  * The chrome row (`tabs.feature.md`, The chrome row): one `--h-chrome` (56px) row holding, in this DOM
  * order, which is also the Tab order, the navigation tools, the tablist, the address bar (the tablist's
- * sibling, never inside it), the new-tab button and the toolbar's toggles. Each entry is the control's
+ * sibling, never inside it), the new-tab button and the toolbar's toggles, the AI agent's last (its panel
+ * opens at the window's right edge, under it; `agent-panel.feature.md`, Toggle). Each entry is the control's
  * `data-testid`; the tablist contributes only its active tab to the Tab order (roving tabindex), and a
  * disabled tool (Back or Forward with nowhere to go, Reload on an empty tab) is skipped. The canvas
  * also draws an "Ask frost" button, a score on the SEO sidebar toggle and a "More tabs" menu: none of
  * them is part of merging the rows, so none is here yet.
  */
-export const CHROME_ROW = ['back', 'forward', 'reload', 'tab-strip', 'address', 'new-tab', 'seo-toggle', 'render-profile-toggle'] as const;
+export const CHROME_ROW = ['back', 'forward', 'reload', 'tab-strip', 'address', 'new-tab', 'seo-toggle', 'render-profile-toggle', 'agent-toggle'] as const;
 export type ChromeRowControl = (typeof CHROME_ROW)[number];
 
 /** The chrome row's height in CSS px: Signal's `--h-chrome` (`design-tokens.spec.ts`). */
@@ -108,9 +109,9 @@ export const ADDRESS_BASIS_PX = 360;
 /**
  * The window's minimum content width (CSS px; the window's minimum size adds its frame, and tiling
  * window managers may ignore it): what the chrome row
- * needs to fit whole, from the tokens: its padding (2 × `--space-4` = 24), six `--h-control` tools
- * (Back, Forward, Reload, New tab, the SEO and render-profile toggles: 204), seven `--space-1` gaps
- * (28), one tab with its ring room (`TAB_MIN_WIDTH_PX` + 2 × `--space-1` = 92) and
- * `ADDRESS_MIN_WIDTH_PX` (240).
+ * needs to fit whole, from the tokens: its padding (2 × `--space-4` = 24), seven `--h-control` tools
+ * (Back, Forward, Reload, New tab, the SEO, render-profile and AI agent toggles: 238), eight
+ * `--space-1` gaps (32), one tab with its ring room (`TAB_MIN_WIDTH_PX` + 2 × `--space-1` = 92) and
+ * `ADDRESS_MIN_WIDTH_PX` (240). It was 588 before the AI agent's toggle moved into the row.
  */
-export const CHROME_MIN_CONTENT_WIDTH_PX = 588;
+export const CHROME_MIN_CONTENT_WIDTH_PX = 626;

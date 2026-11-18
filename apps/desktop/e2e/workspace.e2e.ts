@@ -1,5 +1,6 @@
 // Specs: specs/workspace-layout.spec.ts (WORKSPACE_GAP, pageViewRadius) · Acceptance: specs/workspace-layout.feature.md
-// (page-view-matches-the-card, narrow-window-keeps-the-sheets-whole, page-view-corner-is-drawn-rounded). It runs on
+// (page-view-matches-the-card, narrow-window-keeps-the-sheets-whole, default-width-keeps-its-layout,
+// page-view-corner-is-drawn-rounded). It runs on
 // Linux, Windows and macOS and proves, on each, the view's bounds against the page card, the radius main passed to
 // setBorderRadius (a spy: Electron has no getter), and, from a screen capture, that the corner is drawn rounded.
 import { createServer } from 'node:http';
@@ -8,9 +9,9 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { COMMAND_PALETTE_MENU_ID } from '@app/specs/command-palette.spec';
 import { DEVTOOLS_MENU_ID } from '@app/specs/devtools.spec';
 import { fitRenderViewport } from '@app/specs/render-profile.spec';
-import { AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
-import { PAGE_MIN_WIDTH } from '@app/specs/seo-sidebar.spec';
-import { NARROW_WINDOW, pageViewRadius, TIGHT_WORKSPACE_BELOW, WORKSPACE_GAP, WORKSPACE_GAP_TIGHT, workspaceGap } from '@app/specs/workspace-layout.spec';
+import { AGENT_PANEL_WIDTH } from '@app/specs/agent-panel.spec';
+import { PAGE_MIN_WIDTH, SIDEBAR_PANEL_WIDTH } from '@app/specs/seo-sidebar.spec';
+import { NARROW_WINDOW, pageViewRadius, TIGHT_WORKSPACE_BELOW, WORKSPACE_GAP, WORKSPACE_GAP_TIGHT, workspaceGap, workspaceRowChrome, workspaceRowWidth } from '@app/specs/workspace-layout.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -89,7 +90,8 @@ const sameBox = (a: Box, b: Box) => near(a.x, b.x) && near(a.y, b.y) && near(a.w
 /**
  * The page card and the view line up (each edge within 1px), the view has `radius`, and the sheets
  * beside the card stand WORKSPACE_GAP off it: the SEO sidebar's right edge on the left, the agent
- * panel's left edge on the right.
+ * panel's left edge on the right; with the agent collapsed (it renders nothing) the card reaches the
+ * workspace's right inset.
  */
 async function cardMatches(radius: number, view: (card: Box) => Box = (card) => card): Promise<void> {
   await expect
@@ -97,18 +99,76 @@ async function cardMatches(radius: number, view: (card: Box) => Box = (card) => 
       const [state, card, sidebar, agent, width] = await Promise.all([viewState(), box('.page-area'), box('.seo'), box('.agent'), page.evaluate(() => innerWidth)]);
       // The workspace's gap at this width: tight under TIGHT_WORKSPACE_BELOW.
       const gap = workspaceGap(width);
-      if (!state.bounds || !card || !sidebar || !agent) return 'missing';
+      if (!state.bounds || !card || !sidebar) return 'missing';
       const want = view(card);
       if (!sameBox(state.bounds, want)) return `view ${JSON.stringify(state.bounds)} card ${JSON.stringify(want)}`;
       if (state.radius !== radius) return `radius ${state.radius}`;
       if (!near(card.x - (sidebar.x + sidebar.width), gap)) return `left gap ${card.x - (sidebar.x + sidebar.width)}`;
-      if (!near(agent.x - (card.x + card.width), gap)) return `right gap ${agent.x - (card.x + card.width)}`;
+      if (agent && !near(agent.x - (card.x + card.width), gap)) return `right gap ${agent.x - (card.x + card.width)}`;
+      if (!agent && !near(width - (card.x + card.width), gap)) return `right inset ${width - (card.x + card.width)}`;
       return 'ok';
     })
     .toBe('ok');
 }
 
 const PLAIN = pageViewRadius({ fullscreen: false, framed: false });
+
+test('default-width-keeps-its-layout', async () => {
+  // The default 1280px window (the chrome laid out at that width: a tiling window manager ignores the
+  // window's own), the SEO sheet open at its default width: nothing moved but the collapsed agent's
+  // rail, whose room and gap the page card takes (specs/workspace-layout.feature.md).
+  await go(`${origin}/default`);
+  await contentsIdAt(`${origin}/default`);
+  if ((await page.getByTestId('seo-sidebar').getAttribute('data-open')) !== 'true') await page.getByTestId('seo-toggle').click();
+  await expect(page.getByTestId('seo-panel')).toBeVisible();
+  await expect(page.getByTestId('agent-panel')).toHaveCount(0);
+  const { content } = await viewState();
+  const height = Math.min(700, content.height);
+  // Main clamps the view to the window: where the window is narrower than 1280px (a tiled one), only
+  // the chrome's layout is checked, the view against the card in page-view-matches-the-card.
+  const viewMatchesIfItFits = () => (content.width >= 1280 ? cardMatches(PLAIN) : Promise.resolve());
+  const G = WORKSPACE_GAP.px;
+  const measure = async () => {
+    const [width, seoRail, panel, card, agent] = await Promise.all([page.evaluate(() => innerWidth), box('.seo-rail'), box('.seo-panel'), box('.page-area'), box('.agent')]);
+    if (!seoRail || !panel || !card) return null;
+    return { width, seoRail, panel, card, agent };
+  };
+  try {
+    await page.setViewportSize({ width: 1280, height });
+    const collapsed = { leftEdge: G, railToSheet: G, sheet: SIDEBAR_PANEL_WIDTH, sheetToCard: G, rightInset: G, card: workspaceRowWidth(1280) - workspaceRowChrome({ sidebar: true, agent: false }) - SIDEBAR_PANEL_WIDTH };
+    await expect
+      .poll(async () => {
+        const m = await measure();
+        if (!m) return 'missing';
+        if (m.agent) return 'agent rendered';
+        const got = { leftEdge: m.seoRail.x, railToSheet: m.panel.x - (m.seoRail.x + m.seoRail.width), sheet: m.panel.width, sheetToCard: m.card.x - (m.panel.x + m.panel.width), rightInset: m.width - (m.card.x + m.card.width), card: m.card.width };
+        return (Object.keys(collapsed) as (keyof typeof collapsed)[]).every((k) => Math.abs(got[k] - collapsed[k]) <= 1) ? 'ok' : JSON.stringify(got);
+      })
+      .toBe('ok');
+    await viewMatchesIfItFits();
+    // Open, the agent panel is its default width, the gap past the card and from the window's edge; the
+    // card is as much narrower as the panel and its gap.
+    await page.getByTestId('agent-toggle').click();
+    await expect(page.getByTestId('agent-panel')).toHaveAttribute('data-open', 'true');
+    const open = { cardToAgent: G, agent: AGENT_PANEL_WIDTH, rightInset: G, card: collapsed.card - AGENT_PANEL_WIDTH - G };
+    await expect
+      .poll(async () => {
+        const m = await measure();
+        if (!m?.agent) return 'missing';
+        const got = { cardToAgent: m.agent.x - (m.card.x + m.card.width), agent: m.agent.width, rightInset: m.width - (m.agent.x + m.agent.width), card: m.card.width };
+        return (Object.keys(open) as (keyof typeof open)[]).every((k) => Math.abs(got[k] - open[k]) <= 1) ? 'ok' : JSON.stringify(got);
+      })
+      .toBe('ok');
+    await viewMatchesIfItFits();
+    await page.getByTestId('agent-collapse').click();
+    await expect(page.getByTestId('agent-panel')).toHaveCount(0);
+    await viewMatchesIfItFits();
+  } finally {
+    // Back to the window's own size: the emulated 1280px would otherwise stay for the next test.
+    await page.setViewportSize(content);
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
+  }
+});
 
 test('page-view-matches-the-card', async () => {
   const url = `${origin}/page`;
@@ -140,12 +200,13 @@ test('page-view-matches-the-card', async () => {
     await page.getByTestId('seo-toggle').click();
     await expect(page.getByTestId('seo-panel')).toHaveCount(0);
     await cardMatches(PLAIN);
-    // The agent panel open, then collapsed to its rail.
+    // The agent panel open, then collapsed: it renders nothing and the card reaches the right inset.
     await page.getByTestId('agent-toggle').click();
     await expect(page.getByTestId('agent-panel')).toHaveAttribute('data-open', 'true');
     await cardMatches(PLAIN);
     await page.getByTestId('agent-collapse').click();
-    await expect(page.getByTestId('agent-panel')).toHaveAttribute('data-open', 'false');
+    await expect(page.getByTestId('agent-panel')).toHaveCount(0);
+    await cardMatches(PLAIN);
     await page.getByTestId('seo-toggle').click();
     await expect(page.getByTestId('seo-panel')).toBeVisible();
     await cardMatches(PLAIN);
@@ -197,7 +258,7 @@ test('page-view-matches-the-card', async () => {
     await expect(page.getByTestId('agent-panel')).toHaveAttribute('data-open', 'true');
     await cardMatches(PLAIN);
     await page.getByTestId('agent-collapse').click();
-    await expect(page.getByTestId('agent-panel')).toHaveAttribute('data-open', 'false');
+    await expect(page.getByTestId('agent-panel')).toHaveCount(0);
     await cardMatches(PLAIN);
   } finally {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
@@ -224,7 +285,7 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
   if ((await page.getByTestId('seo-sidebar').getAttribute('data-open')) !== 'true') await page.getByTestId('seo-toggle').click();
   if ((await page.getByTestId('seo-panel').getAttribute('data-panel')) !== 'overview') await page.locator('[data-testid="seo-rail-item"][data-panel="overview"]').click();
   await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'overview');
-  await expect(page.getByTestId('agent-panel')).toHaveAttribute('data-open', 'false');
+  await expect(page.getByTestId('agent-panel')).toHaveCount(0);
   // The audit is in: Overview shows its score card.
   await expect(page.locator('.seo-score-card')).toBeVisible({ timeout: 30_000 });
   const padding = () => page.locator('.seo-body').evaluate((el) => getComputedStyle(el).paddingLeft);
@@ -234,61 +295,69 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
     // A width the panel's minimum fits: the canvas's 16px.
     await page.setViewportSize({ width: 900, height });
     await expect.poll(padding).toBe('16px');
-    await page.setViewportSize({ width: NARROW_WINDOW.width, height });
-    // Each within a pixel: on a scaled display the chrome's width is a fraction off the one asked for.
-    // Tight gaps everywhere: the window's edges and between every two sheets.
-    const T = WORKSPACE_GAP_TIGHT.px;
-    const want = { rail: AGENT_RAIL_WIDTH, railGap: T, leftEdge: T, railToSheet: T, sheetToCard: T, cardToAgent: T, panel: NARROW_WINDOW.seoSheet, card: PAGE_MIN_WIDTH };
-    await expect
-      .poll(async () => {
-        const [width, rail, seoRail, panel, card] = await Promise.all([page.evaluate(() => innerWidth), box('.agent-rail'), box('.seo-rail'), box('.seo-panel'), box('.page-area')]);
-        if (!rail || !seoRail || !panel || !card) return 'missing';
-        const got = {
-          rail: rail.width,
-          railGap: width - (rail.x + rail.width),
-          leftEdge: seoRail.x,
-          railToSheet: panel.x - (seoRail.x + seoRail.width),
-          sheetToCard: card.x - (panel.x + panel.width),
-          cardToAgent: rail.x - (card.x + card.width),
-          panel: panel.width,
-          card: card.width,
+    // The window's minimum, and the old one (588px, before the agent's toggle joined the chrome row),
+    // which a tiling window manager may still impose: the same rules hold at both.
+    for (const width of [NARROW_WINDOW.width, 588]) {
+      if ((await page.getByTestId('seo-panel').getAttribute('data-panel')) !== 'overview') await page.locator('[data-testid="seo-rail-item"][data-panel="overview"]').click();
+      await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'overview');
+      await page.setViewportSize({ width, height });
+      // Each within a pixel: on a scaled display the chrome's width is a fraction off the one asked for.
+      // Tight gaps everywhere: the window's edges and between every two sheets; the collapsed agent takes
+      // no room, so the page card ends the inset from the window's right edge.
+      const T = WORKSPACE_GAP_TIGHT.px;
+      const seoSheet = workspaceRowWidth(width) - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: true, agent: false }, workspaceGap(width));
+      if (width === NARROW_WINDOW.width) expect(seoSheet).toBe(NARROW_WINDOW.seoSheet);
+      const want = { rightEdge: T, leftEdge: T, railToSheet: T, sheetToCard: T, panel: seoSheet, card: PAGE_MIN_WIDTH };
+      await expect
+        .poll(async () => {
+          const [chrome, agent, seoRail, panel, card] = await Promise.all([page.evaluate(() => innerWidth), box('.agent'), box('.seo-rail'), box('.seo-panel'), box('.page-area')]);
+          if (agent) return 'agent rendered';
+          if (!seoRail || !panel || !card) return 'missing';
+          const got = {
+            rightEdge: chrome - (card.x + card.width),
+            leftEdge: seoRail.x,
+            railToSheet: panel.x - (seoRail.x + seoRail.width),
+            sheetToCard: card.x - (panel.x + panel.width),
+            panel: panel.width,
+            card: card.width,
+          };
+          return (Object.keys(want) as (keyof typeof want)[]).every((k) => Math.abs(got[k] - want[k]) <= 1) ? 'ok' : JSON.stringify(got);
+        })
+        .toBe('ok');
+      // Under the panel's minimum the body gives its content the padding back, Overview's first card fits
+      // inside the body's padding edge (boxes), and no text is cut inside its own box either: the body
+      // doesn't scroll sideways, the score card's text column and each of its lines, and the first toggle
+      // or action, are no wider inside than their boxes (scrollWidth <= clientWidth).
+      await expect.poll(padding).toBe('4px');
+      const facts = await page.locator('.seo-body').evaluate((body) => {
+        const limit = body.getBoundingClientRect().right - parseFloat(getComputedStyle(body).paddingRight);
+        const card = body.querySelector('.seo-score-card')!;
+        const text = card.querySelector('.seo-score-text') as HTMLElement | null;
+        const control = body.querySelector('.seo-toggle, .seo-action') as HTMLElement | null;
+        const cut = (el: Element) => el.scrollWidth > el.clientWidth;
+        return {
+          cardInside: [card, ...card.querySelectorAll('*')].every((el) => el.getBoundingClientRect().right <= limit + 0.5),
+          bodyScrolls: body.scrollWidth > body.clientWidth,
+          textCut: text === null ? 'missing' : [text, ...text.children].filter(cut).map((el) => el.className.toString()),
+          controlCut: control === null ? 'missing' : cut(control),
         };
-        return (Object.keys(want) as (keyof typeof want)[]).every((k) => Math.abs(got[k] - want[k]) <= 1) ? 'ok' : JSON.stringify(got);
-      })
-      .toBe('ok');
-    // Under the panel's minimum the body gives its content the padding back, Overview's first card fits
-    // inside the body's padding edge (boxes), and no text is cut inside its own box either: the body
-    // doesn't scroll sideways, the score card's text column and each of its lines, and the first toggle
-    // or action, are no wider inside than their boxes (scrollWidth <= clientWidth).
-    await expect.poll(padding).toBe('4px');
-    const facts = await page.locator('.seo-body').evaluate((body) => {
-      const limit = body.getBoundingClientRect().right - parseFloat(getComputedStyle(body).paddingRight);
-      const card = body.querySelector('.seo-score-card')!;
-      const text = card.querySelector('.seo-score-text') as HTMLElement | null;
-      const control = body.querySelector('.seo-toggle, .seo-action') as HTMLElement | null;
-      const cut = (el: Element) => el.scrollWidth > el.clientWidth;
-      return {
-        cardInside: [card, ...card.querySelectorAll('*')].every((el) => el.getBoundingClientRect().right <= limit + 0.5),
-        bodyScrolls: body.scrollWidth > body.clientWidth,
-        textCut: text === null ? 'missing' : [text, ...text.children].filter(cut).map((el) => el.className.toString()),
-        controlCut: control === null ? 'missing' : cut(control),
-      };
-    });
-    expect(facts).toEqual({ cardInside: true, bodyScrolls: false, textCut: [], controlCut: false });
-    // Changes: its capture card's Screenshot row and Project picker stack, so the body doesn't scroll
-    // sideways and no screenshot kind (nor its label) or Project picker part is cut inside its own box
-    // (overlapping kinds were cut that way, inside a body that only just fitted).
-    await page.locator('[data-testid="seo-rail-item"][data-panel="changes"]').click();
-    await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'changes');
-    await expect(page.locator('.changes-shot-kinds .seo-segment')).toHaveCount(3);
-    const changes = await page.locator('.seo-body').evaluate((body) => {
-      const cut = (el: Element) => el.scrollWidth > el.clientWidth;
-      const name = (el: Element) => `${el.className.toString()}: ${(el.textContent ?? '').trim()}`;
-      const kinds = [...body.querySelectorAll('.changes-shot-kinds .seo-segment')].flatMap((el) => [el, ...el.querySelectorAll('*')]);
-      const picker = [...body.querySelectorAll('.changes-project, .changes-project > *')];
-      return { bodyScrolls: body.scrollWidth > body.clientWidth, kindsCut: kinds.filter(cut).map(name), pickerCut: picker.length === 0 ? ['missing'] : picker.filter(cut).map(name) };
-    });
-    expect(changes).toEqual({ bodyScrolls: false, kindsCut: [], pickerCut: [] });
+      });
+      expect(facts).toEqual({ cardInside: true, bodyScrolls: false, textCut: [], controlCut: false });
+      // Changes: its capture card's Screenshot row and Project picker stack, so the body doesn't scroll
+      // sideways and no screenshot kind (nor its label) or Project picker part is cut inside its own box
+      // (overlapping kinds were cut that way, inside a body that only just fitted).
+      await page.locator('[data-testid="seo-rail-item"][data-panel="changes"]').click();
+      await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'changes');
+      await expect(page.locator('.changes-shot-kinds .seo-segment')).toHaveCount(3);
+      const changes = await page.locator('.seo-body').evaluate((body) => {
+        const cut = (el: Element) => el.scrollWidth > el.clientWidth;
+        const name = (el: Element) => `${el.className.toString()}: ${(el.textContent ?? '').trim()}`;
+        const kinds = [...body.querySelectorAll('.changes-shot-kinds .seo-segment')].flatMap((el) => [el, ...el.querySelectorAll('*')]);
+        const picker = [...body.querySelectorAll('.changes-project, .changes-project > *')];
+        return { bodyScrolls: body.scrollWidth > body.clientWidth, kindsCut: kinds.filter(cut).map(name), pickerCut: picker.length === 0 ? ['missing'] : picker.filter(cut).map(name) };
+      });
+      expect(changes).toEqual({ bodyScrolls: false, kindsCut: [], pickerCut: [] });
+    }
     // The view still lines up with the card.
     await cardMatches(PLAIN);
     // The tight gaps apply exactly under the threshold, and not in a 776px (tiled) chrome.

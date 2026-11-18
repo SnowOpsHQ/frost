@@ -108,10 +108,10 @@ input {
   --address-basis: 360px;
   /* One whole tab with its ring room: the least the tablist shows. */
   --one-tab: calc(var(--tab-min) + 2 * var(--space-1));
-  /* The room for the tablist and the address bar: the row's content width less its six tools (Back,
-     Forward, Reload, New tab and the two toggles) and its seven gaps (CHROME_ROW). Read where it is
-     used, inside the row, so 100cqw is the row's own width. */
-  --row-free: calc(100cqw - 6 * var(--h-control) - 7 * var(--space-1));
+  /* The room for the tablist and the address bar: the row's content width less its seven tools (Back,
+     Forward, Reload, New tab and the three toggles: SEO sidebar, render profile, AI agent) and its
+     eight gaps (CHROME_ROW). Read where it is used, inside the row, so 100cqw is the row's own width. */
+  --row-free: calc(100cqw - 7 * var(--h-control) - 8 * var(--space-1));
   /* The window's controls (title-bar.spec.ts): the traffic lights' zone at the start; the caption
      buttons at the end (the window's width less the free title bar area); 0 without an overlay. */
   --controls-start: env(titlebar-area-x, 0px);
@@ -400,7 +400,8 @@ input {
   color: color-mix(in srgb, var(--text-faint) 50%, transparent);
 }
 
-/* The toolbar's SEO sidebar toggle: pressed while the sidebar is open. */
+/* The toolbar's panel toggles, the SEO sidebar's and the AI agent's (AgentToggle.tsx): pressed while
+   their panel is open. */
 .sidebar-toggle[aria-pressed='true'] {
   background: var(--accent-soft);
   color: var(--accent);
@@ -7906,7 +7907,7 @@ input {
 
 /* The drawer's gap under the row in a narrow workspace (specs/workspace-layout.feature.md, A narrow
    window: the chrome's query, kept in this section with every .devtools rule). */
-@container chrome (width < 748px) {
+@container chrome (width < 700px) {
   .devtools {
     max-height: calc(100% - var(--devtools-page-min) - var(--space-1));
     margin-top: var(--space-1);
@@ -11126,14 +11127,14 @@ input {
 
 /* ---- Workspace: tight gaps in a narrow window ----------------------------------------------- */
 
-/* specs/workspace-layout.feature.md, A narrow window: under TIGHT_WORKSPACE_BELOW (748px of workspace,
+/* specs/workspace-layout.feature.md, A narrow window: under TIGHT_WORKSPACE_BELOW (700px of workspace,
    where --space-3 gaps would leave the SEO sheet under its minimum with the agent collapsed), every
    gap and inset of the workspace is --space-1 together, the bands' too, so their edges stay on the
    sheets' (the two gaps inside the page column, the palette's and a Projects run's, cost no width
    and stay). The separators keep their 8px hit area: offset by the 4px gap, they also cover the pane's
    own 4px edge beside it (never the page card), their line in the middle of the gap. The DevTools
    drawer's section and the agent's stylesheet repeat this query for the drawer and the separator. Last in the file, after the rules it overrides. */
-@container chrome (width < 748px) {
+@container chrome (width < 700px) {
   .workspace-stack {
     padding: 0 var(--space-1);
   }
