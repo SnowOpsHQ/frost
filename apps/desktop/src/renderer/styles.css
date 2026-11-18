@@ -108,10 +108,10 @@ input {
   --address-basis: 360px;
   /* One whole tab with its ring room: the least the tablist shows. */
   --one-tab: calc(var(--tab-min) + 2 * var(--space-1));
-  /* The room for the tablist and the address bar: the row's content width less its seven tools (Back,
-     Forward, Reload, New tab and the three toggles: SEO sidebar, render profile, AI agent) and its
-     eight gaps (CHROME_ROW). Read where it is used, inside the row, so 100cqw is the row's own width. */
-  --row-free: calc(100cqw - 7 * var(--h-control) - 8 * var(--space-1));
+  /* The room for the tablist and the address bar: the row's content width less its eight tools (Back,
+     Forward, Reload, New tab, the three toggles: SEO sidebar, render profile, AI agent, and Settings) and its
+     nine gaps (CHROME_ROW). Read where it is used, inside the row, so 100cqw is the row's own width. */
+  --row-free: calc(100cqw - 8 * var(--h-control) - 9 * var(--space-1));
   /* The window's controls (title-bar.spec.ts): the traffic lights' zone at the start; the caption
      buttons at the end (the window's width less the free title bar area); 0 without an overlay. */
   --controls-start: env(titlebar-area-x, 0px);

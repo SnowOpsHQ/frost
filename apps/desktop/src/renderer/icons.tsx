@@ -677,6 +677,16 @@ export function MorePanelsIcon(props: IconProps) {
   );
 }
 
+/** The chrome row's Settings button (`SETTINGS_BUTTON`): an eight-toothed gear around a hub. */
+export function SettingsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9.9 5.4 L10.3 3.2 L13.7 3.2 L14.1 5.4 L15.1 5.9 L17.0 4.5 L19.5 7.0 L18.1 8.9 L18.6 9.9 L20.8 10.3 L20.8 13.7 L18.6 14.1 L18.1 15.1 L19.5 17.0 L17.0 19.5 L15.1 18.1 L14.1 18.6 L13.7 20.8 L10.3 20.8 L9.9 18.6 L8.9 18.1 L7.0 19.5 L4.5 17.0 L5.9 15.1 L5.4 14.1 L3.2 13.7 L3.2 10.3 L5.4 9.9 L5.9 8.9 L4.5 7.0 L7.0 4.5 L8.9 5.9z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </Icon>
+  );
+}
+
 /** A panel's "Keep on the rail" toggle (Phase 11 Task 10): a push pin. */
 export function PinIcon(props: IconProps) {
   return (
