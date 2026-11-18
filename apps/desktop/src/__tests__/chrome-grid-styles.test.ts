@@ -11,6 +11,7 @@ import { SIGNAL_TOKENS } from '@app/specs/design-tokens.spec';
 import { RENDER_FRAME } from '@app/specs/render-profile.spec';
 import { SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 import { ADDRESS_BASIS_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
+import { TITLE_BAR_OVERLAY_COLOURS, WINDOW_DRAG_STRIP_PX } from '@app/specs/title-bar.spec';
 import {
   NARROW_PANEL_WRAPS,
   NARROW_WINDOW,
@@ -119,6 +120,47 @@ test('chrome-row-is-one-fixed-track', () => {
       .map(({ selector }) => `${file}: ${selector}`),
   );
   expect(stale).toEqual([]);
+});
+
+test('title-bar-overlay-colours-are-the-row-tokens', () => {
+  // specs/tabs.feature.md (The row is the window's title bar): Windows draws its caption buttons on the
+  // row's background with the tools' icon colour, light and dark, from title-bar.spec.ts's literals.
+  const tokens = read('tokens.css');
+  const dark = tokens.indexOf('@media (prefers-color-scheme: dark)');
+  expect(dark).toBeGreaterThan(0);
+  const hex = (css: string, name: string) => css.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6});`))?.[1]?.toLowerCase();
+  const theme = (css: string) => ({ color: hex(css, '--bg-window'), symbolColor: hex(css, '--text-muted') });
+  expect(theme(tokens.slice(0, dark))).toEqual(TITLE_BAR_OVERLAY_COLOURS.light);
+  expect(theme(tokens.slice(dark))).toEqual(TITLE_BAR_OVERLAY_COLOURS.dark);
+  // …and those are the row's colours.
+  expect(rule('styles.css', '.chrome-row')).toMatch(/background:\s*var\(--bg-window\);/);
+  expect(rule('styles.css', '.tool')).toMatch(/color:\s*var\(--text-muted\);/);
+});
+
+test('chrome-row-pads-by-the-window-controls', () => {
+  // specs/tabs.feature.md (The row is the window's title bar): the Window Controls Overlay's variables,
+  // present on macOS and Windows and absent on Linux (each falls back so its inset is 0).
+  const row = rule('styles.css', '.chrome-row');
+  expect(row).toMatch(/--controls-start:\s*env\(titlebar-area-x, 0px\);/);
+  expect(row).toMatch(/--controls-end:\s*max\(0px, 100vw - env\(titlebar-area-x, 0px\) - env\(titlebar-area-width, 100vw\)\);/);
+  expect(row).toMatch(new RegExp(`--drag-strip:\\s*${WINDOW_DRAG_STRIP_PX}px;`));
+  expect(row).toMatch(/padding-block:\s*0;/);
+  // The traffic lights' zone, or --space-4 where there is none.
+  expect(row).toMatch(/padding-left:\s*max\(var\(--space-4\), var\(--controls-start\)\);/);
+  // The caption buttons and the drag strip beside them, or --space-4 where there are none.
+  expect(row).toMatch(/padding-right:\s*calc\(var\(--space-4\) \+ var\(--controls-end\) \+ sign\(var\(--controls-end\)\) \* \(var\(--drag-strip\) - var\(--space-4\)\)\);/);
+  expect(row).not.toMatch(/(^|;)\s*padding:/);
+});
+
+test('only-the-chrome-row-sets-app-region', () => {
+  // specs/tabs.feature.md (The row is the window's title bar: dragging): the row drags; each of its
+  // children but the tablist and the loading line, and each tab, does not; no other rule names it.
+  const setters = CSS_FILES.flatMap((file) =>
+    rules(read(file))
+      .filter(({ body }) => /(^|[\s;])(-webkit-)?app-region\s*:/.test(body))
+      .map(({ selector, body }) => `${file}: ${selector.replace(/\s+/g, ' ')} → ${[...body.matchAll(/app-region\s*:\s*([^;]+);/g)].map((m) => m[1]!.trim()).join(' ')}`),
+  );
+  expect(setters).toEqual(['styles.css: .chrome-row → drag', 'styles.css: .chrome-row > :not(.tabs, .progress), .chrome-row .tab → no-drag']);
 });
 
 test('no-style-drops-a-chrome-slot', () => {

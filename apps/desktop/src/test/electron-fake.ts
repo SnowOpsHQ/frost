@@ -97,6 +97,7 @@ export class FakeBrowserWindow {
   setMinimumSize = vi.fn((width: number, height: number) => {
     this.minimumSize = [width, height];
   });
+  setTitleBarOverlay = vi.fn();
 
   constructor(options: BrowserWindowConstructorOptions = {}) {
     this.options = options;
@@ -217,6 +218,8 @@ export function electronFake() {
   };
   // `dialog.showMessageBox`: answers Cancel (button 1) unless a test says otherwise.
   const dialog = { showMessageBox: vi.fn(async (..._args: unknown[]) => ({ response: 1, checkboxChecked: false })) };
-  const electron = { app, BrowserWindow: FakeBrowserWindow, WebContentsView: FakeWebContentsView, Menu, shell, session, protocol, ipcMain, dialog };
+  // `nativeTheme`: light until a test sets `shouldUseDarkColors` and emits `updated`.
+  const nativeTheme = Object.assign(new EventEmitter(), { shouldUseDarkColors: false });
+  const electron = { app, BrowserWindow: FakeBrowserWindow, WebContentsView: FakeWebContentsView, Menu, shell, session, protocol, ipcMain, dialog, nativeTheme };
   return { ...electron, default: electron };
 }
