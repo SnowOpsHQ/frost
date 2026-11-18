@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AgentPanel } from './components/agent/AgentPanel';
+import { useAgentPanel } from './components/agent/useAgentPanel';
 import { ChromeRow } from './components/ChromeRow';
 import { CommandPalette } from './components/CommandPalette';
 import { DevtoolsDrawer } from './components/devtools/DevtoolsDrawer';
@@ -62,9 +63,20 @@ export function App() {
   const [historyOpen, closeHistory] = useHistoryView(state?.historyViewSeq, tab);
   // Projects (`projects.feature.md`): the Projects sheet over the page column, like History.
   const [projectsOpen, closeProjects] = useProjectsSheet(historyOpen, closeHistory);
+  // The agent panel (`agent-panel.feature.md`): its open state and main's AgentState, shared by the
+  // chrome row's toggle and the panel (collapsed, it takes no room in the workspace row).
+  const agent = useAgentPanel();
   return (
     <div className="chrome">
-      <ChromeRow state={state} tab={tab} sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} profileOpen={profileOpen} onToggleProfile={() => setProfileOpen((open) => !open)} />
+      <ChromeRow
+        state={state}
+        tab={tab}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={toggleSidebar}
+        profileOpen={profileOpen}
+        onToggleProfile={() => setProfileOpen((open) => !open)}
+        agent={agent}
+      />
       {/* Always present (empty without a prompt), so the grid rows stay put; polite, not focus-taking. */}
       <div className="prompt-slot" aria-live="polite">
         {tab?.permissionPrompt ? <PromptBar key={`${tab.id} ${tab.permissionPrompt.id}`} prompt={tab.permissionPrompt} covered={tab.fullscreen !== null} /> : null}
@@ -92,7 +104,7 @@ export function App() {
             <SettingsSlot tab={tab} historySeq={state?.historyViewSeq} onOpen={closeHistory} />
             <PageArea tab={tab} empty={state !== null && empty} onEditProfile={() => setProfileOpen(true)} />
           </div>
-          <AgentPanel tab={tab} />
+          <AgentPanel tab={tab} agent={agent} />
         </div>
         {/* The SEO devtools drawer (`devtools.feature.md`): a band under the workspace, which shrinks above it. */}
         <DevtoolsDrawer state={state} tab={tab} audit={empty ? null : audit} onOpenPanel={(panel) => setPanelJump((last) => ({ panel, focus: true, seq: (last?.seq ?? 0) + 1 }))} />

@@ -70,8 +70,8 @@ export interface PaneWidths {
 }
 
 /**
- * What the row leaves the two open panes beside the page's minimum: the SEO rail, the collapsed
- * agent's rail and the gaps between the row's sheets (`workspaceRowChrome`, specs/workspace-layout.spec.ts).
+ * What the row leaves the two open panes beside the page's minimum: the SEO rail and the gaps between
+ * the row's sheets (`workspaceRowChrome`, specs/workspace-layout.spec.ts; the collapsed agent takes no room).
  */
 export function roomForPanes(input: LayoutInput): number {
   return input.workspace - PAGE_MIN_WIDTH - workspaceRowChrome({ sidebar: input.sidebar.open, agent: input.agent.open }, input.gap ?? WORKSPACE_GAP.px);
@@ -285,7 +285,8 @@ export interface SeparatorProps {
 /**
  * A pane of the workspace row (`sidebar` or `agent`): reports whether it is open, watches the row's
  * width (the pane element's parent), sets its width on `element` as its CSS custom property, and
- * answers its separator's props. `layout` is for tests.
+ * answers its separator's props. The collapsed agent renders no element: the row is watched again
+ * once it has one. `layout` is for tests.
  */
 export function usePaneLayout(pane: PaneId, open: boolean, element: RefObject<HTMLElement | null>, layout: WorkspaceLayout = workspaceLayout): { readonly width: number; readonly separator: SeparatorProps } {
   const snapshot = useSyncExternalStore(layout.subscribe, layout.snapshot);
@@ -303,7 +304,7 @@ export function usePaneLayout(pane: PaneId, open: boolean, element: RefObject<HT
     const observer = new ResizeObserver(measure);
     observer.observe(row);
     return () => observer.disconnect();
-  }, [layout, element]);
+  }, [layout, element, open]);
   useLayoutEffect(() => {
     element.current?.style.setProperty(WIDTH_PROPERTIES[pane], `${width}px`);
   }, [element, pane, width, open]);

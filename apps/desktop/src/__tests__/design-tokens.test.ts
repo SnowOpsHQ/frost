@@ -432,6 +432,8 @@ test('removed-legacy-tokens-are-gone', () => {
   expect(REMOVED).toEqual(expect.arrayContaining(['--bg-chrome', '--palette-bg', '--jump-tile-bg', '--agent-card']));
   // And the base face's: the body's system face, and the three aliases the workspace's sheets read.
   expect(REMOVED).toEqual(expect.arrayContaining(['--font-ui', '--bg-page', '--agent-bg', '--seo-rail-width']));
+  // And the agent toggle's: the collapsed agent's rail went (its toggle is the chrome row's).
+  expect(REMOVED).toEqual(expect.arrayContaining(['--agent-rail-width']));
   // What is left declared: the Signal tokens' own names, the layout constants and the sidebar's dragged width.
   for (const row of MIGRATION) {
     if (row.removed === true) continue;

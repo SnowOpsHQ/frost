@@ -115,11 +115,22 @@ export function PageArea({ tab, empty, onEditProfile }: { readonly tab: TabState
     const observer = new ResizeObserver(report);
     observer.observe(el);
     // It also moves without changing size when a pane beside it changes width while the page is held
-    // at its minimum (a narrow window; specs/workspace-layout.feature.md): the row's other sheets too.
-    for (const pane of el.closest('.workspace')?.children ?? []) if (!pane.contains(el)) observer.observe(pane);
+    // at its minimum (a narrow window; specs/workspace-layout.feature.md): the row's other sheets too,
+    // and a pane that joins the row later (the agent panel renders nothing while collapsed).
+    const row = el.closest('.workspace');
+    const observePanes = () => {
+      for (const pane of row?.children ?? []) if (!pane.contains(el)) observer.observe(pane);
+    };
+    observePanes();
+    const panes = new MutationObserver(() => {
+      observePanes();
+      report();
+    });
+    if (row) panes.observe(row, { childList: true });
     window.addEventListener('resize', report);
     return () => {
       observer.disconnect();
+      panes.disconnect();
       window.removeEventListener('resize', report);
     };
   }, [report]);

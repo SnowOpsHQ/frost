@@ -58,7 +58,7 @@ describe('main window', () => {
     const gaps = CHROME_ROW.length - 1;
     const row = 2 * space4 + tools * control + gaps * space1 + (TAB_MIN_WIDTH_PX + 2 * space1) + ADDRESS_MIN_WIDTH_PX;
     expect(row).toBe(CHROME_MIN_CONTENT_WIDTH_PX);
-    expect(CHROME_MIN_CONTENT_WIDTH_PX).toBe(588);
+    expect(CHROME_MIN_CONTENT_WIDTH_PX).toBe(626);
     // The minimum counts the frame (the fake's is 16px wide): the content's minimum plus it; the height is kept.
     const win = createMainWindow() as unknown as FakeBrowserWindow;
     expect(win.getMinimumSize()).toEqual([CHROME_MIN_CONTENT_WIDTH_PX + 16, 0]);

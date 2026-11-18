@@ -92,7 +92,7 @@ async function signInToPlan(): Promise<void> {
   await expect(page.getByTestId('agent-chatgpt')).toHaveAttribute('data-state', 'signed-in', { timeout: 20_000 });
   await expect(page.getByTestId('agent-model')).toHaveValue('chatgpt/gpt-e2e');
   await page.getByTestId('agent-collapse').click();
-  await expect(page.getByTestId('agent-panel')).toHaveAttribute('data-open', 'false');
+  await expect(page.getByTestId('agent-panel')).toHaveCount(0);
 }
 
 test.beforeAll(async () => {
