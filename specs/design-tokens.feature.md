@@ -1306,7 +1306,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.a, .b.c { &:hover { … } }`, `div, .a { &:hover { … } }`, `.a, .b { & + & { … } }` or `.a, .b { .c { … } }`
   (each takes `:is()` of the whole list, which is not modelled), and `.a { &[title='&'] { … } }`), so nothing
   is skipped unread. Every renderer stylesheet's at-rules are among those it applies: each stylesheet's rules resolve in
-  every `CASCADE_CONTEXTS` state without a throw. A focus ring a `@container chrome (width < 748px)` rule takes
+  every `CASCADE_CONTEXTS` state without a throw. A focus ring a `@container chrome (width < 700px)` rule takes
   away, or a colour a reduced-motion rule changes, fails its check in that state. Each check below runs in light
   and dark in every `CASCADE_CONTEXTS` state.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
@@ -1546,7 +1546,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   and at the default width it is the four-column table with each domain whole on one line;
   at 300px neither it nor the body does, no text in the table or the parameter grid is cut, its rows are
   grids, and the accessibility tree (CDP `Accessibility.queryAXTree`) holds 1 table, 4 column headers, 2
-  row headers and 6 cells; in the 588px window (`NARROW_WINDOW`) its rows have two columns, its wrap
+  row headers and 6 cells; in the 626px window (`NARROW_WINDOW`) its rows have two columns, its wrap
   doesn't scroll, no header or cell is cut, and each count's cell has its header's edges; with
   `LONG_DOMAINS` (`?domains=long`) at the default width it is still four columns, nothing scrolls, no
   domain breaks except after a dot or a hyphen, and the fixture's two are on one line each.

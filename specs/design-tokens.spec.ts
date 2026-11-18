@@ -265,7 +265,8 @@ export const LEGACY_TOKEN_MIGRATION = [
   // Layout constants: kept, no visual token
   { legacy: '--page-min-width', kind: 'alias', signal: null, was: '320px', note: 'layout constant: the name stays, no visual token' },
   { legacy: '--agent-panel-width', kind: 'alias', signal: null, was: '380px', note: 'layout constant: the name stays, no visual token' },
-  { legacy: '--agent-rail-width', kind: 'alias', signal: null, was: '40px', note: 'layout constant: the name stays, no visual token' },
+  // The agent toggle's PR (agent-panel.feature.md, Toggle): the collapsed agent takes no room, so its rail's width went.
+  { legacy: '--agent-rail-width', kind: 'retire', signal: null, was: '40px', note: 'none: the collapsed agent has no rail (its toggle is the chrome row\'s)', removed: true },
   { legacy: '--settings-width', kind: 'alias', signal: null, was: '820px', note: 'layout constant: the name stays, no visual token' },
   { legacy: '--settings-nav-width', kind: 'alias', signal: null, was: '168px', note: 'layout constant: the name stays, no visual token' },
   { legacy: '--history-width', kind: 'alias', signal: null, was: '760px', note: 'layout constant: the name stays, no visual token' },
@@ -472,7 +473,7 @@ export interface CascadeContext {
  * The states every cascade check runs in (`TEXT_COLOUR_RULES`, `TEXT_TYPE_RULES`, `FOCUS_RING_RULES`,
  * `FORCED_COLOURS_BUSY`, `FORCED_COLOURS_PRESSED`, `FORCED_COLOURS_KEPT`, `DISABLED_CONTROLS`, `PRESSED_EDGES`,
  * `STATE_EDGES` and `TAB_STRIP`'s active tab), each in light and dark: the default window, where every container
- * is wider than its queries and motion is allowed; reduced motion; and the narrowest window (588px,
+ * is wider than its queries and motion is allowed; reduced motion; and the narrowest window (626px,
  * `workspace-layout.spec.ts` `NARROW_WINDOW`), where every width query the stylesheets hold (each an upper
  * bound) applies at once. A rule in a reduced-motion or width block that undid a guarded colour, ring, edge,
  * type or `forced-color-adjust` fails its check there.
