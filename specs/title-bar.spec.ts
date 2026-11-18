@@ -81,23 +81,37 @@ export function rowIsTitleBar(platform: TitleBarPlatform): boolean {
 }
 
 /**
- * A browsed page never drags the window (`tabs.feature.md`, Dragging). Without a native title bar
- * Electron takes drag regions from every WebContentsView of the window, a tab's page view included
- * (`WebContentsView::NonClientHitTest`, Electron 45, which has no switch per WebContents), so a page
- * that styles `app-region: drag` would move the window and lose its own clicks there. Where the row is
- * the title bar, each tab view's main-frame document gets `PAGE_NO_DRAG_CSS` in the user origin, where
- * `!important` beats the page's own (in shadow trees too); child frames give Electron no regions.
- *
- * The value is `initial` (no region at all), not `no-drag`: Blink sends a rectangle for every box whose
- * region is set, drag or not. The selectors are every element and each standard pseudo-element
- * Chromium 156 gives a box of its own and lets carry the property; a rule each, so one a later Chromium
- * drops cannot void the others. Left out on purpose: `::first-letter`, `::first-line` and `::marker`
- * (Chromium does not apply the property to them, and a universal `::first-letter` rule makes one in
- * every block, which splits its text). Known limit: a control's vendor parts (`::-webkit-slider-thumb`
- * and the like) and a pseudo-element a later Chromium adds are not covered; a page that sets a drag
- * region there only costs itself those clicks.
+ * The parts of Chromium's built-in controls that a page's style sheet can reach (`::-webkit-…`): the
+ * `pseudo` names of the user-agent shadow parts that every standard control renders in Chromium
+ * 156.0.8078.48 (read over the DevTools protocol, `DOM.getDocument` with `pierce`), plus the slider's
+ * and the media slider's thumb and container, the seconds and milliseconds fields and the text track's
+ * boxes, which that page did not render. `-internal-…` parts are left out: only the browser's own sheet
+ * can name them. Re-read the list when Electron's Chromium changes.
  */
-export const PAGE_NO_DRAG_SELECTORS = [
+export const PAGE_NO_DRAG_CONTROL_PARTS = [
+  '-webkit-calendar-picker-indicator', '-webkit-color-swatch', '-webkit-color-swatch-wrapper',
+  '-webkit-datetime-edit', '-webkit-datetime-edit-ampm-field', '-webkit-datetime-edit-day-field',
+  '-webkit-datetime-edit-fields-wrapper', '-webkit-datetime-edit-hour-field',
+  '-webkit-datetime-edit-millisecond-field', '-webkit-datetime-edit-minute-field',
+  '-webkit-datetime-edit-month-field', '-webkit-datetime-edit-second-field', '-webkit-datetime-edit-text',
+  '-webkit-datetime-edit-week-field', '-webkit-datetime-edit-year-field', '-webkit-details-marker',
+  '-webkit-file-upload-button', '-webkit-inner-spin-button', '-webkit-input-placeholder', '-webkit-media-controls',
+  '-webkit-media-controls-current-time-display', '-webkit-media-controls-enclosure',
+  '-webkit-media-controls-fullscreen-button', '-webkit-media-controls-mute-button',
+  '-webkit-media-controls-overlay-enclosure', '-webkit-media-controls-panel', '-webkit-media-controls-play-button',
+  '-webkit-media-controls-time-remaining-display', '-webkit-media-controls-timeline',
+  '-webkit-media-controls-toggle-closed-captions-button', '-webkit-media-controls-volume-control-container',
+  '-webkit-media-controls-volume-control-hover-background', '-webkit-media-controls-volume-slider',
+  '-webkit-media-slider-container', '-webkit-media-slider-thumb', '-webkit-media-text-track-container',
+  '-webkit-media-text-track-display', '-webkit-meter-bar', '-webkit-meter-even-less-good-value',
+  '-webkit-meter-inner-element', '-webkit-meter-optimum-value', '-webkit-meter-suboptimum-value',
+  '-webkit-progress-bar', '-webkit-progress-inner-element', '-webkit-progress-value', '-webkit-search-cancel-button',
+  '-webkit-slider-container', '-webkit-slider-runnable-track', '-webkit-slider-thumb',
+  '-webkit-textfield-decoration-container',
+] as const;
+
+/** The standard pseudo-elements with a box of their own (`PAGE_NO_DRAG_SELECTORS`). */
+const PAGE_NO_DRAG_STANDARD_SELECTORS = [
   '*',
   '*::before',
   '*::after',
@@ -107,6 +121,7 @@ export const PAGE_NO_DRAG_SELECTORS = [
   '*::details-content',
   '*::checkmark',
   '*::picker-icon',
+  '*::picker(select)',
   '*::interest-button',
   '*::column',
   '*::column::scroll-marker',
@@ -120,6 +135,26 @@ export const PAGE_NO_DRAG_SELECTORS = [
   '::view-transition-old(*)',
   '::view-transition-new(*)',
 ] as const;
+
+/**
+ * A browsed page never drags the window (`tabs.feature.md`, Dragging). Without a native title bar
+ * Electron takes drag regions from every WebContentsView of the window, a tab's page view included
+ * (`WebContentsView::NonClientHitTest`, Electron 45, which has no switch per WebContents), so a page
+ * that styles `app-region: drag` would move the window and lose its own clicks there. Where the row is
+ * the title bar, each tab view's main-frame document gets `PAGE_NO_DRAG_CSS` in the user origin, where
+ * `!important` beats the page's own (in shadow trees too); child frames give Electron no regions.
+ *
+ * The value is `initial` (no region at all), not `no-drag`: Blink sends a rectangle for every box whose
+ * region is set, drag or not. The selectors are every element and each standard pseudo-element
+ * Chromium 156 gives a box of its own and lets carry the property; a rule each, so one a later Chromium
+ * drops cannot void the others. Left out on purpose: `::first-letter`, `::first-line` and `::marker`
+ * (Chromium does not apply the property to them, and a universal `::first-letter` rule makes one in
+ * every block, which splits its text). After them come the built-in controls' parts a page can style
+ * (`PAGE_NO_DRAG_CONTROL_PARTS`). Known limit: a pseudo-element or a control part a later Chromium
+ * adds is not covered until it is listed; a page that sets a drag region there only costs itself
+ * those clicks.
+ */
+export const PAGE_NO_DRAG_SELECTORS: readonly string[] = [...PAGE_NO_DRAG_STANDARD_SELECTORS, ...PAGE_NO_DRAG_CONTROL_PARTS.map((part) => `*::${part}`)];
 
 export const PAGE_NO_DRAG_CSS = PAGE_NO_DRAG_SELECTORS.map((selector) => `${selector} { app-region: initial !important; }`).join('\n');
 

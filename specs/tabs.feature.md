@@ -98,11 +98,12 @@ Phase 1 Task 2. Each scenario maps to one named test.
       style sheet on every main-frame navigation (`createTabView`): a page's own `app-region: drag`
       (or `window-drag`), `!important` or not, in a shadow tree or on a pseudo-element with a box
       (`PAGE_NO_DRAG_SELECTORS`), resolves to none, so the page sends no region at all. On Linux,
-      where the native frame makes Electron ignore every region, nothing is inserted. Known limit: a
-      control's vendor parts (`::-webkit-slider-thumb` and the like) and a box-making pseudo-element a
-      later Chromium adds are not covered (Electron has no switch; a page that drags from one only
-      loses its own clicks there). No rule names `::first-letter`: one on every block would split its
-      text.
+      where the native frame makes Electron ignore every region, nothing is inserted. The selectors also
+      name the built-in controls' parts a page can style (`PAGE_NO_DRAG_CONTROL_PARTS`, such as
+      `::-webkit-slider-thumb`). Known limit: a box-making pseudo-element or a control part a later
+      Chromium adds is not covered until it is listed (Electron has no switch; a page that drags from
+      one only loses its own clicks there). No rule names `::first-letter`: one on every block would
+      split its text.
     - **Minimum window width** with the controls: `CHROME_MIN_CONTENT_WIDTH_PX` plus
       `chromeRowInset(platform)`, the room the row gives the window controls (0 on Linux).
 - **Keyboard contract of the chrome row.** Nothing a keyboard user could do with two rows is lost:

@@ -58,7 +58,7 @@ describe('createTabView', () => {
     }
     // One rule per selector (an unknown one voids only its own), every one no region at all.
     expect(PAGE_NO_DRAG_CSS.split('\n')).toEqual(PAGE_NO_DRAG_SELECTORS.map((selector) => `${selector} { app-region: initial !important; }`));
-    expect(PAGE_NO_DRAG_SELECTORS).toEqual(expect.arrayContaining(['*', '*::before', '*::after', '*::backdrop', '*::scroll-button(*)', '*::column::scroll-marker']));
+    expect(PAGE_NO_DRAG_SELECTORS).toEqual(expect.arrayContaining(['*', '*::before', '*::after', '*::backdrop', '*::scroll-button(*)', '*::column::scroll-marker', '*::picker(select)', '*::-webkit-slider-thumb']));
     // Never ::first-letter or ::first-line: a universal rule there makes the pseudo-element in every block and splits its text.
     expect(PAGE_NO_DRAG_SELECTORS.filter((selector) => /first-(letter|line)/.test(selector))).toEqual([]);
   });
