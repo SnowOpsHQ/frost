@@ -605,7 +605,7 @@ export interface ForcedColoursPressed extends ForcedColoursBusy {
  * over it. An entry with `rest` (and `match`) also pins the unchosen item's edge (`ForcedColoursPressed`).
  */
 export const FORCED_COLOURS_PRESSED = [
-  { stylesheet: 'styles.css', element: ['.tool', ".sidebar-toggle[aria-pressed='true']"], why: 'the SEO sidebar toggle, pressed (the sidebar open)' },
+  { stylesheet: 'styles.css', element: ['.tool', ".sidebar-toggle[aria-pressed='true']"], why: 'the SEO sidebar\'s and the AI agent\'s toggles (both .sidebar-toggle), pressed (their panel open)' },
   { stylesheet: 'styles.css', element: ['.tool', ".render-toggle[aria-pressed='true']"], why: 'the render-profile toggle, pressed (its editor bar open)' },
   // The panels' shared controls (Links, Images, Social and Schema's PR): pressed is a fill (--accent-soft,
   // or the chosen segment's raised --bg-surface), which forced colours replace.
@@ -2696,7 +2696,7 @@ export const FOCUS_RING_RULES = [
   {
     stylesheet: 'styles.css',
     element: ['.tool', TOOL_HOVER, ".sidebar-toggle[aria-pressed='true']", '.tool:focus-visible'],
-    why: 'the SEO sidebar toggle, pressed (the sidebar open), focused and hovered: its --accent-soft fill keeps the ring',
+    why: 'the SEO sidebar\'s and the AI agent\'s toggles (both .sidebar-toggle), pressed (their panel open), focused and hovered: the --accent-soft fill keeps the ring',
   },
   { stylesheet: 'styles.css', element: ['.tab', TAB_HOVER, TAB_FOCUS], why: 'an inactive tab, focused (the tablist\'s roving focus) and hovered' },
   { stylesheet: 'styles.css', element: ['.tab', ".tab[data-active='true']", TAB_FOCUS], why: 'the active tab, focused: its --e-raised edge gives way to --focus-ring' },

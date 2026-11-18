@@ -1359,7 +1359,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
   over it. Every selector named is one of the stylesheet's.
 - **Scenario: pressed-toggles-show-under-forced-colours** — for each `FORCED_COLOURS_PRESSED` entry (the
-  SEO sidebar toggle and the render-profile toggle, pressed; a panel toggle, the chosen segment and a
+  SEO sidebar's and the AI agent's toggles (one `.sidebar-toggle` rule) and the render-profile toggle, pressed; a panel toggle, the chosen segment and a
   filter chip, pressed; the find bar's Match case, pressed; the DevTools drawer's selected tab; an n-gram's highlight button,
   pressed; the chosen version, project, view, node, Inspector view, source match and swatch), in light
   and dark, the cascade over its
