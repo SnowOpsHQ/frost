@@ -101,7 +101,7 @@ to one named test.
   toggle are remembered.
 - **Scenario: agent-toggle-badge-and-focus** (`agent-panel.test.ts`) — collapsed, the row's toggle
   carries the badge (`running`, then `approval` over it) and none while open; opening from the
-  toggle focuses the composer, and collapsing from the header's Collapse, the toggle or the palette's
+  toggle focuses the composer (also when the panel kept another view, such as Agent settings), and collapsing from the header's Collapse, the toggle or the palette's
   toggle focuses the toggle.
 - **Scenario: agent-panel-palette-requests-move-focus** (`agent-panel.test.ts`; issue #25) — from the
   palette, settings focuses the settings button and a skill run (or a new chat) the composer (its

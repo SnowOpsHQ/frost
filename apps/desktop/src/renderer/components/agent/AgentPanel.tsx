@@ -109,7 +109,7 @@ export function AgentPanel({ tab, agent }: { readonly tab: TabState | undefined;
     const target = focusAfter.current;
     if (target === 'toggle' && !open) toggle.current?.focus();
     else if (target === 'settings' && open && view === 'settings') settingsToggle.current?.focus();
-    else if (target === 'input' && open && view === 'chat') {
+    else if (target === 'input' && open) {
       const field = input.current ?? picker.current;
       if (field === null) return;
       field.focus();

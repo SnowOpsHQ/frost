@@ -190,6 +190,16 @@ test('agent-toggle-badge-and-focus', () => {
   click('agent-toggle');
   expect(isOpen()).toBe(false);
   expect(document.activeElement).toBe(toggle());
+  // The panel keeps its view while collapsed: reopened on Agent settings, focus still goes to the composer.
+  click('agent-toggle');
+  click('agent-settings-toggle');
+  click('agent-toggle');
+  click('agent-toggle');
+  expect(isOpen()).toBe(true);
+  expect(document.activeElement).toBe(byTestId('agent-input'));
+  click('agent-settings-toggle');
+  click('agent-toggle');
+  expect(document.activeElement).toBe(toggle());
   // The palette's toggle: open on the composer, collapsed on the row's toggle.
   (document.activeElement as HTMLElement | null)?.blur();
   act(() => requestAgentPanel({ kind: 'toggle' }));
