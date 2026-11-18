@@ -92,6 +92,10 @@ Phase 1 Task 2. Each scenario maps to one named test.
       the row but the tablist and the loading line (the navigation group, the address bar, New tab,
       the toggles and any tool added later), and each tab (its × included). No rule outside the chrome
       row's sets `app-region`. On Linux, with its native frame, the drag area does nothing.
+    - **Only the chrome drags, never a page:** without a native title bar Electron takes drag regions
+      from every view of the window, a tab's page view included, so each tab view's document gets
+      `PAGE_NO_DRAG_CSS` as a user style sheet on every main-frame navigation (`createTabView`): a
+      page's own `app-region: drag`, `!important` or not, resolves to `no-drag`.
     - **Minimum window width** with the controls: `CHROME_MIN_CONTENT_WIDTH_PX` plus
       `chromeRowInset(platform)`, the room the row gives the window controls (0 on Linux).
 - **Keyboard contract of the chrome row.** Nothing a keyboard user could do with two rows is lost:
@@ -398,6 +402,9 @@ shrink order) is the same on all three platforms.
   overlay and the row's padding is `--space-4` at both ends. On all three the row's `app-region` is
   `drag` and every control in it (each `CHROME_ROW` control's element, each tab and its ×, and every
   focusable element in the row) resolves to `no-drag` on itself or an ancestor inside the row.
+- **Scenario: page-cannot-drag-the-window** — a page whose style sheet and inline style both set
+  `app-region: drag !important` on its root, body and a button resolves `no-drag` on all three, and
+  again after a reload (the next document).
 - **Scenario: fullscreen-row-takes-the-full-width** (macOS) — in native fullscreen the traffic lights'
   inset is gone: Back starts at the row's `--space-4`; leaving fullscreen brings the inset back.
 - **Scenario: arrow-focus-brings-the-whole-tab-in** — in a 1280px window with 20 tabs and the first

@@ -23,6 +23,9 @@ async function startSiteServer() {
         window.seen = [];
         addEventListener('keydown', (event) => { seen.push(event.key); event.preventDefault(); event.stopImmediatePropagation(); }, true);
       </script>`);
+    else if (path === '/dragger')
+      // A page that claims the window's drag area for itself, every way it can (page-cannot-drag-the-window).
+      html(`<title>Dragger</title><style>html, body, button { app-region: drag !important; }</style><button id="b" style="app-region: drag !important">Click me</button>`);
     else if (path === '/slow') held.push(response);
     else {
       const name = path.slice(1).toUpperCase() || 'ROOT';
@@ -47,7 +50,7 @@ async function startSiteServer() {
 
 let app: ElectronApplication;
 let page: Page;
-const { browseContents, attachedViewIds, contentsIdAt, menu, strip, activeTab, address, chromeCaughtUp, go, closeAllTabs, press } = chromeHelpers(
+const { browseContents, attachedViewIds, contentsIdAt, menu, run, strip, activeTab, address, chromeCaughtUp, go, closeAllTabs, press } = chromeHelpers(
   () => app,
   () => page,
 );
@@ -656,6 +659,18 @@ test('chrome-row-is-the-title-bar', async () => {
     expect(rect!.x + rect!.width - facts.last).toBeGreaterThanOrEqual(WINDOW_DRAG_STRIP_PX - 0.5);
     expect(facts.padding[0]).toBe(12);
   }
+});
+
+// Acceptance: specs/tabs.feature.md (Dragging: only the chrome drags, never a page)
+test('page-cannot-drag-the-window', async () => {
+  await go(`${site.origin}/dragger`);
+  const id = await contentsIdAt(`${site.origin}/dragger`);
+  // The page's own `app-region: drag !important` (style sheet and inline) loses to the user sheet main inserts.
+  const regions = () => run(id, `['html', 'body', '#b'].map((s) => getComputedStyle(document.querySelector(s)).getPropertyValue('app-region').trim())`);
+  await expect.poll(regions).toEqual(['no-drag', 'no-drag', 'no-drag']);
+  // And in the next document the tab commits.
+  await run(id, 'location.reload()').catch(() => undefined);
+  await expect.poll(regions).toEqual(['no-drag', 'no-drag', 'no-drag']);
 });
 
 test('fullscreen-row-takes-the-full-width', async () => {

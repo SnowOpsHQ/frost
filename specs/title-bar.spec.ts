@@ -76,6 +76,16 @@ export function titleBarWindowOptions(platform: TitleBarPlatform, dark: boolean)
 }
 
 /**
+ * A browsed page never drags the window (`tabs.feature.md`, Dragging). Without a native title bar
+ * Electron takes drag regions from every WebContentsView of the window, a tab's page view included
+ * (`WebContentsView::NonClientHitTest`, Electron 45), so a page that styles `app-region: drag` would
+ * move the window and lose its own clicks there. Each tab view's main-frame document gets this style
+ * sheet in the user origin, where `!important` beats the page's own; child frames give Electron no
+ * regions.
+ */
+export const PAGE_NO_DRAG_CSS = '*, *::before, *::after, *::backdrop { app-region: no-drag !important; }';
+
+/**
  * The room the chrome row gives the window's controls on `platform`, on top of
  * `CHROME_MIN_CONTENT_WIDTH_PX` (CSS px): the traffic lights' zone on macOS and the caption buttons with
  * the drag strip on Windows, each less the `--space-4` it replaces; 0 on Linux.

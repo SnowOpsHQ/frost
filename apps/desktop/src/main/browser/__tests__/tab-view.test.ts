@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { BROWSE_PARTITION, TAB_VIEW_WEB_PREFERENCES } from '@app/specs/browser.spec';
 import { HARDENED_WEB_PREFERENCES } from '@app/specs/window-hardening.spec';
 import { LOCATION_WEBRTC_POLICY, locationPartition } from '@app/specs/location-profiles.spec';
+import { PAGE_NO_DRAG_CSS } from '@app/specs/title-bar.spec';
 import type { FakeWebContentsView } from '../../../test/electron-fake';
 import { createTabView } from '../../window';
 
@@ -31,6 +32,26 @@ describe('createTabView', () => {
 
   test('tab-view-disables-dialogs', () => {
     expect(webPreferencesOf()['disableDialogs']).toBe(true);
+  });
+
+  // Acceptance: specs/tabs.feature.md (Dragging: only the chrome drags, never a page)
+  test('tab-view-pages-cannot-drag-the-window', async () => {
+    const view = createTabView() as unknown as FakeWebContentsView;
+    const insertCSS = vi.fn(async (_css: string, _options?: { cssOrigin?: string }) => 'key');
+    Object.assign(view.webContents, { insertCSS });
+    // Nothing before a document commits; then once per main-frame navigation, in the user origin.
+    expect(insertCSS).not.toHaveBeenCalled();
+    view.webContents.emit('did-navigate', {}, 'https://example.com/');
+    view.webContents.emit('did-navigate', {}, 'https://example.com/next');
+    expect(insertCSS.mock.calls).toEqual([
+      [PAGE_NO_DRAG_CSS, { cssOrigin: 'user' }],
+      [PAGE_NO_DRAG_CSS, { cssOrigin: 'user' }],
+    ]);
+    expect(PAGE_NO_DRAG_CSS).toMatch(/^\*, \*::before, \*::after, \*::backdrop \{ app-region: no-drag !important; \}$/);
+    // A page that is gone by then rejects the insert: swallowed, never an unhandled rejection.
+    insertCSS.mockRejectedValueOnce(new Error('gone'));
+    view.webContents.emit('did-navigate', {}, 'https://example.com/gone');
+    await Promise.resolve();
   });
 });
 
