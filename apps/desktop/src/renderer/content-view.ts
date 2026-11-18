@@ -46,7 +46,8 @@ export function widthMeter(cut: SnippetCut | null): WidthMeter {
   const mark = Math.round((1 / METER_SCALE) * 1000) / 10;
   if (cut === null || cut.width === 0) return { state: 'empty', fill: 0, mark, label: 'Nothing to measure' };
   const fill = Math.max(2, Math.round((Math.min(cut.width, cut.budget * METER_SCALE) / (cut.budget * METER_SCALE)) * 1000) / 10);
-  const px = (n: number) => `${Math.round(n).toLocaleString('en-US')} px`;
+  // A number keeps its unit: a no-break space, so a narrow meter wraps the verdict between them, never inside one.
+  const px = (n: number) => `${Math.round(n).toLocaleString('en-US')}\u00a0px`;
   return cut.truncated
     ? { state: 'over', fill, mark, label: `${px(cut.width)} of about ${px(cut.budget)}: cut` }
     : { state: 'fits', fill, mark, label: `${px(cut.width)} of about ${px(cut.budget)}: fits` };
@@ -182,6 +183,16 @@ export interface StandardPreviewView {
   readonly trailTruncated: boolean;
   readonly date: string | null;
   readonly rating: { readonly stars: string; readonly label: string } | null;
+}
+
+/**
+ * The address line's crumbs, each but the last with its separator after a no-break space (`guides\u00a0›`):
+ * the preview draws each as one box, so a narrow card breaks the line between crumbs, never inside one
+ * (a crumb wider than the card still wraps inside itself). The text reads as the trail did.
+ */
+export function trailCrumbs(trail: string): string[] {
+  const parts = trail.split(' › ');
+  return parts.map((part, i) => (i < parts.length - 1 ? `${part}\u00a0›` : part));
 }
 
 export function standardPreview(facts: SerpPreviewFacts, toggles: SerpToggles): StandardPreviewView {

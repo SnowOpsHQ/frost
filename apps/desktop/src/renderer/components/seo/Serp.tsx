@@ -14,6 +14,7 @@ import { serpPaletteSources } from '../../serp-palette';
 import {
   compositionSegments,
   compositionSummary,
+  domainLabels,
   forgetSerp,
   intentChip,
   knownIntent,
@@ -177,7 +178,7 @@ function Ownership({ snapshot }: { readonly snapshot: SerpReady }) {
         <p className="seo-empty-line">No organic results with a link on this page.</p>
       ) : (
         <div className="serp-table-wrap">
-          <table className="serp-table" data-testid="serp-ownership-table">
+          <table className="serp-table serp-owners" data-testid="serp-ownership-table">
             <caption className="visually-hidden">Organic results per domain, ads not counted</caption>
             <thead>
               <tr>
@@ -195,7 +196,7 @@ function Ownership({ snapshot }: { readonly snapshot: SerpReady }) {
               {rows.map((row) => (
                 <tr key={row.domain} data-testid="serp-ownership-row" data-domain={row.domain}>
                   <th scope="row" className="serp-domain">
-                    <PageText value={row.domain} />
+                    <PageText value={row.domain} parts={domainLabels(row.domain)} />
                   </th>
                   <td className="serp-num" data-testid="serp-ownership-count">
                     {formatCount(row.count)}

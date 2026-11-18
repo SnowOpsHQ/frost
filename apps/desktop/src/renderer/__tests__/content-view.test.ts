@@ -24,6 +24,7 @@ import {
   siteNameOverride,
   snippetIndicator,
   standardPreview,
+  trailCrumbs,
   variantCard,
   variantChoices,
   widthMeter,
@@ -123,13 +124,23 @@ describe('content view', () => {
     expect(fits.state).toBe('fits');
     expect(fits.mark).toBe(80);
     expect(fits.fill).toBeLessThan(fits.mark);
-    expect(fits.label).toMatch(/^\d+ px of about 580 px: fits$/);
+    // A number keeps its unit (a no-break space): a narrow meter never wraps between them.
+    expect(fits.label).toMatch(/^\d+\u00a0px of about 580\u00a0px: fits$/);
     const over = widthMeter(truncateToWidth('W'.repeat(40), SNIPPET_BUDGETS_PX.titleDesktop, 'title'));
     expect(over.state).toBe('over');
     expect(over.fill).toBeGreaterThan(over.mark);
-    expect(over.label).toBe('755 px of about 580 px: cut');
+    expect(over.label).toBe('755\u00a0px of about 580\u00a0px: cut');
     // A huge width stops at the track's end.
     expect(widthMeter(truncateToWidth('W'.repeat(400), SNIPPET_BUDGETS_PX.titleDesktop, 'title')).fill).toBe(100);
+  });
+
+  test('trail-crumbs', () => {
+    // Each crumb but the last carries its separator after a no-break space; the text reads as the trail.
+    expect(trailCrumbs('example.com › guides › cold-brew-coffee')).toEqual(['example.com\u00a0›', 'guides\u00a0›', 'cold-brew-coffee']);
+    expect(trailCrumbs('example.com › guides › cold-brew-coffee').join(' ').replace(/\u00a0/g, ' ')).toBe('example.com › guides › cold-brew-coffee');
+    // A cut trail keeps its ellipsis on the last crumb; the host alone is one crumb.
+    expect(trailCrumbs('example.com › guides ›…')).toEqual(['example.com\u00a0›', 'guides ›…']);
+    expect(trailCrumbs('example.com')).toEqual(['example.com']);
   });
 
   test('on-page-length-verdict-uses-width', () => {

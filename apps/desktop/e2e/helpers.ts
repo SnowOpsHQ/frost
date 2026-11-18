@@ -1,5 +1,6 @@
-import { expect, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { BROWSE_PARTITION, NEW_TAB_LABEL } from '@app/specs/browser.spec';
+import { SIDEBAR_PANEL_WIDTH_RANGE } from '@app/specs/seo-sidebar.spec';
 
 /** A modifier for `press`: `mod` is Cmd on macOS and Ctrl elsewhere. */
 export type KeyModifier = 'mod' | 'control' | 'shift' | 'alt';
@@ -127,4 +128,89 @@ export function chromeHelpers(getApp: () => ElectronApplication, getPage: () => 
   };
 
   return { browseContents, contentsIdAt, attachedViewIds, menu, run, runInFrame, urlOf, realClick, press, strip, activeTab, address, go, chromeCaughtUp, closeAllTabs };
+}
+
+/**
+ * The text cut inside its own box under `root` (specs/design-tokens.feature.md, The panels at 300px): each
+ * element laid out as a box that holds text of its own (a visually hidden one aside) whose text runs past
+ * its box (`scrollWidth > clientWidth`: text clipped inside its box counts, which comparing boxes with the
+ * panel's edge missed), and each select whose chosen option needs more room than it has (a copy holding
+ * only that option, at its own width). Each as `tag.class "text" +px`; none is `[]`.
+ */
+export function cutText(root: Locator): Promise<string[]> {
+  return root.evaluate((top) => {
+    const cut: string[] = [];
+    for (const el of [top, ...top.querySelectorAll('*')] as HTMLElement[]) {
+      if (!(el instanceof HTMLElement) || el.closest('.visually-hidden') || el.tagName === 'OPTION' || el.getClientRects().length === 0) continue;
+      const style = getComputedStyle(el);
+      if (style.display === 'inline' || style.display === 'contents') continue;
+      let over: number;
+      let text: string;
+      if (el instanceof HTMLSelectElement) {
+        text = el.options[el.selectedIndex]?.text ?? '';
+        const copy = el.cloneNode(false) as HTMLSelectElement;
+        copy.append(new Option(text));
+        // CSSOM, not a style attribute (the chrome's CSP).
+        copy.style.position = 'absolute';
+        copy.style.width = 'auto';
+        copy.style.minWidth = '0';
+        copy.style.maxWidth = 'none';
+        el.after(copy);
+        over = Math.ceil(copy.getBoundingClientRect().width - el.getBoundingClientRect().width);
+        copy.remove();
+      } else {
+        if (![...el.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim() !== '')) continue;
+        text = el.textContent!.trim();
+        over = el.scrollWidth - el.clientWidth;
+      }
+      if (over > 0) cut.push(`${el.tagName.toLowerCase()}.${[...el.classList].join('.')} "${text.slice(0, 40)}" +${over}px`);
+    }
+    return cut;
+  });
+}
+
+/** How far `scroller` scrolls sideways (0: it doesn't). */
+export const sidewaysScroll = (scroller: Locator): Promise<number> => scroller.evaluate((el) => el.scrollWidth - el.clientWidth);
+
+/**
+ * Sets the SEO panel to its narrowest width (Home on its separator) for `body`, then gives it back the width
+ * it had: keyboard steps up to the last one under it, then a drag for the rest (the default, 360px, isn't a
+ * whole number of steps from either end). The drag starts at the minimum plus those steps and is under one
+ * step (24px), so the tab view's edge moves too little to cross a parked cursor (seo-sidebar.e2e.ts,
+ * drag-resize-moves-page-view). A failure in `body` is the one reported, even if restoring then fails too.
+ */
+export async function atNarrowestPanel(page: Page, body: () => Promise<void>): Promise<void> {
+  const separator = page.getByTestId('seo-resize');
+  const found = Number(await separator.getAttribute('aria-valuenow'));
+  const { min, keyboardStep } = SIDEBAR_PANEL_WIDTH_RANGE;
+  await separator.focus();
+  await page.keyboard.press('Home');
+  await expect(separator).toHaveAttribute('aria-valuenow', String(min));
+  await separator.blur();
+  let failure: unknown = null;
+  try {
+    await body();
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    const steps = Math.floor((found - min) / keyboardStep);
+    await separator.focus();
+    for (let i = 0; i < steps; i++) await page.keyboard.press('ArrowRight');
+    await separator.blur();
+    const rest = found - (min + steps * keyboardStep);
+    if (rest > 0) {
+      const box = (await separator.boundingBox())!;
+      const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + rest / 2, y, { steps: 4 });
+      await page.mouse.move(x + rest, y, { steps: 4 });
+      await page.mouse.up();
+    }
+    await expect(separator).toHaveAttribute('aria-valuenow', String(found));
+  } catch (error) {
+    if (failure === null) throw error;
+  }
+  if (failure !== null) throw failure;
 }

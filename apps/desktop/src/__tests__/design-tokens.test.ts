@@ -16,6 +16,7 @@ import {
   FORCED_COLOURS_BUSY,
   FORCED_COLOURS_KEPT,
   FORCED_COLOURS_PRESSED,
+  NARROW_PANEL_FITS,
   PROJECTS_SHEET_NARROW,
   FORCED_COLOURS_SYSTEM_COLOURS,
   GRAPHICS_ONLY_COLOURS,
@@ -42,6 +43,7 @@ import {
   type HoverSkipsPressed,
   type LegacyTokenMigration,
   type LoadsBefore,
+  type NarrowPanelFit,
   type PressedEdge,
   type StateEdge,
   type SignalSurface,
@@ -1756,6 +1758,41 @@ test('surface-rules-read-signal-tokens', () => {
     expect(result.checked, surface.name).toBeGreaterThan(0);
     expect(result.problems, surface.name).toEqual([]);
     expect(result.typeRules, `${surface.name} reads the --text-* tokens`).toBeGreaterThan(0);
+  }
+});
+
+test('narrow-panel-fits-resolve', () => {
+  const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const fits: readonly NarrowPanelFit[] = NARROW_PANEL_FITS;
+  for (const fit of fits) {
+    const index = selectorIndex(read(fit.stylesheet));
+    const own = index.get(fit.selector) ?? [];
+    const top = own.filter((d) => d.outer.length === 0);
+    const inside = fit.query === null ? top : own.filter((d) => d.outer.length === 1 && collapse(d.outer[0]!) === fit.query);
+    for (const [property, value] of Object.entries(fit.set)) {
+      const last = inside.filter((d) => d.property === property).at(-1);
+      expect(last?.value, `${fit.stylesheet}: ${fit.selector} { ${property} }${fit.query === null ? '' : ` in ${fit.query}`}`).toBe(value);
+      if (fit.query !== null) {
+        // After every declaration of the property on the selector at the top level or in a wider query of
+        // the same container (a larger `width <` bound): at the same weight the later rule wins.
+        const bound = (query: string) => Number(/^@container (\S+) \(width < (\d+)px\)$/.exec(collapse(query))?.[2] ?? NaN);
+        const query = fit.query;
+        const wider = (d: { readonly outer: readonly string[] }) => d.outer.length === 1 && collapse(d.outer[0]!).split(' (')[0] === query.split(' (')[0] && bound(d.outer[0]!) > bound(query);
+        const outside = own.filter((d) => d.property === property && (d.outer.length === 0 || wider(d)));
+        const lastOutside = Math.max(-1, ...outside.map((d) => d.order));
+        expect(last!.order, `${fit.selector} { ${property} }: its ${fit.query} after the rules it overrides`).toBeGreaterThan(lastOutside);
+      }
+      for (const before of fit.after ?? []) {
+        const theirs = (index.get(before) ?? []).filter((d) => d.outer.length === 0 && d.property === property);
+        expect(last!.order, `${fit.selector} { ${property} } after ${before}'s`).toBeGreaterThan(Math.max(-1, ...theirs.map((d) => d.order)));
+      }
+    }
+    for (const property of fit.absent ?? []) expect(top.filter((d) => d.property === property), `${fit.stylesheet}: ${fit.selector} sets no ${property}`).toEqual([]);
+    if (fit.container !== undefined) {
+      const declared = (index.get(fit.container.selector) ?? []).filter((d) => d.outer.length === 0 && d.property === 'container');
+      expect(declared.at(-1)?.value, `${fit.container.selector} is the query's container`).toBe(fit.container.value);
+      expect(fit.query, `${fit.selector}: the query names that container`).toMatch(new RegExp(`^@container ${fit.container.value.split(' / ')[0]} \\(`));
+    }
   }
 });
 

@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { GSC_DEVICE_LABELS, GSC_FILTER_TEXT, GSC_PANEL_COPY, GSC_RANGE_PRESET_LABELS, gscPresetRange } from '@app/specs/gsc-panel.spec';
-import { GSC_LIMITS, gscDateRange, gscRetentionStart, type GscQueryScope, type GscRangeDays } from '@app/specs/gsc.spec';
+import { GSC_COUNTRY_ALPHA3, GSC_LIMITS, gscDateRange, gscRetentionStart, type GscQueryScope, type GscRangeDays } from '@app/specs/gsc.spec';
 import { accountHelpers, fakeAccountEnv } from './account-helpers';
 import { startFakeBackend, type FakeBackend } from './fake-backend';
-import { fakeDateRows, fakeFilterEcho, fakeFiltersOf, startFakeGoogle, type FakeGoogle, type FakeQuery } from './fake-google';
+import { fakeCountryRows, fakeDateRows, fakeFilterEcho, fakeFiltersOf, startFakeGoogle, type FakeGoogle, type FakeQuery } from './fake-google';
 import { closeApp, launchApp, startLoopbackServer } from './harness';
-import { chromeHelpers } from './helpers';
+import { atNarrowestPanel, chromeHelpers, cutText } from './helpers';
 
 let backend: FakeBackend;
 let google: FakeGoogle;
@@ -396,8 +396,70 @@ test.describe.serial('the Search Console panel', () => {
     // The chosen country stays chosen while the countries are read again.
     await expect(country).toHaveValue('gbr');
     await expect(page.getByTestId('gsc-clear-filters')).toHaveText(GSC_FILTER_TEXT.clear);
+    // Every control's label whole ("United Kingdom", "More ranges…", the days), at the default width and at
+    // 300px, where the rows wrap (design-tokens.feature.md, The panels at 300px).
+    const controls = page.locator('.gsc-controls');
+    expect(await cutText(controls)).toEqual([]);
+    await atNarrowestPanel(page, async () => {
+      expect(await cutText(controls)).toEqual([]);
+      expect(await page.locator('.seo-body').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+    });
 
     // Leaves no filter for the other tests.
+    await page.getByTestId('gsc-clear-filters').click();
+    await expect(page.getByTestId('gsc-total-clicks')).toHaveText('60');
+
+    // Every country Search Console names (GSC_COUNTRY_ALPHA3, some 240). The filters' split is the
+    // stylesheet's (design-tokens.feature.md, The panels at 300px): at the default width two equal columns
+    // on one line whatever is chosen, on every OS; at 300px a line each. "United Kingdom" is whole at both,
+    // the longest name ends in an ellipsis inside its select, and changing the choice moves nothing.
+    google.countryRows = () => Object.keys(GSC_COUNTRY_ALPHA3).map((code, i) => ({ keys: [code], clicks: 1_000 - i, impressions: 10_000, ctr: 0.1, position: 3 }));
+    // A device not chosen before in this test, so main reads the countries again (it keeps each answer).
+    await device.selectOption('TABLET');
+    await expect.poll(() => country.locator('option').count()).toBeGreaterThan(200);
+    const layout = () =>
+      page.locator('.gsc-controls').evaluate((controls) => {
+        const box = (selector: string) => {
+          const b = controls.querySelector(selector)!.getBoundingClientRect();
+          return { x: Math.round(b.x * 10) / 10, y: Math.round(b.y * 10) / 10, w: Math.round(b.width * 10) / 10 };
+        };
+        return { row: box('.gsc-filter-row'), country: box('[data-testid="gsc-country"]'), device: box('[data-testid="gsc-device"]'), clear: box('[data-testid="gsc-clear-filters"]'), property: box('[data-testid="gsc-property"]') };
+      });
+    const choose = async (code: string) => {
+      await country.selectOption(code);
+      await expect(panel()).toHaveAttribute('data-pending', 'false');
+    };
+    const longest = await country.evaluate((select: HTMLSelectElement) => [...select.options].reduce((a, b) => (b.text.length > a.text.length ? b : a)).value);
+    const split = async (narrow: boolean) => {
+      const seen: Awaited<ReturnType<typeof layout>>[] = [];
+      for (const code of ['', 'gbr', longest, 'vct']) {
+        await choose(code);
+        const at = await layout();
+        const widths = `country ${at.country.w}px, device ${at.device.w}px, row ${at.row.w}px (${code || 'all'}, ${narrow ? '300px' : 'default'})`;
+        // In the run's log on every OS (the split is the stylesheet's; this says what each drew).
+        console.log(`gsc filter split on ${process.platform}: ${widths}`);
+        if (narrow) {
+          // A line each, the row's width.
+          expect(at.device.y, widths).toBeGreaterThan(at.country.y);
+          expect(Math.abs(at.country.w - at.row.w), widths).toBeLessThanOrEqual(1);
+          expect(Math.abs(at.device.w - at.row.w), widths).toBeLessThanOrEqual(1);
+        } else {
+          // One line, 1:1 to the pixel.
+          expect(Math.abs(at.country.y - at.device.y), widths).toBeLessThanOrEqual(1);
+          expect(Math.abs(at.country.w - at.device.w), widths).toBeLessThanOrEqual(1);
+        }
+        if (code === 'gbr') expect(await cutText(controls), widths).toEqual([]);
+        seen.push(at);
+      }
+      // Nothing moved as the choice changed: the selects, "Clear filters" and the line under them.
+      expect(seen.map((at) => JSON.stringify(at)), 'boxes per choice').toEqual(seen.map(() => JSON.stringify(seen[0])));
+    };
+    await split(false);
+    await atNarrowestPanel(page, async () => {
+      await split(true);
+      expect(await page.locator('.seo-body').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+    });
+    google.countryRows = () => fakeCountryRows();
     await page.getByTestId('gsc-clear-filters').click();
     await expect(page.getByTestId('gsc-total-clicks')).toHaveText('60');
   });

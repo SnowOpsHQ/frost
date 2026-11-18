@@ -291,6 +291,12 @@
   overflow-wrap: anywhere;
 }
 
+/* "Open in tab" keeps its own width: the URL beside it breaks anywhere, so it asked for the whole row and
+   squeezed the button onto two lines. Two classes: it outweighs .panel-button (styles.css, loaded later). */
+.ai-answer-citation .panel-button {
+  flex: none;
+}
+
 /* Focus: the ring, after the hover and the pressed rule. */
 .ai-answers-input:focus-visible,
 .ai-answers-select:focus-visible,

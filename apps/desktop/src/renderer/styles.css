@@ -4595,7 +4595,8 @@ input {
    close to tell apart by their shade alone. The 2px stroke is painted under the fill, so only its outer
    1px shows, over the previous segment's end, and never over its own fill; on whole pixels (crispEdges)
    and 2px at any scale, so it is a solid column, not two anti-aliased halves. It never covers a segment's
-   own fill when nothing follows within its width (the next phase starts at a short one's real end). */
+   own fill: a short phase is drawn at the minimum and the next one starts where it ends (speed-view.ts,
+   waterfall), where it used to start at the short one's real end and cover it. */
 .seo-speed-phase {
   color: var(--bg-surface);
   stroke: currentColor;
@@ -4692,6 +4693,11 @@ input {
   margin-bottom: 0;
 }
 
+/* A card is its tiles' container: they lay themselves out by its width (below). */
+.seo-speed-card {
+  container: speed-card / inline-size;
+}
+
 .seo-speed-milestones div,
 .seo-speed-totals div {
   min-width: 0;
@@ -4716,6 +4722,15 @@ input {
   font: var(--text-body);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* Three tiles need about 270px to hold "Page weight" and "DOM ready" whole; narrower (the 300px panel's
+   227px cut them 8 to 14px) they take two columns. After the rules they override. */
+@container speed-card (width < 270px) {
+  .seo-speed-milestones,
+  .seo-speed-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* The marks' key: a 2px edge (a border, which forced colours draw) in the mark's colour. */
@@ -4755,6 +4770,13 @@ input {
   color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A type's size wraps between its words: "size unavailable" (cross-origin requests without
+   Timing-Allow-Origin) takes two lines in the 64px column, where it ran 23px past it on one; a size
+   ("123.4 kB") is narrower than the column and stays on one line. */
+.seo-speed-bytes {
+  white-space: normal;
 }
 
 /* A type with no request: --text-faint (it faded to half). */
@@ -5155,6 +5177,7 @@ input {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  container: a11y-results / inline-size;
 }
 
 .seo-a11y-tally {
@@ -5204,6 +5227,14 @@ input {
   .seo-a11y-tally-item[data-count='0'] .seo-a11y-tally-value {
     border-color: GrayText;
     color: GrayText;
+  }
+}
+
+/* Four tiles need about 280px to hold "Moderate" whole; narrower (the 300px panel's 226px), they take two
+   columns, two rows. Its own container (the results' width), after the rule it overrides. */
+@container a11y-results (width < 280px) {
+  .seo-a11y-tally {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -6359,6 +6390,13 @@ input {
 .seo-serp-path {
   color: var(--text-muted);
   font: var(--text-small);
+}
+
+/* A crumb (with its separator) is one box: the trail breaks between crumbs, so "cold-brew-coffee" is never
+   split at a hyphen; one wider than the card wraps inside itself (the card's overflow-wrap). */
+.seo-serp-crumb {
+  display: inline-block;
+  max-width: 100%;
 }
 
 /* The title reads as a link, as Overview's preview: --accent. */
@@ -8905,11 +8943,13 @@ input {
 }
 
 /* Tables (ownership, probes): real table markup, scrolling sideways when wider than the panel; rows ruled
-   by --divider (border-spacing, not border-collapse: each cell draws its own rule). */
+   by --divider (border-spacing, not border-collapse: each cell draws its own rule). The wrap is the
+   tables' container: Who owns page 1 lays itself out by its own width (below). */
 .serp-table-wrap {
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: thin;
+  container: serp-table / inline-size;
 }
 
 .serp-table {
@@ -8949,6 +8989,75 @@ input {
 
 .serp-domain {
   max-width: 150px;
+}
+
+/* Who owns page 1 has no inline padding at its outer edges (the card has its own): at the default 360px
+   panel the four columns left "brewguide.example" 0.5px short of one line (120.5px of 121px); the 16px goes
+   to the domain. */
+.serp-owners th:first-child,
+.serp-owners td:first-child {
+  padding-inline-start: 0;
+}
+
+.serp-owners th:last-child,
+.serp-owners td:last-child {
+  padding-inline-end: 0;
+}
+
+/* A domain wraps (it was cut with an ellipsis), at its dots (a <wbr> after each, domainLabels) and hyphens,
+   never inside a label: `break-word`, not the page text's `anywhere`, so the column is never narrower than
+   its longest label and the table's auto layout can't squeeze it to break "brewguide.exam|ple". Only a
+   single label wider than the column would scroll. (Stacked, below, it has the row and breaks anywhere.) */
+.serp-owners .serp-domain .seo-page-text {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* Who owns page 1 where its four columns don't fit (under 280px: the 300px panel's 227px, where it
+   scrolled 60px sideways; the default 360px panel's 287px keeps the four columns): each row takes two
+   lines, the domain across the row and its counts under it in three columns under their headers, the
+   head likewise. Still a table: every cell keeps its header. After the rules it overrides. */
+@container serp-table (width < 280px) {
+  .serp-owners,
+  .serp-owners thead,
+  .serp-owners tbody {
+    display: block;
+  }
+
+  .serp-owners tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .serp-owners tr > :first-child {
+    grid-column: 1 / -1;
+    max-width: none;
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .serp-owners .serp-domain .seo-page-text {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Where three counts can't hold their headers (under 180px: the 588px window's 111px, where "Positions"
+   ran 22px past its column), a row takes three lines: the domain, Results and Share under their headers,
+   then Positions across the row; only the last line draws the row's rule. After the query above. */
+@container serp-table (width < 180px) {
+  .serp-owners tr {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .serp-owners tr > :last-child {
+    grid-column: 1 / -1;
+  }
+
+  .serp-owners tr > :nth-child(2),
+  .serp-owners tr > :nth-child(3) {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
 }
 
 /* The results list. */

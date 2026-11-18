@@ -51,9 +51,21 @@
   gap: var(--space-2);
 }
 
-.gsc-range-row,
-.gsc-filter-row {
+.gsc-range-row {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+}
+
+/* The filters: the country and device selects in two equal columns, fixed by the stylesheet whatever is
+   chosen and on every OS (a select's own width followed its chosen option, or its longest, and moved the
+   row as the choice changed); "Clear filters" on the line under them. Below 280px each takes the row. */
+.gsc-filter-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
   gap: var(--space-2);
   width: 100%;
@@ -65,19 +77,29 @@
   min-width: 0;
 }
 
-/* The panels' select (--h-control at --r-sm), at --text-small so "More ranges…" fits beside the days. */
+/* The panels' select (--h-control at --r-sm), at --text-small so "More ranges…" fits beside the days. A
+   select is never narrower than the label it shows, so that label is whole: where the controls don't fit
+   on one line (the 300px panel cut "More ranges…" and "United Kingdom") the row wraps and a control takes
+   the next line. Never wider than the row: a name longer than the row ends in an ellipsis. */
 .gsc .gsc-select {
-  min-width: 0;
+  max-width: 100%;
   font: var(--text-small);
+  text-overflow: ellipsis;
 }
 
+/* "More ranges…": its own width, its longest preset's (they are few and short). */
 .gsc-range-row .gsc-select {
   flex: 0 1 auto;
-  max-width: 45%;
 }
 
+/* A filter's select is its column's width: a name too long for it ends in an ellipsis. */
 .gsc-filter-row .gsc-select {
-  flex: 1 1 0;
+  min-width: 0;
+}
+
+.gsc-filter-row .gsc-clear {
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 /* A filter in force (a month preset, a country, a device): an --accent edge on its transparent border and
@@ -571,5 +593,13 @@
   .gsc-data {
     animation: none;
     transition: none;
+  }
+}
+
+/* Two selects each hold "United Kingdom" (125px) from a 258px panel; under 280px (the 300px panel's 256px)
+   each takes the row, so the split never runs that close. After the filter row's rule. */
+@container gsc (width < 280px) {
+  .gsc-filter-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

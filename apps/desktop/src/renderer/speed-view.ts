@@ -5,6 +5,7 @@ import {
   INP_HINT,
   LOADED_HIDDEN_HINT,
   LOW_RESOURCES_NOTE,
+  NAVIGATION_PHASE_MIN_WIDTH,
   SNAPSHOT_PERFORMANCE_RULES,
   SOFT_NAVIGATION_NOTE,
   VITAL_THRESHOLDS,
@@ -83,15 +84,34 @@ export interface WaterfallMarker {
 
 /**
  * The navigation timing row: each phase as a bar on one 0…100 axis that ends at the load event (or,
- * before it, the last milestone or phase), at least 0.8 wide so a 1 ms phase still shows; and the
- * DOMContentLoaded and load markers.
+ * before it, the last milestone or phase), and the DOMContentLoaded and load markers at their real times.
+ * A phase is at least `NAVIGATION_PHASE_MIN_WIDTH` wide, so every phase with a duration shows; the next one
+ * starts at its real start or where the one before it is drawn to end, whichever is later, and ends at its
+ * real end or the minimum past its start, whichever is later. A row pushed past the axis's end is pulled
+ * back from there: the last phase ends at 100, each one before it where the next starts. So starts and
+ * ends move by up to n × the minimum near short phases and at the axis's end, and a pushed bar can pass a
+ * marker; the legend gives each phase's real duration.
  */
 export function waterfall(nav: NavigationReport): { readonly end: number; readonly bars: readonly WaterfallBar[]; readonly markers: readonly WaterfallMarker[] } {
   const end = Math.max(nav.load ?? 0, nav.domContentLoaded ?? 0, ...nav.spans.map((s) => s.end), 1);
-  const bars = nav.spans.map((s) => {
-    const x = Math.min(99.2, pct(s.start, end));
-    return { phase: s.phase, x, width: Math.min(100 - x, Math.max(0.8, pct(s.end - s.start, end))) };
-  });
+  const min = NAVIGATION_PHASE_MIN_WIDTH;
+  const drawn: { phase: NavigationPhase; x: number; right: number }[] = [];
+  let cursor = 0;
+  for (const s of nav.spans) {
+    const x = Math.max(pct(s.start, end), cursor);
+    const right = Math.max(pct(s.end, end), x + min);
+    drawn.push({ phase: s.phase, x, right });
+    cursor = right;
+  }
+  let limit = 100;
+  for (let i = drawn.length - 1; i >= 0; i--) {
+    const bar = drawn[i]!;
+    bar.right = Math.min(bar.right, limit);
+    bar.x = Math.min(bar.x, bar.right - min);
+    limit = bar.x;
+  }
+  const tenth = (n: number) => Math.round(n * 10) / 10;
+  const bars = drawn.map((bar) => ({ phase: bar.phase, x: tenth(bar.x), width: tenth(bar.right - bar.x) }));
   const markers: WaterfallMarker[] = [];
   if (nav.domContentLoaded !== null) markers.push({ id: 'dcl', label: 'DOMContentLoaded', x: pct(nav.domContentLoaded, end), ms: nav.domContentLoaded });
   if (nav.load !== null) markers.push({ id: 'load', label: 'Load', x: pct(nav.load, end), ms: nav.load });

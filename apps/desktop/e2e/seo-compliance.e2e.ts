@@ -9,7 +9,7 @@ import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { A11Y_LIMITS, A11Y_TIMEOUT_MS, SECURITY_VERDICT_LABELS } from '@app/specs/seo-compliance.spec';
 import { AUDIT_DEBOUNCE_MS, EXTRACT_TIMEOUT_MS } from '@app/specs/seo-limits.spec';
 import { closeApp, launchApp } from './harness';
-import { chromeHelpers } from './helpers';
+import { atNarrowestPanel, chromeHelpers, cutText } from './helpers';
 import { selfSignedCertificate } from './tls';
 
 const AUDIT_WAIT = AUDIT_DEBOUNCE_MS + EXTRACT_TIMEOUT_MS + 10_000;
@@ -212,6 +212,16 @@ test('accessibility-check-reports-violations-e2e', async () => {
   expect(await ruleIds('serious')).toEqual(expect.arrayContaining(['color-contrast']));
   await expect(page.getByTestId('seo-a11y-count-critical')).not.toHaveAttribute('data-count', '0');
   await expect(page.getByTestId('seo-a11y-totals')).toContainText('rules passed');
+  // The tally's labels whole, at the default width and at 300px (two columns there: design-tokens.feature.md,
+  // The panels at 300px).
+  const tally = page.locator('.seo-a11y-tally');
+  expect(await cutText(tally)).toEqual([]);
+  // Four columns at the default width (its 280px threshold sits a few px under the results' width there).
+  expect(await tally.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(4);
+  await atNarrowestPanel(page, async () => {
+    expect(await cutText(tally)).toEqual([]);
+    expect(await tally.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(2);
+  });
   // A rule opens to its help, help URL (text) and elements (selector text and failure summary).
   const imageAlt = page.locator('[data-testid="seo-a11y-rule"][data-rule-id="image-alt"]');
   await imageAlt.getByTestId('seo-a11y-rule-toggle').click();

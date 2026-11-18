@@ -202,7 +202,11 @@ heuristic does, not what a linguist would count. No rule, finding or score depen
 
 ## Panel (`content-view.test.ts`)
 - **Scenario: ngram-bar-classes** — a row's bar width is an SVG attribute from its count, never a style.
-- **Scenario: width-meter** — the meter's state (`fits`, `over`) and label.
+- **Scenario: width-meter** — the meter's state (`fits`, `over`) and label, each number joined to its unit
+  by a no-break space (a narrow meter wraps between words, never inside "12,345 px").
+- **Scenario: trail-crumbs** — the preview's address line as its crumbs, each but the last holding its `›`
+  after a no-break space, so the preview breaks the line between crumbs only (`design-tokens.feature.md`,
+  The panels at 300px); joined, they read as the trail.
 - **Scenario: draft-slots** — a new draft takes the first free slot; none past `MAX_SNIPPET_VARIANTS`.
 - **Scenario: on-page-length-verdict-uses-width** — On-Page's "too long" is the width cut, not 60
   characters; "too short" stays the character minimum.

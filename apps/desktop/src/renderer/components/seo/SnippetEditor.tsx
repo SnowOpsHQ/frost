@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react';
+import { Fragment, useId, useMemo, useState } from 'react';
 import { measureSnippet, serpPreview, type SeoAudit, type SnippetCut } from '@app/seo-core';
 import type { TabState } from '@app/specs/browser.spec';
 import {
@@ -11,7 +11,7 @@ import {
   SNIPPET_VARIANT_TITLE_MAX_CHARS,
   type SerpPreviewVariant,
 } from '@app/specs/seo-content.spec';
-import { capDescription, capTitle, cleanSiteName, SERP_TOGGLES_ON, siteNameOverride, standardPreview, variantChoices, widthMeter, type SerpToggles, type StandardPreviewView } from '../../content-view';
+import { capDescription, capTitle, cleanSiteName, SERP_TOGGLES_ON, siteNameOverride, standardPreview, trailCrumbs, variantChoices, widthMeter, type SerpToggles, type StandardPreviewView } from '../../content-view';
 import { copyPreviewJsonLd, copySnippetHtml, type ContentNotesApi } from '../../hooks/useContentNotes';
 import { CodeIcon, PlusIcon } from '../../icons';
 import { auditRef } from './actions';
@@ -93,7 +93,12 @@ function Preview({ device, view, measured }: { readonly device: 'desktop' | 'mob
               {view.siteName}
             </bdi>
             <bdi className="seo-serp-path" dir="auto" data-testid={`seo-serp-${device}-trail`} data-truncated={view.trailTruncated}>
-              {view.trail}
+              {trailCrumbs(view.trail).map((crumb, i) => (
+                <Fragment key={i}>
+                  {i > 0 ? ' ' : null}
+                  <span className="seo-serp-crumb">{crumb}</span>
+                </Fragment>
+              ))}
             </bdi>
           </span>
         </div>

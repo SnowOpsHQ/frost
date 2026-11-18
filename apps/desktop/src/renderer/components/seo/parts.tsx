@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import type { SeoSeverity } from '@app/specs/seo-rules.spec';
 import { ErrorGlyph, InfoGlyph, WarningGlyph } from '../../icons';
 import { isolatedTooltip, rawSegments, type LengthIndicator } from '../../seo-view';
@@ -8,11 +8,19 @@ import { isolatedTooltip, rawSegments, type LengthIndicator } from '../../seo-vi
 // markup and never as a link; long values are cut by styles.css with the full value in `title`.
 
 /** Page text: inert, bidi-isolated, cut with an ellipsis, the full value as its tooltip. */
-export function PageText({ value, className, testId, lines }: { readonly value: string; readonly className?: string; readonly testId?: string; readonly lines?: 1 | 2 | 3 }) {
+export function PageText({ value, className, testId, lines, parts }: { readonly value: string; readonly className?: string; readonly testId?: string; readonly lines?: 1 | 2 | 3; readonly parts?: readonly string[] }) {
   const clamp = lines && lines > 1 ? ` seo-clamp-${lines}` : ' seo-ellipsis';
   return (
     <bdi className={`seo-page-text${clamp}${className ? ` ${className}` : ''}`} title={isolatedTooltip(value)} data-testid={testId} dir="auto">
-      {value}
+      {/* `parts`: the value in pieces with a break opportunity between them (they join to `value`). */}
+      {parts
+        ? parts.map((part, i) => (
+            <Fragment key={i}>
+              {i > 0 ? <wbr /> : null}
+              {part}
+            </Fragment>
+          ))
+        : value}
     </bdi>
   );
 }

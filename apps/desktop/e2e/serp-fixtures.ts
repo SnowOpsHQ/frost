@@ -11,9 +11,20 @@ export const PACK_PATH = '/serp-selectors.json';
 /** Above the bundled pack's version, so the test pack installs. */
 export const PACK_VERSION = 1000;
 
+/**
+ * Long real-world domains for Who owns page 1 at the default width (`?domains=long`): the one with
+ * hyphens and a two-part suffix, a `www.` one, the fixture's two and a 59-character one
+ * (design-tokens.feature.md, The panels at 300px).
+ */
+export const LONG_DOMAINS = ['www.seriouseats.com', 'coffee-brewing-guides.example.co.uk', 'brewguide.example', 'leafhouse.example', 'shop.the-very-long-green-tea-company-of-great-britain.co.uk'] as const;
+
 /** frost's own minimal result page markup (no real engine's): ads, a snippet, organic results and related questions. */
-export function resultPage(query: string): string {
+export function resultPage(query: string, domains?: readonly string[]): string {
   const q = query.replace(/[<>&"]/g, '');
+  if (domains)
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${q} · frost test search</title></head><body>
+<form action="/search"><input name="q" value="${q}"></form>
+<main id="results">${domains.map((domain, i) => `<div class="result"><a href="https://${domain}/page-${i}"><h3>Result ${i + 1}</h3></a></div>`).join('')}</main></body></html>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${q} · frost test search</title></head><body>
 <form action="/search"><input name="q" value="${q}"></form>
 <div id="ads"><div class="ad"><a href="https://teashop.example/buy"><h3>Buy tea online</h3></a></div></div>
@@ -73,7 +84,12 @@ export function engineAnswer(url: URL, pack: { readonly bytes: Buffer; readonly 
   if (url.pathname === PACK_PATH) return { status: 200, type: 'application/json', body: pack.bytes };
   if (url.pathname === packSignatureUrl(PACK_PATH)) return { status: 200, type: 'text/plain', body: pack.signature };
   if (url.pathname === '/robots.txt') return { status: 200, type: 'text/plain', body: 'User-agent: *\nAllow: /\n' };
-  if (url.pathname === '/search') return { status: 200, type: 'text/html; charset=utf-8', body: url.searchParams.get('layout') === 'new' ? UNREADABLE_PAGE : resultPage(url.searchParams.get('q') ?? '') };
+  if (url.pathname === '/search')
+    return {
+      status: 200,
+      type: 'text/html; charset=utf-8',
+      body: url.searchParams.get('layout') === 'new' ? UNREADABLE_PAGE : resultPage(url.searchParams.get('q') ?? '', url.searchParams.get('domains') === 'long' ? LONG_DOMAINS : undefined),
+    };
   if (url.pathname === '/about') return { status: 200, type: 'text/html; charset=utf-8', body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>About this test search</title></head><body><h1>About</h1><p>Not a result page.</p></body></html>' };
   return null;
 }

@@ -5,15 +5,16 @@
 // Acceptance: specs/serp-panels.feature.md (End to end)
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { INTENT_E2E_FAKE_SWITCH, INTENT_LABEL_NAMES } from '@app/specs/intent-classifier.spec';
 import { PACK_UPDATE_MESSAGES, SERP_E2E_PACK_KEY_SWITCH, SERP_E2E_PACK_URL_SWITCH, packSignatureUrl } from '@app/specs/serp-selector-pack.spec';
 import { SERP_NOT_SERP_MESSAGE, SERP_OUTLINE_KEY } from '@app/specs/serp-service.spec';
 import { SERP_UNREADABLE_MESSAGES, SERP_WORLD_ID } from '@app/specs/serp.spec';
+import { NARROW_WINDOW } from '@app/specs/workspace-layout.spec';
 import { closeApp, launchApp } from './harness';
-import { chromeHelpers } from './helpers';
-import { PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
+import { atNarrowestPanel, chromeHelpers, cutText, sidewaysScroll } from './helpers';
+import { LONG_DOMAINS, PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
 
 const READ_WAIT = 20_000;
 
@@ -173,7 +174,110 @@ test('serp-composition-and-ownership', async () => {
   // The tables are real table markup with header cells.
   await expect(page.getByTestId('serp-ownership-table').locator('thead th')).toHaveCount(4);
   await expect(page.getByTestId('serp-ownership-table').locator('tbody th[scope="row"]')).toHaveCount(2);
+  // At 300px (design-tokens.feature.md, The panels at 300px) the table stacks: nothing scrolls sideways and
+  // no cell's text is cut; Chromium's accessibility tree still holds a table, its headers and its cells.
+  // The parameter grid holds too (it broke twice at 300px).
+  const table = page.getByTestId('serp-ownership-table');
+  const wrap = page.locator('.serp-table-wrap').first();
+  expect(await sidewaysScroll(wrap)).toBe(0);
+  // At the default width it is the four-column table, each domain whole on its line.
+  expect(await table.locator('tbody tr').first().evaluate((row) => getComputedStyle(row).display)).toBe('table-row');
+  expect(await domainBreaks(table)).toEqual({ midLabel: [], wrapped: [] });
+  await atNarrowestPanel(page, async () => {
+    expect(await sidewaysScroll(wrap)).toBe(0);
+    expect(await sidewaysScroll(page.locator('.seo-body'))).toBe(0);
+    expect(await cutText(page.getByTestId('serp-ownership'))).toEqual([]);
+    expect(await cutText(page.locator('.serp-params'))).toEqual([]);
+    expect(await table.locator('tr').first().evaluate((row) => getComputedStyle(row).display)).toBe('grid');
+    expect(await axRoles(table)).toEqual({ table: 1, columnheader: 4, rowheader: 2, cell: 6 });
+  });
+  // In the 588px window (the panel about 160px) a row takes three lines: every header and cell whole, nothing
+  // scrolling, and each count under its header (the same track's edges).
+  const before = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  try {
+    await page.setViewportSize({ width: NARROW_WINDOW.width, height: Math.min(700, before.height) });
+    await expect.poll(() => table.locator('tr').first().evaluate((row) => getComputedStyle(row).gridTemplateColumns.split(' ').length)).toBe(2);
+    expect(await sidewaysScroll(wrap)).toBe(0);
+    expect(await cutText(table)).toEqual([]);
+    const misplaced = await table.evaluate((t) => {
+      const heads = [...t.querySelectorAll('thead th')].map((th) => th.getBoundingClientRect());
+      const off: string[] = [];
+      for (const row of t.querySelectorAll('tbody tr'))
+        [...row.children].forEach((cell, i) => {
+          const [c, h] = [cell.getBoundingClientRect(), heads[i]!];
+          if (i > 0 && (Math.abs(c.left - h.left) > 1 || Math.abs(c.right - h.right) > 1)) off.push(`${row.getAttribute('data-domain')} ${i}`);
+        });
+      return off;
+    });
+    expect(misplaced).toEqual([]);
+  } finally {
+    // Back to the chrome's own size (dropping the emulation instead left the Visibility panel's query box
+    // with no box in the next test, on CI and locally).
+    await page.setViewportSize(before);
+  }
+  // Long real domains (LONG_DOMAINS, a 59-character one among them) at the default width: still the
+  // four-column table, nothing scrolling, a domain wrapping only after a dot or a hyphen, never inside a
+  // label, and the fixture's two whole on their lines.
+  await load(searchUrl('green tea', '&domains=long'));
+  await expect(panelState()).toHaveAttribute('data-state', 'ready', { timeout: READ_WAIT });
+  await expect(page.getByTestId('serp-ownership-row')).toHaveCount(LONG_DOMAINS.length);
+  expect(await table.locator('tbody tr').first().evaluate((row) => getComputedStyle(row).display)).toBe('table-row');
+  expect(await sidewaysScroll(wrap)).toBe(0);
+  const breaks = await domainBreaks(table);
+  expect(breaks.midLabel).toEqual([]);
+  expect(breaks.wrapped.filter((domain) => domain === 'brewguide.example' || domain === 'leafhouse.example')).toEqual([]);
 });
+
+/**
+ * Where the ownership table's domains wrap: `midLabel`, each line break not right after a dot or a hyphen
+ * (`domain: …end of line|start of next…`); `wrapped`, the domains on more than one line.
+ */
+function domainBreaks(table: Locator): Promise<{ midLabel: string[]; wrapped: string[] }> {
+  return table.evaluate((t) => {
+    const midLabel: string[] = [];
+    const wrapped: string[] = [];
+    for (const cell of t.querySelectorAll<HTMLElement>('tbody .serp-domain .seo-page-text')) {
+      const domain = cell.textContent ?? '';
+      const range = document.createRange();
+      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      let text = '';
+      let top: number | null = null;
+      let lines = 1;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        for (let i = 0; i < node.textContent!.length; i++) {
+          range.setStart(node, i);
+          range.setEnd(node, i + 1);
+          const rect = range.getClientRects()[0];
+          if (rect && top !== null && Math.abs(rect.top - top) > 2) {
+            lines += 1;
+            if (!/[.-]$/.test(text)) midLabel.push(`${domain}: …${text.slice(-6)}|${node.textContent!.slice(i, i + 6)}…`);
+          }
+          if (rect) top = rect.top;
+          text += node.textContent![i];
+        }
+      }
+      if (lines > 1) wrapped.push(domain);
+    }
+    return { midLabel, wrapped };
+  });
+}
+
+/** The table, header and cell roles Chromium's accessibility tree holds for `table` and under it. */
+async function axRoles(table: Locator): Promise<Record<string, number>> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+    const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: `[data-testid="${await table.getAttribute('data-testid')}"]` });
+    const counts: Record<string, number> = {};
+    for (const role of ['table', 'columnheader', 'rowheader', 'cell']) {
+      const { nodes } = await cdp.send('Accessibility.queryAXTree', { nodeId, role });
+      counts[role] = nodes.filter((node) => !node.ignored).length;
+    }
+    return counts;
+  } finally {
+    await cdp.detach();
+  }
+}
 
 test('serp-params-per-tab', async () => {
   await ensurePack();

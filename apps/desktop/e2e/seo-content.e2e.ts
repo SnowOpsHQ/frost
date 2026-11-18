@@ -19,7 +19,7 @@ import { HIGHLIGHT_STYLES, SEO_PANELS } from '@app/specs/seo-sidebar.spec';
 import { accountHelpers } from './account-helpers';
 import { fakeFiltersOf, startFakeGoogle, type FakeGoogle } from './fake-google';
 import { closeApp, launchApp } from './harness';
-import { chromeHelpers } from './helpers';
+import { atNarrowestPanel, chromeHelpers, cutText } from './helpers';
 
 const WIDE_TITLE = 'Green tea for beginners: how to choose, brew and store loose leaf green tea at home, step by step';
 const DESCRIPTION = 'How to choose green tea, brew it at the right temperature for the leaf, and store the leaves so they keep their fresh taste for months.';
@@ -283,6 +283,26 @@ test('snippet-editor-previews', async () => {
   await expect(railItem('content')).toHaveAttribute('data-status', 'warn');
   // No favicon or other image is loaded into the chrome: the previews use a drawn glyph.
   expect(await sidebar().evaluate((root) => ({ img: root.querySelectorAll('img').length, glyphs: root.querySelectorAll('.seo-serp-glyph').length }))).toEqual({ img: 0, glyphs: 2 });
+  // At 300px (design-tokens.feature.md, The panels at 300px): the address line breaks only between its
+  // crumbs, a meter's verdict keeps each number with its unit, and no text is cut.
+  const meters = page.locator('.seo-width-meters').first();
+  await atNarrowestPanel(page, async () => {
+    for (const device of ['desktop', 'mobile'] as const) {
+      const crumbs = page.getByTestId(`seo-serp-${device}-trail`).locator('.seo-serp-crumb');
+      expect(await crumbs.count()).toBe(3);
+      const split = await crumbs.evaluateAll((all) =>
+        all.filter((crumb) => {
+          const range = document.createRange();
+          range.selectNodeContents(crumb);
+          return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size > 1;
+        }),
+      );
+      expect(split).toHaveLength(0);
+      expect(await cutText(page.getByTestId(`seo-serp-${device}`))).toEqual([]);
+    }
+    expect(await page.getByTestId('seo-width-title-text').textContent()).toMatch(/^[\d,]+\u00a0px of about [\d,]+\u00a0px: cut$/);
+    expect(await cutText(meters)).toEqual([]);
+  });
 
   // Copy as HTML of the page itself, through main.
   await app!.evaluate(({ clipboard }) => clipboard.writeText('before'));
@@ -787,6 +807,14 @@ test('content-gsc-suggestion-sets-target', async () => {
   await expect(page.getByTestId('gsc-target-suggestion-query')).toHaveText(Array.from({ length: GSC_TARGET_SUGGESTIONS }, (_, i) => `fake query ${i + 1}`));
   await expect(page.getByTestId('gsc-target-use')).toHaveCount(GSC_TARGET_SUGGESTIONS);
   await expect(page.getByTestId('gsc-target-suggestions-note')).toHaveText(GSC_TARGETS_COPY.suggestionsNote.replace('{range}', RANGE));
+  // Each query whole, at the default width and at 300px, where its clicks and button go under it, together
+  // at the row's end (design-tokens.feature.md, The panels at 300px).
+  expect(await cutText(suggestions)).toEqual([]);
+  await atNarrowestPanel(page, async () => {
+    expect(await cutText(suggestions)).toEqual([]);
+    const atEnd = await rows.evaluateAll((all) => all.map((row) => Math.abs(row.getBoundingClientRect().right - row.querySelector('.gsc-targets-end')!.getBoundingClientRect().right) <= 1));
+    expect(atEnd).toEqual(atEnd.map(() => true));
+  });
   // Read for this page, without a country or device; nothing about pages yet (no target query).
   const read = readsOf('query').at(-1)!;
   expect(fakeFiltersOf(read.body)).toEqual({ page: articleUrl(), query: null, country: null, device: null });
