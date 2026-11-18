@@ -20,8 +20,8 @@ to one named test.
   found took space when not in use); open, a panel `AGENT_PANEL_WIDTH` wide. It starts closed and
   remembers the user's open / closed choice (`AGENT_PANEL_STORAGE_KEY`). A new approval request
   opens it for now without changing that choice.
-- **Toggle.** The chrome row's last tool (`agent-toggle`, `CHROME_ROW` in `tabs.spec.ts`; after the
-  render-profile toggle, over the right edge where the panel opens): a `.tool` with the agent's spark
+- **Toggle.** A chrome-row tool (`agent-toggle`, `CHROME_ROW` in `tabs.spec.ts`; after the
+  render-profile toggle and before the Settings button, near the right edge where the panel opens): a `.tool` with the agent's spark
   icon, named "AI agent", pressed (`aria-pressed`) while the panel is open and drawn pressed as the
   SEO sidebar's toggle is (the same `.sidebar-toggle` rules and guards), its title saying what a
   click does ("Open the AI agent" / "Collapse the AI agent"). While the panel is collapsed it carries

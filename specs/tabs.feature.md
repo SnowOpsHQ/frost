@@ -25,8 +25,9 @@ Phase 1 Task 2. Each scenario maps to one named test.
   (Signal's `--h-chrome`) high, that never wraps or grows. In DOM order: the navigation tools (Back,
   Forward, Reload ⇄ Stop), the tablist, the address bar (the tablist's next sibling, never inside it:
   a `tablist` holds only `tab`s), the new-tab button, the SEO sidebar toggle, the render-profile
-  toggle and the AI agent's toggle (`agent-panel.feature.md`, Toggle: last, over the right edge where
-  its panel opens); the loading line runs along the row's foot. The permission prompt, the render-profile editor
+  toggle, the AI agent's toggle (`agent-panel.feature.md`, Toggle: over the right edge where its panel
+  opens) and the Settings button (`account-settings.feature.md`, Opening: the row's last control, at its
+  right end); the loading line runs along the row's foot. The permission prompt, the render-profile editor
   bar, the find bar and the update notice stay bands under the row.
   - **Width, in this order** (measured on the row's own width, so a window narrower than it asked
     for gets the same order): the tools never shrink (each stays an `--h-control` circle). With room
@@ -37,8 +38,8 @@ Phase 1 Task 2. Each scenario maps to one named test.
        in a narrow window, does the address bar give way: to `ADDRESS_MIN_WIDTH_PX` at the window's
        minimum (`CHROME_MIN_CONTENT_WIDTH_PX`), and below that minimum, which a tiling window manager
        may impose (see Minimum window width), on down to its own padding and border (24px), so the tools and one whole tab
-       stay whole down to `CHROME_MIN_CONTENT_WIDTH_PX − ADDRESS_MIN_WIDTH_PX` + 24 (410px). Narrower still, the
-       row clips from its right end (the AI agent's toggle first).
+       stay whole down to `CHROME_MIN_CONTENT_WIDTH_PX − ADDRESS_MIN_WIDTH_PX` + 24 (448px). Narrower still, the
+       row clips from its right end (the Settings button first).
     No tab is squeezed under its minimum: the tablist's ends clip the tabs scrolled past them.
   - **A focused tab is shown whole:** whenever a tab takes focus (the tablist's keys, Tab or Shift+Tab,
     a click, Delete's neighbour), and again once a Delete's closed tab is gone from the strip, the
@@ -96,7 +97,7 @@ Phase 1 Task 2. Each scenario maps to one named test.
 - **Keyboard contract of the chrome row.** Nothing a keyboard user could do with two rows is lost:
   - **Tab order** follows `CHROME_ROW`: Back, Forward, Reload (each only while enabled), the active
     tab (the tablist's one Tab stop), the address bar, New tab, the SEO sidebar toggle, the
-    render-profile toggle, the AI agent's toggle; Shift+Tab walks it back (from the address bar to the active tab). With two
+    render-profile toggle, the AI agent's toggle, the Settings button; Shift+Tab walks it back (from the address bar to the active tab). With two
     rows the tab strip came first and the address bar after the navigation tools.
   - **In the tablist** (as above): Left/Right to the previous/next tab, wrapping; Home/End to the
     first/last; Enter or Space activates the focused tab (moving focus never activates); Delete closes
@@ -287,9 +288,9 @@ Phase 1 Task 2. Each scenario maps to one named test.
   (its size less its content size; the minimum height is kept), on macOS, Linux and Windows, and
   `CHROME_MIN_CONTENT_WIDTH_PX` equals, from `tokens.css` and `CHROME_ROW`,
   `2 × --space-4` (the row's padding) + one `--h-control` per tool (`CHROME_ROW` but the tablist and the
-  address bar: 7) + one `--space-1` per gap (between the row's items and inside the navigation group:
-  `CHROME_ROW`'s length less one, 8) + `TAB_MIN_WIDTH_PX + 2 × --space-1` (one tab, ring room) +
-  `ADDRESS_MIN_WIDTH_PX`: 626 (588 before the AI agent's toggle joined the row).
+  address bar: 8) + one `--space-1` per gap (between the row's items and inside the navigation group:
+  `CHROME_ROW`'s length less one, 9) + `TAB_MIN_WIDTH_PX + 2 × --space-1` (one tab, ring room) +
+  `ADDRESS_MIN_WIDTH_PX`: 664 (626 before the Settings button joined the row, 588 before the AI agent's toggle).
 - **Scenario: window-row-is-the-title-bar** — on macOS `createMainWindow()` sets `titleBarStyle:
   'hidden'`, `trafficLightPosition: TRAFFIC_LIGHT_POSITION` and `titleBarOverlay: true`; on Windows
   `titleBarStyle: 'hidden'` and `titleBarOverlay` of `TITLE_BAR_OVERLAY_HEIGHT_PX` (= `CHROME_ROW_HEIGHT_PX`)
@@ -369,7 +370,7 @@ shrink order) is the same on all three platforms.
   find bar's) and the page area come after the row, and the tab's view starts at the page area's top.
 - **Scenario: chrome-row-tab-order** — with a page loaded in a background tab and the active one
   (Back enabled), Tab from Back walks Forward when enabled, Reload, the active tab, the address bar,
-  New tab, the SEO sidebar toggle, the render-profile toggle and the AI agent's toggle, in that order, and Shift+Tab walks
+  New tab, the SEO sidebar toggle, the render-profile toggle, the AI agent's toggle and the Settings button, in that order, and Shift+Tab walks
   back; Mod+L (via the menu, as its accelerator does) focuses the address bar from the page, and the
   tablist's keys still work from the tab Tab lands on.
 - **Scenario: narrow-tabs-scroll-and-address-keeps-its-width** — in an 800px wide window with many
@@ -386,7 +387,7 @@ shrink order) is the same on all three platforms.
   its box, the tablist shows one whole tab (at least `TAB_MIN_WIDTH_PX`), the address bar is
   `ADDRESS_MIN_WIDTH_PX` wide and every tool 34×34.
 - **Scenario: focus-never-scrolls-the-row** — with the row made narrower than its contents (a test-only
-  width on it), focusing the clipped AI agent toggle (the row's last control) leaves the row's `scrollLeft` at 0 and Back
+  width on it), focusing the clipped Settings button (the row's last control) leaves the row's `scrollLeft` at 0 and Back
   at the row's left padding.
 - **Scenario: chrome-row-is-the-title-bar** — on macOS and Windows the content starts at the window's
   top (content bounds' top and height equal the window's) and the Window Controls Overlay is visible;

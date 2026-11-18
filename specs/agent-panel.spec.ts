@@ -22,8 +22,8 @@ import type { ModelId, ModelProvider, ModelRoute } from './agent-tools.spec';
  * to make room, so main lays the tab's view out clear of both.
  *
  * Collapsed, the agent panel takes no room in the row (no rail, no gap: the page column reaches the
- * workspace's right inset); its toggle is the chrome row's last tool (`agent-toggle` in `CHROME_ROW`,
- * `tabs.spec.ts`). Open, it is `AGENT_PANEL_WIDTH` wide with a collapse button in its header.
+ * workspace's right inset); its toggle is a chrome-row tool (`agent-toggle` in `CHROME_ROW`,
+ * `tabs.spec.ts`, before the Settings button). Open, it is `AGENT_PANEL_WIDTH` wide with a collapse button in its header.
  */
 export const AGENT_PANEL_WIDTH = 380;
 

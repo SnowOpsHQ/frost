@@ -61,10 +61,10 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   still gives way before the page goes under `PAGE_MIN_WIDTH`, in the same order (the agent panel to
   its minimum, then the SEO sheet). In the tiled 776px window with the SEO sheet open and the agent
   collapsed, the SEO sheet keeps its 360px and the page is 336px (with the collapsed agent's 40px rail
-  and its gap the sheet narrowed to 328px beside a 320px page); at the 626px minimum (tight gaps) the
-  page keeps 320 and the sheet is 242px, and at the old 588px minimum, which a tiling window manager
-  may still impose, 204px (160 with the rail); with the sidebar collapsed the page is 704px at 776
-  and 566px at 626. The gaps never touch the
+  and its gap the sheet narrowed to 328px beside a 320px page); at the 664px minimum (tight gaps) the
+  page keeps 320 and the sheet is 280px, at the 626px and 588px minimums the row had before (which a
+  tiling window manager may still impose) 242px and 204px (160 at 588 with the collapsed agent's rail);
+  with the sidebar collapsed the page is 704px at 776 and 604px at 664. The gaps never touch the
   chrome row, whose width rules (`tabs.feature.md`) are unchanged, so no control leaves the row.
   `sidebar-layout.ts` and the DevTools drawer count the gap the workspace's width gives
   (`workspaceGap`); main's bounds come from the page card's measured box, so they follow.
@@ -87,8 +87,9 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   is the workspace's (its stack spans the chrome's one column); the DevTools drawer's section
   (`devtools-styles-are-delimited`) and the agent's stylesheet repeat the same query for the drawer
   and the separator. Corners stay `--r-lg` and the native view's radius is unchanged. At
-  the 626px minimum the sheet is 242px and its body's content box 232px, less its vertical
-  scrollbar; at 588px (below the minimum: a tiled window) 204px, content 194px. Round 1 set the
+  the 664px minimum the sheet is 280px and its body's content box 270px, less its vertical
+  scrollbar; at 626px and 588px (below the minimum: a tiled window) 242px and 204px, content 232px
+  and 194px. Round 1 set the
   rules below at 588px with the collapsed agent's rail, a 160px sheet (content 150px, 140px beside
   the scrollbar): the room was accepted; what costs the text is the parts that
   keep everything on one line, so under the panel's minimum (the same `seo-panel` query) they wrap
@@ -96,8 +97,8 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   beside the 84px ring), the AI-readiness tile's score row likewise (`ai-readiness.css`, which holds the
   tile's rules and loads before `styles.css`), a section head puts its badge under its title, and the
   panels' toggles and actions wrap a long label onto a second line, their height automatic from
-  `--h-chip` up. The bar, agent collapsed at the minimum (set at 588px with the rail, and held at 626
-  and 588px without it): Overview's, On-Page's, Links' and Changes' bodies
+  `--h-chip` up. The bar, agent collapsed at the minimum (set at 588px with the rail, and held at 664,
+  626 and 588px without it): Overview's, On-Page's, Links' and Changes' bodies
   don't scroll sideways (as on `main`) and Overview's first card clips no more words than `main`'s
   (1); Page Speed, Content and Visibility scrolled sideways on `main` too. Measured: Overview, On-Page
   and Links no longer scroll and Overview's first card clips no word. Changes' capture card stacks too
@@ -113,9 +114,10 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   the tight gaps free 16px (the two insets and two gaps, the agent collapsed), so at 699px the SEO
   sheet is 15px wider than at 700px and the page card starts 3px further right.
   Options that change behaviour (the sheet opening collapsed, the page giving way) were not needed.
-  The window's minimum is 626px since the agent's toggle joined the chrome row (`tabs.feature.md`;
-  588px before). At the default 1280px window nothing moved but the rail: the gaps and inset are
-  `--space-3`, the SEO sheet its 360px, and the page card takes the rail's 40px and its gap.
+  The window's minimum is 664px since the Settings button joined the chrome row (`tabs.feature.md`;
+  626px with the agent's toggle alone, 588px before). At the default 1280px window nothing moved but
+  the rail: the gaps and inset are `--space-3`, the SEO sheet its 360px, and the page card takes the
+  rail's 40px and its gap (the Settings button takes 38px from the address bar, not from the workspace).
 - **Resizing.** A pane's separator (`.pane-separator`) moves from the pane's own edge into the gap
   beside the page, its 2px line in the middle of the gap (still only on hover, drag and focus). It is
   8px wide (`--space-3`) at every width: with `--space-3` gaps it fills the gap; with tight gaps it
@@ -209,11 +211,11 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
 - **Scenario: entrance-animations-end** (same file) — no rule in any renderer stylesheet runs an
   animation with `both` or `forwards` fill.
 - **Scenario: narrow-window-keeps-the-sheets-whole** (e2e `workspace.e2e.ts`) — the chrome laid out
-  `NARROW_WINDOW.width` (626px) wide, and again at the old 588px minimum, with the SEO sheet open on
+  `NARROW_WINDOW.width` (664px) wide, and again at the earlier minimums 626px and 588px, with the SEO sheet open on
   Overview and the agent collapsed: no agent panel is rendered and the page card ends
   `WORKSPACE_GAP_TIGHT` from the chrome's right edge, the gaps between the
   sheets `WORKSPACE_GAP_TIGHT`, the SEO sheet the row less the page's minimum and `workspaceRowChrome`
-  (242px; 204 at 588), the page `PAGE_MIN_WIDTH`; the workspace's gap is `WORKSPACE_GAP_TIGHT` at a chrome one pixel
+  (280px; 242 at 626, 204 at 588), the page `PAGE_MIN_WIDTH`; the workspace's gap is `WORKSPACE_GAP_TIGHT` at a chrome one pixel
   under `TIGHT_WORKSPACE_BELOW` and `WORKSPACE_GAP` at it and in a 776px chrome; the SEO body's
   padding is `--space-1` (it is `--space-5` at a width the panel's minimum fits); on Overview the
   body doesn't scroll sideways, and neither the score card's text column (and each line in it) nor

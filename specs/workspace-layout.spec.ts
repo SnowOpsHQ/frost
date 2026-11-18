@@ -128,8 +128,8 @@ export const PAGE_AREA_COLLAPSES = [
 
 /**
  * A narrow window (`workspace-layout.feature.md`, A narrow window): the window's minimum content width (CSS px,
- * `CHROME_MIN_CONTENT_WIDTH_PX`, 626) and, there, the SEO sheet's width with the agent collapsed (the row less the
- * page's minimum and `workspaceRowChrome`, with the tight gaps: 242). Below the panel's minimum the SEO body's padding is
+ * `CHROME_MIN_CONTENT_WIDTH_PX`, 664) and, there, the SEO sheet's width with the agent collapsed (the row less the
+ * page's minimum and `workspaceRowChrome`, with the tight gaps: 280). Below the panel's minimum the SEO body's padding is
  * `SEO_BODY_NARROW_PADDING`; the query is on the panel's content box, inside its 1px border.
  */
 export const NARROW_WINDOW = {

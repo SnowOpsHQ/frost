@@ -382,7 +382,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   4px ring needs at either end (the reason the tab row was 42px). The loading line runs along the row's
   foot. The tools are `flex: none`, the row clips (`overflow: clip`, never scrolled by focus), and the
   widths give way in `tabs.feature.md`'s order: the tabs to 84px, then the tablist scrolls, and only in a
-  narrow window the address bar from 360px to 240px (and below the window's 588px minimum, which tiling
+  narrow window the address bar from 360px to 240px (and below the window's 664px minimum, which tiling
   window managers ignore, on toward nothing before a tool is clipped), measured on the row's own width
   (an inline-size container, `100cqw`; `tabs.feature.md`). No colour, type or state of a tab, tool or the address changed, so `TAB_STRIP`,
   `FOCUS_RING_RULES`, `FORCED_COLOURS_BUSY`, `FORCED_COLOURS_PRESSED` and `CONTRAST_PAIRS` keep their
@@ -1546,7 +1546,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   and at the default width it is the four-column table with each domain whole on one line;
   at 300px neither it nor the body does, no text in the table or the parameter grid is cut, its rows are
   grids, and the accessibility tree (CDP `Accessibility.queryAXTree`) holds 1 table, 4 column headers, 2
-  row headers and 6 cells; in the 626px window (`NARROW_WINDOW`, a 242px sheet) its rows have three
+  row headers and 6 cells; in the 664px window (`NARROW_WINDOW`, a 280px sheet) its rows have three
   columns, and in a 544px chrome (a tiled window: the 160px sheet the old 588px minimum left beside the agent's
   rail) two; at each its wrap doesn't scroll, no header or cell is cut, and each count's cell has its header's edges; with
   `LONG_DOMAINS` (`?domains=long`) at the default width it is still four columns, nothing scrolls, no

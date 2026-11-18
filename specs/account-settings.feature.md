@@ -29,6 +29,14 @@ to one named test.
   state every feature parses). Main also gives that window's chrome keyboard focus. A sign-in that
   reaches `confirming` opens Settings on Account by itself (main has focused the window) and focuses the
   question, so the confirmation is in view and announced.
+- **A visible way in.** A gear at the chrome row's right end (`SETTINGS_BUTTON`: test id `settings-open`,
+  name "Settings", title "Settings (Ctrl/⌘+,)"; the row's last control, after the AI agent's toggle,
+  `tabs.feature.md`, The chrome row) is the third way in, so the sheet is reachable without knowing the
+  palette or the shortcut. A click is the palette's "Settings": it asks for Account
+  (`requestSettings('account')`) and focus moves into the sheet. Clicking it while Settings already shows
+  asks again (focus returns to the section); it is not a toggle (no `aria-pressed`), because a sign-in
+  waiting for its confirmation may hold the sheet open and that rule lives in one place (`holdsSheet`,
+  Close and Esc). It is a `.tool` like the row's other tools and, like them, never a window drag area.
 - **The confirmation cannot be clicked by accident.** Its button says "Confirm sign-in" (not "Sign in"),
   sits inside the confirmation card after Cancel (not where Sign in was), and takes no activation for
   `SETTINGS_CONFIRM_ARM_MS` after it appears and again after the window regains focus or becomes
@@ -91,6 +99,10 @@ to one named test.
 - `settings-opens-for-confirmation` — the account entering `confirming` opens it on Account; staying there does not re-open it.
 - `settings-menu-seq` — main's counter opens it on each change after the first value seen.
 
+## The row's button (`apps/desktop/src/renderer/__tests__/settings-button.test.ts`)
+- `settings-button-requests-account` — the row's gear (`SETTINGS_BUTTON`) asks for Account with a click, each time: with Settings closed it opens on Account and focuses the section, and with it open (on another section) it asks again and focus returns to Account; it never closes the sheet.
+- `settings-button-is-a-plain-tool` — the gear is a `.tool` button named "Settings" with the title `SETTINGS_BUTTON.title`, after the AI agent's toggle and last in the row, and it is not a pressed toggle (no `aria-pressed`).
+
 ## Palette (`apps/desktop/src/renderer/__tests__/settings-palette.test.ts`)
 - `settings-palette-actions` — the four actions, in the Browser group, each open its section and move focus themselves; "Sign in to frost" is offered only while signed out.
 - `settings-palette-registers-with-others` — they register beside the built-in and browser-polish actions with no duplicate ID.
@@ -106,6 +118,8 @@ to one named test.
 
 ## End to end (`apps/desktop/e2e/settings.e2e.ts`, fakes `fake-backend.ts`, `fake-telemetry.ts`, `fake-google.ts`)
 - `settings-opens-from-palette-and-menu` — the palette's "Settings" and the menu item (its accelerator Mod+,: a synthetic key never reaches the native menu, so the item is clicked) open the sheet on Account with focus there; Esc and Close close it; History and Settings never show together; "Sign in to frost" is offered while signed out.
+- `settings-opens-from-the-row-button` — clicking the row's gear opens the sheet on Account with focus there; clicking it again with the sheet open asks again (focus returns to Account after moving to another section) and does not close it; Esc closes it.
+- `settings-button-tab-order` — Tab from the AI agent's toggle reaches the gear next (the row's last Tab stop), Shift+Tab goes back to the agent's toggle; its name is "Settings" and its title is `SETTINGS_BUTTON.title`.
 - `settings-sheet-not-covered-by-page` — while Settings shows, the tab's view is zero-high (nothing drawn over the sheet).
 - `settings-sign-in-needs-confirmation` — Sign in opens the authorize page; after the browser leg the view asks "Sign in to frost as <email>?" with the fingerprint the browser shows, the question focused; an immediate click and Enter on "Confirm sign-in" do nothing; Esc does not hide it silently (it cancels, tested in the unit tests); a deliberate click after the delay signs in; then the account shows as active.
 - `settings-telemetry-toggles-follow-main` — the switches start off, show main's answers, and keep their state across a restart on the same profile.

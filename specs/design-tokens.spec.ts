@@ -473,7 +473,7 @@ export interface CascadeContext {
  * The states every cascade check runs in (`TEXT_COLOUR_RULES`, `TEXT_TYPE_RULES`, `FOCUS_RING_RULES`,
  * `FORCED_COLOURS_BUSY`, `FORCED_COLOURS_PRESSED`, `FORCED_COLOURS_KEPT`, `DISABLED_CONTROLS`, `PRESSED_EDGES`,
  * `STATE_EDGES` and `TAB_STRIP`'s active tab), each in light and dark: the default window, where every container
- * is wider than its queries and motion is allowed; reduced motion; and the narrowest window (626px,
+ * is wider than its queries and motion is allowed; reduced motion; and the narrowest window (664px,
  * `workspace-layout.spec.ts` `NARROW_WINDOW`), where every width query the stylesheets hold (each an upper
  * bound) applies at once. A rule in a reduced-motion or width block that undid a guarded colour, ring, edge,
  * type or `forced-color-adjust` fails its check there.

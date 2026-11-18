@@ -40,6 +40,20 @@ export const SETTINGS_MENU = {
   accelerator: 'CmdOrCtrl+,',
 } as const;
 
+/**
+ * The third way in (`account-settings.feature.md`, Opening; `tabs.feature.md`, The chrome row): a gear, the
+ * chrome row's last control (`settings-open` in `CHROME_ROW`, `tabs.spec.ts`). A click asks for Account
+ * exactly as the palette's "Settings" does (clicking it while Settings shows asks again, so focus returns
+ * to the section; it never closes the sheet, and it is not a pressed toggle). `title` names the shortcut as
+ * the row's toggles do.
+ */
+export const SETTINGS_BUTTON = {
+  testId: 'settings-open',
+  label: 'Settings',
+  title: 'Settings (Ctrl/⌘+,)',
+  section: 'account',
+} as const satisfies { testId: string; label: string; title: string; section: SettingsSectionId };
+
 /** The palette's Settings actions (group `browser`): each opens the sheet on its section; `signedOutOnly` is offered only while signed out. */
 export const SETTINGS_PALETTE_ACTIONS = [
   { id: 'settings.open', label: 'Settings', section: 'account', signedOutOnly: false, keywords: ['preferences', 'options', 'account', 'sync'] },
