@@ -14,7 +14,7 @@ import { SERP_UNREADABLE_MESSAGES, SERP_WORLD_ID } from '@app/specs/serp.spec';
 import { NARROW_WINDOW } from '@app/specs/workspace-layout.spec';
 import { closeApp, launchApp } from './harness';
 import { atNarrowestPanel, chromeHelpers, cutText, sidewaysScroll } from './helpers';
-import { PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
+import { LONG_DOMAINS, PACK_PATH, PACK_VERSION, SEARCH_HOST, engineAnswer, signedTestPack } from './serp-fixtures';
 
 const READ_WAIT = 20_000;
 
@@ -180,6 +180,9 @@ test('serp-composition-and-ownership', async () => {
   const table = page.getByTestId('serp-ownership-table');
   const wrap = page.locator('.serp-table-wrap').first();
   expect(await sidewaysScroll(wrap)).toBe(0);
+  // At the default width it is the four-column table, each domain whole on its line.
+  expect(await table.locator('tbody tr').first().evaluate((row) => getComputedStyle(row).display)).toBe('table-row');
+  expect(await domainBreaks(table)).toEqual({ midLabel: [], wrapped: [] });
   await atNarrowestPanel(page, async () => {
     expect(await sidewaysScroll(wrap)).toBe(0);
     expect(await sidewaysScroll(page.locator('.seo-body'))).toBe(0);
@@ -212,7 +215,52 @@ test('serp-composition-and-ownership', async () => {
     // with no box in the next test, on CI and locally).
     await page.setViewportSize(before);
   }
+  // Long real domains (LONG_DOMAINS, a 59-character one among them) at the default width: still the
+  // four-column table, nothing scrolling, a domain wrapping only after a dot or a hyphen, never inside a
+  // label, and the fixture's two whole on their lines.
+  await load(searchUrl('green tea', '&domains=long'));
+  await expect(panelState()).toHaveAttribute('data-state', 'ready', { timeout: READ_WAIT });
+  await expect(page.getByTestId('serp-ownership-row')).toHaveCount(LONG_DOMAINS.length);
+  expect(await table.locator('tbody tr').first().evaluate((row) => getComputedStyle(row).display)).toBe('table-row');
+  expect(await sidewaysScroll(wrap)).toBe(0);
+  const breaks = await domainBreaks(table);
+  expect(breaks.midLabel).toEqual([]);
+  expect(breaks.wrapped.filter((domain) => domain === 'brewguide.example' || domain === 'leafhouse.example')).toEqual([]);
 });
+
+/**
+ * Where the ownership table's domains wrap: `midLabel`, each line break not right after a dot or a hyphen
+ * (`domain: …end of line|start of next…`); `wrapped`, the domains on more than one line.
+ */
+function domainBreaks(table: Locator): Promise<{ midLabel: string[]; wrapped: string[] }> {
+  return table.evaluate((t) => {
+    const midLabel: string[] = [];
+    const wrapped: string[] = [];
+    for (const cell of t.querySelectorAll<HTMLElement>('tbody .serp-domain .seo-page-text')) {
+      const domain = cell.textContent ?? '';
+      const range = document.createRange();
+      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      let text = '';
+      let top: number | null = null;
+      let lines = 1;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        for (let i = 0; i < node.textContent!.length; i++) {
+          range.setStart(node, i);
+          range.setEnd(node, i + 1);
+          const rect = range.getClientRects()[0];
+          if (rect && top !== null && Math.abs(rect.top - top) > 2) {
+            lines += 1;
+            if (!/[.-]$/.test(text)) midLabel.push(`${domain}: …${text.slice(-6)}|${node.textContent!.slice(i, i + 6)}…`);
+          }
+          if (rect) top = rect.top;
+          text += node.textContent![i];
+        }
+      }
+      if (lines > 1) wrapped.push(domain);
+    }
+    return { midLabel, wrapped };
+  });
+}
 
 /** The table, header and cell roles Chromium's accessibility tree holds for `table` and under it. */
 async function axRoles(table: Locator): Promise<Record<string, number>> {

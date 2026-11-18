@@ -175,8 +175,9 @@ export const sidewaysScroll = (scroller: Locator): Promise<number> => scroller.e
 /**
  * Sets the SEO panel to its narrowest width (Home on its separator) for `body`, then gives it back the width
  * it had: keyboard steps up to the last one under it, then a drag for the rest (the default, 360px, isn't a
- * whole number of steps from either end). The drag is under a step and starts at the minimum, so the tab
- * view's edge never crosses a parked cursor (seo-sidebar.e2e.ts, drag-resize-moves-page-view).
+ * whole number of steps from either end). The drag starts at the minimum plus those steps and is under one
+ * step (24px), so the tab view's edge moves too little to cross a parked cursor (seo-sidebar.e2e.ts,
+ * drag-resize-moves-page-view). A failure in `body` is the one reported, even if restoring then fails too.
  */
 export async function atNarrowestPanel(page: Page, body: () => Promise<void>): Promise<void> {
   const separator = page.getByTestId('seo-resize');
@@ -186,9 +187,13 @@ export async function atNarrowestPanel(page: Page, body: () => Promise<void>): P
   await page.keyboard.press('Home');
   await expect(separator).toHaveAttribute('aria-valuenow', String(min));
   await separator.blur();
+  let failure: unknown = null;
   try {
     await body();
-  } finally {
+  } catch (error) {
+    failure = error;
+  }
+  try {
     const steps = Math.floor((found - min) / keyboardStep);
     await separator.focus();
     for (let i = 0; i < steps; i++) await page.keyboard.press('ArrowRight');
@@ -204,5 +209,8 @@ export async function atNarrowestPanel(page: Page, body: () => Promise<void>): P
       await page.mouse.up();
     }
     await expect(separator).toHaveAttribute('aria-valuenow', String(found));
+  } catch (error) {
+    if (failure === null) throw error;
   }
+  if (failure !== null) throw failure;
 }

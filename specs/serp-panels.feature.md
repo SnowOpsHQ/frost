@@ -44,6 +44,9 @@ named test.
 - **Scenario: serp-composition-segments** — one segment per type with results, in
   `SERP_RESULT_TYPES` order, each with its count, its `SERP_OUTLINE_STYLES` colour and its place on a
   0–100 bar (widths sum to 100); a summary sentence is the bar's text equivalent.
+- **Scenario: domain-labels** — a domain as its labels, each but the last with its dot, joined the domain:
+  the ownership table puts a `<wbr>` between them, so it wraps at dots and hyphens, never inside a label
+  (`design-tokens.feature.md`, The panels at 300px).
 - **Scenario: serp-ownership-rows** — one row per domain in main's order, with its count, its share as
   a whole percent and its positions; the title names the page; `SERP_TRUNCATED_NOTE` when
   `ownership.complete` is false.

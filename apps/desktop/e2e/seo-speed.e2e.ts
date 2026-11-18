@@ -218,6 +218,8 @@ test('lcp-late-image-e2e', async () => {
   const texts = chrome.locator('.seo-speed-types, .seo-speed-milestones, .seo-speed-totals');
   const cutIn = async () => (await Promise.all((await texts.all()).map((part) => cutText(part)))).flat();
   expect(await cutIn()).toEqual([]);
+  // Three tile columns at the default width (its 270px threshold sits under the card's width there).
+  expect(await chrome.locator('.seo-speed-totals').first().evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(3);
   await atNarrowestPanel(chrome, async () => {
     expect(await cutIn()).toEqual([]);
     expect(await chrome.locator('.seo-speed-totals').first().evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(2);

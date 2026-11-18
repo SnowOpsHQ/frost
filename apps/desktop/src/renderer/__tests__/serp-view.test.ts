@@ -22,6 +22,7 @@ import {
   knownSerp,
   ownershipNote,
   ownershipRows,
+  domainLabels,
   ownershipTitle,
   packStatusText,
   packUpdateLine,
@@ -121,6 +122,15 @@ describe('SERP panel view model', () => {
     expect(ownershipTitle({ ...SNAPSHOT.ownership, page: 3 })).toBe('Who owns page 3');
     expect(ownershipNote(SNAPSHOT.ownership)).toBeNull();
     expect(ownershipNote({ ...SNAPSHOT.ownership, complete: false })).toBe(SERP_TRUNCATED_NOTE);
+  });
+
+  test('domain-labels', () => {
+    // A break opportunity goes after each dot; joined, the labels are the domain.
+    expect(domainLabels('www.seriouseats.com')).toEqual(['www.', 'seriouseats.', 'com']);
+    expect(domainLabels('coffee-brewing-guides.example.co.uk')).toEqual(['coffee-brewing-guides.', 'example.', 'co.', 'uk']);
+    expect(domainLabels('localhost')).toEqual(['localhost']);
+    const long = 'shop.the-very-long-green-tea-company-of-great-britain.co.uk';
+    expect(domainLabels(long).join('')).toBe(long);
   });
 
   test('serp-result-rows', () => {

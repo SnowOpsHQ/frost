@@ -216,6 +216,8 @@ test('accessibility-check-reports-violations-e2e', async () => {
   // The panels at 300px).
   const tally = page.locator('.seo-a11y-tally');
   expect(await cutText(tally)).toEqual([]);
+  // Four columns at the default width (its 280px threshold sits a few px under the results' width there).
+  expect(await tally.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(4);
   await atNarrowestPanel(page, async () => {
     expect(await cutText(tally)).toEqual([]);
     expect(await tally.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(2);

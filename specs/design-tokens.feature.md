@@ -1125,33 +1125,45 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   - **Content's width meters:** a verdict's number and its unit are joined by a no-break space
     (`widthMeter`'s label), so a narrow meter wraps between words, never inside "12,345 px": on `main`,
     at 324px, "12,345 px of about 920 | px: cut".
-  - **SERP's Who owns page 1:** a domain wraps (it was cut by an ellipsis), and where four columns leave
-    the domain under about 115px (`@container serp-table (width < 300px)` on the tables' wrap: 227px at
-    300px, where it scrolled 60px, and 287px at the default 360px, where "brewguide.example" broke
-    mid-word) the table stacks: each row two lines, the domain across the row and its counts under it in
-    three columns under their headers, the head likewise. Where three counts can't hold their headers
-    (`width < 180px`: the 588px window's 111px, where "Results" ran 12px and "Positions" 22px past their
-    columns and the wrap scrolled 22px) a row takes three lines: the domain, then Results and Share under
-    their headers, then Positions across the row, only the last line ruled. From the 588px window's 160px
-    panel to 560px every width either stacks or leaves the domain at least 124px (one line for
-    "brewguide.example"), and nothing scrolls or is cut. It stays table markup with its header cells, and
+  - **SERP's Who owns page 1:** at the default 360px panel (its wrap 287px) it is the four-column table, as
+    on `main`. A domain wraps (it was cut by an ellipsis) only at its dots (a `<wbr>` after each,
+    `domainLabels`) and hyphens, never inside a label: `overflow-wrap: break-word`, not the page text's
+    `anywhere`, which let the table's auto layout squeeze the column and break "brewguide.exam|ple"; the
+    column is never narrower than its longest label, so only a single label wider than it would scroll. The
+    table has no inline padding at its outer edges (the card has its own): the four columns had left
+    "brewguide.example" 0.5px short of one line at 360px (120.5px of 121px); now the column is 119.8px
+    for a 115px name. With five long real domains (`LONG_DOMAINS`: `seriouseats.com`, `example.co.uk`, the
+    fixture's two and `the-very-long-green-tea-company-of-great-britain.co.uk`, as the table names them)
+    at 360px the 59-character one takes three lines, broken after hyphens, every other domain one, nothing
+    scrolls. Where four columns don't fit (`@container serp-table (width < 280px)` on the tables' wrap:
+    227px at 300px, where it scrolled 60px sideways) the table stacks: each row two lines, the domain
+    across the row (breaking anywhere there) and its counts under it in three columns under their headers,
+    the head likewise. Where three counts can't hold their headers (`width < 180px`: the 588px window's
+    111px, where "Results" ran 12px and "Positions" 22px past their columns and the wrap scrolled 22px) a
+    row takes three lines: the domain, then Results and Share under their headers, then Positions across
+    the row, only the last line ruled. A round raised the stacking threshold to 300px, which stacked the
+    table at the default width; it is 280px again. It stays table markup with its header cells, and
     Chromium's accessibility tree still holds a table of 4 column headers, 2 row headers and 6 cells. The
     probe table (Visibility) shares the wrap but none of these rules: it is not one of these parts. The
     parameter grid above it holds at 300px (it broke twice in #49).
-  - **Search Console's controls:** the range and filter rows wrap (`flex-wrap`), and a select is never
-    narrower than the label it shows nor wider than the row. "More ranges…" is its own width, its longest
-    preset's (no longer capped at 45% of the row; no `min-width: 0`). The country and device share the
-    filter row equally, each at least its chosen option's width (`field-sizing: content`): with every
-    country Search Console names (`GSC_COUNTRY_ALPHA3`, about 240) a select's own width would be its
-    longest option's, and on the first round "South Georgia & South Sandwich Islands" made the country
-    select take the whole row at 360px with "All countries" chosen. A name longer than the row ends in an
-    ellipsis inside it (`text-overflow`). Where they don't fit, a control takes the next line: at 300px
-    "More ranges…" goes under the days and "Clear filters" under the country and device. On `main`, at
-    300px, "More ranges…" was cut 12px, "United Kingdom" 49px ("United…"), "All devices" 20px and the days
-    1-2px each; at 360px "United Kingdom" was cut 19px. At 360px with "All countries" and "All devices"
-    the controls are as on `main` on Linux (two equal 155px selects on one line, 34px tall); where a chosen
-    label needs more than half the row a select keeps that label's width rather than cutting it (macOS CI
-    drew the two unequal there); with a country and a device set, "Clear filters" takes the next line.
+  - **Search Console's controls:** the range row wraps (`flex-wrap`), "More ranges…" at its own width, its
+    longest preset's (no longer capped at 45% of the row; no `min-width: 0`), never wider than the row. The
+    filters are a split fixed by the stylesheet, whatever is chosen and on every OS: the country and device
+    selects in two equal columns (`grid-template-columns: repeat(2, minmax(0, 1fr))`, `min-width: 0`), a
+    name too long for its select ending in an ellipsis (`text-overflow`), and "Clear filters" on the line
+    under them, so the selects keep their widths when it comes and goes. Under `@container gsc (width <
+    280px)` (the 300px panel's 256px) each select takes the row. The first round sized a select by its
+    chosen option (`field-sizing: content`): the halves were equal only while each chosen label was under
+    half the row ("St. Vincent & Grenadines" made them 173px and 117px), arrowing through a closed select
+    wrapped and unwrapped the row, and macOS CI drew them unequal. Two columns hold "United Kingdom"
+    (125px with the select's padding and arrow) from a 258px panel, so 280px, not the 260px suggested,
+    keeps 11px in hand. Measured on Linux with every country Search Console names (`GSC_COUNTRY_ALPHA3`):
+    at 360px the selects are 155px and 155px on one line with "All countries", "United Kingdom" and "South
+    Georgia & South Sandwich Islands" (ellipsis) chosen, at the same places each time; at 300px each is
+    256px on its own line, "United Kingdom" whole. The only movement on a choice is "Clear filters" taking
+    its line when the first filter is set and leaving it when the last is cleared. On `main`, at 300px,
+    "More ranges…" was cut 12px, "United Kingdom" 49px ("United…"), "All devices" 20px and the days 1-2px
+    each; at 360px "United Kingdom" was cut 19px (beside "Clear filters").
   - **Content's Search Console targets:** a suggested query wraps (the decision: the whole query shows, on
     as many lines as it needs, because its tooltip, the only way to the cut part, is out of the keyboard's
     reach, and Search Console's queries are mostly a line); where it doesn't fit beside its clicks and
@@ -1521,27 +1533,32 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 ## End to end, the panels at 300px (each in its panel's suite, at the default width and after Home on the separator)
 - **Scenario: lcp-late-image-e2e** (`seo-speed.e2e.ts`) — every navigation phase is at least
   `NAVIGATION_PHASE_MIN_WIDTH` wide, in order, none starting before the one before it ends, inside the axis;
-  no text in the requests by type or the tiles is cut, and at 300px the tiles have two columns.
+  no text in the requests by type or the tiles is cut, and the tiles have three columns at the default width
+  and two at 300px.
 - **Scenario: accessibility-check-reports-violations-e2e** (`seo-compliance.e2e.ts`) — no tally label is
-  cut; at 300px the tally has two columns.
+  cut; the tally has four columns at the default width and two at 300px.
 - **Scenario: snippet-editor-previews** (`seo-content.e2e.ts`) — at 300px each of the trail's three crumbs
   is on one line, no text in either preview or the width meters is cut, and the title's verdict reads
   `<n> px of about <n> px: cut` with no-break spaces.
 - **Scenario: content-gsc-suggestion-sets-target** (`seo-content.e2e.ts`) — no query is cut; at 300px
   each row's clicks and button end at the row's end.
-- **Scenario: serp-composition-and-ownership** (`serp.e2e.ts`) — the ownership table's wrap doesn't scroll;
+- **Scenario: serp-composition-and-ownership** (`serp.e2e.ts`) — the ownership table's wrap doesn't scroll,
+  and at the default width it is the four-column table with each domain whole on one line;
   at 300px neither it nor the body does, no text in the table or the parameter grid is cut, its rows are
   grids, and the accessibility tree (CDP `Accessibility.queryAXTree`) holds 1 table, 4 column headers, 2
   row headers and 6 cells; in the 588px window (`NARROW_WINDOW`) its rows have two columns, its wrap
-  doesn't scroll, no header or cell is cut, and each count's cell has its header's edges.
+  doesn't scroll, no header or cell is cut, and each count's cell has its header's edges; with
+  `LONG_DOMAINS` (`?domains=long`) at the default width it is still four columns, nothing scrolls, no
+  domain breaks except after a dot or a hyphen, and the fixture's two are on one line each.
 - **Scenario: gsc-panel-country-device-filters** (`gsc-panel.e2e.ts`) — with "United Kingdom" and a
   device chosen, no control's label is cut (a select against a copy of it holding only its chosen option),
-  and at 300px the body doesn't scroll sideways; then with every country (`GSC_COUNTRY_ALPHA3`) the country
-  and device selects share one line at the default width, inside the row, with no label cut and the country
-  select at least 20px narrower than its longest option would make it (not "equal halves": macOS CI drew
-  the two unequal, a select keeping its chosen label's width), "United Kingdom" is whole at 300px, and "South
-  Georgia & South Sandwich Islands" stays inside the row there.
-`atNarrowestPanel` gives the panel back the width it found (keyboard steps, then a drag under a step).
+  and at 300px the body doesn't scroll sideways; then with every country (`GSC_COUNTRY_ALPHA3`), for "All
+  countries", "United Kingdom", the longest name and "St. Vincent & Grenadines": at the default width the
+  two selects on one line at the same width to 1px (1:1), at 300px each the row's width on its own line,
+  "United Kingdom" whole at both, and every box (the selects, "Clear filters", the line under them) the
+  same for every choice; a failure prints the widths.
+`atNarrowestPanel` gives the panel back the width it found (keyboard steps, then a drag under a step), and
+a failure in its body is the one reported even if giving the width back fails too.
 The check (`cutText`, `e2e/helpers.ts`) reads the text itself: each box holding text of its own whose
 `scrollWidth` passes its `clientWidth`, and each select narrower than its chosen option needs.
 

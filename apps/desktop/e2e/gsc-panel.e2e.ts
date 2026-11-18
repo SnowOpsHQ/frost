@@ -409,43 +409,52 @@ test.describe.serial('the Search Console panel', () => {
     await page.getByTestId('gsc-clear-filters').click();
     await expect(page.getByTestId('gsc-total-clicks')).toHaveText('60');
 
-    // Every country Search Console names (GSC_COUNTRY_ALPHA3, some 240): a select is as wide as its chosen
-    // option, never its longest ("South Georgia & South Sandwich Islands"). With "All countries" the two
-    // filters share the row equally at the default width, as before; at 300px "United Kingdom" is whole,
-    // and the longest name stays inside the row (it ends in an ellipsis).
+    // Every country Search Console names (GSC_COUNTRY_ALPHA3, some 240). The filters' split is the
+    // stylesheet's (design-tokens.feature.md, The panels at 300px): at the default width two equal columns
+    // on one line whatever is chosen, on every OS; at 300px a line each. "United Kingdom" is whole at both,
+    // the longest name ends in an ellipsis inside its select, and changing the choice moves nothing.
     google.countryRows = () => Object.keys(GSC_COUNTRY_ALPHA3).map((code, i) => ({ keys: [code], clicks: 1_000 - i, impressions: 10_000, ctr: 0.1, position: 3 }));
     // A device not chosen before in this test, so main reads the countries again (it keeps each answer).
     await device.selectOption('TABLET');
     await expect.poll(() => country.locator('option').count()).toBeGreaterThan(200);
-    // Where the filters are: on one line, inside the row, and the country select narrower than its longest
-    // option would make it (a copy of it holding only that option, at its own width). Not "equal halves":
-    // a select keeps its chosen label's width where that needs more than half the row (macOS CI).
-    const boxes = () =>
-      page.locator('.gsc-filter-row').evaluate((row) => {
-        const box = (el: Element | null) => el!.getBoundingClientRect();
-        const select = row.querySelector<HTMLSelectElement>('[data-testid="gsc-country"]')!;
-        const [r, c, d] = [box(row), box(select), box(row.querySelector('[data-testid="gsc-device"]'))];
-        const longest = [...select.options].reduce((a, b) => (b.text.length > a.text.length ? b : a));
-        const copy = select.cloneNode(false) as HTMLSelectElement;
-        copy.append(new Option(longest.text));
-        copy.style.position = 'absolute';
-        copy.style.width = 'auto';
-        copy.style.maxWidth = 'none';
-        copy.style.setProperty('field-sizing', 'content');
-        row.append(copy);
-        const needed = copy.getBoundingClientRect().width;
-        copy.remove();
-        return { sameLine: Math.abs(c.top - d.top) <= 1, notByLongest: c.width < needed - 20, inside: c.right <= r.right + 0.5 && c.width <= r.width + 0.5 };
+    const layout = () =>
+      page.locator('.gsc-controls').evaluate((controls) => {
+        const box = (selector: string) => {
+          const b = controls.querySelector(selector)!.getBoundingClientRect();
+          return { x: Math.round(b.x * 10) / 10, y: Math.round(b.y * 10) / 10, w: Math.round(b.width * 10) / 10 };
+        };
+        return { row: box('.gsc-filter-row'), country: box('[data-testid="gsc-country"]'), device: box('[data-testid="gsc-device"]'), clear: box('[data-testid="gsc-clear-filters"]'), property: box('[data-testid="gsc-property"]') };
       });
-    expect(await boxes()).toEqual({ sameLine: true, notByLongest: true, inside: true });
-    expect(await cutText(controls)).toEqual([]);
+    const choose = async (code: string) => {
+      await country.selectOption(code);
+      await expect(panel()).toHaveAttribute('data-pending', 'false');
+    };
+    const longest = await country.evaluate((select: HTMLSelectElement) => [...select.options].reduce((a, b) => (b.text.length > a.text.length ? b : a)).value);
+    const split = async (narrow: boolean) => {
+      const seen: Awaited<ReturnType<typeof layout>>[] = [];
+      for (const code of ['', 'gbr', longest, 'vct']) {
+        await choose(code);
+        const at = await layout();
+        const widths = `country ${at.country.w}px, device ${at.device.w}px, row ${at.row.w}px (${code || 'all'}, ${narrow ? '300px' : 'default'})`;
+        if (narrow) {
+          // A line each, the row's width.
+          expect(at.device.y, widths).toBeGreaterThan(at.country.y);
+          expect(Math.abs(at.country.w - at.row.w), widths).toBeLessThanOrEqual(1);
+          expect(Math.abs(at.device.w - at.row.w), widths).toBeLessThanOrEqual(1);
+        } else {
+          // One line, 1:1 to the pixel.
+          expect(Math.abs(at.country.y - at.device.y), widths).toBeLessThanOrEqual(1);
+          expect(Math.abs(at.country.w - at.device.w), widths).toBeLessThanOrEqual(1);
+        }
+        if (code === 'gbr') expect(await cutText(controls), widths).toEqual([]);
+        seen.push(at);
+      }
+      // Nothing moved as the choice changed: the selects, "Clear filters" and the line under them.
+      expect(seen.map((at) => JSON.stringify(at)), 'boxes per choice').toEqual(seen.map(() => JSON.stringify(seen[0])));
+    };
+    await split(false);
     await atNarrowestPanel(page, async () => {
-      await country.selectOption('gbr');
-      await expect(panel()).toHaveAttribute('data-pending', 'false');
-      expect(await cutText(controls)).toEqual([]);
-      await country.selectOption('sgs');
-      await expect(panel()).toHaveAttribute('data-pending', 'false');
-      expect((await boxes()).inside).toBe(true);
+      await split(true);
       expect(await page.locator('.seo-body').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
     });
     google.countryRows = () => fakeCountryRows();
