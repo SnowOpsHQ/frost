@@ -164,6 +164,8 @@ test('default-width-keeps-its-layout', async () => {
     await expect(page.getByTestId('agent-panel')).toHaveCount(0);
     await viewMatchesIfItFits();
   } finally {
+    // Back to the window's own size: the emulated 1280px would otherwise stay for the next test.
+    await page.setViewportSize(content);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
   }
 });

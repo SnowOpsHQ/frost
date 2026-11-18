@@ -1546,8 +1546,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   and at the default width it is the four-column table with each domain whole on one line;
   at 300px neither it nor the body does, no text in the table or the parameter grid is cut, its rows are
   grids, and the accessibility tree (CDP `Accessibility.queryAXTree`) holds 1 table, 4 column headers, 2
-  row headers and 6 cells; in the 626px window (`NARROW_WINDOW`) its rows have two columns, its wrap
-  doesn't scroll, no header or cell is cut, and each count's cell has its header's edges; with
+  row headers and 6 cells; in the 626px window (`NARROW_WINDOW`, a 242px sheet) its rows have three
+  columns, and in a 544px chrome (a tiled window: the 160px sheet the old 588px minimum left beside the agent's
+  rail) two; at each its wrap doesn't scroll, no header or cell is cut, and each count's cell has its header's edges; with
   `LONG_DOMAINS` (`?domains=long`) at the default width it is still four columns, nothing scrolls, no
   domain breaks except after a dot or a hyphen, and the fixture's two are on one line each.
 - **Scenario: gsc-panel-country-device-filters** (`gsc-panel.e2e.ts`) — with "United Kingdom" and a
