@@ -89,16 +89,18 @@ export function rowIsTitleBar(platform: TitleBarPlatform): boolean {
  * `!important` beats the page's own (in shadow trees too); child frames give Electron no regions.
  *
  * The value is `initial` (no region at all), not `no-drag`: Blink sends a rectangle for every box whose
- * region is set, drag or not. The selectors are every element and each pseudo-element Chromium 156
- * gives a box of its own; a rule each, so one a later Chromium drops cannot void the others. A
- * pseudo-element Chromium adds later is not covered until it is listed here.
+ * region is set, drag or not. The selectors are every element and each standard pseudo-element
+ * Chromium 156 gives a box of its own and lets carry the property; a rule each, so one a later Chromium
+ * drops cannot void the others. Left out on purpose: `::first-letter`, `::first-line` and `::marker`
+ * (Chromium does not apply the property to them, and a universal `::first-letter` rule makes one in
+ * every block, which splits its text). Known limit: a control's vendor parts (`::-webkit-slider-thumb`
+ * and the like) and a pseudo-element a later Chromium adds are not covered; a page that sets a drag
+ * region there only costs itself those clicks.
  */
 export const PAGE_NO_DRAG_SELECTORS = [
   '*',
   '*::before',
   '*::after',
-  '*::marker',
-  '*::first-letter',
   '*::backdrop',
   '*::placeholder',
   '*::file-selector-button',
@@ -107,6 +109,7 @@ export const PAGE_NO_DRAG_SELECTORS = [
   '*::picker-icon',
   '*::interest-button',
   '*::column',
+  '*::column::scroll-marker',
   '*::scroll-button(*)',
   '*::scroll-marker',
   '*::scroll-marker-group',
