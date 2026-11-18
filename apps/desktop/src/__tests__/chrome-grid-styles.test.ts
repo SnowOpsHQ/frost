@@ -100,7 +100,7 @@ test('chrome-row-is-one-fixed-track', () => {
   expect(address).toMatch(/min-width:\s*min\(var\(--address-basis\),\s*max\(0px,\s*var\(--row-free\) - var\(--one-tab\)\)\);/);
   // The room for the tablist and the address bar: the row's own content width (an inline-size
   // container) less its tools and gaps, counted from CHROME_ROW, so a new tool can't go uncounted.
-  expect([ROW_TOOLS, ROW_GAPS]).toEqual([7, 8]);
+  expect([ROW_TOOLS, ROW_GAPS]).toEqual([8, 9]);
   expect(row).toMatch(/container-type:\s*inline-size;/);
   const free = row.match(/--row-free:\s*calc\(100cqw - (\d+) \* var\(--h-control\) - (\d+) \* var\(--space-1\)\);/);
   expect(free, '--row-free').not.toBeNull();
@@ -296,14 +296,15 @@ test('workspace-layout-values', () => {
   expect(workspaceRowChrome({ sidebar: false, agent: true })).toBe(SIDEBAR_RAIL_WIDTH + 2 * WORKSPACE_GAP.px);
   expect(workspaceRowWidth(1280)).toBe(1280 - 2 * WORKSPACE_GAP.px);
   // The window's minimum: the SEO sheet with the agent collapsed (specs/workspace-layout.feature.md, A narrow window).
-  expect(NARROW_WINDOW).toEqual({ width: 626, seoSheet: 242 });
+  expect(NARROW_WINDOW).toEqual({ width: 664, seoSheet: 280 });
   // Tight gaps where, with --space-3 ones and the agent collapsed, the SEO sheet would fall under its minimum.
   expect(TIGHT_WORKSPACE_BELOW).toBe(700);
   expect(token(WORKSPACE_GAP_TIGHT.token)).toBe(`${WORKSPACE_GAP_TIGHT.px}px`);
-  expect([workspaceGap(699), workspaceGap(700), workspaceGap(776), workspaceGap(626), workspaceGap(588)]).toEqual([4, 8, 8, 4, 4]);
-  expect(workspaceRowWidth(626)).toBe(618);
+  expect([workspaceGap(699), workspaceGap(700), workspaceGap(776), workspaceGap(664), workspaceGap(626), workspaceGap(588)]).toEqual([4, 8, 8, 4, 4, 4]);
+  expect(workspaceRowWidth(664)).toBe(656);
   expect(workspaceRowChrome({ sidebar: true, agent: false }, 4)).toBe(SIDEBAR_RAIL_WIDTH + 8);
-  // The old 588px minimum, which a tiling window manager may still impose: the sheet is 204px.
+  // The earlier minimums (626px with the agent's toggle alone, 588px before it), which a tiling window manager may still impose: the sheet is 242px and 204px.
+  expect(workspaceRowWidth(626) - 320 - workspaceRowChrome({ sidebar: true, agent: false }, workspaceGap(626))).toBe(242);
   expect(workspaceRowWidth(588) - 320 - workspaceRowChrome({ sidebar: true, agent: false }, workspaceGap(588))).toBe(204);
   expect(SEO_BODY_NARROW_PADDING).toEqual({ token: '--space-1', belowContentWidth: 298 });
   expect(pageViewRadius({ fullscreen: false, framed: false })).toBe(16);

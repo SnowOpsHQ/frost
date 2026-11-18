@@ -70,7 +70,7 @@ describe('main window', () => {
     const gaps = CHROME_ROW.length - 1;
     const row = 2 * space4 + tools * control + gaps * space1 + (TAB_MIN_WIDTH_PX + 2 * space1) + ADDRESS_MIN_WIDTH_PX;
     expect(row).toBe(CHROME_MIN_CONTENT_WIDTH_PX);
-    expect(CHROME_MIN_CONTENT_WIDTH_PX).toBe(626);
+    expect(CHROME_MIN_CONTENT_WIDTH_PX).toBe(664);
     // The minimum counts the frame (the fake's is 16px wide): the content's minimum plus it; the height is kept.
     // On macOS and Windows the row also gives the window's controls their room (title-bar.spec.ts).
     for (const platform of PLATFORMS)

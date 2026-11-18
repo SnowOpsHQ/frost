@@ -191,14 +191,15 @@ test('serp-composition-and-ownership', async () => {
     expect(await table.locator('tr').first().evaluate((row) => getComputedStyle(row).display)).toBe('grid');
     expect(await axRoles(table)).toEqual({ table: 1, columnheader: 4, rowheader: 2, cell: 6 });
   });
-  // In the window's minimum (NARROW_WINDOW: the panel 242px) a row is a three-column grid; in a 544px chrome (a
-  // tiled window: the panel 160px, what the old 588px minimum left it beside the agent's rail) it takes three lines
-  // of two columns. Either way every header and cell is whole, nothing scrolls, and each count is under its header
+  // In the window's minimum (NARROW_WINDOW: the panel 280px) and at the 626px one before it (242px) a row is a
+  // three-column grid; in a 544px chrome (a tiled window: the panel 160px, what the 588px minimum before that left
+  // it beside the agent's rail) it takes three lines of two columns. Either way every header and cell is whole, nothing scrolls, and each count is under its header
   // (the same track's edges).
   const before = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
   try {
     for (const [width, columns] of [
       [NARROW_WINDOW.width, 3],
+      [626, 3],
       [544, 2],
     ] as const) {
       await page.setViewportSize({ width, height: Math.min(700, before.height) });

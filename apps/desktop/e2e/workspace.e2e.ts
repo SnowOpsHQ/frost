@@ -295,9 +295,10 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
     // A width the panel's minimum fits: the canvas's 16px.
     await page.setViewportSize({ width: 900, height });
     await expect.poll(padding).toBe('16px');
-    // The window's minimum, and the old one (588px, before the agent's toggle joined the chrome row),
-    // which a tiling window manager may still impose: the same rules hold at both.
-    for (const width of [NARROW_WINDOW.width, 588]) {
+    // The window's minimum, and the earlier ones (626px before the Settings button joined the chrome row,
+    // 588px before the agent's toggle did), which a tiling window manager may still impose: the same rules
+    // hold at each.
+    for (const width of [NARROW_WINDOW.width, 626, 588]) {
       if ((await page.getByTestId('seo-panel').getAttribute('data-panel')) !== 'overview') await page.locator('[data-testid="seo-rail-item"][data-panel="overview"]').click();
       await expect(page.getByTestId('seo-panel')).toHaveAttribute('data-panel', 'overview');
       await page.setViewportSize({ width, height });

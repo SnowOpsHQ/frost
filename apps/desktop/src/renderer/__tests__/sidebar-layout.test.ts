@@ -86,11 +86,12 @@ describe('resizable panes', () => {
     expect(roomForPanes(layout(1_000, [false, 360], [true, 380]))).toBe(1_000 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 2 * WORKSPACE_GAP.px);
     expect(roomForPanes(layout(1_000, [false, 360], [false, 380]))).toBe(1_000 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - WORKSPACE_GAP.px);
     expect(paneMax('sidebar', layout(800, [false, 360], [false, 380]))).toBe(800 - fixed(true, false));
-    // A narrow workspace's tight gaps: the 626px window's row (618) leaves the SEO sheet 242px; the old
-    // 588px minimum's (580), 204px.
+    // A narrow workspace's tight gaps: the 664px window's row (656) leaves the SEO sheet 280px; the earlier
+    // minimums' rows (618 at 626px, 580 at 588px), 242px and 204px.
+    expect(roomForPanes({ ...layout(656, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px })).toBe(280);
     expect(roomForPanes({ ...layout(618, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px })).toBe(242);
     expect(roomForPanes({ ...layout(580, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px })).toBe(204);
-    expect(paneWidths({ ...layout(618, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px }).sidebar).toBe(SIDEBAR_PANEL_WIDTH_RANGE.min);
+    expect(paneWidths({ ...layout(656, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px }).sidebar).toBe(SIDEBAR_PANEL_WIDTH_RANGE.min);
     // Unmeasured: the chosen widths, any maximum.
     expect(paneWidths(layout(0, [true, 500], [true, 600]))).toEqual({ sidebar: 500, agent: 600 });
     expect(paneMax('sidebar', layout(0, [true, 500], [true, 600]))).toBe(S.max);

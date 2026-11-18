@@ -1,14 +1,14 @@
-// Specs: specs/account-settings.spec.ts (SETTINGS_MENU, ACCOUNT_SETTINGS_TEXT, GSC_SETTINGS_TEXT), specs/account-state.schema.ts
+// Specs: specs/account-settings.spec.ts (SETTINGS_MENU, SETTINGS_BUTTON, ACCOUNT_SETTINGS_TEXT, GSC_SETTINGS_TEXT), specs/account-state.schema.ts
 // (ACCOUNT_CONFIG_ENV, AccountStateSchema), specs/account-api.schema.ts (requestFingerprint, DesktopAuthorizeQuerySchema),
 // specs/telemetry-consent.schema.ts (TELEMETRY_CONFIG_ENV, TelemetryStateSchema), specs/gsc.schema.ts (GSC_SCOPE, GscStatusSchema)
-// Acceptance: specs/account-settings.feature.md (End to end) · review focus "Telemetry UI matches behaviour", the in-app
+// Acceptance: specs/account-settings.feature.md (End to end; the row's button: settings-opens-from-the-row-button, settings-button-tab-order) · review focus "Telemetry UI matches behaviour", the in-app
 // sign-in confirmation · specs/diagnostics.feature.md (End to end: export-diagnostics-saves-reviewed-report;
 // specs/diagnostics.spec.ts DIAGNOSTICS_TEXT, DIAGNOSTICS_REPORT_HEADER, DIAGNOSTICS_FORBIDDEN_CHARS)
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { ACCOUNT_SETTINGS_TEXT, SETTINGS_MENU } from '@app/specs/account-settings.spec';
+import { ACCOUNT_SETTINGS_TEXT, SETTINGS_BUTTON, SETTINGS_MENU } from '@app/specs/account-settings.spec';
 import { DesktopAuthorizeQuerySchema, requestFingerprint } from '@app/specs/account-api.schema';
 import { ACCOUNT_CONFIG_ENV, AccountStateSchema, type AccountState } from '@app/specs/account-state.schema';
 import { HISTORY_MENU_ID } from '@app/specs/browser-polish.spec';
@@ -77,6 +77,7 @@ const gscStatus = async (): Promise<GscStatus> => GscStatusSchema.parse(await qu
 
 const settings = () => page.getByTestId('settings-view');
 const history = () => page.getByTestId('history-view');
+const gear = () => page.getByTestId(SETTINGS_BUTTON.testId);
 const toggle = (channel: 'usage' | 'errors') => page.getByTestId(`telemetry-toggle-${channel}`);
 const viewHeight = () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children[0]?.getBounds().height ?? 0);
 
@@ -135,6 +136,40 @@ test('settings-opens-from-palette-and-menu', async () => {
   await expect(settings()).toBeVisible();
   await expect(history()).toHaveCount(0);
   await expect(page.locator('#settings-section-telemetry')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(settings()).toHaveCount(0);
+});
+
+test('settings-opens-from-the-row-button', async () => {
+  await expect(gear()).toBeVisible();
+  await expect(gear()).toHaveAccessibleName(SETTINGS_BUTTON.label);
+  await expect(gear()).toHaveAttribute('title', SETTINGS_BUTTON.title);
+  await gear().click();
+  await expect(settings()).toBeVisible();
+  await expect(page.locator('#settings-section-account')).toBeFocused();
+  // Another section, then the gear again: it asks again (focus returns to Account); it does not close the sheet.
+  await page.getByTestId('settings-nav-telemetry').click();
+  await expect(page.locator('#settings-section-telemetry')).toBeFocused();
+  await gear().click();
+  await expect(page.locator('#settings-section-account')).toBeFocused();
+  await expect(settings()).toBeVisible();
+  // Esc closes it, as it does for every other way in.
+  await page.keyboard.press('Escape');
+  await expect(settings()).toHaveCount(0);
+});
+
+test('settings-button-tab-order', async () => {
+  // The row's last Tab stop: after the AI agent's toggle, and nothing after it in the row.
+  await page.getByTestId('agent-toggle').focus();
+  await page.keyboard.press('Tab');
+  await expect(gear()).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByTestId('agent-toggle')).toBeFocused();
+  // Enter on it opens the sheet like a click does (a plain button).
+  await gear().focus();
+  await page.keyboard.press('Enter');
+  await expect(settings()).toBeVisible();
+  await expect(page.locator('#settings-section-account')).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(settings()).toHaveCount(0);
 });
