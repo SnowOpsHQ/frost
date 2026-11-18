@@ -95,7 +95,13 @@ input {
    the window's minimum (CHROME_MIN_CONTENT_WIDTH_PX, exactly the row with one tab and that width),
    and below it (a tiling window manager ignores the minimum) on toward nothing, before any tool. It
    measures its own width (an inline-size container), not the window's. The loading line runs along
-   its foot. */
+   its foot.
+   On macOS and Windows it is also the window's title bar (specs/tabs.feature.md, The row is the
+   window's title bar): the traffic lights or the caption buttons are drawn over its ends, and it pads
+   itself by the Window Controls Overlay's variables (absent on Linux, where both ends keep --space-4):
+   the lights' zone at the start, the caption buttons and a drag strip (WINDOW_DRAG_STRIP_PX) at the
+   end. 100cqw is its content box, so the widths above hold inside the insets. It drags the window;
+   every control in it does not. */
 .chrome-row {
   /* TAB_MIN_WIDTH_PX and ADDRESS_BASIS_PX (specs/tabs.spec.ts). */
   --tab-min: 84px;
@@ -106,6 +112,11 @@ input {
      Forward, Reload, New tab and the two toggles) and its seven gaps (CHROME_ROW). Read where it is
      used, inside the row, so 100cqw is the row's own width. */
   --row-free: calc(100cqw - 6 * var(--h-control) - 7 * var(--space-1));
+  /* The window's controls (title-bar.spec.ts): the traffic lights' zone at the start; the caption
+     buttons at the end (the window's width less the free title bar area); 0 without an overlay. */
+  --controls-start: env(titlebar-area-x, 0px);
+  --controls-end: max(0px, 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  --drag-strip: 40px;
   container-type: inline-size;
   position: relative;
   display: flex;
@@ -113,10 +124,22 @@ input {
   gap: var(--space-1);
   min-width: 0;
   height: var(--h-chrome);
-  padding: 0 var(--space-4);
+  padding-block: 0;
+  padding-left: max(var(--space-4), var(--controls-start));
+  /* The drag strip instead of --space-4 only where caption buttons are (sign() is 1 there, else 0). */
+  padding-right: calc(var(--space-4) + var(--controls-end) + sign(var(--controls-end)) * (var(--drag-strip) - var(--space-4)));
   overflow: clip;
   background: var(--bg-window);
   font: var(--text-body);
+  app-region: drag;
+}
+
+/* The controls take their clicks back from the title bar: every child of the row but the tablist and
+   the loading line (a tool added later too), and each tab with its ×; the tablist's padding and the gaps
+   between its tabs drag. */
+.chrome-row > :not(.tabs, .progress),
+.chrome-row .tab {
+  app-region: no-drag;
 }
 
 /* The tablist: as wide as its tabs, it shrinks first and then scrolls sideways (no scrollbar). Each

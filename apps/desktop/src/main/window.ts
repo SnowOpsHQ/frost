@@ -1,9 +1,10 @@
 import path from 'node:path';
-import { BrowserWindow, WebContentsView } from 'electron';
+import { BrowserWindow, nativeTheme, WebContentsView } from 'electron';
 import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { CHROME_MIN_CONTENT_WIDTH_PX } from '@app/specs/tabs.spec';
 import { isLocationPartition, LOCATION_WEBRTC_POLICY } from '@app/specs/location-profiles.spec';
+import { chromeRowInset, titleBarOverlayColours, titleBarWindowOptions, type TitleBarPlatform } from '@app/specs/title-bar.spec';
 
 /**
  * Creates the app's main window. The four security-critical webPreferences are set explicitly
@@ -12,14 +13,22 @@ import { isLocationPartition, LOCATION_WEBRTC_POLICY } from '@app/specs/location
  * They are written as literals, inline in `new BrowserWindow({…})`, so the Electronegativity CI gate
  * can see them (it resolves neither `HARDENED_WEB_PREFERENCES.*` nor `satisfies`; spec
  * `ci-gates.feature.md`). `boot.test.ts` keeps them equal to `HARDENED_WEB_PREFERENCES`.
+ *
+ * On macOS and Windows the chrome row is the window's title bar (`tabs.feature.md`, The chrome row;
+ * `title-bar.spec.ts`): a hidden title bar, the traffic lights or the caption buttons drawn over the
+ * row's ends, the Window Controls Overlay on so the row can pad itself by them. Linux keeps its frame.
  */
 export function createMainWindow(): BrowserWindow {
+  const platform = process.platform as TitleBarPlatform;
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    // Drawn on no title bar on macOS and Windows; the taskbar, the Dock and Mission Control show it.
     title: 'frost',
-    // Linux/Windows: the menu bar stays out of the way until Alt (spec `tabs.feature.md`, Window).
-    autoHideMenuBar: process.platform !== 'darwin',
+    // Linux: the menu bar stays out of the way until Alt (spec `tabs.feature.md`, Window). Windows' hidden
+    // title bar has no menu bar at all; its accelerators still work.
+    autoHideMenuBar: platform !== 'darwin',
+    ...titleBarWindowOptions(platform, nativeTheme.shouldUseDarkColors),
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
@@ -30,21 +39,30 @@ export function createMainWindow(): BrowserWindow {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
-  keepChromeRowWhole(win);
+  keepChromeRowWhole(win, platform);
+  if (platform === 'win32') overlayFollowsTheme(win);
   return win;
 }
 
+/** Windows: the caption buttons' overlay takes the row's colours again whenever the OS theme changes. */
+function overlayFollowsTheme(win: BrowserWindow): void {
+  const follow = () => win.setTitleBarOverlay(titleBarOverlayColours(nativeTheme.shouldUseDarkColors));
+  nativeTheme.on('updated', follow);
+  win.once('closed', () => nativeTheme.off('updated', follow));
+}
+
 /**
- * Keeps the window's content at least `CHROME_MIN_CONTENT_WIDTH_PX` wide, what the chrome row needs to
- * fit whole (`tabs.feature.md`, The chrome row): the minimum size counts the frame, so it is that plus
- * the frame's width (size less content size); the minimum height stays as it is. (A `minWidth` with
+ * Keeps the window's content at least `CHROME_MIN_CONTENT_WIDTH_PX` wide, plus the room the row gives the
+ * window's controls on this platform (`chromeRowInset`), what the chrome row needs to fit whole
+ * (`tabs.feature.md`, The chrome row): the minimum size counts the frame, so it is that plus the frame's
+ * width (size less content size); the minimum height stays as it is. (A `minWidth` with
  * `useContentSize` would be a content constraint Electron neither reports nor lets a test read.)
  */
-function keepChromeRowWhole(win: BrowserWindow): void {
+function keepChromeRowWhole(win: BrowserWindow, platform: TitleBarPlatform): void {
   const [outer = 0] = win.getSize();
   const [inner = 0] = win.getContentSize();
   const [, minHeight = 0] = win.getMinimumSize();
-  win.setMinimumSize(CHROME_MIN_CONTENT_WIDTH_PX + Math.max(0, outer - inner), minHeight);
+  win.setMinimumSize(CHROME_MIN_CONTENT_WIDTH_PX + chromeRowInset(platform) + Math.max(0, outer - inner), minHeight);
 }
 
 /**
