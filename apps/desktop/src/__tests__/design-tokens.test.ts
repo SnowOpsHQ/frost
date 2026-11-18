@@ -1513,6 +1513,8 @@ test('tokens-load-before-every-other-stylesheet', () => {
 
 /** Keywords a colour-bearing value on a surface may hold besides `var()` of a Signal token or alias. */
 const SURFACE_COLOUR_WORDS = new Set(['transparent', 'currentcolor', 'inherit', 'none', 'solid', 'dashed', 'dotted', 'double', 'inset', 'color-mix', 'in', 'srgb', 'calc', 'min', 'max', 'clamp']);
+/** The Window Controls Overlay's environment variables (lengths, never colours), as the chrome row's insets read them (specs/tabs.feature.md, The row is the window's title bar). */
+const OVERLAY_ENV_WORDS = new Set(['env', 'titlebar-area-x', 'titlebar-area-y', 'titlebar-area-width', 'titlebar-area-height']);
 /** `text-decoration`'s line and style keywords: not colours (a colour in it still needs the allowlist). */
 const TEXT_DECORATION_WORDS = new Set(['underline', 'overline', 'line-through', 'wavy']);
 /** The CSS system colours, allowed in a surface rule only under `@media (forced-colors: active)`. */
@@ -1614,7 +1616,8 @@ function surfaceProblems(css: string, surface: SignalSurface): { problems: strin
       // Inside `@media (forced-colors: active)` only, the CSS system colours (GrayText for a busy button).
       const forced = d.context.some((level) => FORCED_COLOURS_MEDIA.test(level));
       const strays = words.filter(
-        (word) => !SURFACE_COLOUR_WORDS.has(word) && !(decoration && TEXT_DECORATION_WORDS.has(word)) && !(forced && SYSTEM_COLOURS.has(word)),
+        (word) =>
+          !SURFACE_COLOUR_WORDS.has(word) && !(d.property.startsWith('--') && OVERLAY_ENV_WORDS.has(word)) && !(decoration && TEXT_DECORATION_WORDS.has(word)) && !(forced && SYSTEM_COLOURS.has(word)),
       );
       if (rest.includes('#') || strays.length > 0) problems.push(`${label}: a literal colour (${rest.includes('#') ? '#' : strays.join(', ')})`);
     }
