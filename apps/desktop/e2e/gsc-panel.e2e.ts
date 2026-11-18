@@ -436,6 +436,8 @@ test.describe.serial('the Search Console panel', () => {
         await choose(code);
         const at = await layout();
         const widths = `country ${at.country.w}px, device ${at.device.w}px, row ${at.row.w}px (${code || 'all'}, ${narrow ? '300px' : 'default'})`;
+        // In the run's log on every OS (the split is the stylesheet's; this says what each drew).
+        console.log(`gsc filter split on ${process.platform}: ${widths}`);
         if (narrow) {
           // A line each, the row's width.
           expect(at.device.y, widths).toBeGreaterThan(at.country.y);
