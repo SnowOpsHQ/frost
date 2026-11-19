@@ -15,7 +15,8 @@ import '../help.css';
 // marks in `localStorage` (`SETUP_CHECKLIST_STORAGE_KEY`) that the Telemetry settings and the shortcuts
 // screen were opened. Each item's button opens where it is done. "Hide this checklist" hides it for
 // good; it is gone too once every item is done. Under the header a meter (decorative: "N of M done" says
-// it) has a segment per item, filled when that item is done (UI polish round 2).
+// it) has a segment per item and fills from the left: N items done fill its first N segments (UI polish
+// round 2).
 
 export interface SetupMarks {
   readonly dismissed: boolean;
@@ -150,8 +151,8 @@ export function SetupChecklist({ tabId }: { readonly tabId?: number | undefined 
         </button>
       </header>
       <div className="setup-meter" data-testid="setup-meter" aria-hidden="true">
-        {SETUP_CHECKLIST_ITEMS.map((item) => (
-          <span key={item.id} className="setup-meter-step" data-done={done[item.id] ? 'true' : 'false'} />
+        {SETUP_CHECKLIST_ITEMS.map((item, index) => (
+          <span key={item.id} className="setup-meter-step" data-done={index < count ? 'true' : 'false'} />
         ))}
       </div>
       <ul className="setup-items">

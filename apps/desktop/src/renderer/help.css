@@ -268,7 +268,7 @@
   color: var(--text);
 }
 
-/* The progress meter: a 4px segment per item, in order, --bg-active until its item is done, then --ok (a
+/* The progress meter: a 4px segment per item, filled from the left (N done: the first N), --bg-active, then --ok (a
    graphic, as the step marks; kept under forced colours for the same reason). */
 .setup-meter {
   display: grid;

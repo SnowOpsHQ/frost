@@ -562,7 +562,10 @@ test('setup-checklist', async () => {
   await page.getByTestId('shortcuts-view-close').click();
   await expect(page.getByTestId('shortcuts-view')).toHaveCount(0);
   await expect(item('shortcuts')).toHaveAttribute('data-done', 'true');
-  await expect(page.locator('[data-testid="setup-meter"] .setup-meter-step').nth(SETUP_CHECKLIST_ITEMS.findIndex((entry) => entry.id === 'shortcuts'))).toHaveAttribute('data-done', 'true');
+  // The meter fills from the left: one item done (the last one) fills the first segment only.
+  const meterSteps = page.locator('[data-testid="setup-meter"] .setup-meter-step');
+  await expect(meterSteps.first()).toHaveAttribute('data-done', 'true');
+  await expect(meterSteps.nth(SETUP_CHECKLIST_ITEMS.findIndex((entry) => entry.id === 'shortcuts'))).toHaveAttribute('data-done', 'false');
   // "Open privacy settings" opens Settings on Telemetry and marks the step.
   await item('privacy').getByTestId('setup-action').click();
   await expect(page.getByTestId('settings-view')).toBeVisible();

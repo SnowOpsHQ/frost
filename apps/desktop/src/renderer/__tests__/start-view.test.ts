@@ -166,12 +166,15 @@ test('setup-checklist-meter', async () => {
   expect(meter()).not.toBeNull();
   // Decorative: "N of M done" says it in words.
   expect(meter()!.getAttribute('aria-hidden')).toBe('true');
-  // One segment per item, in the items' order, done exactly when its item is.
-  expect(steps()).toEqual(SETUP_CHECKLIST_ITEMS.map((item) => (item.id === 'privacy' ? 'true' : 'false')));
+  // One segment per item, filled from the start: N items done fill the first N, whichever they are
+  // (privacy is the fourth item; alone it fills the first segment).
+  const filled = (n: number) => SETUP_CHECKLIST_ITEMS.map((_, index) => (index < n ? 'true' : 'false'));
+  expect(SETUP_CHECKLIST_ITEMS.findIndex((item) => item.id === 'privacy')).toBeGreaterThan(0);
+  expect(steps()).toEqual(filled(1));
   main.agentReady = true;
   await show(2);
-  expect(steps()).toEqual(SETUP_CHECKLIST_ITEMS.map((item) => (item.id === 'privacy' || item.id === 'agent' ? 'true' : 'false')));
-  expect(steps()).toEqual(items().map((item) => item.dataset['done']));
+  expect(steps()).toEqual(filled(2));
+  expect(items().filter((item) => item.dataset['done'] === 'true')).toHaveLength(2);
 });
 
 test('setup-checklist-dismiss', async () => {
