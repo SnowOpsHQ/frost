@@ -616,6 +616,8 @@ export const FORCED_COLOURS_PRESSED = [
   { stylesheet: 'styles.css', element: ['.find-tool', ".find-case[aria-pressed='true']"], why: 'the find bar\'s Match case, pressed' },
   { stylesheet: 'styles.css', element: ['.devtools-tab', ".devtools-tab[aria-selected='true']"], why: 'the DevTools drawer\'s selected tab' },
   { stylesheet: 'styles.css', element: ['.seo-ngram-highlight', ".seo-ngram-highlight[aria-pressed='true']"], why: 'Content: an n-gram row\'s highlight button, pressed (the page shows that phrase)' },
+  // Settings › History (UI polish round 2): the chosen retention, raised as the canvas's chosen segment.
+  { stylesheet: 'settings.css', element: ['.settings-segment', ".settings-segment[aria-checked='true']"], why: 'the chosen History retention (its raised --bg-surface segment)' },
   // The Changes panel, Projects, Rankings, Inspector and the screenshot editor (their surface PR): a chosen
   // item drawn by its fill and an --accent edge (PRESSED_EDGES), or by an --accent line, which forced colours replace.
   { stylesheet: 'styles.css', element: ['.changes-version', ".changes-version[aria-pressed='true']"], rest: 'canvas', why: 'the Changes panel\'s chosen version (the one the diff shows)' },
@@ -723,6 +725,9 @@ export const FORCED_COLOURS_KEPT = [
   // canvas, so a step done and one not done were the same ring; the marks keep their colours there.
   { stylesheet: 'help.css', element: ['.setup-check'], why: 'Help\'s setup checklist: a step not done (a --switch-off ring)' },
   { stylesheet: 'help.css', element: ['.setup-check', ".setup-item[data-done='true'] .setup-check"], why: 'Help\'s setup checklist: a step done (an --ok disc)' },
+  // UI polish round 2: the checklist's progress meter, a segment per item, filled --ok as its step's mark.
+  { stylesheet: 'help.css', element: ['.setup-meter-step'], why: 'Help\'s setup checklist meter: a step not done (a --bg-active segment)' },
+  { stylesheet: 'help.css', element: ['.setup-meter-step', ".setup-meter-step[data-done='true']"], why: 'Help\'s setup checklist meter: a step done (an --ok segment)' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -770,7 +775,7 @@ export const SIGNAL_SURFACES = [
   // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).
   { name: 'command palette', stylesheet: 'styles.css', selectorPrefix: '.palette' },
   // The new-tab view (specs/browser-chrome.feature.md, browser-polish.feature.md): `.start`, `.start-mark`,
-  // `.start-wordmark`, `.start-hint`, then "Jump back in": `.jump`, `.jump-title`, `.jump-tile`, `.jump-monogram`, ….
+  // `.start-wordmark`, `.start-search`, `.start-search-field`, `.start-search-input`, then "Jump back in": `.jump`, `.jump-title`, `.jump-tile`, `.jump-monogram`, ….
   { name: 'new tab', stylesheet: 'styles.css', selectorPrefix: '.start' },
   { name: 'new tab: Jump back in', stylesheet: 'styles.css', selectorPrefix: '.jump' },
   // Every rule in the panel's own stylesheet (specs/agent-panel.feature.md, agent-styles-are-delimited).
@@ -902,6 +907,8 @@ export const SIGNAL_SURFACES = [
     selectorPrefix: '.seo',
     classes: [
       '.seo-overview',
+      // The summary card (UI polish round 2): the scores, the counts and "Highlight everything"
+      '.seo-summary',
       // The score card's interior
       '.seo-ring-*',
       '.seo-score-text',
@@ -1269,6 +1276,16 @@ export const NARROW_PANEL_FITS = [
   { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-row[data-target]', query: null, set: { 'flex-wrap': 'wrap' }, why: "Content's suggested queries: the clicks and \"Use as target\" go under a query that doesn't fit beside them (the query had about 40px at 300px)" },
   { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-row[data-target] .gsc-targets-text', query: null, set: { 'white-space': 'normal' }, why: "Content's suggested queries: the whole query shows, on as many lines as it needs (it was cut, its tooltip out of the keyboard's reach)" },
   { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-end', query: null, set: { flex: 'none', 'margin-inline-start': 'auto' }, why: "Content's suggested queries: the clicks and the button wrap together, at the row's end" },
+  // Visibility: the probe comparison (UI polish round 2), three fixed columns that never scroll sideways.
+  { stylesheet: 'styles.css', selector: '.visibility-table', query: null, set: { 'table-layout': 'fixed' }, absent: ['min-width'], why: "Visibility's probe table: three fixed columns, the panel's width (it was eight columns at a 560px minimum, scrolling 997px sideways at 360px and 1,057px at 300px)" },
+  { stylesheet: 'styles.css', selector: '.visibility-table thead th:first-child', query: null, set: { width: '30%' }, absent: ['position'], why: "Visibility's probe table: the fact column is 30% (no longer sticky: nothing scrolls under it)" },
+  { stylesheet: 'styles.css', selector: '.visibility-table thead th + th', query: null, set: { width: '35%' }, why: "Visibility's probe table: the browser's and the chosen crawler's columns share the rest" },
+  { stylesheet: 'styles.css', selector: '.visibility-table td', query: null, set: { 'overflow-wrap': 'break-word' }, why: "Visibility's probe table: a value wraps between words, a word wider than its column inside itself (\"Googlebot smartphone\", \"Too many redirects\")" },
+  { stylesheet: 'styles.css', selector: '.visibility-table th', query: null, set: { 'overflow-wrap': 'break-word' }, why: "Visibility's probe table: a header wraps between words, never past its column" },
+  { stylesheet: 'styles.css', selector: '.visibility-table td .seo-page-text', query: null, set: { display: 'block', 'white-space': 'normal', 'text-overflow': 'clip' }, absent: ['max-width'], why: "Visibility's probe table: a canonical URL is whole on its lines (the page text's `anywhere`, not PageText's one-line ellipsis); it was cut 134px" },
+  { stylesheet: 'styles.css', selector: '.visibility-table thead th', query: null, set: { 'padding-inline-end': '0' }, why: "Visibility's probe table: a header has no end padding, so \"smartphone\" holds its line in the 300px panel's 79px column (it broke \"smartphon|e\")" },
+  { stylesheet: 'styles.css', selector: '.visibility-robots-file', query: null, set: { 'flex-wrap': 'wrap' }, why: "Visibility's robots.txt as read: when it was read goes under the URL where they don't fit together" },
+  { stylesheet: 'styles.css', selector: '.visibility-robots-file .seo-page-text', query: null, set: { 'white-space': 'normal', 'text-overflow': 'clip' }, why: "Visibility's robots.txt as read: the file's URL is whole on its lines (it was cut by an ellipsis at 300px)" },
   // The AI answers sheet (found by #55's review): a citation's button beside a long URL.
   { stylesheet: 'ai-answers.css', selector: '.ai-answer-citation .panel-button', query: null, set: { flex: 'none' }, why: 'AI answers: a citation\'s "Open in tab" keeps its one line; the URL beside it (`overflow-wrap: anywhere`) wraps instead (it asked for the whole row and squeezed the button onto two lines)' },
 ] as const satisfies readonly NarrowPanelFit[];
@@ -2672,17 +2689,33 @@ export const FOCUS_RING_RULES = [
   {
     stylesheet: 'settings-ai-checks.css',
     element: ['.settings-choice', ".settings-choice[aria-checked='true']", '.settings-choice:focus-visible'],
-    why: 'the chosen AI checks or History choice, focused: its --accent ring gives way to --focus-ring',
+    why: 'the chosen AI checks choice, focused: its --accent ring gives way to --focus-ring',
   },
   {
     stylesheet: 'settings-ai-checks.css',
     element: ['.settings-choice', ".settings-choice[aria-disabled='true']", '.settings-choice:focus-visible'],
     why: 'a choice while its call runs (aria-disabled, still focusable), focused: it fades only while not focused',
   },
+  // UI polish round 2 (`browser-polish.feature.md`, History retention): the retention's segmented control.
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-segment', ".settings-segment:hover:where(:not([aria-checked='true'], [aria-disabled='true']))", ".settings-segment[aria-checked='true']", '.settings-segment:focus-visible'],
+    why: 'the chosen History retention, focused (and hovered): its raised shadow gives way to --focus-ring',
+  },
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-segment', ".settings-segment[aria-disabled='true']", '.settings-segment:focus-visible'],
+    why: 'a retention while its call runs (aria-disabled, still focusable), focused: it fades only while not focused',
+  },
   {
     stylesheet: 'help.css',
     element: ['.setup-action', '.setup-action:hover', '.setup-action:focus-visible'],
     why: 'a setup checklist action, focused and hovered',
+  },
+  {
+    stylesheet: 'help.css',
+    element: ['.setup-dismiss', '.setup-dismiss:hover', '.setup-dismiss:focus-visible'],
+    why: 'the setup checklist\'s "Hide this checklist", focused and hovered: its --bg-hover fill keeps the ring',
   },
   // The browser chrome (its surface PR): the shared `.tool` (the toolbar's, and the agent panel's and
   // SEO sidebar's header tools), the tabs, the new-tab button, the address bar and the permission prompt.
@@ -2702,6 +2735,7 @@ export const FOCUS_RING_RULES = [
   { stylesheet: 'styles.css', element: ['.tab', ".tab[data-active='true']", TAB_FOCUS], why: 'the active tab, focused: its --e-raised edge gives way to --focus-ring' },
   { stylesheet: 'styles.css', element: ['.new-tab', '.new-tab:hover', '.new-tab:active', '.new-tab:focus-visible'], why: 'the new-tab button, focused, hovered and pressed' },
   { stylesheet: 'styles.css', element: ['.address', '.address:focus-within'], why: 'the address bar, focused (:focus-within): its --e-raised edge gives way to --focus-ring' },
+  { stylesheet: 'styles.css', element: ['.start-search-field', '.start-search-field:focus-within'], why: 'the new tab\'s search field, focused (:focus-within): its --e-raised edge gives way to --focus-ring, as the address bar\'s' },
   { stylesheet: 'styles.css', element: ['.prompt-button', PROMPT_BUTTON_HOVER, '.prompt-button:focus-visible'], why: 'the permission prompt\'s Allow or Block, focused and hovered' },
   { stylesheet: 'styles.css', element: ['.prompt-dismiss', PROMPT_DISMISS_HOVER, '.prompt-dismiss:focus-visible'], why: 'the permission prompt\'s dismiss button, focused and hovered' },
   // Overview and On-Page (their surface PR): the focusable controls inside them that are their own. An

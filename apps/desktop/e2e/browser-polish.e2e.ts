@@ -2,7 +2,8 @@
 // specs/tabs.spec.ts (RESERVED_TAB_SHORTCUTS['find-in-page' | 'reopen-closed-tab']), specs/browser.spec.ts (BROWSE_PARTITION)
 // Acceptance: specs/browser-polish.feature.md (End to end; History retention, ranges and projects:
 // history-project-filter-and-clear-hour); specs/help.feature.md (End to end: help-shortcuts-sheet,
-// whats-new-after-version-change, setup-checklist; specs/help.spec.ts, specs/browser-session-db.spec.ts DB_FILE_NAME)
+// whats-new-after-version-change, setup-checklist, setup-checklist-layout; specs/help.spec.ts, specs/browser-session-db.spec.ts
+// DB_FILE_NAME); specs/browser-polish.feature.md (New-tab page: start-view-column)
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
@@ -14,9 +15,10 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { CLEAR_HISTORY, CLEAR_HISTORY_RANGE, clearHistoryRangeMessage, HISTORY_ALL_PAGES_LABEL, HISTORY_EMPTY_MESSAGE, HISTORY_MENU_ID, HISTORY_NO_MATCHES, JUMP_BACK_IN_TITLE, searchEngineUrl } from '@app/specs/browser-polish.spec';
 import { DB_FILE_NAME } from '@app/specs/browser-session-db.spec';
-import { HELP_URLS, KEYBOARD_SHORTCUTS, SETUP_CHECKLIST_ITEMS, SETUP_CHECKLIST_STORAGE_KEY, SHORTCUTS_TEXT, WHATS_NEW_SEEN_SETTING_KEY } from '@app/specs/help.spec';
+import { HELP_URLS, KEYBOARD_SHORTCUTS, SETUP_CHECKLIST_COLUMNS_MIN_PX, SETUP_CHECKLIST_STORAGE_KEY, SHORTCUTS_TEXT, WHATS_NEW_SEEN_SETTING_KEY, setupItemsShown } from '@app/specs/help.spec';
+import { NARROW_WINDOW } from '@app/specs/workspace-layout.spec';
 import { APP_DIR, closeApp, launchApp } from './harness';
-import { chromeHelpers } from './helpers';
+import { chromeHelpers, cutText, sidewaysScroll } from './helpers';
 
 /**
  * Loopback pages: `/find` (three "tea"s; it logs every key and input event it sees), `/greedy`
@@ -118,6 +120,84 @@ test.afterAll(async () => {
 
 test.beforeEach(async () => {
   await closeAllTabs();
+});
+
+/**
+ * The start view's layout as it is now (browser-polish.feature.md, New-tab page; help.feature.md, the checklist's
+ * layout): `column`, the search field, "Jump back in" and the checklist whose left or right edge is off the
+ * field's; `actions`, checklist rows whose action is out of place (in columns: not sharing the first action's
+ * edges, or not right of its label; stacked: not at its label's left edge); `columns`, whether the checklist's
+ * content box is wide enough for columns (`null`: no checklist).
+ */
+function startViewLayout(): Promise<{ column: string[]; actions: string[]; columns: boolean | null }> {
+  return page.getByTestId('start-view').evaluate((view, min) => {
+    const box = (el: Element) => el.getBoundingClientRect();
+    const off = (a: number, b: number) => Math.abs(a - b) > 1;
+    const field = box(view.querySelector('.start-search')!);
+    const column = ['.jump', '.setup']
+      .map((selector) => [selector, view.querySelector(selector)] as const)
+      .filter(([, el]) => el !== null && box(el).width > 0)
+      .filter(([, el]) => off(box(el!).left, field.left) || off(box(el!).right, field.right))
+      .map(([selector]) => selector);
+    const setup = view.querySelector<HTMLElement>('.setup');
+    if (setup === null) return { column, actions: [], columns: null };
+    const style = getComputedStyle(setup);
+    const columns = setup.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) >= min;
+    const rows = [...setup.querySelectorAll<HTMLElement>('.setup-item')].filter((row) => row.querySelector('.setup-action') !== null);
+    const first = box(rows[0]!.querySelector('.setup-action')!);
+    const actions = rows
+      .filter((row) => {
+        const [label, action] = [box(row.querySelector('.setup-label')!), box(row.querySelector('.setup-action')!)];
+        return columns ? off(action.left, first.left) || off(action.right, first.right) || action.left < label.right : off(action.left, label.left) || action.top < label.bottom - 1;
+      })
+      .map((row) => row.dataset['item']!);
+    return { column, actions, columns };
+  }, SETUP_CHECKLIST_COLUMNS_MIN_PX);
+}
+
+/**
+ * The start view's layout holds at 1280×800 and in the window's minimum (`NARROW_WINDOW`), with the SEO sidebar
+ * open and closed: one column, the checklist's actions aligned (in columns where the card is wide enough,
+ * under their labels where it isn't; both are seen), nothing scrolling sideways and no text cut (but a tile's
+ * title and host, which ellipsise by design).
+ */
+async function expectStartViewLayout(): Promise<void> {
+  const view = page.getByTestId('start-view');
+  const sidebar = page.getByTestId('seo-sidebar');
+  const wasOpen = (await sidebar.getAttribute('data-open')) === 'true';
+  const before = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  const seen = new Set<boolean | null>();
+  try {
+    for (const width of [1280, NARROW_WINDOW.width]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width);
+      for (const open of [true, false]) {
+        if (((await sidebar.getAttribute('data-open')) === 'true') !== open) await page.getByTestId('seo-toggle').click();
+        await expect(sidebar).toHaveAttribute('data-open', String(open));
+        const at = `${width}px, sidebar ${open ? 'open' : 'closed'}`;
+        await expect.poll(async () => (await startViewLayout()).column, at).toEqual([]);
+        const layout = await startViewLayout();
+        expect(layout.actions, at).toEqual([]);
+        seen.add(layout.columns);
+        expect(await sidewaysScroll(view), at).toBe(0);
+        // A "Jump back in" tile's title and host ellipsise by design (the full URL is its tooltip).
+        expect((await cutText(view)).filter((cut) => !/^bdi\.jump-(label|host) /.test(cut)), at).toEqual([]);
+      }
+    }
+  } finally {
+    await page.setViewportSize(before);
+    if (((await sidebar.getAttribute('data-open')) === 'true') !== wasOpen) await page.getByTestId('seo-toggle').click();
+  }
+  // Columns at 1280 (the page area's ~840px), stacked beside the open sidebar in the window's minimum.
+  expect(seen).toEqual(new Set([true, false]));
+}
+
+test('start-view-column', async () => {
+  // A fresh profile's first tab: no visits yet, so no "Jump back in"; the checklist shows.
+  await expect(page.getByTestId('start-view')).toBeVisible();
+  await expect(page.getByTestId('jump-back-in')).toHaveCount(0);
+  await expect(page.getByTestId('setup-checklist')).toBeVisible();
+  await expectStartViewLayout();
 });
 
 test('find-counts-steps-and-clears', async () => {
@@ -469,10 +549,13 @@ test('setup-checklist', async () => {
   const checklist = page.getByTestId('setup-checklist');
   await expect(checklist).toBeVisible();
   const item = (id: string) => page.locator(`[data-testid="setup-item"][data-item="${id}"]`);
-  await expect(page.getByTestId('setup-item')).toHaveCount(SETUP_CHECKLIST_ITEMS.length);
-  for (const entry of SETUP_CHECKLIST_ITEMS) await expect(item(entry.id)).toContainText(entry.label);
-  // No agent key, no Search Console, nothing opened yet (a project may exist from an earlier test).
-  for (const id of ['agent', 'search-console', 'privacy', 'shortcuts']) await expect(item(id)).toHaveAttribute('data-done', 'false');
+  // This suite's build has no Search Console client: its item is left out (setup-checklist-follows-the-build).
+  const shown = setupItemsShown(false);
+  await expect(page.getByTestId('setup-item')).toHaveCount(shown.length);
+  for (const entry of shown) await expect(item(entry.id)).toContainText(entry.label);
+  await expect(item('search-console')).toHaveCount(0);
+  // No agent key, nothing opened yet (a project may exist from an earlier test).
+  for (const id of ['agent', 'privacy', 'shortcuts']) await expect(item(id)).toHaveAttribute('data-done', 'false');
   // Nothing remote on the new-tab page.
   expect(await checklist.locator('img, iframe').count()).toBe(0);
 
@@ -482,6 +565,11 @@ test('setup-checklist', async () => {
   await page.getByTestId('shortcuts-view-close').click();
   await expect(page.getByTestId('shortcuts-view')).toHaveCount(0);
   await expect(item('shortcuts')).toHaveAttribute('data-done', 'true');
+  // The meter fills from the left: one item done (the last one) fills the first segment only.
+  const meterSteps = page.locator('[data-testid="setup-meter"] .setup-meter-step');
+  await expect(meterSteps.first()).toHaveAttribute('data-done', 'true');
+  await expect(meterSteps).toHaveCount(shown.length);
+  await expect(meterSteps.nth(shown.findIndex((entry) => entry.id === 'shortcuts'))).toHaveAttribute('data-done', 'false');
   // "Open privacy settings" opens Settings on Telemetry and marks the step.
   await item('privacy').getByTestId('setup-action').click();
   await expect(page.getByTestId('settings-view')).toBeVisible();
@@ -499,6 +587,19 @@ test('setup-checklist', async () => {
   await expect(page.getByTestId('start-view')).toBeVisible();
   await expect(checklist).toHaveCount(0);
   await page.evaluate((key) => window.localStorage.removeItem(key), SETUP_CHECKLIST_STORAGE_KEY);
+});
+
+test('setup-checklist-layout', async () => {
+  // The stylesheet's query is the spec's width.
+  expect(readFileSync(path.join(APP_DIR, 'src/renderer/help.css'), 'utf8')).toContain(`@container setup (width < ${SETUP_CHECKLIST_COLUMNS_MIN_PX}px)`);
+  // With "Jump back in" shown too: a visit, then a new tab.
+  await page.evaluate((key) => window.localStorage.removeItem(key), SETUP_CHECKLIST_STORAGE_KEY);
+  await go(`${site.origin}/h/fig`);
+  await contentsIdAt(`${site.origin}/h/fig`);
+  await menu('new-tab');
+  await expect(page.getByTestId('jump-back-in')).toBeVisible();
+  await expect(page.getByTestId('setup-checklist')).toBeVisible();
+  await expectStartViewLayout();
 });
 
 test('help-shortcuts-sheet', async () => {

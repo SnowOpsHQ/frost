@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test, vi } from 'vitest';
 import { APP_ENTRY_URL } from '@app/specs/app-protocol.spec';
-import { ADDRESS_MIN_WIDTH_PX, CHROME_MIN_CONTENT_WIDTH_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
+import { ACTIVE_TAB_MIN_WIDTH_PX, ADDRESS_MIN_WIDTH_PX, CHROME_MIN_CONTENT_WIDTH_PX, CHROME_ROW } from '@app/specs/tabs.spec';
 import {
   CAPTION_BUTTONS_WIDTH_PX,
   CHROME_ROW_PADDING_PX,
@@ -68,7 +68,8 @@ describe('main window', () => {
     // Tools and gaps counted from CHROME_ROW: a new tool raises the minimum, or this goes red.
     const tools = CHROME_ROW.filter((id) => id !== 'tab-strip' && id !== 'address').length;
     const gaps = CHROME_ROW.length - 1;
-    const row = 2 * space4 + tools * control + gaps * space1 + (TAB_MIN_WIDTH_PX + 2 * space1) + ADDRESS_MIN_WIDTH_PX;
+    // The active tab at its readable minimum, with its ring room, beside the address bar's minimum.
+    const row = 2 * space4 + tools * control + gaps * space1 + (ACTIVE_TAB_MIN_WIDTH_PX + 2 * space1) + ADDRESS_MIN_WIDTH_PX;
     expect(row).toBe(CHROME_MIN_CONTENT_WIDTH_PX);
     expect(CHROME_MIN_CONTENT_WIDTH_PX).toBe(664);
     // The minimum counts the frame (the fake's is 16px wide): the content's minimum plus it; the height is kept.

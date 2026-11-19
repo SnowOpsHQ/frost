@@ -30,6 +30,56 @@ export const SETTINGS_SECTIONS = [
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];
 
 /**
+ * The sections a build can leave out (`account-settings.feature.md`, "Unconfigured sections are left
+ * out"): Account while main says accounts are `unconfigured`, Search Console while its status is not
+ * `configured`. Each is left out of the section list and the sheet only once main has said so; until
+ * main answers it shows (with "Loading…"), never a guess.
+ */
+export const SETTINGS_OPTIONAL_SECTIONS = ['account', 'search-console'] as const satisfies readonly SettingsSectionId[];
+export type SettingsOptionalSection = (typeof SETTINGS_OPTIONAL_SECTIONS)[number];
+
+/** The sections the sheet shows, in `SETTINGS_SECTIONS` order: every one but those `leftOut` names. */
+export function settingsSectionsShown(leftOut: Readonly<Partial<Record<SettingsOptionalSection, boolean>>>): SettingsSectionId[] {
+  const optional: readonly SettingsSectionId[] = SETTINGS_OPTIONAL_SECTIONS;
+  return SETTINGS_SECTIONS.map((entry) => entry.id).filter((id) => !optional.includes(id) || leftOut[id as SettingsOptionalSection] !== true);
+}
+
+/**
+ * Where a request for `requested` lands: that section while it is shown, else the first shown one (the
+ * top of the sheet). The gear, the menu's Settings…, Mod+, and the palette's "Settings" ask for Account,
+ * so in a build without accounts they open the sheet at its top.
+ */
+export function settingsLanding(requested: SettingsSectionId, shown: readonly SettingsSectionId[]): SettingsSectionId {
+  return shown.includes(requested) ? requested : (shown[0] ?? requested);
+}
+
+/**
+ * The section list follows the scroll (`account-settings.feature.md`, "The section list follows the
+ * scroll"): the current section is the last whose heading is at or above `line` (a fraction of the
+ * content's visible height, from its top), the first while none is, and the last once the content is
+ * scrolled to its end. A section asked for (a click in the list, or any request) is current until the
+ * content is scrolled again.
+ */
+export const SETTINGS_SCROLL_SPY = { line: 1 / 3 } as const;
+
+/**
+ * The current section for headings at `tops` (each heading's offset from the top of the content's
+ * scrolled area, in order) and the content's scroll geometry; `null` with no sections.
+ */
+export function settingsSectionInView<Id extends string>(
+  tops: readonly { readonly id: Id; readonly top: number }[],
+  view: { readonly scrollTop: number; readonly clientHeight: number; readonly scrollHeight: number },
+): Id | null {
+  if (tops.length === 0) return null;
+  const end = view.scrollHeight - view.clientHeight;
+  if (end > 1 && view.scrollTop >= end - 1) return tops.at(-1)!.id;
+  const line = view.scrollTop + view.clientHeight * SETTINGS_SCROLL_SPY.line;
+  let current = tops[0]!.id;
+  for (const entry of tops) if (entry.top <= line) current = entry.id;
+  return current;
+}
+
+/**
  * The menu item (macOS: the app menu, after About; elsewhere: the end of Edit). Its click asks main to
  * open Settings in the window the menu acted on (else the focused app window): that window's
  * `account.settingsWatch` counter goes up and its chrome is focused.
@@ -45,7 +95,8 @@ export const SETTINGS_MENU = {
  * chrome row's last control (`settings-open` in `CHROME_ROW`, `tabs.spec.ts`). A click asks for Account
  * exactly as the palette's "Settings" does (clicking it while Settings shows asks again, so focus returns
  * to the section; it never closes the sheet, and it is not a pressed toggle). `title` names the shortcut as
- * the row's toggles do.
+ * the row's toggles do. In a build without accounts the request lands on the first shown section
+ * (`settingsLanding`).
  */
 export const SETTINGS_BUTTON = {
   testId: 'settings-open',
@@ -54,13 +105,17 @@ export const SETTINGS_BUTTON = {
   section: 'account',
 } as const satisfies { testId: string; label: string; title: string; section: SettingsSectionId };
 
-/** The palette's Settings actions (group `browser`): each opens the sheet on its section; `signedOutOnly` is offered only while signed out. */
+/**
+ * The palette's Settings actions (group `browser`): each opens the sheet on its section; `signedOutOnly`
+ * is offered only while signed out, `whileShown` only while its section is shown (not left out:
+ * `SETTINGS_OPTIONAL_SECTIONS`). "Settings" is always offered (it lands on the top of the sheet).
+ */
 export const SETTINGS_PALETTE_ACTIONS = [
-  { id: 'settings.open', label: 'Settings', section: 'account', signedOutOnly: false, keywords: ['preferences', 'options', 'account', 'sync'] },
-  { id: 'settings.sign-in', label: 'Sign in to frost', section: 'account', signedOutOnly: true, keywords: ['account', 'log in', 'login', 'sync'] },
-  { id: 'settings.search-console', label: 'Search Console settings', section: 'search-console', signedOutOnly: false, keywords: ['google', 'gsc', 'connect', 'disconnect'] },
-  { id: 'settings.telemetry', label: 'Telemetry settings', section: 'telemetry', signedOutOnly: false, keywords: ['privacy', 'usage', 'crash', 'errors', 'reports', 'diagnostics'] },
-] as const satisfies readonly { id: string; label: string; section: SettingsSectionId; signedOutOnly: boolean; keywords: readonly string[] }[];
+  { id: 'settings.open', label: 'Settings', section: 'account', signedOutOnly: false, whileShown: false, keywords: ['preferences', 'options', 'account', 'sync'] },
+  { id: 'settings.sign-in', label: 'Sign in to frost', section: 'account', signedOutOnly: true, whileShown: false, keywords: ['account', 'log in', 'login', 'sync'] },
+  { id: 'settings.search-console', label: 'Search Console settings', section: 'search-console', signedOutOnly: false, whileShown: true, keywords: ['google', 'gsc', 'connect', 'disconnect'] },
+  { id: 'settings.telemetry', label: 'Telemetry settings', section: 'telemetry', signedOutOnly: false, whileShown: false, keywords: ['privacy', 'usage', 'crash', 'errors', 'reports', 'diagnostics'] },
+] as const satisfies readonly { id: string; label: string; section: SettingsSectionId; signedOutOnly: boolean; whileShown: boolean; keywords: readonly string[] }[];
 
 /** At most this many `account.settingsWatch` calls wait at once; one more answers the oldest early. */
 export const MAX_PENDING_SETTINGS_WATCHES = 4;

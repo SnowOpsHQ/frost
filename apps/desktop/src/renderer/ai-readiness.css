@@ -205,16 +205,29 @@
   font-weight: 600;
 }
 
-/* The Overview's AI-readiness tile and "Page" card. */
+/* The Overview's AI-readiness tile, a row of the summary card under the health score (styles.css,
+   .seo-summary; seo-sidebar.feature.md, Overview, the summary): its ring beside its words as the health
+   score's, a --divider above it, "Open AI readiness" a link at the start of its words, under the basis. */
 .ai-tile {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
 }
 
-.ai-tile-open {
-  align-self: flex-start;
+.ai-tile .ai-score {
+  gap: var(--space-4);
 }
+
+.ai-tile .ai-tile-open {
+  align-self: flex-start;
+  width: auto;
+  margin-top: 0;
+  padding: 0;
+  border-top: 0;
+  text-align: start;
+}
+
+/* The Overview's "Page" card. */
 
 .page-type-head {
   display: flex;
@@ -276,10 +289,17 @@
 }
 
 /* Under the SEO panel's minimum (its seo-panel query, styles.css; specs/workspace-layout.feature.md,
-   A narrow window): the score row puts its ring above its words. */
+   A narrow window): the Visibility panel's score row puts its ring above its words. */
 @container seo-panel (width < 298px) {
   .ai-score {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  /* The Overview's tile stays a row, its ring 48px beside its words (styles.css, .seo-summary .seo-ring). */
+  .ai-tile .ai-score {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-3);
   }
 }

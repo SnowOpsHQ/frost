@@ -315,6 +315,14 @@ export const HISTORY_SETTINGS_TEXT = {
  * the tab.
  */
 export const JUMP_BACK_IN_TITLE = 'Jump back in' as const;
+
+/**
+ * What to type into an address field, in one wording (browser-polish.feature.md, New-tab page): the address
+ * bar's placeholder, and the new tab's search field's placeholder and accessible name. The start view has no
+ * tagline repeating it: its search field says it. Both fields are one path (`useAddressInput`): main decides
+ * URL or search (`browser.navigate`).
+ */
+export const ADDRESS_PROMPT = 'Search or enter address' as const;
 export const JUMP_BACK_IN_MOST_VISITED = 4;
 export const JUMP_BACK_IN_RECENT = 4;
 

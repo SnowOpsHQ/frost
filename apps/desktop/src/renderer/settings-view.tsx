@@ -1,8 +1,8 @@
-import { useEffect, useReducer, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react';
 // Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types).
 import type { TabState } from '@app/specs/browser.spec';
 import type { AccountState, AccountStatus } from '@app/specs/account-state.schema';
-import { ACCOUNT_SETTINGS_TEXT, SETTINGS_SECTIONS, SETTINGS_TITLE, type SettingsSectionId } from '@app/specs/account-settings.spec';
+import { ACCOUNT_SETTINGS_TEXT, SETTINGS_SECTIONS, SETTINGS_TITLE, settingsLanding, settingsSectionInView, settingsSectionsShown, type SettingsSectionId } from '@app/specs/account-settings.spec';
 import { CloseIcon } from './icons';
 import { actions } from './ipc';
 import { registerPaletteActions } from './palette/registry';
@@ -12,7 +12,7 @@ import { DataSourcesSettings } from './settings-data-sources';
 import { GscSettings } from './settings-gsc';
 import { HistorySettings } from './settings-history';
 import { LocationsSettings } from './settings-locations';
-import { accountStore, settingsActions, useAccountState, useSettingsMenuSeq } from './settings-hooks';
+import { accountStore, gscStore, settingsActions, useAccountState, useGscStatus, useSettingsMenuSeq } from './settings-hooks';
 import { closeCancelsSignIn, holdsSheet, isMenuRequest, onSettingsCloseAsked, onSettingsRequest, opensForConfirmation, requestSettings, SETTINGS_CLOSED, settingsOpened, settingsReducer } from './settings-open';
 import { settingsPaletteSources } from './settings-palette';
 import { TelemetrySettings } from './settings-telemetry';
@@ -27,6 +27,10 @@ import './settings.css';
 // document. While a confirmation waits, History and page changes leave it open and Close / Esc cancel
 // the sign-in first, so a waiting confirmation is never hidden. When it closes and focus was inside it,
 // focus goes to the page (else the address bar). Every value comes from main; every change is a procedure.
+// A section this build has nothing for (accounts or Search Console unconfigured, as main says) is left
+// out, and a request for it lands on the top of the sheet (`settingsSectionsShown`, `settingsLanding`).
+// The section list marks the section in view as the content scrolls (`settingsSectionInView`); a
+// request marks its own section until the content is scrolled again.
 
 /** Where focus goes once the sheet is gone (if it was inside): the page, else the address bar. */
 function focusAfterClose(): void {
@@ -36,12 +40,17 @@ function focusAfterClose(): void {
 }
 
 // The palette's Settings actions, once per module instance.
-const unregisterPaletteActions = registerPaletteActions(...settingsPaletteSources({ openSettings: requestSettings, accountStatus: () => accountStore.current()?.status ?? null }));
+const unregisterPaletteActions = registerPaletteActions(
+  ...settingsPaletteSources({ openSettings: requestSettings, accountStatus: () => accountStore.current()?.status ?? null, gscConfigured: () => gscStore.current()?.configured ?? null }),
+);
 import.meta.hot?.dispose(unregisterPaletteActions);
 
 const headingId = (section: SettingsSectionId) => `settings-section-${section}`;
 
-function SettingsView({ section, focusSeq, account, tabId, closeLabel, onClose, onSection }: {
+function SettingsView({ sections, section, focusSeq, account, tabId, closeLabel, onClose, onSection }: {
+  /** The sections shown, in order (`settingsSectionsShown`). */
+  readonly sections: readonly SettingsSectionId[];
+  /** The section asked for, as it lands (`settingsLanding`: always one of `sections`). */
   readonly section: SettingsSectionId;
   readonly focusSeq: number;
   readonly account: AccountState | null;
@@ -52,6 +61,15 @@ function SettingsView({ section, focusSeq, account, tabId, closeLabel, onClose, 
   readonly onSection: (section: SettingsSectionId) => void;
 }) {
   const sheet = useRef<HTMLElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  // The section the list marks: the one asked for, then the one in view as the content scrolls.
+  const [current, setCurrent] = useState(section);
+  // Where the content was scrolled to by the last request (`null` once scrolled since): until then the
+  // section asked for stays current, even when its heading cannot reach the top (the end of the content).
+  const pinned = useRef<number | null>(null);
+  const pin = () => {
+    pinned.current = content.current?.scrollTop ?? null;
+  };
   // Each request moves focus to its section's heading (and scrolls it into view).
   useEffect(() => {
     const heading = sheet.current?.querySelector<HTMLElement>(`#${headingId(section)}`);
@@ -59,7 +77,54 @@ function SettingsView({ section, focusSeq, account, tabId, closeLabel, onClose, 
     const question = section === 'account' ? sheet.current?.querySelector<HTMLElement>('#account-question') : null;
     (question ?? heading)?.focus();
     heading?.scrollIntoView({ block: 'start' });
+    setCurrent(section);
+    pin();
   }, [section, focusSeq]);
+  /** The section in view now (`null` without content or sections). */
+  const sectionInView = (): SettingsSectionId | null => {
+    const box = content.current;
+    if (!box) return null;
+    // Each heading's offset from the top of the scrolled area.
+    const origin = box.getBoundingClientRect().top - box.scrollTop;
+    const tops = sections.flatMap((id) => {
+      const heading = box.querySelector<HTMLElement>(`#${headingId(id)}`);
+      return heading ? [{ id, top: heading.getBoundingClientRect().top - origin }] : [];
+    });
+    return settingsSectionInView(tops, box);
+  };
+  const onScroll = () => {
+    const box = content.current;
+    if (!box) return;
+    // The request's own scroll (its event comes after the effect): the section asked for stays current.
+    if (pinned.current !== null) {
+      if (Math.abs(box.scrollTop - pinned.current) <= 1) return;
+      // Moved up onto the end of the content: the layout clamped it (a section left out, the sheet
+      // resized), since a user scrolling up from a valid position cannot land past the end. Move the pin.
+      if (box.scrollTop < pinned.current && box.scrollTop >= box.scrollHeight - box.clientHeight - 1) return pin();
+    }
+    pinned.current = null;
+    const inView = sectionInView();
+    if (inView !== null) setCurrent(inView);
+  };
+  // Worked out again with no scroll when the sections shown change (main's late answer leaves one out)
+  // or the content is resized; a section asked for that is still shown stays current.
+  const sectionInViewRef = useRef(sectionInView);
+  sectionInViewRef.current = sectionInView;
+  useEffect(() => {
+    const box = content.current;
+    if (!box) return;
+    const recompute = () => {
+      // The layout may have clamped the scroll (its event can come before or after this): move the pin.
+      if (pinned.current !== null) pin();
+      const inView = sectionInViewRef.current();
+      setCurrent((last) => (pinned.current !== null && sections.includes(last) ? last : (inView ?? last)));
+    };
+    recompute();
+    if (typeof ResizeObserver === 'undefined') return;
+    const resized = new ResizeObserver(recompute);
+    resized.observe(box);
+    return () => resized.disconnect();
+  }, [sections]);
   // Closed for any reason with focus inside: the sheet's nodes are gone, so focus fell to the body.
   // Checked once this commit's effects ran: a sheet that replaced this one has focused itself by then
   // (React runs this cleanup before the new sheet's mount effect), and keeps focus.
@@ -71,6 +136,7 @@ function SettingsView({ section, focusSeq, account, tabId, closeLabel, onClose, 
     },
     [],
   );
+  const entries = SETTINGS_SECTIONS.filter((entry) => sections.includes(entry.id));
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
@@ -89,14 +155,14 @@ function SettingsView({ section, focusSeq, account, tabId, closeLabel, onClose, 
         </header>
         <div className="settings-body">
           <nav className="settings-nav" aria-label="Settings sections">
-            {SETTINGS_SECTIONS.map((entry) => (
-              <button key={entry.id} type="button" className="settings-nav-item" data-testid={`settings-nav-${entry.id}`} aria-current={entry.id === section ? 'true' : undefined} onClick={() => onSection(entry.id)}>
+            {entries.map((entry) => (
+              <button key={entry.id} type="button" className="settings-nav-item" data-testid={`settings-nav-${entry.id}`} aria-current={entry.id === current ? 'true' : undefined} onClick={() => onSection(entry.id)}>
                 {entry.label}
               </button>
             ))}
           </nav>
-          <div className="settings-content" data-testid="settings-content">
-            {SETTINGS_SECTIONS.map((entry) => (
+          <div ref={content} className="settings-content" data-testid="settings-content" onScroll={onScroll}>
+            {entries.map((entry) => (
               <section key={entry.id} className="settings-section" aria-labelledby={headingId(entry.id)} data-testid={`settings-${entry.id}`}>
                 <h2 className="settings-section-title" id={headingId(entry.id)} tabIndex={-1}>
                   {entry.label}
@@ -125,6 +191,10 @@ export function SettingsSlot({ tab, historySeq, onOpen }: { readonly tab: Pick<T
   const [state, dispatch] = useReducer(settingsReducer, SETTINGS_CLOSED);
   const account = useAccountState();
   const status: AccountStatus | null = account?.status ?? null;
+  // What this build has: a section main says is unconfigured is left out (none until main answers).
+  const accountUnconfigured = status === 'unconfigured';
+  const gscUnconfigured = useGscStatus()?.configured === false;
+  const shown = useMemo(() => settingsSectionsShown({ account: accountUnconfigured, 'search-console': gscUnconfigured }), [accountUnconfigured, gscUnconfigured]);
   const latestOnOpen = useRef(onOpen);
   latestOnOpen.current = onOpen;
   const open = (section: SettingsSectionId) => {
@@ -192,7 +262,8 @@ export function SettingsSlot({ tab, historySeq, onOpen }: { readonly tab: Pick<T
   };
   return (
     <SettingsView
-      section={state.section}
+      sections={shown}
+      section={settingsLanding(state.section, shown)}
       focusSeq={state.focusSeq}
       account={account}
       tabId={tab?.id}

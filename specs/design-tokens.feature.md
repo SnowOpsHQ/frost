@@ -175,7 +175,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   flat `--bg-surface` (`--bg-page` until the base face; `--start-glow`: "no gradient washes"); the FrostMark is `--accent` (`--start-mark`),
   in the tab row's empty-tab glyph too; the mark eases in over `--dur-slow` with `--ease-out`. The
   wordmark is `--text-display` (the type scale's largest: it was 44px at weight 300, which Geist isn't
-  bundled in) and the hint `--text-body` in `--text-muted`. "Jump back in" takes `--text-caps` for its
+  bundled in). Under it (UI polish round 2; the hint that repeated the address bar's placeholder is gone)
+  the search field is the address bar's face at a larger size: an `--r-pill` on `--bg-surface` with
+  `--e-raised` and a transparent 1px border (the edge forced colours draw), 44px tall (`--h-field` plus
+  `--space-2`), its glyph `--text-faint`, its text `--text-heading` at weight 400 (typed text, not a heading) with a
+  `--text-faint` placeholder, and `--focus-ring` around the whole field
+  while it holds focus (`:focus-within`, beside a transparent 2px outline). "Jump back in" takes `--text-caps` for its
   title, and its tiles are `--bg-surface` cards at `--r-md` with `--e-ring` in place of their border
   (`--jump-tile-edge`; a transparent 1px border stays, the edge forced colours draw), the label in
   `--text-body` at its emphasis weight and the host in `--text-small`
@@ -185,7 +190,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--accent` (it was an accent border) and lifts 1px over `--dur-fast`; a focused one takes
   `--focus-ring` beside a transparent 2px outline (forced colours drop the shadow and draw the
   outline). The setup checklist under it (`help.css`), which read `--jump-tile-edge` for its border
-  and `--jump-tile-bg` for its fill, takes `--e-ring` and `--bg-surface` the same way.
+  and `--jump-tile-bg` for its fill, takes `--e-ring` and `--bg-surface` the same way. Its progress meter
+  (UI polish round 2, `help.feature.md`) is one 4px `--r-pill` segment per item on `--bg-active`,
+  filled `--ok` when done (a graphic, 3:1, as the step marks), kept under forced colours
+  (`FORCED_COLOURS_KEPT`) for the same reason; "Hide this checklist" is a chip-height `--text-muted`
+  text button that lays `--bg-hover` under itself on hover.
 - **The agent panel** (every rule of `components/agent/agent.css`) follows the Migration notes and
   the approved agent screen, where they agree: Geist on the `--text-*` tokens (the panel's own text at `--text-body`, its title at `--text-title`, secondary lines at `--text-small`,
   code, the context meter and skill instructions at `--text-mono`, chips at `--text-micro`); the open
@@ -1144,7 +1153,8 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
     the row, only the last line ruled. A round raised the stacking threshold to 300px, which stacked the
     table at the default width; it is 280px again. It stays table markup with its header cells, and
     Chromium's accessibility tree still holds a table of 4 column headers, 2 row headers and 6 cells. The
-    probe table (Visibility) shares the wrap but none of these rules: it is not one of these parts. The
+    probe table (Visibility) shared the wrap but none of these rules; since UI polish round 2 it has no
+    wrap and lays itself out (below). The
     parameter grid above it holds at 300px (it broke twice in #49).
   - **Search Console's controls:** the range row wraps (`flex-wrap`), "More ranges…" at its own width, its
     longest preset's (no longer capped at 45% of the row; no `min-width: 0`), never wider than the row. The
@@ -1175,9 +1185,24 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
     of its title and URL beside "Open in tab", and the URL (`overflow-wrap: anywhere`) asked for the
     whole row, so the button wrapped onto two lines beside a long URL. The button keeps its own width
     (`.ai-answer-citation .panel-button { flex: none }`); the URL wraps beside it.
+  - **Visibility's probe table** (UI polish round 2; Left for later until then, as no item of this work
+    named it): an eight-column table (Fact, the browser, seven crawlers), wider than any panel. Measured
+    after a run on the probe page it scrolled 997px sideways at the default 360px, 1,057px at 300px and
+    1,173px in the 588px window (where the panel body also scrolled 37px), and each of its 8 URL cells
+    was cut 134px by an ellipsis (the URL in its title). Now chips choose a crawler and the table
+    compares it with the browser in three fixed columns (`serp-panels.feature.md`, Decisions: the
+    probes compare one agent with the browser at a time): `table-layout: fixed`, the fact 30% and each
+    value 35% (`.visibility-table`, no `min-width`), a value wrapping in its column (`overflow-wrap:
+    break-word`; a URL `anywhere`, `.visibility-table td .seo-page-text`, no longer PageText's one line
+    with an ellipsis), a header without end padding (the first round broke "smartphon|e" at 300px), the
+    fact column no longer sticky (nothing scrolls under it), the wrap's sideways scroll gone with the
+    wrap (`.serp-table-wrap` is the ownership table's alone); robots.txt as read wraps its URL too
+    (`.visibility-robots-file`: it was cut by an ellipsis at 300px). At 300px, the default 360px
+    and the 664px window nothing scrolls sideways and no chip, header, cell, note or robots.txt line is
+    cut (`visibility-comparison-fits`).
   - **Not here:** the Changes panel's capture card at the 588px window, which `workspace-layout.feature.md`
     records as fixed (round 3 of the layout PR: the Screenshot row and the Project picker stack; its e2e
-    checks they are whole); and the Visibility table, which no item named (Left for later). Under the
+    checks they are whole). Under the
     panel's minimum, in the 588px window, Search Console's scope and day segments are cut ("Whole
     property" 12px) and its body scrolls 9px: that width is `NARROW_PANEL_WRAPS`', not these parts'.
 
@@ -1226,6 +1251,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
 8. The panels at 300px (done): the parts that cut their text or scrolled sideways at the panel's
    narrowest width are laid out for it (`NARROW_PANEL_FITS`, The panels at 300px), and the navigation
    timing shows every phase (`NAVIGATION_PHASE_MIN_WIDTH`).
+9. UI polish round 2, the SEO panels: Visibility's probe table compares one crawler with the browser
+   and fits the panel (The panels at 300px; the last Left-for-later item of the panels), and Overview's
+   scores, counts and "Highlight everything" are one summary card (`seo-sidebar.feature.md`, Overview,
+   the summary; `.seo-summary` joins the Overview's `SIGNAL_SURFACES` classes, `.seo-score-card` is a
+   row in it and no longer a card of its own).
 
 ## Unit (`apps/desktop/src/__tests__/design-tokens.test.ts`)
 - **Scenario: tokens-stylesheet-holds-only-root-tokens** — `tokens.css` has only `:root` blocks
@@ -1569,12 +1599,6 @@ What the rollout leaves, each where it lives; none is fixed by the cleanup or th
   available, labelled "Soon"): natively disabled, so it holds no focus a fade could dim, but it says
   disabled by opacity, not by the disabled colours the other controls take, and forced colours draw it
   only faded.
-- **The Visibility table scrolls sideways at every width, and cuts its URLs** (`styles.css`,
-  `.serp-table-wrap` and `.visibility-table`; `components/seo/Visibility.tsx`): real table markup with a
-  column per probe field, wider than any panel. Measured after a run on the probe page: it scrolls 997px
-  at the default 360px, 1,057px at 300px and 1,173px in the 588px window (where the panel body also
-  scrolls 37px sideways), and each of its 8 URL cells is cut 134px by an ellipsis (the URL is in its
-  title). The panels-at-300px work left it: no item named it.
 - **The canvas's features the app doesn't have** (the design canvas; each would need markup or behaviour,
   not tokens): the score on the SEO sidebar toggle, "Ask frost", click-to-edit on the tab, "More tabs",
   Overview's AI-readiness, Page and AI-judgment cards as the canvas draws them, the find icon and match

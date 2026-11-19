@@ -500,7 +500,80 @@
   }
 }
 
-/* The History section (Phase 11 Task 10): the retention choices are radio rows like AI checks'. */
-.settings-history-retention .settings-toggle {
-  padding: 0;
+/* The History section (Phase 11 Task 10; UI polish round 2): "Keep history for" and the retention's
+   segmented control share one row card, the control under the label when the row is too narrow. */
+.settings-history-retention {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  row-gap: var(--space-3);
+}
+
+/* A segmented control of radios, drawn as the canvas's (`.seo-segmented`): a --bg-subtle pill track,
+   the chosen segment raised. Equal segments, each its own Tab stop. */
+.settings-segmented {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
+}
+
+.settings-segment {
+  min-width: 0;
+  height: var(--h-chip);
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--text-small);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.settings-segment:hover:where(:not([aria-checked='true'], [aria-disabled='true'])) {
+  color: var(--text);
+}
+
+.settings-segment[aria-checked='true'] {
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
+  color: var(--text);
+}
+
+.settings-segment[aria-disabled='true'] {
+  cursor: default;
+}
+
+/* Busy fades a segment only while it is not focused, so its focus ring keeps full strength. */
+.settings-segment[aria-disabled='true']:where(:not(:focus-visible)) {
+  opacity: 0.6;
+}
+
+.settings-segment:focus-visible {
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* Forced colours drop the chosen segment's fill and shadow: Highlight edges it (FORCED_COLOURS_PRESSED). */
+@media (forced-colors: active) {
+  .settings-segment[aria-checked='true'] {
+    border-color: Highlight;
+  }
+}
+
+/* The narrowest sheet: the four retentions two by two across the card, under the label (a pill track
+   would clip them). */
+@container settings (max-width: 340px) {
+  .settings-segmented {
+    flex: 1 1 100%;
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-radius: var(--r-md);
+  }
 }

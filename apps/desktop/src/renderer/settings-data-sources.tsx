@@ -15,8 +15,10 @@ import './settings-data-sources.css';
 // never kept in state: Save reads it and empties it at once, before the call, so a key is never
 // rendered (the agent's key rows' pattern, `AgentSettings.tsx`). Clear asks first, in the account
 // confirmation's way (`settings-account.tsx`): the question takes focus when it opens, and focus goes
-// back to Clear after Cancel or once the clear is done. Reads are sequenced: an older answer that
-// arrives after a newer one is dropped.
+// back to Clear after Cancel or once the clear is done (to what the row says, if Clear is gone). Reads
+// are sequenced: an older answer that arrives after a newer one is dropped. A provider whose legal gate
+// is closed is one compact line (its name and why), with no fields or Save: there is nothing to enter
+// in this build (`data-sources.feature.md`, Settings › Data sources, the 2026-11-19 decision).
 
 interface Views {
   readonly status: DataSourcesView;
@@ -49,6 +51,15 @@ function ClearQuestion({ row, onCancel, onConfirm }: { readonly row: DataSourceR
 function DataSourceRow({ row, onChanged }: { readonly row: DataSourceRowView; readonly onChanged: () => Promise<DataSourcesView | null> }) {
   const fields = useRef<Partial<Record<DataSourceField, HTMLInputElement | null>>>({});
   const clearButton = useRef<HTMLButtonElement>(null);
+  const said = useRef<HTMLSpanElement>(null);
+  // Set once a clear is done: after that render focus goes to Clear, or (an unavailable row loses Clear
+  // with its key) to what the row says.
+  const focusAfterClear = useRef(false);
+  useEffect(() => {
+    if (!focusAfterClear.current) return;
+    focusAfterClear.current = false;
+    (clearButton.current ?? said.current)?.focus();
+  });
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -84,7 +95,7 @@ function DataSourceRow({ row, onChanged }: { readonly row: DataSourceRowView; re
       await onChanged();
       setBusy(false);
       setMessage(cleared ? TEXT.cleared : TEXT.clearFailed);
-      clearButton.current?.focus();
+      focusAfterClear.current = true;
     });
   };
   const cancel = () => {
@@ -92,90 +103,114 @@ function DataSourceRow({ row, onChanged }: { readonly row: DataSourceRowView; re
     clearButton.current?.focus();
   };
 
+  const clearControl = (
+    <button
+      ref={clearButton}
+      type="button"
+      className="settings-button"
+      data-testid="data-source-clear"
+      aria-label={TEXT.clearName(row.label)}
+      aria-disabled={busy || !row.canClear ? 'true' : undefined}
+      onClick={() => {
+        if (!busy && row.canClear) setAsking(true);
+      }}
+    >
+      {TEXT.clear}
+    </button>
+  );
+  const reason =
+    row.reason !== null ? (
+      <span className={row.available ? 'settings-muted' : 'settings-muted settings-data-source-reason'} id={id('reason')} data-testid="data-source-reason">
+        {row.reason}
+      </span>
+    ) : null;
+
   return (
-    <li className="settings-toggle" data-testid="data-source" data-provider={row.provider} data-has-key={row.hasKey} data-disabled={row.disabled}>
+    <li
+      className={row.available ? 'settings-toggle' : 'settings-toggle settings-data-source-unavailable'}
+      data-testid="data-source"
+      data-provider={row.provider}
+      data-has-key={row.hasKey}
+      data-disabled={row.disabled}
+      data-available={row.available}
+    >
       <div className="settings-toggle-text">
         <div className="settings-data-source-head">
           <span className="settings-toggle-label" id={id('label')}>
             {row.label}
           </span>
-          <span className="settings-status" data-testid="data-source-key-state" data-tone={row.hasKey ? 'ok' : undefined}>
-            {row.keyState}
-          </span>
+          {/* Unavailable: why sits on the name's line. */}
+          {row.available ? null : reason}
+          {row.keyState !== null ? (
+            <span className="settings-status" data-testid="data-source-key-state" data-tone={row.hasKey ? 'ok' : undefined}>
+              {row.keyState}
+            </span>
+          ) : null}
         </div>
-        {row.reason !== null ? (
-          <span className="settings-muted" id={id('reason')} data-testid="data-source-reason">
-            {row.reason}
-          </span>
-        ) : null}
+        {row.available ? reason : null}
         {row.notes.map((note, index) => (
           <span key={note} className="settings-muted" id={id(`note-${index}`)} data-testid="data-source-note">
             {note}
           </span>
         ))}
-        <div className="settings-data-source-fields">
-          {row.fields.map((field) => (
-            <div key={field.id} className="settings-data-source-field">
-              <span className="settings-muted" id={id(`field-${field.id}`)}>
-                {field.label}
-              </span>
-              <input
-                ref={(element) => {
-                  fields.current[field.id] = element;
-                }}
-                className="settings-data-source-input"
-                data-testid="data-source-input"
-                data-field={field.id}
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                disabled={row.disabled}
-                placeholder={row.hasKey ? TEXT.replacePlaceholder : TEXT.keyPlaceholder}
-                aria-labelledby={`${id('label')} ${id(`field-${field.id}`)}`}
+        {row.fields.length > 0 ? (
+          <div className="settings-data-source-fields">
+            {row.fields.map((field) => (
+              <div key={field.id} className="settings-data-source-field">
+                <span className="settings-muted" id={id(`field-${field.id}`)}>
+                  {field.label}
+                </span>
+                <input
+                  ref={(element) => {
+                    fields.current[field.id] = element;
+                  }}
+                  className="settings-data-source-input"
+                  data-testid="data-source-input"
+                  data-field={field.id}
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={row.disabled}
+                  placeholder={row.hasKey ? TEXT.replacePlaceholder : TEXT.keyPlaceholder}
+                  aria-labelledby={`${id('label')} ${id(`field-${field.id}`)}`}
+                  aria-describedby={described}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      save();
+                    }
+                  }}
+                />
+              </div>
+            ))}
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="settings-button settings-button-primary"
+                data-testid="data-source-save"
+                aria-label={TEXT.saveName(row.label)}
                 aria-describedby={described}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    save();
-                  }
-                }}
-              />
+                aria-disabled={busy || row.disabled ? 'true' : undefined}
+                onClick={save}
+              >
+                {TEXT.save}
+              </button>
+              {clearControl}
             </div>
-          ))}
-          <div className="settings-actions">
-            <button
-              type="button"
-              className="settings-button settings-button-primary"
-              data-testid="data-source-save"
-              aria-label={TEXT.saveName(row.label)}
-              aria-describedby={described}
-              aria-disabled={busy || row.disabled ? 'true' : undefined}
-              onClick={save}
-            >
-              {TEXT.save}
-            </button>
-            <button
-              ref={clearButton}
-              type="button"
-              className="settings-button"
-              data-testid="data-source-clear"
-              aria-label={TEXT.clearName(row.label)}
-              aria-disabled={busy || !row.canClear ? 'true' : undefined}
-              onClick={() => {
-                if (!busy && row.canClear) setAsking(true);
-              }}
-            >
-              {TEXT.clear}
-            </button>
           </div>
-        </div>
+        ) : row.canClear ? (
+          // Unavailable with a key (or part of one) somehow set: clearing is never gated.
+          <div className="settings-actions">{clearControl}</div>
+        ) : null}
         {asking ? <ClearQuestion row={row} onCancel={cancel} onConfirm={clear} /> : null}
-        <span className="settings-muted">
-          <span className="visually-hidden">{`${TEXT.usageLabel}: `}</span>
-          <span data-testid="data-source-usage">{row.usage}</span>
-        </span>
+        {row.usage !== null ? (
+          <span className="settings-muted">
+            <span className="visually-hidden">{`${TEXT.usageLabel}: `}</span>
+            <span data-testid="data-source-usage">{row.usage}</span>
+          </span>
+        ) : null}
         {message !== null ? (
-          <span className="settings-note" role="status" data-testid="data-source-message">
+          <span ref={said} className="settings-note" role="status" data-testid="data-source-message" tabIndex={-1}>
             {message}
           </span>
         ) : null}

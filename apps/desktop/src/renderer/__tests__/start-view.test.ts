@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 // Spec: specs/help.spec.ts (SETUP_CHECKLIST_ITEMS, SETUP_CHECKLIST_STORAGE_KEY, SETUP_CHECKLIST_TEXT)
 // Acceptance: specs/help.feature.md (Chrome: setup-checklist-done-states, setup-checklist-dismiss,
-// setup-checklist-storage-tolerant)
+// setup-checklist-storage-tolerant, setup-checklist-meter, setup-checklist-follows-the-build)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { SETUP_CHECKLIST_ITEMS, SETUP_CHECKLIST_STORAGE_KEY, SETUP_CHECKLIST_TEXT } from '@app/specs/help.spec';
+import { SETUP_CHECKLIST_ITEMS, SETUP_CHECKLIST_STORAGE_KEY, SETUP_CHECKLIST_TEXT, setupItemsShown } from '@app/specs/help.spec';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,12 +13,13 @@ import { SETUP_CHECKLIST_ITEMS, SETUP_CHECKLIST_STORAGE_KEY, SETUP_CHECKLIST_TEX
 const main = {
   agentReady: false,
   gscConnected: false,
+  gscConfigured: true,
   projects: [{ id: 'unfiled', name: 'Unfiled', unfiled: true }] as { id: string; name: string; unfiled: boolean }[],
   agentReads: 0,
   projectReads: 0,
 };
 const never = () => new Promise<never>(() => undefined);
-const gscStatus = () => ({ version: 1, configured: true, entitled: true, connected: main.gscConnected, connecting: false, keychain: 'persistent', error: null });
+const gscStatus = () => ({ version: 1, configured: main.gscConfigured, entitled: true, connected: main.gscConnected, connecting: false, keychain: 'persistent', error: null });
 /** The Search Console watch waiting in main: answering it ends the chrome's wait. */
 let gscWaiting: ((status: unknown) => void) | null = null;
 vi.mock('../ipc', () => ({
@@ -69,6 +70,7 @@ let host: HTMLElement;
 beforeEach(async () => {
   main.agentReady = false;
   main.gscConnected = false;
+  main.gscConfigured = true;
   // The chrome's shared Search Console store ends its wait with main's state now (not connected).
   const waiting = gscWaiting;
   gscWaiting = null;
@@ -156,6 +158,55 @@ test('setup-checklist-done-states', async () => {
   await show(3);
   expect(checklist()).toBeNull();
   expect(host.querySelector('[data-testid="start-view"]')).not.toBeNull();
+});
+
+test('setup-checklist-meter', async () => {
+  const meter = () => host.querySelector<HTMLElement>('[data-testid="setup-meter"]');
+  const steps = () => [...meter()!.querySelectorAll<HTMLElement>('.setup-meter-step')].map((step) => step.dataset['done']);
+  window.localStorage.setItem(SETUP_CHECKLIST_STORAGE_KEY, JSON.stringify({ privacy: true }));
+  await show();
+  expect(meter()).not.toBeNull();
+  // Decorative: "N of M done" says it in words.
+  expect(meter()!.getAttribute('aria-hidden')).toBe('true');
+  // One segment per item, filled from the start: N items done fill the first N, whichever they are
+  // (privacy is the fourth item; alone it fills the first segment).
+  const filled = (n: number) => SETUP_CHECKLIST_ITEMS.map((_, index) => (index < n ? 'true' : 'false'));
+  expect(SETUP_CHECKLIST_ITEMS.findIndex((item) => item.id === 'privacy')).toBeGreaterThan(0);
+  expect(steps()).toEqual(filled(1));
+  main.agentReady = true;
+  await show(2);
+  expect(steps()).toEqual(filled(2));
+  expect(items().filter((item) => item.dataset['done'] === 'true')).toHaveLength(2);
+});
+
+test('setup-checklist-follows-the-build', async () => {
+  const ids = () => items().map((item) => item.dataset['item']);
+  const segments = () => host.querySelectorAll('[data-testid="setup-meter"] .setup-meter-step').length;
+  // Main says this build has no Search Console client: the item is left out and nothing counts it.
+  window.localStorage.setItem(SETUP_CHECKLIST_STORAGE_KEY, JSON.stringify({ privacy: true }));
+  await show();
+  main.gscConfigured = false;
+  await act(async () => gscWaiting?.({ ...gscStatus(), version: 20 }));
+  const shown = setupItemsShown(false);
+  expect(shown.map((item) => item.id)).not.toContain('search-console');
+  expect(ids()).toEqual(shown.map((item) => item.id));
+  expect(segments()).toBe(shown.length);
+  expect(checklist()!.textContent).toContain(SETUP_CHECKLIST_TEXT.progress(1, shown.length));
+  // Every listed item done: the checklist is gone, Search Console or not.
+  window.localStorage.setItem(SETUP_CHECKLIST_STORAGE_KEY, JSON.stringify({ privacy: true, shortcuts: true }));
+  main.agentReady = true;
+  main.projects = [...main.projects, { id: 'p1', name: 'Shop', unfiled: false }];
+  await show(2);
+  expect(checklist()).toBeNull();
+  // Configured: all five again.
+  act(() => root.unmount());
+  root = createRoot(host);
+  main.agentReady = false;
+  await show(3);
+  main.gscConfigured = true;
+  await act(async () => gscWaiting?.({ ...gscStatus(), version: 21 }));
+  expect(ids()).toEqual(SETUP_CHECKLIST_ITEMS.map((item) => item.id));
+  expect(segments()).toBe(SETUP_CHECKLIST_ITEMS.length);
 });
 
 test('setup-checklist-dismiss', async () => {

@@ -35,6 +35,32 @@ named test.
 - **Accessible.** Every control has an accessible name; the ownership and probe tables are real
   `<table>` markup with header cells; the composition bar is an image with a text label, and its
   counts are listed as text beside it.
+- **The probes compare one agent with the browser at a time** (UI polish round 2; it closes the
+  Visibility table's Left-for-later item in `design-tokens.feature.md`). The run's table was eight
+  columns (Fact, the browser, seven crawlers) in a panel whose card is about 286px wide (226px at the
+  300px minimum): it scrolled about 1,000px sideways at every width and cut each URL by an ellipsis.
+  Now a row of chips names the seven crawlers ("Compare with the browser", a group of toggle buttons,
+  `.seo-chip-button` as the snippet editor's sources), and under it one real table compares the chosen
+  crawler with the browser: Fact, Browser (frost), the crawler; a row per fact, as before. A crawler
+  that differs from the browser carries a warning glyph and the number of facts that differ on its chip
+  (and "differs from the browser in n facts" for a screen reader), so who differs reads before any
+  choice; the table opens on the first crawler that differs (the first crawler when none does), and
+  a differing cell stays marked as before (`--warn-ink` on `--warn-soft`, its `--warn` edge, "(differs
+  from the browser)" for a screen reader). Every fact for every agent is a chip away; the summary
+  line still counts the agents that differ. The table is three fixed columns (the fact 30%, each value
+  35%): a value wraps inside its column (a URL anywhere, other text between words, a word wider than
+  the column inside itself), so nothing scrolls sideways and nothing is cut, at 300px, 360px and wider.
+  Its header cells keep their scopes, its caption names the crawler ("Googlebot smartphone compared
+  with the browser"), the chips point at it (`aria-controls`), and the chosen chip is `aria-pressed`
+  with an `--accent` edge (`PRESSED_EDGES`). The AI crawlers' footnote (`*` on a modelled crawler's
+  header) and robots.txt as read stay under the table. Rejected: **a list per agent** (an accordion
+  leading with what differs): seven disclosures, each a table of its own, many open at once as long as
+  the old table, and the browser's values repeated in each; **the grid transposed** (agents as rows):
+  nine facts become the columns, as wide as before; **a summary of differences with the full grid on
+  demand**: the grid on demand still scrolls 1,000px, so every fact of every agent would stay out of
+  reach at the panel's width; **a select** for the agent: one control, but which crawlers differ hides
+  inside its closed list. The view model is unchanged (`probeTable`); the comparison is a view of it
+  (`probeComparison`).
 
 ## SERP panel view model (`apps/desktop/src/renderer/__tests__/serp-view.test.ts`)
 - **Scenario: serp-params-labels** — the search parameters bar from `SearchParams`: engine label,
@@ -72,8 +98,13 @@ named test.
   noindex, nofollow, canonical, words, size, visible text); an `idle` run has no table.
 - **Scenario: eight-columns-fit** — a full run of the eight agents (`PROBE_AGENT_IDS`, the two OpenAI
   agents last, marked as frost's model like the other AI crawlers) gives eight columns and eight cells
-  in every row, each column headed by the agent's short label (at most 20 characters) so the table
-  stays narrow enough to scroll sideways in the panel.
+  in every row, each column headed by the agent's short label (at most 20 characters, so a chip and a
+  column header stay short).
+- **Scenario: probe-comparison** — `probeComparison(table, agent)` is the browser's column and the
+  chosen crawler's, a row per fact with the browser's cell and the crawler's (marked where the table
+  marks it), and per crawler the number of rows marked (`differences`, 0 for one that matches); with no
+  agent chosen, or one the run doesn't hold (or the browser), it is the first crawler that differs, else
+  the first crawler; a run without crawler rows has none.
 - **Scenario: probe-table-cells** — a row's status, redirect hops, robots.txt verdict, noindex /
   nofollow, canonical, word count, size (with "cut") and text similarity as short text, the longer
   wording (`PROBE_OUTCOME_MESSAGES`, `PROBE_ROBOTS_VERDICT_LABELS`) as the cell's title; a row still
@@ -261,8 +292,17 @@ keypair, signs a pack for that host (version above the bundled one) and serves i
   only by the two checks of `serp-pack-update-installs`.
 - **Scenario: visibility-probes-per-agent** — on a loopback site whose robots.txt disallows GPTBot and
   which sends `X-Robots-Tag: googlebot: noindex` and a smaller page to one crawler, the disclosure is
-  shown before the run; "Run visibility probes" fills one column per agent, with GPTBot's robots.txt
-  and Googlebot's noindex marked as differences, and the notes shown; one request per crawler, and
-  robots.txt asked at most once (main's cache).
+  shown before the run; "Run visibility probes" gives a chip per crawler in `PROBE_AGENTS` order, the
+  three that differ (Googlebot, GPTBot, ClaudeBot) marked with their counts and the others not, and the
+  table opens on Googlebot (the first that differs) beside the browser; choosing each chip shows its
+  column, with GPTBot's robots.txt and Googlebot's noindex marked as differences, and the notes shown;
+  one request per crawler, and robots.txt asked at most once (main's cache).
+- **Scenario: visibility-comparison-fits** — after that run, at the default 360px panel, at the 300px
+  minimum and in the window's 664px minimum: the comparison table and the panel's body don't scroll
+  sideways (`scrollWidth <= clientWidth`), no text in the chips, the table (every header and cell, the
+  canonical URL whole on its lines), the notes or robots.txt as read is cut (`cutText`), and the table's
+  three columns share its width (the fact 30%, each value 35%, to a pixel); the keyboard reaches each
+  chip, Space chooses it (`aria-pressed`, the caption and the column follow), and Chromium's
+  accessibility tree holds a table of 3 column headers, 9 row headers and 18 cells.
 - **Scenario: visibility-probes-stop** — a run against slow answers shows Stop; Stop ends it
-  (`stopped`), keeping what was found.
+  (`stopped`), keeping what was found (the chosen crawler's status says "Stopped").

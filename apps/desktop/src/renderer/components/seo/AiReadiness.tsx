@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { AiReadinessAudit } from '@app/seo-core';
 import { AI_READINESS_COPY as COPY, type AiCheckStatus } from '@app/specs/ai-readiness.spec';
 import type { ProbesState } from '@app/specs/visibility-probes.schema';
@@ -36,8 +37,8 @@ export function AiScoreRing({ ring }: { readonly ring: AiRingView }) {
   );
 }
 
-/** The ring, its basis and (partial only) what would complete it. */
-export function AiScoreSummary({ ring, eyebrow }: { readonly ring: AiRingView; readonly eyebrow: string }) {
+/** The ring, its basis and (partial only) what would complete it; `children` end its words (the Overview tile's link). */
+export function AiScoreSummary({ ring, eyebrow, children }: { readonly ring: AiRingView; readonly eyebrow: string; readonly children?: ReactNode }) {
   return (
     <div className="ai-score">
       <AiScoreRing ring={ring} />
@@ -51,6 +52,7 @@ export function AiScoreSummary({ ring, eyebrow }: { readonly ring: AiRingView; r
             {ring.hint}
           </span>
         ) : null}
+        {children}
       </div>
     </div>
   );
