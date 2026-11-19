@@ -9,7 +9,7 @@ import { expect, test } from 'vitest';
 import { SIGNAL_TOKENS } from '@app/specs/design-tokens.spec';
 import { RENDER_FRAME } from '@app/specs/render-profile.spec';
 import { SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
-import { ADDRESS_BASIS_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
+import { ACTIVE_TAB_MIN_WIDTH_PX, ADDRESS_BASIS_PX, ADDRESS_MIN_WIDTH_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
 import { TITLE_BAR_OVERLAY_COLOURS, WINDOW_DRAG_STRIP_PX } from '@app/specs/title-bar.spec';
 import {
   NARROW_PANEL_WRAPS,
@@ -88,15 +88,28 @@ test('chrome-row-is-one-fixed-track', () => {
   expect(row).not.toMatch(/overflow(-x)?:\s*(hidden|auto|scroll);/);
   // The tools never shrink.
   for (const fixed of ['.nav-buttons', '.tool', '.new-tab']) expect(rule('styles.css', fixed), fixed).toMatch(/flex:\s*none;/);
-  // Tabs shrink to their minimum, then the tablist scrolls; the address bar keeps its basis until only
-  // one tab is left beside it, and never goes under its minimum.
+  // Tabs shrink to their minimum (the active one to a readable one), then the tablist scrolls; the
+  // address bar keeps its basis until only the active tab is left beside it, and never goes under its
+  // minimum at or above the window's.
   expect(row).toMatch(new RegExp(`--tab-min:\\s*${TAB_MIN_WIDTH_PX}px;`));
+  expect(row).toMatch(new RegExp(`--active-tab-min:\\s*${ACTIVE_TAB_MIN_WIDTH_PX}px;`));
+  expect(row).toMatch(new RegExp(`--address-min:\\s*${ADDRESS_MIN_WIDTH_PX}px;`));
   expect(row).toMatch(new RegExp(`--address-basis:\\s*${ADDRESS_BASIS_PX}px;`));
   expect(rule('styles.css', '.tab')).toMatch(/min-width:\s*var\(--tab-min\);/);
+  // The active tab: its readable minimum while the room beside the address bar's minimum allows (at or
+  // above the window's minimum), else less, never under --tab-min (a tiled window below the minimum).
+  expect(row).toMatch(
+    /--active-tab-room:\s*clamp\(var\(--tab-min\),\s*var\(--row-free\) - 2 \* var\(--space-1\) - var\(--address-min\),\s*var\(--active-tab-min\)\);/,
+  );
+  expect(rule('styles.css', ".tab[data-active='true']")).toMatch(/min-width:\s*var\(--active-tab-room\);/);
+  // The minimums count on these gaps (specs/tabs.spec.ts): a label --space-1 from its ×, the address bar's
+  // text --space-2 from its badge.
+  expect(rule('styles.css', '.tab')).toMatch(/gap:\s*var\(--space-1\);/);
+  expect(rule('styles.css', '.address')).toMatch(/gap:\s*var\(--space-2\);/);
   const address = rule('styles.css', '.address');
   expect(address).toMatch(/flex:\s*1 1 var\(--address-basis\);/);
-  // The basis, or the room left beside one tab, whichever is less: below the window's minimum (a tiled
-  // window) the address bar gives way before the tools.
+  // The basis, or the room left beside the active tab, whichever is less: below the window's minimum (a
+  // tiled window) the address bar gives way before the tools.
   expect(address).toMatch(/min-width:\s*min\(var\(--address-basis\),\s*max\(0px,\s*var\(--row-free\) - var\(--one-tab\)\)\);/);
   // The room for the tablist and the address bar: the row's own content width (an inline-size
   // container) less its tools and gaps, counted from CHROME_ROW, so a new tool can't go uncounted.
@@ -105,7 +118,8 @@ test('chrome-row-is-one-fixed-track', () => {
   const free = row.match(/--row-free:\s*calc\(100cqw - (\d+) \* var\(--h-control\) - (\d+) \* var\(--space-1\)\);/);
   expect(free, '--row-free').not.toBeNull();
   expect([Number(free![1]), Number(free![2])]).toEqual([ROW_TOOLS, ROW_GAPS]);
-  expect(row).toMatch(/--one-tab:\s*calc\(var\(--tab-min\) \+ 2 \* var\(--space-1\)\);/);
+  // The tablist's least width: the active tab, whole, and its ring room.
+  expect(row).toMatch(/--one-tab:\s*calc\(var\(--active-tab-room\) \+ 2 \* var\(--space-1\)\);/);
   const tablist = rule('styles.css', '.tabs');
   expect(tablist).toMatch(/overflow-x:\s*auto;/);
   expect(tablist).toMatch(/min-width:\s*var\(--one-tab\);/);
@@ -119,6 +133,28 @@ test('chrome-row-is-one-fixed-track', () => {
       .map(({ selector }) => `${file}: ${selector}`),
   );
   expect(stale).toEqual([]);
+});
+
+test('new-tab-follows-the-tablist', () => {
+  // specs/tabs.feature.md (Behaviour: "+" is the tablist's next sibling, not inside its scroller): it
+  // follows the last tab, and stays in view at the tablist's end once the tablist scrolls.
+  const lines = read('components/ChromeRow.tsx').split('\n');
+  const at = (pattern: RegExp) => lines.findIndex((line) => pattern.test(line));
+  const strip = at(/^\s*<TabStrip\b/);
+  const plus = at(/^\s*<button\b.*data-testid="new-tab"/);
+  const address = at(/^\s*<AddressBar\b/);
+  expect([strip, plus, address].every((i) => i > 0)).toBe(true);
+  expect(plus).toBe(strip + 1);
+  // The button's element is one line (its icon and closing tag on the next two), then the address bar.
+  expect(lines.slice(plus + 1, address).map((line) => line.trim())).toEqual(['<PlusIcon />', '</button>']);
+  const button = rule('styles.css', '.new-tab');
+  expect(button).toMatch(/flex:\s*none;/);
+  // 4px toward the tabs (into the gap after the tablist's ring padding), 4px away from the address bar:
+  // the row's width is unchanged.
+  expect(button).toMatch(/margin-inline:\s*calc\(-1 \* var\(--space-1\)\) var\(--space-1\);/);
+  // Never pinned over the tabs: the tablist's scroller holds tabs only.
+  const sticky = rules(read('styles.css')).filter(({ selector, body }) => /\.(tabs|new-tab)\b/.test(selector) && /position:\s*sticky/.test(body));
+  expect(sticky).toEqual([]);
 });
 
 test('title-bar-overlay-colours-are-the-row-tokens', () => {
