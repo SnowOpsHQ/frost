@@ -58,7 +58,10 @@ to one named test.
   height from its top, the first while none is, and the last once the content is scrolled to its end
   (`SETTINGS_SCROLL_SPY`, `settingsSectionInView`). A section asked for (a click in the list, the gear,
   the palette, the menu) is current at once, even when the content cannot scroll its heading to the
-  top, and stays current until the content is scrolled again.
+  top, and stays current until the content is scrolled again. The section in view is worked out again,
+  without a scroll, when the sections shown change (main's late answer leaves one out) or the content
+  is resized, so the list always marks a shown section; a section asked for that is still shown stays
+  current through either.
 - **Telemetry's "no endpoint" notes are quiet (2026-11-19).** "This build has no endpoint for this, so
   nothing is sent" is information, not a warning (nothing is wrong and nothing is sent): it is muted text
   under the channel's description (still in the switch's description), not an amber notice. The
@@ -124,6 +127,7 @@ to one named test.
 - `settings-section-in-view` — the last heading at or above a third of the visible height is current, the first while none is, the last at the end of the scroll; content that does not scroll keeps the first.
 - `settings-sheet-leaves-out-unconfigured` — with accounts `unconfigured` and Search Console not `configured`, the sheet has no Account or Search Console entry or section; the gear's request lands on Data sources (current, its heading focused); a request for Search Console does too.
 - `settings-nav-follows-the-request` — a request marks its section current (`aria-current="true"` on it alone), and a click in the list marks the clicked one.
+- `settings-nav-survives-a-section-leaving` — scrolled (not asked) to Search Console while main has not answered, then main says Search Console is not configured: with no scroll, exactly one shown section is current.
 
 ## Opening and closing (`apps/desktop/src/renderer/__tests__/settings-open.test.ts`)
 - `settings-opens-on-request` — a request opens Settings on its section and asks for focus each time.
