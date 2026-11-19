@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { SETUP_CHECKLIST_ITEMS, SETUP_CHECKLIST_STORAGE_KEY, SETUP_CHECKLIST_TEXT, type SetupChecklistItemId } from '@app/specs/help.spec';
+import { SETUP_CHECKLIST_STORAGE_KEY, SETUP_CHECKLIST_TEXT, setupItemsShown, type SetupChecklistItemId } from '@app/specs/help.spec';
 import { requestAgentPanel } from '../agent-palette';
 import { requestHelpSheet } from '../help-palette';
 import { actions, ipc } from '../ipc';
@@ -137,26 +137,28 @@ export function SetupChecklist({ tabId }: { readonly tabId?: number | undefined 
   }, [tabId]);
   if (stored.dismissed) return null;
   const done = setupDone({ agentReady: main?.agentReady ?? false, gscConnected: gsc?.connected === true, hasProject: main?.hasProject ?? false, marks: stored });
-  const count = SETUP_CHECKLIST_ITEMS.filter((item) => done[item.id]).length;
-  if (count === SETUP_CHECKLIST_ITEMS.length) return null;
+  // Only what this build has: no Search Console item while main says there is no client for it.
+  const shown = setupItemsShown(gsc?.configured);
+  const count = shown.filter((item) => done[item.id]).length;
+  if (count === shown.length) return null;
   return (
     <section className="setup" data-testid="setup-checklist" aria-labelledby="setup-title">
       <header className="setup-header">
         <h2 className="setup-title" id="setup-title">
           {SETUP_CHECKLIST_TEXT.title}
         </h2>
-        <span className="setup-progress">{SETUP_CHECKLIST_TEXT.progress(count, SETUP_CHECKLIST_ITEMS.length)}</span>
+        <span className="setup-progress">{SETUP_CHECKLIST_TEXT.progress(count, shown.length)}</span>
         <button type="button" className="setup-dismiss" data-testid="setup-dismiss" onClick={() => markSetupStep('dismissed')}>
           {SETUP_CHECKLIST_TEXT.dismiss}
         </button>
       </header>
       <div className="setup-meter" data-testid="setup-meter" aria-hidden="true">
-        {SETUP_CHECKLIST_ITEMS.map((item, index) => (
+        {shown.map((item, index) => (
           <span key={item.id} className="setup-meter-step" data-done={index < count ? 'true' : 'false'} />
         ))}
       </div>
       <ul className="setup-items">
-        {SETUP_CHECKLIST_ITEMS.map((item) => (
+        {shown.map((item) => (
           <li key={item.id} className="setup-item" data-testid="setup-item" data-item={item.id} data-done={done[item.id] ? 'true' : 'false'}>
             <span className="setup-check" aria-hidden="true" />
             <span className="setup-label">{item.label}</span>

@@ -15,7 +15,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { BROWSE_PARTITION } from '@app/specs/browser.spec';
 import { CLEAR_HISTORY, CLEAR_HISTORY_RANGE, clearHistoryRangeMessage, HISTORY_ALL_PAGES_LABEL, HISTORY_EMPTY_MESSAGE, HISTORY_MENU_ID, HISTORY_NO_MATCHES, JUMP_BACK_IN_TITLE, searchEngineUrl } from '@app/specs/browser-polish.spec';
 import { DB_FILE_NAME } from '@app/specs/browser-session-db.spec';
-import { HELP_URLS, KEYBOARD_SHORTCUTS, SETUP_CHECKLIST_COLUMNS_MIN_PX, SETUP_CHECKLIST_ITEMS, SETUP_CHECKLIST_STORAGE_KEY, SHORTCUTS_TEXT, WHATS_NEW_SEEN_SETTING_KEY } from '@app/specs/help.spec';
+import { HELP_URLS, KEYBOARD_SHORTCUTS, SETUP_CHECKLIST_COLUMNS_MIN_PX, SETUP_CHECKLIST_STORAGE_KEY, SHORTCUTS_TEXT, WHATS_NEW_SEEN_SETTING_KEY, setupItemsShown } from '@app/specs/help.spec';
 import { NARROW_WINDOW } from '@app/specs/workspace-layout.spec';
 import { APP_DIR, closeApp, launchApp } from './harness';
 import { chromeHelpers, cutText, sidewaysScroll } from './helpers';
@@ -549,10 +549,13 @@ test('setup-checklist', async () => {
   const checklist = page.getByTestId('setup-checklist');
   await expect(checklist).toBeVisible();
   const item = (id: string) => page.locator(`[data-testid="setup-item"][data-item="${id}"]`);
-  await expect(page.getByTestId('setup-item')).toHaveCount(SETUP_CHECKLIST_ITEMS.length);
-  for (const entry of SETUP_CHECKLIST_ITEMS) await expect(item(entry.id)).toContainText(entry.label);
-  // No agent key, no Search Console, nothing opened yet (a project may exist from an earlier test).
-  for (const id of ['agent', 'search-console', 'privacy', 'shortcuts']) await expect(item(id)).toHaveAttribute('data-done', 'false');
+  // This suite's build has no Search Console client: its item is left out (setup-checklist-follows-the-build).
+  const shown = setupItemsShown(false);
+  await expect(page.getByTestId('setup-item')).toHaveCount(shown.length);
+  for (const entry of shown) await expect(item(entry.id)).toContainText(entry.label);
+  await expect(item('search-console')).toHaveCount(0);
+  // No agent key, nothing opened yet (a project may exist from an earlier test).
+  for (const id of ['agent', 'privacy', 'shortcuts']) await expect(item(id)).toHaveAttribute('data-done', 'false');
   // Nothing remote on the new-tab page.
   expect(await checklist.locator('img, iframe').count()).toBe(0);
 
@@ -565,7 +568,8 @@ test('setup-checklist', async () => {
   // The meter fills from the left: one item done (the last one) fills the first segment only.
   const meterSteps = page.locator('[data-testid="setup-meter"] .setup-meter-step');
   await expect(meterSteps.first()).toHaveAttribute('data-done', 'true');
-  await expect(meterSteps.nth(SETUP_CHECKLIST_ITEMS.findIndex((entry) => entry.id === 'shortcuts'))).toHaveAttribute('data-done', 'false');
+  await expect(meterSteps).toHaveCount(shown.length);
+  await expect(meterSteps.nth(shown.findIndex((entry) => entry.id === 'shortcuts'))).toHaveAttribute('data-done', 'false');
   // "Open privacy settings" opens Settings on Telemetry and marks the step.
   await item('privacy').getByTestId('setup-action').click();
   await expect(page.getByTestId('settings-view')).toBeVisible();
