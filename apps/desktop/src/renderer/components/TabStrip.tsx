@@ -136,8 +136,9 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
 
 /**
  * The tab strip: the chrome row's tablist (`ChromeRow.tsx`; spec `tabs.feature.md`, The chrome row). It
- * holds only tabs and scrolls sideways once they reach their minimum width; the address bar is its
- * next sibling and the new-tab button follows that. Roving tabindex: only the active tab is in the
+ * holds only tabs and scrolls sideways once they reach their minimum width; the new-tab button is its
+ * next sibling (so it follows the last tab and stays in view when the tabs scroll), the address bar
+ * the one after. Roving tabindex: only the active tab is in the
  * Tab order; Left/Right/Home/End move focus inside the tablist.
  */
 export function TabStrip({ state }: { readonly state: BrowserState | null }) {
