@@ -773,7 +773,7 @@ export const SIGNAL_SURFACES = [
   // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).
   { name: 'command palette', stylesheet: 'styles.css', selectorPrefix: '.palette' },
   // The new-tab view (specs/browser-chrome.feature.md, browser-polish.feature.md): `.start`, `.start-mark`,
-  // `.start-wordmark`, `.start-search`, `.start-search-input`, then "Jump back in": `.jump`, `.jump-title`, `.jump-tile`, `.jump-monogram`, ….
+  // `.start-wordmark`, `.start-search`, `.start-search-field`, `.start-search-input`, then "Jump back in": `.jump`, `.jump-title`, `.jump-tile`, `.jump-monogram`, ….
   { name: 'new tab', stylesheet: 'styles.css', selectorPrefix: '.start' },
   { name: 'new tab: Jump back in', stylesheet: 'styles.css', selectorPrefix: '.jump' },
   // Every rule in the panel's own stylesheet (specs/agent-panel.feature.md, agent-styles-are-delimited).
@@ -2710,7 +2710,7 @@ export const FOCUS_RING_RULES = [
   { stylesheet: 'styles.css', element: ['.tab', ".tab[data-active='true']", TAB_FOCUS], why: 'the active tab, focused: its --e-raised edge gives way to --focus-ring' },
   { stylesheet: 'styles.css', element: ['.new-tab', '.new-tab:hover', '.new-tab:active', '.new-tab:focus-visible'], why: 'the new-tab button, focused, hovered and pressed' },
   { stylesheet: 'styles.css', element: ['.address', '.address:focus-within'], why: 'the address bar, focused (:focus-within): its --e-raised edge gives way to --focus-ring' },
-  { stylesheet: 'styles.css', element: ['.start-search', '.start-search:focus-within'], why: 'the new tab\'s search field, focused (:focus-within): its --e-raised edge gives way to --focus-ring, as the address bar\'s' },
+  { stylesheet: 'styles.css', element: ['.start-search-field', '.start-search-field:focus-within'], why: 'the new tab\'s search field, focused (:focus-within): its --e-raised edge gives way to --focus-ring, as the address bar\'s' },
   { stylesheet: 'styles.css', element: ['.prompt-button', PROMPT_BUTTON_HOVER, '.prompt-button:focus-visible'], why: 'the permission prompt\'s Allow or Block, focused and hovered' },
   { stylesheet: 'styles.css', element: ['.prompt-dismiss', PROMPT_DISMISS_HOVER, '.prompt-dismiss:focus-visible'], why: 'the permission prompt\'s dismiss button, focused and hovered' },
   // Overview and On-Page (their surface PR): the focusable controls inside them that are their own. An

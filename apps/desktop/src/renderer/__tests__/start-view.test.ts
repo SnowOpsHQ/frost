@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Spec: specs/help.spec.ts (SETUP_CHECKLIST_ITEMS, SETUP_CHECKLIST_STORAGE_KEY, SETUP_CHECKLIST_TEXT)
 // Acceptance: specs/help.feature.md (Chrome: setup-checklist-done-states, setup-checklist-dismiss,
-// setup-checklist-storage-tolerant)
+// setup-checklist-storage-tolerant, setup-checklist-meter)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -156,6 +156,22 @@ test('setup-checklist-done-states', async () => {
   await show(3);
   expect(checklist()).toBeNull();
   expect(host.querySelector('[data-testid="start-view"]')).not.toBeNull();
+});
+
+test('setup-checklist-meter', async () => {
+  const meter = () => host.querySelector<HTMLElement>('[data-testid="setup-meter"]');
+  const steps = () => [...meter()!.querySelectorAll<HTMLElement>('.setup-meter-step')].map((step) => step.dataset['done']);
+  window.localStorage.setItem(SETUP_CHECKLIST_STORAGE_KEY, JSON.stringify({ privacy: true }));
+  await show();
+  expect(meter()).not.toBeNull();
+  // Decorative: "N of M done" says it in words.
+  expect(meter()!.getAttribute('aria-hidden')).toBe('true');
+  // One segment per item, in the items' order, done exactly when its item is.
+  expect(steps()).toEqual(SETUP_CHECKLIST_ITEMS.map((item) => (item.id === 'privacy' ? 'true' : 'false')));
+  main.agentReady = true;
+  await show(2);
+  expect(steps()).toEqual(SETUP_CHECKLIST_ITEMS.map((item) => (item.id === 'privacy' || item.id === 'agent' ? 'true' : 'false')));
+  expect(steps()).toEqual(items().map((item) => item.dataset['done']));
 });
 
 test('setup-checklist-dismiss', async () => {

@@ -149,7 +149,8 @@ are read from `ci_project_pages` / `ci_versions` in the same database file.
 - **Scenario: start-view-column** (e2e `browser-polish.e2e.ts`) — at the default window, in the window's
   minimum (`NARROW_WINDOW`) with the SEO sidebar open and with it closed: the search field, "Jump back in"
   and the checklist have the same left and right edges, nothing in the start view scrolls sideways, and
-  no text in it is cut (`cutText`).
+  no text in it is cut (`cutText`), but a "Jump back in" tile's title and host, which ellipsise by design
+  (the tile's tooltip is its full URL).
 
 ## Search engines
 - `SEARCH_ENGINES` is a typed table of `https:` templates; `{q}` is only ever the encoded query.

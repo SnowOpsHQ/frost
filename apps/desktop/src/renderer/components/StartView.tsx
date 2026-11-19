@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { HistoryVisitAnswer, JumpBackInAnswer } from '@app/ipc-contract';
-import { JUMP_BACK_IN_TITLE } from '@app/specs/browser-polish.spec';
+import { ADDRESS_PROMPT, JUMP_BACK_IN_TITLE } from '@app/specs/browser-polish.spec';
 import { monogram, visitHost, visitLabel } from '../history-view';
-import { FrostMark } from '../icons';
+import { useAddressInput } from '../hooks/useAddressInput';
+import { FrostMark, SearchIcon } from '../icons';
 import { actions } from '../ipc';
 import { isolatedTooltip } from '../seo-view';
 import { SetupChecklist } from './SetupChecklist';
@@ -12,6 +13,21 @@ import { SetupChecklist } from './SetupChecklist';
 // the most visited and recent pages from the local `recent_visits`, as frost-drawn tiles (a monogram,
 // the title and the host as text; no favicon, nothing remote); a tile opens its page in this tab.
 // Phase 11 Task 11 (`help.feature.md`): the setup checklist under it, from local state only.
+// UI polish round 2 (`browser-polish.feature.md`, New-tab page): a search field under the wordmark, on the
+// address bar's own path (`useAddressInput`); it never takes focus by itself (the address bar keeps the caret).
+
+/** The start view's search field: the address bar's behaviour in a larger frame. Its tab is empty (url ''). */
+function StartSearch({ tabId }: { readonly tabId: number | undefined }) {
+  const { inputProps } = useAddressInput({ id: tabId, url: '', loading: false });
+  return (
+    <search className="start-search" data-testid="start-search">
+      <label className="start-search-field">
+        <SearchIcon className="start-search-icon" />
+        <input {...inputProps} data-testid="start-search-input" className="start-search-input" aria-label={ADDRESS_PROMPT} placeholder={ADDRESS_PROMPT} />
+      </label>
+    </search>
+  );
+}
 
 function Tile({ visit }: { readonly visit: HistoryVisitAnswer }) {
   return (
@@ -48,7 +64,7 @@ export function StartView({ tabId }: { readonly tabId?: number | undefined }) {
     <section className="start" data-testid="start-view" aria-label="New tab">
       <FrostMark className="start-mark" />
       <h1 className="start-wordmark">frost</h1>
-      <p className="start-hint">Search or enter address</p>
+      <StartSearch tabId={tabId} />
       {visits.length > 0 ? (
         <section className="jump" data-testid="jump-back-in" aria-labelledby="jump-title">
           <h2 className="jump-title" id="jump-title">

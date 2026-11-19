@@ -102,7 +102,8 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
   widest, so the actions' left and right edges line up instead of each pill hugging the card's right
   edge at its own width; "Done" sits in that column too. A card narrower than
   `SETUP_CHECKLIST_COLUMNS_MIN_PX` (its content box: the page area beside the SEO sidebar in a narrow
-  window) puts each action under its label, at the label's left edge, at its own width. Rejected:
+  window) puts each action under its label, at the label's left edge, at its own width, and "N of M
+  done" on its own line under the title and Hide (so Hide never wraps onto a line alone). Rejected:
   shorter action labels (they name where each one goes); one fixed button width (it clips
   "Open Search Console settings" or wastes room on "Open projects").
 - **Progress at a glance (Decision, UI polish round 2).** Under the header, a meter of one segment per
@@ -116,7 +117,8 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
 - **Scenario: setup-checklist-layout** (e2e `browser-polish.e2e.ts`) — in a card at
   least `SETUP_CHECKLIST_COLUMNS_MIN_PX` wide every action has the same left and right edge and sits
   right of its label; in a narrower one (the window's minimum with the SEO sidebar open) each action's
-  left edge is its label's; at both, no text is cut, with and without "Jump back in" shown.
+  left edge is its label's; at both, no text is cut (start-view-column), with and without "Jump back in"
+  shown.
 
 ## End to end (`apps/desktop/e2e/browser-polish.e2e.ts`)
 - **Scenario: help-shortcuts-sheet** — Help › Keyboard Shortcuts opens the sheet listing every group;

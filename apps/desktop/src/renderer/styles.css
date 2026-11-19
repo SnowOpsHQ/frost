@@ -754,18 +754,26 @@ input {
 }
 
 /* Signal (specs/design-tokens.feature.md, The new-tab view): flat --bg-surface, no gradient wash; the
-   FrostMark in --accent, the wordmark and hint on the --text-* type tokens (Geist). */
+   FrostMark in --accent, the wordmark and the search field on the --text-* type tokens (Geist). One
+   centred column (specs/browser-polish.feature.md, New-tab page) that scrolls rather than clipping when
+   "Jump back in" and the setup checklist make it taller than the page. */
 .start {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center;
   gap: var(--space-2);
-  padding-bottom: 8vh;
+  padding: var(--space-7) 0 8vh;
+  overflow-y: auto;
   background: var(--bg-surface);
   text-align: center;
+}
+
+/* Their own heights in a column that scrolls: a flex item would shrink instead (the mark went to nothing). */
+.start > * {
+  flex: none;
 }
 
 .mark {
@@ -788,10 +796,62 @@ input {
   letter-spacing: -0.02em;
 }
 
-.start-hint {
-  margin: var(--space-1) 0 0;
-  color: var(--text-muted);
-  font: var(--text-body);
+/* The search field (UI polish round 2): the address bar's face, larger. As wide as "Jump back in" and the
+   checklist under it; the label is the pill, so a click anywhere on it (the glyph too) focuses the input. */
+.start-search {
+  width: min(640px, 92%);
+  margin-top: var(--space-5);
+}
+
+/* An --r-pill on --bg-surface with --e-raised; the transparent border is the edge forced colours draw (1px
+   less padding). Focus rings the whole field, as the address bar's. */
+.start-search-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: calc(var(--h-field) + var(--space-2));
+  padding: 0 calc(var(--space-5) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
+  cursor: text;
+  transition: box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.start-search-field:focus-within {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+.start-search-icon {
+  color: var(--text-faint);
+}
+
+/* Typed text, not a heading: --text-heading's size at weight 400. */
+.start-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: var(--text-heading);
+  font-weight: 400;
+  text-align: start;
+  user-select: text;
+  cursor: text;
+}
+
+.start-search-input::placeholder {
+  color: var(--text-faint);
+}
+
+.start-search-input::selection {
+  background: var(--accent-soft);
 }
 
 @keyframes mark-in {

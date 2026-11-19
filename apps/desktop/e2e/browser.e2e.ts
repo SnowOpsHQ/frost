@@ -3,6 +3,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { APP_WINDOW_TITLE, BROWSE_PARTITION, SEARCH_URL_TEMPLATE, TAB_VIEW_WEB_PREFERENCES } from '@app/specs/browser.spec';
+import { ADDRESS_PROMPT } from '@app/specs/browser-polish.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_BRIDGE_KEY, IPC_CHANNEL } from '@app/specs/ipc-transport.spec';
 import { appEntryScriptUrl, closeApp, launchApp } from './harness';
@@ -41,7 +42,7 @@ async function startSiteServer() {
 
 let app: ElectronApplication;
 let page: Page;
-const { go } = chromeHelpers(
+const { go, closeAllTabs } = chromeHelpers(
   () => app,
   () => page,
 );
@@ -92,12 +93,51 @@ const windowTitle = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getA
 
 test('empty-tab-shows-start-view', async () => {
   await expect(page.getByTestId('start-view')).toBeVisible();
-  await expect(page.getByTestId('start-view')).toContainText('Search or enter address');
+  // Its search field says what to type; no tagline under the wordmark repeats it.
+  await expect(page.getByTestId('start-view').getByRole('textbox', { name: ADDRESS_PROMPT })).toBeVisible();
+  await expect(page.getByTestId('start-view')).not.toContainText(ADDRESS_PROMPT);
   await expect(page.getByTestId('address')).toBeFocused();
   await expect(page.getByTestId('ping')).toHaveText('pong');
   expect(await tabs()).toEqual([]);
   expect(await attachedViews()).toEqual([]);
   expect(await windowTitle()).toBe(APP_WINDOW_TITLE);
+});
+
+// specs/browser-polish.feature.md (New-tab page): the start view's search field is the address bar's path.
+test('start-search-loads-page', async () => {
+  const field = page.getByTestId('start-search-input');
+  await expect(page.getByTestId('start-view')).toBeVisible();
+  // One focus target: the empty tab's caret is in the address bar, not in the field.
+  await expect(page.getByTestId('address')).toBeFocused();
+  // Escape drops what was typed and keeps the field focused, as in the address bar.
+  await field.click();
+  await expect(field).toBeFocused();
+  await field.pressSequentially('abc');
+  await field.press('Escape');
+  await expect(field).toHaveValue('');
+  await expect(field).toBeFocused();
+  // Non-web input becomes the search URL, as typed in the address bar (non-web-input-becomes-search-e2e).
+  await app.evaluate(({ session }, partition) => {
+    session.fromPartition(partition).protocol.handle('https', () => new Response('<!doctype html><title>stub search</title>', { headers: { 'Content-Type': 'text/html' } }));
+  }, BROWSE_PARTITION);
+  try {
+    await field.fill('javascript:alert(1)');
+    await field.press('Enter');
+    const expected = SEARCH_URL_TEMPLATE.replace('{q}', encodeURIComponent('javascript:alert(1)'));
+    await expect.poll(async () => (await tab()).url).toBe(expected);
+    await expect(page.getByTestId('address')).toHaveValue(expected);
+  } finally {
+    await app.evaluate(({ session }, partition) => session.fromPartition(partition).protocol.unhandle('https'), BROWSE_PARTITION);
+  }
+  // A fresh empty tab: an address typed without a scheme loads over http, as in typing-url-loads-page.
+  await closeAllTabs();
+  await expect(page.getByTestId('start-view')).toBeVisible();
+  await field.click();
+  await field.fill(`127.0.0.1:${site.port}/a`);
+  await field.press('Enter');
+  await expect.poll(async () => (await tab()).url).toBe(`${site.origin}/a`);
+  await expect(page.getByTestId('address')).toHaveValue(`${site.origin}/a`);
+  await expect(page.getByTestId('start-view')).toBeHidden();
 });
 
 test('typing-url-loads-page', async () => {

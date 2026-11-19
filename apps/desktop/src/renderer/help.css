@@ -212,12 +212,8 @@
 
 /* ---- New-tab setup checklist ---- */
 
-/* The start view scrolls rather than clipping when the checklist makes it taller than the page. */
-.start:has(.setup) {
-  justify-content: safe center;
-  overflow-y: auto;
-}
-
+/* A card as wide as the start view's search field and "Jump back in" (the start view scrolls when it is
+   taller than the page: styles.css, .start). Its own width lays its rows out (below). */
 .setup {
   width: min(640px, 92%);
   margin-top: var(--space-6);
@@ -228,13 +224,14 @@
   background: var(--bg-surface);
   box-shadow: var(--e-ring);
   text-align: start;
+  container: setup / inline-size;
 }
 
 .setup-header {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
 }
 
 .setup-title {
@@ -249,31 +246,65 @@
   flex: 1;
   color: var(--text-faint);
   font: var(--text-small);
+  white-space: nowrap;
 }
 
+/* Hide this checklist: a quiet chip-height text button, its text in line with the actions' right edge;
+   hover lays --bg-hover under it. */
 .setup-dismiss {
-  padding: 0;
-  border: 0;
+  height: var(--h-chip);
+  margin-inline-end: calc(-1 * var(--space-3));
+  padding: 0 calc(var(--space-3) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--text-muted);
   font: var(--text-small);
+  white-space: nowrap;
 }
 
 .setup-dismiss:hover {
+  background: var(--bg-hover);
   color: var(--text);
-  text-decoration: underline;
 }
 
+/* The progress meter: a 4px segment per item, in order, --bg-active until its item is done, then --ok (a
+   graphic, as the step marks; kept under forced colours for the same reason). */
+.setup-meter {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+.setup-meter-step {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--bg-active);
+  forced-color-adjust: none;
+}
+
+.setup-meter-step[data-done='true'] {
+  background: var(--ok);
+}
+
+/* One grid for every row (help.feature.md, the checklist's layout): the step mark, the label, the action.
+   The action column is as wide as the widest action, and each action fills it, so their edges line up. */
 .setup-items {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) max-content;
+  column-gap: var(--space-4);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .setup-item {
-  display: flex;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: var(--space-3);
   min-height: var(--h-control);
 }
 
@@ -296,7 +327,7 @@
 }
 
 .setup-label {
-  flex: 1;
+  min-width: 0;
   color: var(--text);
   font: var(--text-body);
 }
@@ -305,13 +336,17 @@
   color: var(--text-muted);
 }
 
+/* In the action column's middle, as an action's text. */
 .setup-done {
+  justify-self: center;
   color: var(--ok-ink);
   font: var(--text-small);
 }
 
-/* A small button: an --h-chip pill on --bg-surface with --e-raised; hover lays --bg-hover over it. */
+/* A small button: an --h-chip pill on --bg-surface with --e-raised, the column's width; hover lays
+   --bg-hover over it. */
 .setup-action {
+  justify-self: stretch;
   height: var(--h-chip);
   padding: 0 11px;
   border: 1px solid transparent;
@@ -321,6 +356,7 @@
   color: var(--text);
   font: var(--text-small);
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .setup-action:hover {
@@ -336,6 +372,35 @@
   outline: 2px solid transparent;
   outline-offset: 2px;
   box-shadow: var(--focus-ring);
+}
+
+/* A card narrower than SETUP_CHECKLIST_COLUMNS_MIN_PX (help.spec.ts; the page area beside the SEO sidebar in
+   a narrow window): each action under its label, at the label's left edge and its own width. */
+@container setup (width < 440px) {
+  .setup-items {
+    grid-template-columns: 14px minmax(0, 1fr);
+  }
+
+  .setup-item {
+    row-gap: var(--space-1);
+    padding-block: var(--space-2);
+  }
+
+  .setup-action,
+  .setup-done {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  /* The title and Hide on the first line, "N of M done" on its own under them (Hide never wraps alone). */
+  .setup-title {
+    flex: 1;
+  }
+
+  .setup-progress {
+    flex-basis: 100%;
+    order: 1;
+  }
 }
 
 /* ---- Export Diagnostics (Phase 11 Task 12, specs/diagnostics.feature.md) ---- */

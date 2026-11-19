@@ -14,7 +14,8 @@ import '../help.css';
 // shared `gsc.watch` store), the projects (`projects.list`, once per empty tab), and the chrome's own
 // marks in `localStorage` (`SETUP_CHECKLIST_STORAGE_KEY`) that the Telemetry settings and the shortcuts
 // screen were opened. Each item's button opens where it is done. "Hide this checklist" hides it for
-// good; it is gone too once every item is done.
+// good; it is gone too once every item is done. Under the header a meter (decorative: "N of M done" says
+// it) has a segment per item, filled when that item is done (UI polish round 2).
 
 export interface SetupMarks {
   readonly dismissed: boolean;
@@ -148,6 +149,11 @@ export function SetupChecklist({ tabId }: { readonly tabId?: number | undefined 
           {SETUP_CHECKLIST_TEXT.dismiss}
         </button>
       </header>
+      <div className="setup-meter" data-testid="setup-meter" aria-hidden="true">
+        {SETUP_CHECKLIST_ITEMS.map((item) => (
+          <span key={item.id} className="setup-meter-step" data-done={done[item.id] ? 'true' : 'false'} />
+        ))}
+      </div>
       <ul className="setup-items">
         {SETUP_CHECKLIST_ITEMS.map((item) => (
           <li key={item.id} className="setup-item" data-testid="setup-item" data-item={item.id} data-done={done[item.id] ? 'true' : 'false'}>
