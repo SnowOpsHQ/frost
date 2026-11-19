@@ -14,8 +14,9 @@ describe('Settings palette actions', () => {
   test('settings-palette-actions', async () => {
     const openSettings = vi.fn();
     let status: AccountStatus | null = 'signed-out';
+    let gscConfigured: boolean | null = true;
     const registry = createPaletteRegistry();
-    registry.register(...settingsPaletteSources({ openSettings, accountStatus: () => status }));
+    registry.register(...settingsPaletteSources({ openSettings, accountStatus: () => status, gscConfigured: () => gscConfigured }));
     const actions = registry.resolve(ctx);
     expect(actions.map((a) => [a.id, a.label])).toEqual([
       ['settings.open', 'Settings'],
@@ -39,6 +40,12 @@ describe('Settings palette actions', () => {
       status = other;
       expect(registry.resolve(ctx).map((a) => a.id), String(other)).toEqual(['settings.open', 'settings.search-console', 'settings.telemetry']);
     }
+    // "Search Console settings" only while its section is shown: not once main says it is not configured
+    // (before main answers it shows, as the section does); "Settings" always (it lands on the top).
+    gscConfigured = null;
+    expect(registry.resolve(ctx).map((a) => a.id)).toContain('settings.search-console');
+    gscConfigured = false;
+    expect(registry.resolve(ctx).map((a) => a.id)).toEqual(['settings.open', 'settings.telemetry']);
   });
 
   test('settings-palette-registers-with-others', () => {
@@ -48,7 +55,7 @@ describe('Settings palette actions', () => {
       registry.register(
         ...builtinPaletteSources(new Proxy({}, { get: () => vi.fn(async () => true) }) as PaletteApi),
         ...browserPolishPaletteSources({ openFind: yes, reopenClosedTab: vi.fn(async () => 1), showHistory: yes, setSearchEngine: yes }),
-        ...settingsPaletteSources({ openSettings: vi.fn(), accountStatus: () => 'signed-out' }),
+        ...settingsPaletteSources({ openSettings: vi.fn(), accountStatus: () => 'signed-out', gscConfigured: () => true }),
       ),
     ).not.toThrow();
     const ids = registry.ids();

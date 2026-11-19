@@ -23,6 +23,24 @@
   font: var(--text-small);
 }
 
+/* A provider whose legal gate is closed (UI polish round 2): one compact line, its name and why (the
+   rest of the line; under the name when the sheet is narrow), with no fields. Its key state, Clear and
+   counts show only while there is something to say. */
+.settings-data-source-unavailable {
+  padding-block: 7px;
+}
+
+.settings-data-source-unavailable .settings-data-source-head {
+  align-items: baseline;
+  justify-content: flex-start;
+  row-gap: 0;
+}
+
+.settings-data-source-reason {
+  flex: 1 1 16em;
+  min-width: 0;
+}
+
 .settings-data-source-fields {
   display: flex;
   flex-wrap: wrap;

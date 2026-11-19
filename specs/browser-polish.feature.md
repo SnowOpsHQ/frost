@@ -108,8 +108,9 @@ are read from `ci_project_pages` / `ci_versions` in the same database file.
   above the "Keep visits to project pages" row: still a `radiogroup` (named by that visible label) of
   `radio` buttons with `aria-checked`, each its own Tab stop and test id (`history-retention`,
   `data-retention`), so the keyboard path, the busy state (`aria-disabled`) and main's confirmation are
-  unchanged. The chosen segment is --accent-soft with an --accent edge (as a pressed chip and the radio
-  cards' chosen row). When the sheet is too narrow for the four in one line beside the label, the control
+  unchanged. It is drawn as the canvas's segmented control (`.seo-segmented`): a --bg-subtle pill track,
+  the chosen segment raised (--bg-surface, --e-raised, --text), Highlight-edged under forced colours.
+  When the sheet is too narrow for the four in one line beside the label, the control
   goes under the label, and in the narrowest sheet it is two by two. Rejected: a select (a choice of
   four short values reads better all at once, and the radio rows elsewhere in Settings are radios too);
   arrow keys that check as they move (each shorter retention asks in main's dialog, so moving through

@@ -69,6 +69,18 @@ test('settings-history', async () => {
   expect(checked()).toBe('forever');
   expect(keep().getAttribute('aria-checked')).toBe('true');
   expect(host.textContent).toContain(HISTORY_SETTINGS_TEXT.keepProjectPages);
+  // One radio group (a segmented control) named by its visible label, in one row card with it.
+  const group = host.querySelector<HTMLElement>('[role="radiogroup"]')!;
+  expect(host.querySelectorAll('[role="radiogroup"]')).toHaveLength(1);
+  expect(group.className).toBe('settings-segmented');
+  expect(document.getElementById(group.getAttribute('aria-labelledby')!)!.textContent).toBe(HISTORY_SETTINGS_TEXT.retentionLabel);
+  expect(group.closest('.settings-toggle')!.contains(document.getElementById(group.getAttribute('aria-labelledby')!))).toBe(true);
+  for (const radio of radios()) {
+    expect(radio.getAttribute('role')).toBe('radio');
+    expect(radio.parentElement).toBe(group);
+    expect(radio.className).toBe('settings-segment');
+  }
+  expect(radios().map((r) => r.textContent)).toEqual(HISTORY_RETENTIONS.map((r) => r.label));
   // A click asks main; the controls wait (aria-disabled) and the checked one stays main's until it answers.
   act(() => radios()[3]!.click());
   expect(writes).toEqual([{ retention: '7d', keepProjectPages: true }]);

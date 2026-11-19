@@ -2,7 +2,7 @@
 // DATA_PROVIDERS, DATA_PROVIDER_LABELS, DATA_SOURCES_SETTINGS_TEXT, DATA_SPEND_NOTE, DATA_CHECK_TEXT),
 // specs/data-sources.schema.ts (DataApiE2eSeamSchema), specs/account-settings.spec.ts (SETTINGS_MENU),
 // specs/ai-answers.spec.ts (AI_ANSWERS_VIEW_TEXT)
-// Acceptance: specs/data-sources.feature.md (End to end: data-sources-gated-off-in-the-real-app,
+// Acceptance: specs/data-sources.feature.md (Settings › Data sources: settings-data-sources-gated; End to end: data-sources-gated-off-in-the-real-app,
 // data-sources-key-set-never-shown, data-sources-check-via-api-joins-the-series,
 // data-sources-usage-counts-each-search). Plan phase-12 Task 11.
 // Loopback only: every data provider is `fake-data-api.ts` through the unpackaged seam; saved searches
@@ -152,15 +152,18 @@ test.describe('as shipped (legal gates closed)', () => {
   });
 
   test('data-sources-gated-off-in-the-real-app', async () => {
-    // Settings › Data sources: every row is disabled with the legal note; nothing can be saved.
+    // Settings › Data sources: every row is one compact line with the legal note; nothing can be entered or saved.
     await openDataSources();
     await expect(page.getByTestId('data-source')).toHaveCount(DATA_PROVIDERS.length);
     for (const provider of DATA_PROVIDERS) {
       await expect(row(provider)).toHaveAttribute('data-disabled', 'true');
+      await expect(row(provider)).toHaveAttribute('data-available', 'false');
       await expect(row(provider).getByTestId('data-source-reason')).toHaveText(LEGAL_GATE_NOTE);
-      for (const input of await row(provider).getByTestId('data-source-input').all()) await expect(input).toBeDisabled();
-      await expect(row(provider).getByTestId('data-source-save')).toHaveAttribute('aria-disabled', 'true');
-      await expect(row(provider).getByTestId('data-source-key-state')).toHaveText(DATA_SOURCES_SETTINGS_TEXT.noKey);
+      await expect(row(provider).getByTestId('data-source-input')).toHaveCount(0);
+      await expect(row(provider).getByTestId('data-source-save')).toHaveCount(0);
+      // No key and no requests: no key state, Clear or counts to show.
+      await expect(row(provider).getByTestId('data-source-key-state')).toHaveCount(0);
+      await expect(row(provider).getByTestId('data-source-clear')).toHaveCount(0);
     }
     await expect(page.getByTestId('data-sources-serp-provider')).toBeDisabled();
     // Main agrees: no provider is available.
