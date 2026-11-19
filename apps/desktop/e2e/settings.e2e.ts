@@ -1,26 +1,30 @@
 // Specs: specs/account-settings.spec.ts (SETTINGS_MENU, SETTINGS_BUTTON, ACCOUNT_SETTINGS_TEXT, GSC_SETTINGS_TEXT), specs/account-state.schema.ts
 // (ACCOUNT_CONFIG_ENV, AccountStateSchema), specs/account-api.schema.ts (requestFingerprint, DesktopAuthorizeQuerySchema),
 // specs/telemetry-consent.schema.ts (TELEMETRY_CONFIG_ENV, TelemetryStateSchema), specs/gsc.schema.ts (GSC_SCOPE, GscStatusSchema)
-// Acceptance: specs/account-settings.feature.md (End to end; the row's button: settings-opens-from-the-row-button, settings-button-tab-order) · review focus "Telemetry UI matches behaviour", the in-app
+// Acceptance: specs/account-settings.feature.md (End to end; the row's button: settings-opens-from-the-row-button, settings-button-tab-order;
+// UI polish round 2: settings-nav-follows-scroll, settings-fits-default-and-narrow, settings-unconfigured-build) ·
+// specs/data-sources.feature.md (settings-data-sources-gated) · specs/browser-polish.feature.md (History retention) · review focus "Telemetry UI matches behaviour", the in-app
 // sign-in confirmation · specs/diagnostics.feature.md (End to end: export-diagnostics-saves-reviewed-report;
 // specs/diagnostics.spec.ts DIAGNOSTICS_TEXT, DIAGNOSTICS_REPORT_HEADER, DIAGNOSTICS_FORBIDDEN_CHARS)
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { ACCOUNT_SETTINGS_TEXT, SETTINGS_BUTTON, SETTINGS_MENU } from '@app/specs/account-settings.spec';
+import { ACCOUNT_SETTINGS_TEXT, SETTINGS_BUTTON, SETTINGS_MENU, SETTINGS_SECTIONS } from '@app/specs/account-settings.spec';
 import { DesktopAuthorizeQuerySchema, requestFingerprint } from '@app/specs/account-api.schema';
 import { ACCOUNT_CONFIG_ENV, AccountStateSchema, type AccountState } from '@app/specs/account-state.schema';
-import { HISTORY_MENU_ID } from '@app/specs/browser-polish.spec';
+import { HISTORY_MENU_ID, HISTORY_RETENTIONS } from '@app/specs/browser-polish.spec';
+import { LEGAL_GATE_NOTE } from '@app/specs/data-sources.spec';
 import { DIAGNOSTICS_FORBIDDEN_CHARS, DIAGNOSTICS_REPORT_HEADER, DIAGNOSTICS_TEXT } from '@app/specs/diagnostics.spec';
 import { GSC_SCOPE, GscStatusSchema, type GscStatus } from '@app/specs/gsc.schema';
 import { IPC_BRIDGE_KEY } from '@app/specs/ipc-transport.spec';
 import { TELEMETRY_CONFIG_ENV, TelemetryStateSchema, type TelemetryState } from '@app/specs/telemetry-consent.schema';
+import { NARROW_WINDOW } from '@app/specs/workspace-layout.spec';
 import { startFakeBackend, type FakeBackend } from './fake-backend';
 import { startFakeGoogle, type FakeGoogle } from './fake-google';
 import { startFakeTelemetry, type FakeTelemetry } from './fake-telemetry';
 import { closeApp, launchApp, startLoopbackServer } from './harness';
-import { chromeHelpers } from './helpers';
+import { chromeHelpers, cutText } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -189,6 +193,95 @@ test('settings-sheet-not-covered-by-page', async () => {
   await expect.poll(viewHeight).toBeGreaterThan(0);
 });
 
+const current = () => page.locator('.settings-nav-item[aria-current="true"]');
+/** Opens Settings from the gear and waits until every section has answered (their heights settle). */
+async function openSettled(): Promise<void> {
+  if ((await settings().count()) === 0) await gear().click();
+  await expect(settings()).toBeVisible();
+  await expect(page.getByTestId('settings-content')).not.toContainText('Loading…');
+}
+
+test('settings-nav-follows-scroll', async () => {
+  await openSettled();
+  await expect(current()).toHaveCount(1);
+  await expect(current()).toHaveAttribute('data-testid', 'settings-nav-account');
+  const content = page.getByTestId('settings-content');
+  // Scrolled to the end: History is current, Account is not.
+  await content.evaluate((box) => box.scrollTo({ top: box.scrollHeight }));
+  await expect(current()).toHaveAttribute('data-testid', 'settings-nav-history');
+  await expect(page.getByTestId('settings-nav-account')).not.toHaveAttribute('aria-current');
+  // Data sources' heading at the top of the content: Data sources.
+  await content.evaluate((box) => {
+    const heading = box.querySelector('#settings-section-data-sources')!;
+    box.scrollTop += heading.getBoundingClientRect().top - box.getBoundingClientRect().top;
+  });
+  await expect(current()).toHaveAttribute('data-testid', 'settings-nav-data-sources');
+  // A click marks its section and focuses its heading; one on Telemetry (which cannot reach the top) too.
+  await page.getByTestId('settings-nav-locations').click();
+  await expect(current()).toHaveAttribute('data-testid', 'settings-nav-locations');
+  await expect(page.locator('#settings-section-locations')).toBeFocused();
+  await page.getByTestId('settings-nav-telemetry').click();
+  await expect(page.locator('#settings-section-telemetry')).toBeFocused();
+  await expect(current()).toHaveAttribute('data-testid', 'settings-nav-telemetry');
+  await expect(current()).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(settings()).toHaveCount(0);
+});
+
+test('settings-fits-default-and-narrow', async () => {
+  // A page with the SEO sidebar open (its sheet beside the page column), as at the narrow window.
+  const url = `${site.origin}/page`;
+  await go(url);
+  await contentsIdAt(url);
+  if ((await page.getByTestId('seo-sidebar').getAttribute('data-open')) !== 'true') await page.getByTestId('seo-toggle').click();
+  await expect(page.getByTestId('seo-panel')).toBeVisible();
+  const before = page.viewportSize() ?? (await page.evaluate(() => ({ width: innerWidth, height: innerHeight })));
+  try {
+    for (const width of [1280, NARROW_WINDOW.width]) {
+      await page.setViewportSize({ width, height: 800 });
+      await openSettled();
+      const retention = page.getByTestId('history-retention');
+      const group = page.locator('.settings-segmented');
+      await group.scrollIntoViewIfNeeded();
+      await expect(retention).toHaveCount(HISTORY_RETENTIONS.length);
+      // No text cut anywhere in History or Data sources, and nothing scrolls sideways.
+      expect(await cutText(page.getByTestId('history-settings')), `history at ${width}`).toEqual([]);
+      expect(await cutText(page.getByTestId('data-sources-section')), `data sources at ${width}`).toEqual([]);
+      expect(await page.getByTestId('settings-content').evaluate((box) => box.scrollWidth - box.clientWidth), `content at ${width}`).toBeLessThanOrEqual(0);
+      // The control stays inside its row card.
+      const card = (await group.evaluate((el) => {
+        const outer = el.closest('.settings-toggle')!.getBoundingClientRect();
+        const inner = el.getBoundingClientRect();
+        return { left: inner.left - outer.left, right: outer.right - inner.right };
+      }))!;
+      expect(card.left, `left inside at ${width}`).toBeGreaterThanOrEqual(0);
+      expect(card.right, `right inside at ${width}`).toBeGreaterThanOrEqual(0);
+      const tops = await retention.evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().top)));
+      const label = page.locator('#history-retention-label');
+      const labelBox = (await label.boundingBox())!;
+      const groupBox = (await group.boundingBox())!;
+      if (width === 1280) {
+        // The default: four in one line, beside the label (one row card).
+        expect(new Set(tops).size, 'one line').toBe(1);
+        expect(Math.abs(groupBox.y + groupBox.height / 2 - (labelBox.y + labelBox.height / 2)), 'beside the label').toBeLessThanOrEqual(2);
+        // A gated provider is one compact line: its name and why on one line.
+        for (const row of await page.locator('.settings-data-source-unavailable').all()) {
+          const [name, why] = [(await row.locator('.settings-toggle-label').boundingBox())!, (await row.getByTestId('data-source-reason').boundingBox())!];
+          expect(Math.abs(name.y - why.y), 'the reason on the name\'s line').toBeLessThanOrEqual(3);
+        }
+      } else {
+        // The narrow window: under the label, two by two.
+        expect(groupBox.y, 'under the label').toBeGreaterThanOrEqual(labelBox.y + labelBox.height - 1);
+        expect(new Set(tops).size, 'two lines').toBe(2);
+      }
+      await page.keyboard.press('Escape');
+      await expect(settings()).toHaveCount(0);
+    }
+  } finally {
+    await page.setViewportSize(before);
+  }
+});
+
 test('settings-telemetry-toggles-follow-main', async () => {
   await palette('settings.telemetry', 'telemetry');
   for (const channel of ['usage', 'errors'] as const) await expect(toggle(channel)).toHaveAttribute('aria-checked', 'false');
@@ -355,5 +448,45 @@ test('export-diagnostics-saves-reviewed-report', async () => {
       if (holder.__diagnosticsSave) dialog.showSaveDialog = holder.__diagnosticsSave;
     });
     await rm(out, { recursive: true, force: true, maxRetries: 5 });
+  }
+});
+
+test('settings-unconfigured-build', async () => {
+  // A second launch with no account service or Search Console client (as a build without them).
+  await closeApp(app);
+  const bare = await mkdtemp(path.join(tmpdir(), 'frost-e2e-settings-bare-'));
+  try {
+    ({ app, page } = await launchApp([], { userDataDir: bare }));
+    await page.waitForLoadState('domcontentloaded');
+    await chromeCaughtUp();
+    await gear().click();
+    await expect(settings()).toBeVisible();
+    await expect(page.getByTestId('settings-content')).not.toContainText('Loading…');
+    // Neither section nor its entry; the rest in order, and the gear's request lands on the top.
+    const shown = SETTINGS_SECTIONS.map((entry) => entry.id).filter((id) => id !== 'account' && id !== 'search-console');
+    await expect(page.locator('.settings-nav-item')).toHaveCount(shown.length);
+    expect(await page.locator('.settings-nav-item').evaluateAll((items) => items.map((item) => (item as HTMLElement).dataset['testid']))).toEqual(shown.map((id) => `settings-nav-${id}`));
+    await expect(page.locator('#settings-section-account, #settings-section-search-console')).toHaveCount(0);
+    await expect(page.getByTestId('settings-content')).not.toContainText(ACCOUNT_SETTINGS_TEXT.unconfigured);
+    await expect(current()).toHaveAttribute('data-testid', 'settings-nav-data-sources');
+    await expect(page.locator('#settings-section-data-sources')).toBeFocused();
+    // Every provider gated (as shipped): one compact line each, with nothing to fill in.
+    await expect(page.locator('[data-testid="data-source"][data-available="false"]')).toHaveCount(5);
+    await expect(page.getByTestId('data-source-input')).toHaveCount(0);
+    for (const reason of await page.getByTestId('data-source-reason').all()) await expect(reason).toHaveText(LEGAL_GATE_NOTE);
+    await page.keyboard.press('Escape');
+    await expect(settings()).toHaveCount(0);
+    // The palette offers "Settings" (it lands on the top) but not "Search Console settings".
+    await press('chrome', 'K', ['mod']);
+    await page.getByTestId('command-palette-input').fill('settings');
+    await expect(page.locator('[data-testid="command-palette-option"][data-action="settings.open"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="command-palette-option"][data-action="settings.search-console"]')).toHaveCount(0);
+    await page.locator('[data-testid="command-palette-option"][data-action="settings.open"]').click();
+    await expect(page.locator('#settings-section-data-sources')).toBeFocused();
+    await page.keyboard.press('Escape');
+  } finally {
+    await closeApp(app);
+    app = undefined;
+    await rm(bare, { recursive: true, force: true, maxRetries: 5 });
   }
 });

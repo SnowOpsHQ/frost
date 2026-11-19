@@ -138,11 +138,24 @@ Scenario: data-usage-view
 Tests: `apps/desktop/src/renderer/__tests__/settings-data-sources.test.ts`,
 `apps/desktop/src/main/data-sources/__tests__/usage.test.ts` (the SERP vendor choice).
 
+Decision (UI polish round 2, 2026-11-19): **a provider whose legal gate is closed is one line.** As
+shipped every gate is closed, and five full cards each with key fields, Save and Clear that can do
+nothing made the section a wall of disabled controls. An unavailable row is now its name and
+`LEGAL_GATE_NOTE` on one compact line (wrapping only when the sheet is narrow): no key fields, no Save
+and none of the field notes (they are about entering a key). It keeps "Key set" and Clear when a key, or
+part of one, is somehow set (clearing is never gated, and a partial DataForSEO row keeps its note), and
+its request counts only when it has any (a gated provider sends nothing, so "This month: 0 · Last
+month: 0" said nothing). Every provider is still listed, in its group, and an available row is unchanged
+(fields, Save, Clear, "Key set"/"No key", counts). Rejected: keeping the fields disabled (they are not
+something to fill in this build) and leaving gated providers out (the section would no longer say which
+providers exist and why they are off). A row whose keys can't be protected (`weak`, `unavailable`) keeps
+its disabled fields and says why: that is this computer's state, which the user can change.
+
 Scenario: settings-data-sources-rows
   Given Settings is open on "Data sources"
   Then the providers show in two groups, "Search results" (SerpApi, DataForSEO, Serper) and
   "AI search" (Perplexity, OpenAI web search), each a text label only (no logo or icon)
-  And each row says "Key set" or "No key", and this month's and last month's request counts
+  And each available row says "Key set" or "No key", and this month's and last month's request counts
   And the cost note `DATA_SPEND_NOTE` is shown
   And OpenAI web search says the agent's OpenAI key is not reused
 
@@ -163,8 +176,9 @@ Scenario: settings-data-sources-weak-protection
 
 Scenario: settings-data-sources-gated
   Given a provider whose legal gate is closed (`available: false`, as shipped)
-  Then its row is disabled with `LEGAL_GATE_NOTE`
-  And Clear stays enabled if a key is somehow set
+  Then its row is one compact line: its name and `LEGAL_GATE_NOTE`, with no key field, Save or field note
+  And it shows no key state, no Clear and no counts while it has no key and no requests
+  And "Key set" and an enabled Clear show if a key is somehow set, and its counts if it has any
 
 Scenario: settings-data-sources-partial-dataforseo
   Given only the DataForSEO login is saved (`partial`: some but not all of its slots set)
@@ -271,8 +285,8 @@ never visited: the check asks the fake SerpApi.
 
 Scenario: data-sources-gated-off-in-the-real-app
   Given the app launched with no gates switch, no seam and no stand-in keychain (as shipped)
-  Then every Settings › Data sources row is disabled with `LEGAL_GATE_NOTE` (fields, Save), and
-  `dataSources.status` says no provider is available
+  Then every Settings › Data sources row is a compact line with `LEGAL_GATE_NOTE` (no key field, no
+  Save), and `dataSources.status` says no provider is available
   And for a project with a saved search `dataSources.checkPlan` answers `unavailable`, the Rankings
   view has no "Check via API" (nor its reason), and the palette offers no "Check searches via …"
   And the AI answers view's Ask is disabled with `LEGAL_GATE_NOTE`, each API engine says it, and

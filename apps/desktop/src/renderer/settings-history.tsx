@@ -4,8 +4,8 @@ import { HISTORY_RETENTIONS, HISTORY_SETTINGS_TEXT as TEXT, type HistoryRetentio
 import { actions } from './ipc';
 
 // The Settings view's History section (Phase 11 Task 10, Decision 13; acceptance
-// `browser-polish.feature.md`, History retention): how long visits are kept (a radio group) and
-// "Keep visits to project pages". Both live in main (`app_settings`); a click asks main
+// `browser-polish.feature.md`, History retention): how long visits are kept (a radio group drawn as a
+// segmented control, in one row card with its label) and "Keep visits to project pages". Both live in main (`app_settings`); a click asks main
 // (`history.setRetention`), which asks in its own dialog first when visits would go, then stores them
 // and prunes at once. What is checked is main's settings read back, never the click's guess (a
 // cancelled change reverts, with a note). While a call runs the controls are `aria-disabled`. A
@@ -69,28 +69,29 @@ export function HistorySettings() {
   return (
     <div className="settings-history" data-testid="history-settings" data-retention={settings.retention}>
       <p className="settings-text">{TEXT.intro}</p>
-      <ul className="settings-toggles settings-history-retention" role="radiogroup" aria-label={TEXT.retentionLabel}>
-        {HISTORY_RETENTIONS.map((entry) => (
-          <li key={entry.id} className="settings-toggle">
-            <button
-              type="button"
-              role="radio"
-              className="settings-choice"
-              data-testid="history-retention"
-              data-retention={entry.id}
-              aria-checked={entry.id === settings.retention}
-              aria-disabled={busy ? 'true' : undefined}
-              onClick={() => choose(entry.id)}
-            >
-              <span className="settings-choice-mark" aria-hidden="true" />
-              <span className="settings-toggle-text">
-                <span className="settings-toggle-label">{entry.label}</span>
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
       <ul className="settings-toggles">
+        <li className="settings-toggle settings-history-retention">
+          <span className="settings-toggle-label" id="history-retention-label">
+            {TEXT.retentionLabel}
+          </span>
+          <div className="settings-segmented" role="radiogroup" aria-labelledby="history-retention-label">
+            {HISTORY_RETENTIONS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                role="radio"
+                className="settings-segment"
+                data-testid="history-retention"
+                data-retention={entry.id}
+                aria-checked={entry.id === settings.retention}
+                aria-disabled={busy ? 'true' : undefined}
+                onClick={() => choose(entry.id)}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
+        </li>
         <li className="settings-toggle">
           <div className="settings-toggle-text">
             <span className="settings-toggle-label" id="history-keep-project-pages-label">

@@ -16,7 +16,9 @@ import {
 // Settings › Data sources). Pure: main's three views (`dataSources.status`, `.usage`,
 // `.serpProvider`) become the rows, notes and select the section shows. Every decision comes from
 // main: a row is live only when main says `available` (its legal gate) and keys are protected
-// (`os`); the select lists main's `choices` only. Nothing here ever holds a key.
+// (`os`); the select lists main's `choices` only. Nothing here ever holds a key. A provider whose
+// legal gate is closed is one compact line (UI polish round 2): its name and `LEGAL_GATE_NOTE`, no
+// fields; its key state and Clear only while a key (or part of one) is set, its counts only if any.
 
 export type DataSourceField = 'key' | 'login' | 'password';
 
@@ -30,11 +32,13 @@ export interface DataSourceRowView {
   /** A text label only (L7: no logo or icon). */
   readonly label: string;
   readonly hasKey: boolean;
+  /** Its legal gate is open (main's `available`); else the row is one compact line with no fields. */
+  readonly available: boolean;
   /** Some but not all of its slots are set (DataForSEO's login or password alone). */
   readonly partial: boolean;
-  /** "Key set" / "No key". */
-  readonly keyState: string;
-  /** The password fields (DataForSEO: login and password). */
+  /** "Key set" / "No key"; `null` on an unavailable row with nothing set. */
+  readonly keyState: string | null;
+  /** The password fields (DataForSEO: login and password); none on an unavailable row. */
   readonly fields: readonly DataSourceFieldView[];
   /** Whether the fields and Save are disabled. */
   readonly disabled: boolean;
@@ -42,8 +46,8 @@ export interface DataSourceRowView {
   readonly reason: string | null;
   /** Clear is offered whenever a key, or part of one, is set (gated or not: clearing is never gated). */
   readonly canClear: boolean;
-  /** "This month: N · Last month: M". */
-  readonly usage: string;
+  /** "This month: N · Last month: M"; `null` on an unavailable row that sent none. */
+  readonly usage: string | null;
   readonly notes: readonly string[];
 }
 
@@ -91,18 +95,21 @@ function row(provider: DataProvider, status: DataSourcesView, usage: DataUsageVi
   const { hasKey, partial, available } = status.providers[provider];
   const reason = !available ? LEGAL_GATE_NOTE : status.protection !== 'os' ? TEXT.protection[status.protection] : null;
   const counts = usage.providers[provider];
+  const set = hasKey || partial;
   return {
     provider,
     label: DATA_PROVIDER_LABELS[provider],
     hasKey,
+    available,
     partial,
-    keyState: hasKey ? TEXT.keySet : TEXT.noKey,
-    fields: provider === 'dataforseo' ? LOGIN_FIELDS : KEY_FIELDS,
+    keyState: available || set ? (hasKey ? TEXT.keySet : TEXT.noKey) : null,
+    fields: !available ? [] : provider === 'dataforseo' ? LOGIN_FIELDS : KEY_FIELDS,
     disabled: reason !== null,
     reason,
-    canClear: hasKey || partial,
-    usage: TEXT.usage(counts.thisMonth, counts.lastMonth),
-    notes: [...(partial ? [TEXT.partial] : []), ...(NOTES[provider] ?? [])],
+    canClear: set,
+    usage: available || counts.thisMonth > 0 || counts.lastMonth > 0 ? TEXT.usage(counts.thisMonth, counts.lastMonth) : null,
+    // The field notes are about entering a key: an unavailable row keeps only the partial one.
+    notes: [...(partial ? [TEXT.partial] : []), ...(available ? (NOTES[provider] ?? []) : [])],
   };
 }
 

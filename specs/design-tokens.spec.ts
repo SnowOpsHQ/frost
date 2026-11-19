@@ -616,6 +616,8 @@ export const FORCED_COLOURS_PRESSED = [
   { stylesheet: 'styles.css', element: ['.find-tool', ".find-case[aria-pressed='true']"], why: 'the find bar\'s Match case, pressed' },
   { stylesheet: 'styles.css', element: ['.devtools-tab', ".devtools-tab[aria-selected='true']"], why: 'the DevTools drawer\'s selected tab' },
   { stylesheet: 'styles.css', element: ['.seo-ngram-highlight', ".seo-ngram-highlight[aria-pressed='true']"], why: 'Content: an n-gram row\'s highlight button, pressed (the page shows that phrase)' },
+  // Settings › History (UI polish round 2): the chosen retention, raised as the canvas's chosen segment.
+  { stylesheet: 'settings.css', element: ['.settings-segment', ".settings-segment[aria-checked='true']"], why: 'the chosen History retention (its raised --bg-surface segment)' },
   // The Changes panel, Projects, Rankings, Inspector and the screenshot editor (their surface PR): a chosen
   // item drawn by its fill and an --accent edge (PRESSED_EDGES), or by an --accent line, which forced colours replace.
   { stylesheet: 'styles.css', element: ['.changes-version', ".changes-version[aria-pressed='true']"], rest: 'canvas', why: 'the Changes panel\'s chosen version (the one the diff shows)' },
@@ -2675,12 +2677,23 @@ export const FOCUS_RING_RULES = [
   {
     stylesheet: 'settings-ai-checks.css',
     element: ['.settings-choice', ".settings-choice[aria-checked='true']", '.settings-choice:focus-visible'],
-    why: 'the chosen AI checks or History choice, focused: its --accent ring gives way to --focus-ring',
+    why: 'the chosen AI checks choice, focused: its --accent ring gives way to --focus-ring',
   },
   {
     stylesheet: 'settings-ai-checks.css',
     element: ['.settings-choice', ".settings-choice[aria-disabled='true']", '.settings-choice:focus-visible'],
     why: 'a choice while its call runs (aria-disabled, still focusable), focused: it fades only while not focused',
+  },
+  // UI polish round 2 (`browser-polish.feature.md`, History retention): the retention's segmented control.
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-segment', ".settings-segment:hover:where(:not([aria-checked='true'], [aria-disabled='true']))", ".settings-segment[aria-checked='true']", '.settings-segment:focus-visible'],
+    why: 'the chosen History retention, focused (and hovered): its raised shadow gives way to --focus-ring',
+  },
+  {
+    stylesheet: 'settings.css',
+    element: ['.settings-segment', ".settings-segment[aria-disabled='true']", '.settings-segment:focus-visible'],
+    why: 'a retention while its call runs (aria-disabled, still focusable), focused: it fades only while not focused',
   },
   {
     stylesheet: 'help.css',

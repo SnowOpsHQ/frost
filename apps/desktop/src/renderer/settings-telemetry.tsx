@@ -41,8 +41,9 @@ export function TelemetrySettings() {
                 <span className="settings-muted" id={`telemetry-${item.channel}-description`}>
                   {item.description}
                 </span>
+                {/* Information, not a warning (nothing is sent): muted, as the description it extends. */}
                 {item.note ? (
-                  <span className="settings-notice" id={`telemetry-${item.channel}-note`}>
+                  <span className="settings-muted" id={`telemetry-${item.channel}-note`}>
                     {item.note}
                   </span>
                 ) : null}
