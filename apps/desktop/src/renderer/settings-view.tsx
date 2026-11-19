@@ -77,21 +77,44 @@ function SettingsView({ sections, section, focusSeq, account, tabId, closeLabel,
     setCurrent(section);
     pinned.current = content.current?.scrollTop ?? null;
   }, [section, focusSeq]);
-  const onScroll = () => {
+  /** The section in view now (`null` without content or sections). */
+  const sectionInView = (): SettingsSectionId | null => {
     const box = content.current;
-    if (!box) return;
-    // The request's own scroll (its event comes after the effect): the section asked for stays current.
-    if (pinned.current !== null && Math.abs(box.scrollTop - pinned.current) <= 1) return;
-    pinned.current = null;
+    if (!box) return null;
     // Each heading's offset from the top of the scrolled area.
     const origin = box.getBoundingClientRect().top - box.scrollTop;
     const tops = sections.flatMap((id) => {
       const heading = box.querySelector<HTMLElement>(`#${headingId(id)}`);
       return heading ? [{ id, top: heading.getBoundingClientRect().top - origin }] : [];
     });
-    const inView = settingsSectionInView(tops, box);
+    return settingsSectionInView(tops, box);
+  };
+  const onScroll = () => {
+    const box = content.current;
+    if (!box) return;
+    // The request's own scroll (its event comes after the effect): the section asked for stays current.
+    if (pinned.current !== null && Math.abs(box.scrollTop - pinned.current) <= 1) return;
+    pinned.current = null;
+    const inView = sectionInView();
     if (inView !== null) setCurrent(inView);
   };
+  // Worked out again with no scroll when the sections shown change (main's late answer leaves one out)
+  // or the content is resized; a section asked for that is still shown stays current.
+  const sectionInViewRef = useRef(sectionInView);
+  sectionInViewRef.current = sectionInView;
+  useEffect(() => {
+    const box = content.current;
+    if (!box) return;
+    const recompute = () => {
+      const inView = sectionInViewRef.current();
+      setCurrent((last) => (pinned.current !== null && sections.includes(last) ? last : (inView ?? last)));
+    };
+    recompute();
+    if (typeof ResizeObserver === 'undefined') return;
+    const resized = new ResizeObserver(recompute);
+    resized.observe(box);
+    return () => resized.disconnect();
+  }, [sections]);
   // Closed for any reason with focus inside: the sheet's nodes are gone, so focus fell to the body.
   // Checked once this commit's effects ran: a sheet that replaced this one has focused itself by then
   // (React runs this cleanup before the new sheet's mount effect), and keeps focus.

@@ -163,4 +163,33 @@ describe('the sheet', () => {
     expect(current()).toEqual([['settings-nav-locations', 'true']]);
     expect(focusedId()).toBe('settings-section-locations');
   });
+
+  test('settings-nav-survives-a-section-leaving', async () => {
+    // Main has answered for accounts, not yet for Search Console: every section shows.
+    store.account = account('signed-out');
+    render();
+    await act(async () => void requestSettings('account'));
+    // Lay the content out: headings 400px apart in a 600px view of 2800px.
+    const box = host.querySelector<HTMLElement>('[data-testid="settings-content"]')!;
+    let scrollTop = 0;
+    Object.defineProperties(box, {
+      scrollTop: { get: () => scrollTop, configurable: true },
+      clientHeight: { value: 600, configurable: true },
+      scrollHeight: { value: 2800, configurable: true },
+    });
+    box.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+    host.querySelectorAll<HTMLElement>('.settings-section-title').forEach((heading, index) => {
+      heading.getBoundingClientRect = () => ({ top: index * 400 - scrollTop }) as DOMRect;
+    });
+    // The user scrolls Search Console's heading to the top.
+    scrollTop = 400;
+    await act(async () => void box.dispatchEvent(new Event('scroll')));
+    expect(current()).toEqual([['settings-nav-search-console', 'true']]);
+    // Main answers late: no Search Console client. Nothing scrolls; one shown section is still current.
+    store.gsc = gsc(false);
+    render();
+    expect(navIds()).not.toContain('search-console');
+    expect(current()).toHaveLength(1);
+    expect(navIds()).toContain(current()[0]![0]!.replace('settings-nav-', ''));
+  });
 });

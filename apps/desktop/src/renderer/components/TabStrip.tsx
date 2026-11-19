@@ -44,7 +44,7 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
   // tab that was whole in view; one the user scrolled away stays put (`tabs.feature.md`).
   useEffect(() => {
     const list = ref.current?.closest<HTMLElement>('[role="tablist"]');
-    if (!active || !list) return;
+    if (!active || !list || typeof ResizeObserver === 'undefined') return;
     const whole = () => {
       const pill = ref.current?.closest('.tab')?.getBoundingClientRect();
       const box = list.getBoundingClientRect();
