@@ -67,6 +67,9 @@ function SettingsView({ sections, section, focusSeq, account, tabId, closeLabel,
   // Where the content was scrolled to by the last request (`null` once scrolled since): until then the
   // section asked for stays current, even when its heading cannot reach the top (the end of the content).
   const pinned = useRef<number | null>(null);
+  const pin = () => {
+    pinned.current = content.current?.scrollTop ?? null;
+  };
   // Each request moves focus to its section's heading (and scrolls it into view).
   useEffect(() => {
     const heading = sheet.current?.querySelector<HTMLElement>(`#${headingId(section)}`);
@@ -75,7 +78,7 @@ function SettingsView({ sections, section, focusSeq, account, tabId, closeLabel,
     (question ?? heading)?.focus();
     heading?.scrollIntoView({ block: 'start' });
     setCurrent(section);
-    pinned.current = content.current?.scrollTop ?? null;
+    pin();
   }, [section, focusSeq]);
   /** The section in view now (`null` without content or sections). */
   const sectionInView = (): SettingsSectionId | null => {
@@ -93,7 +96,12 @@ function SettingsView({ sections, section, focusSeq, account, tabId, closeLabel,
     const box = content.current;
     if (!box) return;
     // The request's own scroll (its event comes after the effect): the section asked for stays current.
-    if (pinned.current !== null && Math.abs(box.scrollTop - pinned.current) <= 1) return;
+    if (pinned.current !== null) {
+      if (Math.abs(box.scrollTop - pinned.current) <= 1) return;
+      // Moved up onto the end of the content: the layout clamped it (a section left out, the sheet
+      // resized), since a user scrolling up from a valid position cannot land past the end. Move the pin.
+      if (box.scrollTop < pinned.current && box.scrollTop >= box.scrollHeight - box.clientHeight - 1) return pin();
+    }
     pinned.current = null;
     const inView = sectionInView();
     if (inView !== null) setCurrent(inView);
@@ -106,6 +114,8 @@ function SettingsView({ sections, section, focusSeq, account, tabId, closeLabel,
     const box = content.current;
     if (!box) return;
     const recompute = () => {
+      // The layout may have clamped the scroll (its event can come before or after this): move the pin.
+      if (pinned.current !== null) pin();
       const inView = sectionInViewRef.current();
       setCurrent((last) => (pinned.current !== null && sections.includes(last) ? last : (inView ?? last)));
     };

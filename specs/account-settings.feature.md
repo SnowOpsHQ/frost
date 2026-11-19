@@ -128,6 +128,7 @@ to one named test.
 - `settings-sheet-leaves-out-unconfigured` — with accounts `unconfigured` and Search Console not `configured`, the sheet has no Account or Search Console entry or section; the gear's request lands on Data sources (current, its heading focused); a request for Search Console does too.
 - `settings-nav-follows-the-request` — a request marks its section current (`aria-current="true"` on it alone), and a click in the list marks the clicked one.
 - `settings-nav-survives-a-section-leaving` — scrolled (not asked) to Search Console while main has not answered, then main says Search Console is not configured: with no scroll, exactly one shown section is current.
+- `settings-nav-keeps-a-request-through-layout` — Telemetry asked for near the end of the content; Search Console then left out (the content shorter, its scroll clamped) and the content resized (clamped again): Telemetry stays current through both scrolls the layout caused; a scroll by the user afterwards hands the list back to the section in view.
 
 ## Opening and closing (`apps/desktop/src/renderer/__tests__/settings-open.test.ts`)
 - `settings-opens-on-request` — a request opens Settings on its section and asks for focus each time.

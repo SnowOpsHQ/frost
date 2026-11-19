@@ -192,4 +192,45 @@ describe('the sheet', () => {
     expect(current()).toHaveLength(1);
     expect(navIds()).toContain(current()[0]![0]!.replace('settings-nav-', ''));
   });
+
+  test('settings-nav-keeps-a-request-through-layout', async () => {
+    store.account = account('signed-out');
+    render();
+    await act(async () => void requestSettings('account'));
+    // Lay the content out: seven headings 400px apart in a 600px view of 2800px.
+    const box = host.querySelector<HTMLElement>('[data-testid="settings-content"]')!;
+    const view = { scrollTop: 0, clientHeight: 600, scrollHeight: 2800 };
+    Object.defineProperties(box, {
+      scrollTop: { get: () => view.scrollTop, configurable: true },
+      clientHeight: { get: () => view.clientHeight, configurable: true },
+      scrollHeight: { get: () => view.scrollHeight, configurable: true },
+    });
+    box.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+    const layOut = () =>
+      host.querySelectorAll<HTMLElement>('.settings-section-title').forEach((heading, index) => {
+        heading.getBoundingClientRect = () => ({ top: index * 400 - view.scrollTop }) as DOMRect;
+      });
+    layOut();
+    // Telemetry (sixth) asked for: its heading scrolled as far as the content goes.
+    view.scrollTop = 2000;
+    await act(async () => void requestSettings('telemetry'));
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    // Main leaves Search Console out: the content is 400px shorter and its scroll clamped.
+    store.gsc = gsc(false);
+    render();
+    view.scrollHeight = 2400;
+    view.scrollTop = 1800;
+    layOut();
+    await act(async () => void box.dispatchEvent(new Event('scroll')));
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    // The sheet resized taller: clamped again, still the request's.
+    view.clientHeight = 700;
+    view.scrollTop = 1700;
+    await act(async () => void box.dispatchEvent(new Event('scroll')));
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    // The user scrolls to the top: the list follows the scroll again.
+    view.scrollTop = 0;
+    await act(async () => void box.dispatchEvent(new Event('scroll')));
+    expect(current()).toEqual([['settings-nav-account', 'true']]);
+  });
 });
