@@ -93,6 +93,15 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
   the stored privacy / shortcuts marks show as done; each item's button opens where it is done. The
   shortcuts mark is set when the shortcuts sheet opens, not by the click: while a sign-in waits for its
   confirmation in Settings the sheet stays shut and the item stays undone (issue #25).
+- **Only what this build has (Decision, UI polish round 2).** Settings leaves out a section this build
+  has nothing for (`account-settings.feature.md`), so "Connect Search Console" would open Settings at
+  its top, on something else. While main says this build has no Search Console client (`gsc.watch`'s
+  `configured: false`) the checklist leaves that item out (`setupItemsShown`): "N of M done", the meter
+  and "every item done" count the items listed. Until main answers, every item shows. Rejected: keeping
+  the item with its button disabled (a step no one can take, counted against them forever).
+- **Scenario: setup-checklist-follows-the-build** (`start-view.test.ts`) — with Search Console not
+  configured the checklist lists every item but `search-console`, its progress and meter count those
+  items, and doing them all hides the checklist; configured, all five are listed.
 - **Scenario: setup-checklist-dismiss** (`start-view.test.ts`) — Hide this checklist stores
   `dismissed` and the checklist is gone on every later new tab; when every item is done it is gone too.
 - **Scenario: setup-checklist-storage-tolerant** (`start-view.test.ts`) — a missing, malformed or
@@ -131,5 +140,6 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
 - **Scenario: whats-new-after-version-change** — a first launch shows no What's New; after the
   stored version is changed, the next launch shows it with the running version's notes; closed, the
   launch after shows nothing.
-- **Scenario: setup-checklist** — a fresh profile's new tab lists the five items, none done; Show shortcuts opens the shortcuts sheet and marks that item done (the
+- **Scenario: setup-checklist** — a fresh profile's new tab (this suite's build has no Search Console
+  client) lists the items `setupItemsShown(false)` names, none done, and no Search Console item; Show shortcuts opens the shortcuts sheet and marks that item done (the
   meter's first segment fills); Hide this checklist removes it from later new tabs.

@@ -324,6 +324,16 @@ export const SETUP_CHECKLIST_ITEMS = [
 export type SetupChecklistItemId = (typeof SETUP_CHECKLIST_ITEMS)[number]['id'];
 
 /**
+ * The items the checklist lists (help.feature.md, "Only what this build has"): every one but
+ * `search-console` while main says this build has no Search Console client (`gsc.watch`'s
+ * `configured: false`, when Settings leaves that section out too: `settingsSectionsShown`). Until main
+ * answers (`null`/`undefined`) every item shows, as Settings shows every section.
+ */
+export function setupItemsShown(gscConfigured: boolean | null | undefined): (typeof SETUP_CHECKLIST_ITEMS)[number][] {
+  return SETUP_CHECKLIST_ITEMS.filter((item) => item.id !== 'search-console' || gscConfigured !== false);
+}
+
+/**
  * The chrome's own `localStorage` key (app://app, like `SIDEBAR_STORAGE_KEY`): JSON
  * `{ dismissed, privacy, shortcuts }` booleans. Anything else reads as all `false`.
  */
