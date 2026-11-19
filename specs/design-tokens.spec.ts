@@ -902,6 +902,8 @@ export const SIGNAL_SURFACES = [
     selectorPrefix: '.seo',
     classes: [
       '.seo-overview',
+      // The summary card (UI polish round 2): the scores, the counts and "Highlight everything"
+      '.seo-summary',
       // The score card's interior
       '.seo-ring-*',
       '.seo-score-text',
@@ -1269,6 +1271,13 @@ export const NARROW_PANEL_FITS = [
   { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-row[data-target]', query: null, set: { 'flex-wrap': 'wrap' }, why: "Content's suggested queries: the clicks and \"Use as target\" go under a query that doesn't fit beside them (the query had about 40px at 300px)" },
   { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-row[data-target] .gsc-targets-text', query: null, set: { 'white-space': 'normal' }, why: "Content's suggested queries: the whole query shows, on as many lines as it needs (it was cut, its tooltip out of the keyboard's reach)" },
   { stylesheet: 'gsc-targets.css', selector: '.gsc-targets-end', query: null, set: { flex: 'none', 'margin-inline-start': 'auto' }, why: "Content's suggested queries: the clicks and the button wrap together, at the row's end" },
+  // Visibility: the probe comparison (UI polish round 2), three fixed columns that never scroll sideways.
+  { stylesheet: 'styles.css', selector: '.visibility-table', query: null, set: { 'table-layout': 'fixed' }, absent: ['min-width'], why: "Visibility's probe table: three fixed columns, the panel's width (it was eight columns at a 560px minimum, scrolling 997px sideways at 360px and 1,057px at 300px)" },
+  { stylesheet: 'styles.css', selector: '.visibility-table thead th:first-child', query: null, set: { width: '30%' }, absent: ['position'], why: "Visibility's probe table: the fact column is 30% (no longer sticky: nothing scrolls under it)" },
+  { stylesheet: 'styles.css', selector: '.visibility-table thead th + th', query: null, set: { width: '35%' }, why: "Visibility's probe table: the browser's and the chosen crawler's columns share the rest" },
+  { stylesheet: 'styles.css', selector: '.visibility-table td', query: null, set: { 'overflow-wrap': 'break-word' }, why: "Visibility's probe table: a value wraps between words, a word wider than its column inside itself (\"Googlebot smartphone\", \"Too many redirects\")" },
+  { stylesheet: 'styles.css', selector: '.visibility-table th', query: null, set: { 'overflow-wrap': 'break-word' }, why: "Visibility's probe table: a header wraps between words, never past its column" },
+  { stylesheet: 'styles.css', selector: '.visibility-table td .seo-page-text', query: null, set: { display: 'block' }, absent: ['max-width', 'overflow', 'text-overflow', 'white-space'], why: "Visibility's probe table: a canonical URL is whole on its lines (the page text's `anywhere`); it was one line cut 134px by an ellipsis" },
   // The AI answers sheet (found by #55's review): a citation's button beside a long URL.
   { stylesheet: 'ai-answers.css', selector: '.ai-answer-citation .panel-button', query: null, set: { flex: 'none' }, why: 'AI answers: a citation\'s "Open in tab" keeps its one line; the URL beside it (`overflow-wrap: anywhere`) wraps instead (it asked for the whole row and squeezed the button onto two lines)' },
 ] as const satisfies readonly NarrowPanelFit[];

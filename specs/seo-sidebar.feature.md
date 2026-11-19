@@ -154,6 +154,19 @@ list, text read and walk: a huge DOM gives a `partial` snapshot, not a timeout.
 - Overview, AI-readiness tile (Phase 9 Task 8, `ai-readiness.feature.md`, AI readiness views): the
   AI-readiness score (pending, or the score with "Based on k of n checks"), separate from the health
   score, and "Open AI readiness", which opens the Visibility panel and moves focus to its rail item.
+- Overview, the summary (UI polish round 2): the health score, the AI-readiness tile, the counts by
+  severity and "Highlight everything" are one card (`.seo-summary`), in that order, ruled by
+  `--divider` between the scores and above the counts, so the summary reads as one block and "Top
+  issues" starts under it, higher than when each was a card or a row of its own (at 1280 × 800 with the
+  default 360px panel it started 515px down; now under 420px). Each score is a row: a 64px ring beside
+  its words (both rings the same size; the value `--text-title`), "Open AI readiness" a link under the
+  tile's words, at their start. The counts are the same pills, in one row that fills the card's width
+  (each grows to share it) and wraps whole pills onto a second line, never a pill's word, where three
+  don't fit. Under the panel's minimum the rings are 48px (value `--text-heading`) and stay beside
+  their words, which wrap (`NARROW_PANEL_WRAPS`); they no longer stack above them. Decided: one card
+  over two cards with tighter gaps (the counts and the highlight would still float between cards and
+  issues) and over side-by-side half-width score tiles (at 300px a 113px tile leaves its words about
+  45px beside even a 48px ring).
 - On-Page: title (with its length and an indicator against `TITLE_MIN_CHARS`…`TITLE_MAX_CHARS`;
   since Phase 2.5 Task 3 "too long" is the width a result shows, `seo-content.feature.md`),
   meta description (likewise), URL, canonical, meta robots, lang, viewport, the heading outline

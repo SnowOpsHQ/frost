@@ -93,9 +93,12 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   rules below at 588px with the collapsed agent's rail, a 160px sheet (content 150px, 140px beside
   the scrollbar): the room was accepted; what costs the text is the parts that
   keep everything on one line, so under the panel's minimum (the same `seo-panel` query) they wrap
-  (`NARROW_PANEL_WRAPS`): Overview's score card puts its ring above its words (it left them about 8px
-  beside the 84px ring), the AI-readiness tile's score row likewise (`ai-readiness.css`, which holds the
-  tile's rules and loads before `styles.css`), a section head puts its badge under its title, and the
+  (`NARROW_PANEL_WRAPS`): Overview's summary keeps each ring beside its words with a 48px ring and a
+  `--space-3` gap (UI polish round 2; the 84px ring had left the words about 8px, so the rings had
+  stacked above them and the cards grown tall; `seo-sidebar.feature.md`, Overview, the summary), the
+  Visibility panel's AI-readiness score row puts its ring above its words (`ai-readiness.css`, which
+  holds the tile's rules and loads before `styles.css`; the Overview's tile overrides it to stay a
+  row), a section head puts its badge under its title, and the
   panels' toggles and actions wrap a long label onto a second line, their height automatic from
   `--h-chip` up. The bar, agent collapsed at the minimum (set at 588px with the rail, and held at 664,
   626 and 588px without it): Overview's, On-Page's, Links' and Changes' bodies
@@ -220,7 +223,11 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   padding is `--space-1` (it is `--space-5` at a width the panel's minimum fits); on Overview the
   body doesn't scroll sideways, and neither the score card's text column (and each line in it) nor
   the first toggle or action overflows its own box (`scrollWidth <= clientWidth`: text clipped inside
-  its box counts, which comparing boxes with the body's edge missed); on Changes the body doesn't
+  its box counts, which comparing boxes with the body's edge missed); the summary card holds the
+  health score, the AI-readiness tile, the counts and "Highlight everything" in that order, each ring
+  (48px; 64px at the 900px width the panel's minimum fits, its default 360px) beside its words (the
+  ring ends left of where its text column starts, and their vertical extents overlap), and no text in
+  the summary is cut (`cutText`); on Changes the body doesn't
   scroll sideways and neither each screenshot kind (and its label) nor the Project picker (its label
   and select) is cut inside its own box. The visual set's `narrow-window` capture draws Overview.
 - **Scenario: default-width-keeps-its-layout** (same file) — the chrome laid out 1280px wide with the
