@@ -344,7 +344,7 @@ const STRICT = process.env['VISUAL_STRICT'] === '1' ? { maxDiffPixels: 0, maxDif
  */
 async function capture(name: CaptureName, options: { readonly keepFocus?: boolean; readonly scroll?: Scroll } = {}): Promise<void> {
   if (!options.keepFocus) await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  // The middle of the bottom edge, at whatever width the window is (narrow-window is 588 px).
+  // The middle of the bottom edge, at whatever width the window is (narrow-window is NARROW_WINDOW.width).
   await page.mouse.move(Math.round((await page.evaluate(() => innerWidth)) / 2), WINDOW.height - 4);
   await settled();
   const key = await app!.evaluate(({ BrowserWindow }, css) => BrowserWindow.getAllWindows()[0]!.webContents.insertCSS(css), VISUAL_CSS);

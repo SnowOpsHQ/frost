@@ -6,7 +6,7 @@
 import { act, createElement, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, test } from 'vitest';
-import { AGENT_PANEL_WIDTH, AGENT_PANEL_WIDTH_RANGE, AGENT_PANEL_WIDTH_STORAGE_KEY, AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
+import { AGENT_PANEL_WIDTH, AGENT_PANEL_WIDTH_RANGE, AGENT_PANEL_WIDTH_STORAGE_KEY } from '@app/specs/agent-panel.spec';
 import { ALWAYS_PINNED_PANELS, PAGE_MIN_WIDTH, SEO_PANELS, SIDEBAR_PANEL_WIDTH, SIDEBAR_PANEL_WIDTH_RANGE, SIDEBAR_RAIL_WIDTH, SIDEBAR_WIDTH_STORAGE_KEY, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import {
   createWorkspaceLayout,
@@ -32,7 +32,7 @@ import { WORKSPACE_GAP, WORKSPACE_GAP_TIGHT, workspaceRowChrome } from '@app/spe
 
 const S = SIDEBAR_PANEL_WIDTH_RANGE;
 const A = AGENT_PANEL_WIDTH_RANGE;
-/** The row's fixed parts beside the page's minimum (the rails and the gaps between the sheets: specs/workspace-layout.spec.ts). */
+/** The row's fixed parts beside the page's minimum (the SEO rail and the gaps between the sheets: specs/workspace-layout.spec.ts). */
 const fixed = (sidebar: boolean, agent: boolean) => PAGE_MIN_WIDTH + workspaceRowChrome({ sidebar, agent });
 /** Both panes open: the SEO rail and three gaps. */
 const FIXED_OPEN = fixed(true, true);
@@ -78,15 +78,20 @@ describe('resizable panes', () => {
     // Never under the range's minimum, however narrow the row.
     expect(paneMax('sidebar', layout(500, [true, 360], [true, 400]))).toBe(S.min);
     expect(paneMax('agent', layout(500, [true, 360], [true, 400]))).toBe(A.min);
-    // The collapsed agent's rail counts against the room.
-    expect(roomForPanes(layout(1_000, [true, 360], [false, 380]))).toBe(1_000 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 3 * WORKSPACE_GAP.px - AGENT_RAIL_WIDTH);
+    // The collapsed agent takes no room: no rail and no page | agent gap count against it.
+    expect(roomForPanes(layout(1_000, [true, 360], [false, 380]))).toBe(1_000 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 2 * WORKSPACE_GAP.px);
     // pane-room-counts-the-gaps (specs/workspace-layout.feature.md): the gap between the SEO rail and
-    // its sheet only while the sheet is open, the two beside the page always.
+    // its sheet only while the sheet is open, the page | agent one only while the agent is, the SEO
+    // sidebar | page one always.
     expect(roomForPanes(layout(1_000, [false, 360], [true, 380]))).toBe(1_000 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - 2 * WORKSPACE_GAP.px);
+    expect(roomForPanes(layout(1_000, [false, 360], [false, 380]))).toBe(1_000 - PAGE_MIN_WIDTH - SIDEBAR_RAIL_WIDTH - WORKSPACE_GAP.px);
     expect(paneMax('sidebar', layout(800, [false, 360], [false, 380]))).toBe(800 - fixed(true, false));
-    // A narrow workspace's tight gaps: the 588px window's row (580) leaves the SEO sheet 160px.
-    expect(roomForPanes({ ...layout(580, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px })).toBe(160);
-    expect(paneWidths({ ...layout(580, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px }).sidebar).toBe(SIDEBAR_PANEL_WIDTH_RANGE.min);
+    // A narrow workspace's tight gaps: the 664px window's row (656) leaves the SEO sheet 280px; the earlier
+    // minimums' rows (618 at 626px, 580 at 588px), 242px and 204px.
+    expect(roomForPanes({ ...layout(656, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px })).toBe(280);
+    expect(roomForPanes({ ...layout(618, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px })).toBe(242);
+    expect(roomForPanes({ ...layout(580, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px })).toBe(204);
+    expect(paneWidths({ ...layout(656, [true, 360], [false, 380]), gap: WORKSPACE_GAP_TIGHT.px }).sidebar).toBe(SIDEBAR_PANEL_WIDTH_RANGE.min);
     // Unmeasured: the chosen widths, any maximum.
     expect(paneWidths(layout(0, [true, 500], [true, 600]))).toEqual({ sidebar: 500, agent: 600 });
     expect(paneMax('sidebar', layout(0, [true, 500], [true, 600]))).toBe(S.max);
@@ -101,7 +106,7 @@ describe('resizable panes', () => {
     expect(paneWidths(layout(FIXED_OPEN + 350 + A.min, [true, 400], [true, 480]))).toEqual({ sidebar: 350, agent: A.min });
     // Short by more than both can give: both at their minimums (CSS narrows them past that, as before).
     expect(paneWidths(layout(600, [true, 400], [true, 480]))).toEqual({ sidebar: S.min, agent: A.min });
-    // The agent closed: its rail is in the row; only the sidebar gives way.
+    // The agent closed: it takes no room; only the sidebar gives way.
     expect(paneWidths(layout(fixed(true, false) + 330, [true, 400], [false, 480]))).toEqual({ sidebar: 330, agent: 480 });
     // The sidebar closed: only the agent gives way.
     expect(paneWidths(layout(fixed(false, true) + 350, [false, 400], [true, 480]))).toEqual({ sidebar: 400, agent: 350 });

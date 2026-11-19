@@ -382,7 +382,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   4px ring needs at either end (the reason the tab row was 42px). The loading line runs along the row's
   foot. The tools are `flex: none`, the row clips (`overflow: clip`, never scrolled by focus), and the
   widths give way in `tabs.feature.md`'s order: the tabs to 84px, then the tablist scrolls, and only in a
-  narrow window the address bar from 360px to 240px (and below the window's 588px minimum, which tiling
+  narrow window the address bar from 360px to 240px (and below the window's 664px minimum, which tiling
   window managers ignore, on toward nothing before a tool is clipped), measured on the row's own width
   (an inline-size container, `100cqw`; `tabs.feature.md`). No colour, type or state of a tab, tool or the address changed, so `TAB_STRIP`,
   `FOCUS_RING_RULES`, `FORCED_COLOURS_BUSY`, `FORCED_COLOURS_PRESSED` and `CONTRAST_PAIRS` keep their
@@ -1306,7 +1306,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `.a, .b.c { &:hover { … } }`, `div, .a { &:hover { … } }`, `.a, .b { & + & { … } }` or `.a, .b { .c { … } }`
   (each takes `:is()` of the whole list, which is not modelled), and `.a { &[title='&'] { … } }`), so nothing
   is skipped unread. Every renderer stylesheet's at-rules are among those it applies: each stylesheet's rules resolve in
-  every `CASCADE_CONTEXTS` state without a throw. A focus ring a `@container chrome (width < 748px)` rule takes
+  every `CASCADE_CONTEXTS` state without a throw. A focus ring a `@container chrome (width < 700px)` rule takes
   away, or a colour a reduced-motion rule changes, fails its check in that state. Each check below runs in light
   and dark in every `CASCADE_CONTEXTS` state.
 - **Scenario: text-colour-rules-resolve** — for each `TEXT_COLOUR_RULES` entry, in light and dark,
@@ -1359,7 +1359,7 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   busy is shown by colour, which forced colours replace, and no later rule of the control's own wins
   over it. Every selector named is one of the stylesheet's.
 - **Scenario: pressed-toggles-show-under-forced-colours** — for each `FORCED_COLOURS_PRESSED` entry (the
-  SEO sidebar toggle and the render-profile toggle, pressed; a panel toggle, the chosen segment and a
+  SEO sidebar's and the AI agent's toggles (one `.sidebar-toggle` rule) and the render-profile toggle, pressed; a panel toggle, the chosen segment and a
   filter chip, pressed; the find bar's Match case, pressed; the DevTools drawer's selected tab; an n-gram's highlight button,
   pressed; the chosen version, project, view, node, Inspector view, source match and swatch), in light
   and dark, the cascade over its
@@ -1546,8 +1546,9 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   and at the default width it is the four-column table with each domain whole on one line;
   at 300px neither it nor the body does, no text in the table or the parameter grid is cut, its rows are
   grids, and the accessibility tree (CDP `Accessibility.queryAXTree`) holds 1 table, 4 column headers, 2
-  row headers and 6 cells; in the 588px window (`NARROW_WINDOW`) its rows have two columns, its wrap
-  doesn't scroll, no header or cell is cut, and each count's cell has its header's edges; with
+  row headers and 6 cells; in the 664px window (`NARROW_WINDOW`, a 280px sheet) its rows have three
+  columns, and in a 544px chrome (a tiled window: the 160px sheet the old 588px minimum left beside the agent's
+  rail) two; at each its wrap doesn't scroll, no header or cell is cut, and each count's cell has its header's edges; with
   `LONG_DOMAINS` (`?domains=long`) at the default width it is still four columns, nothing scrolls, no
   domain breaks except after a dot or a hyphen, and the fixture's two are on one line each.
 - **Scenario: gsc-panel-country-device-filters** (`gsc-panel.e2e.ts`) — with "United Kingdom" and a

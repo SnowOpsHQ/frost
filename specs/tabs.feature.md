@@ -2,7 +2,10 @@
 
 Spec: `specs/tabs.spec.ts` (`MAX_TABS`, `NEW_TAB_LABEL`, `NOTICE_MESSAGES`, `NOTICE_DISPLAY_MS`,
 `TAB_SHORTCUT_COUNT`, `RESERVED_TAB_SHORTCUTS`, `CHROME_ROW`, `CHROME_ROW_HEIGHT_PX`, `TAB_MIN_WIDTH_PX`,
-`ADDRESS_BASIS_PX`, `ADDRESS_MIN_WIDTH_PX`, `CHROME_MIN_CONTENT_WIDTH_PX`; Zod-free so the chrome can import it) and `specs/browser.spec.ts`
+`ADDRESS_BASIS_PX`, `ADDRESS_MIN_WIDTH_PX`, `CHROME_MIN_CONTENT_WIDTH_PX`; Zod-free so the chrome can import it),
+`specs/title-bar.spec.ts` (`TRAFFIC_LIGHT_POSITION`, `TRAFFIC_LIGHTS_ZONE_PX`, `CAPTION_BUTTONS_WIDTH_PX`,
+`WINDOW_DRAG_STRIP_PX`, `TITLE_BAR_OVERLAY_HEIGHT_PX`, `TITLE_BAR_OVERLAY_COLOURS`, `chromeRowInset`,
+`titleBarWindowOptions`) and `specs/browser.spec.ts`
 (`TabIdInputSchema`, `BrowserStateSchema.focusAddressBarSeq` / `.notice`, `NoticeSchema`).
 Builds on `browser-chrome.feature.md` (one tab, its view, the controller).
 Phase 1 Task 2. Each scenario maps to one named test.
@@ -21,8 +24,10 @@ Phase 1 Task 2. Each scenario maps to one named test.
 - **The chrome row** (`CHROME_ROW`): the tab strip and the toolbar are one row, `CHROME_ROW_HEIGHT_PX`
   (Signal's `--h-chrome`) high, that never wraps or grows. In DOM order: the navigation tools (Back,
   Forward, Reload ⇄ Stop), the tablist, the address bar (the tablist's next sibling, never inside it:
-  a `tablist` holds only `tab`s), the new-tab button, the SEO sidebar toggle and the render-profile
-  toggle; the loading line runs along the row's foot. The permission prompt, the render-profile editor
+  a `tablist` holds only `tab`s), the new-tab button, the SEO sidebar toggle, the render-profile
+  toggle, the AI agent's toggle (`agent-panel.feature.md`, Toggle: over the right edge where its panel
+  opens) and the Settings button (`account-settings.feature.md`, Opening: the row's last control, at its
+  right end); the loading line runs along the row's foot. The permission prompt, the render-profile editor
   bar, the find bar and the update notice stay bands under the row.
   - **Width, in this order** (measured on the row's own width, so a window narrower than it asked
     for gets the same order): the tools never shrink (each stays an `--h-control` circle). With room
@@ -33,8 +38,8 @@ Phase 1 Task 2. Each scenario maps to one named test.
        in a narrow window, does the address bar give way: to `ADDRESS_MIN_WIDTH_PX` at the window's
        minimum (`CHROME_MIN_CONTENT_WIDTH_PX`), and below that minimum, which a tiling window manager
        may impose (see Minimum window width), on down to its own padding and border (24px), so the tools and one whole tab
-       stay whole down to `CHROME_MIN_CONTENT_WIDTH_PX − ADDRESS_MIN_WIDTH_PX` + 24 (372px). Narrower still, the
-       row clips from its right end (the render-profile toggle first).
+       stay whole down to `CHROME_MIN_CONTENT_WIDTH_PX − ADDRESS_MIN_WIDTH_PX` + 24 (448px). Narrower still, the
+       row clips from its right end (the Settings button first).
     No tab is squeezed under its minimum: the tablist's ends clip the tabs scrolled past them.
   - **A focused tab is shown whole:** whenever a tab takes focus (the tablist's keys, Tab or Shift+Tab,
     a click, Delete's neighbour), and again once a Delete's closed tab is gone from the strip, the
@@ -43,7 +48,8 @@ Phase 1 Task 2. Each scenario maps to one named test.
     background leaves the strip where the user scrolled it.
   - **Never scrolled itself:** the row clips what does not fit (`overflow: clip`), so focusing a
     control cannot scroll the row and move Back off the window's edge.
-  - **Minimum window width:** the window asks for content at least `CHROME_MIN_CONTENT_WIDTH_PX` wide
+  - **Minimum window width:** the window asks for content at least `CHROME_MIN_CONTENT_WIDTH_PX` wide,
+    plus on macOS and Windows the room the row gives the window controls (`chromeRowInset`, below)
     (its minimum size is that plus the frame's width, so it counts the page and not the frame): exactly
     the row's padding, its tools, one whole tab with its ring room and `ADDRESS_MIN_WIDTH_PX`, so at or
     above it the row fits whole and shows a tab. It is a hint: a floating window's manager keeps a
@@ -53,14 +59,57 @@ Phase 1 Task 2. Each scenario maps to one named test.
     window below the minimum.
   - **Focus ring:** the tablist keeps `--space-1` of room around its tabs, also as scroll padding, so a
     focused tab's `--focus-ring` (4px) is drawn whole inside the scrolling tablist, at either end too.
-  - **Window controls and dragging** stay the OS's: the window keeps its native frame and title bar on
-    macOS, Windows and Linux (no `frame: false`, `titleBarStyle` or `titleBarOverlay`), so the traffic
-    lights or the minimise, maximise and close buttons and the drag area are where the OS puts them, and
-    no chrome rule sets `-webkit-app-region`.
+  - **The row is the window's title bar** (`title-bar.spec.ts`; reverses the earlier "window controls
+    and dragging stay the OS's", on the user's request): on macOS and Windows the window draws no title
+    bar strip of its own above the row, and the OS's window controls are drawn over the row's ends.
+    - **macOS:** `titleBarStyle: 'hidden'` keeps the traffic lights, placed at `TRAFFIC_LIGHT_POSITION`
+      so they sit vertically centred in the row; Back starts right of their zone
+      (`TRAFFIC_LIGHTS_ZONE_PX`, as much room after the lights as before them). In native fullscreen,
+      where the lights are gone, the row starts at its `--space-4` again.
+    - **Windows:** `titleBarStyle: 'hidden'` with a title bar overlay: the minimise, maximise and close
+      buttons are drawn over the row's right end, `TITLE_BAR_OVERLAY_HEIGHT_PX` (the row's height) high,
+      in the row's own colours (`TITLE_BAR_OVERLAY_COLOURS`: the row's `--bg-window` behind and the
+      tools' `--text-muted` for the symbols, light or dark as the OS theme is, which main follows on
+      `nativeTheme`'s `updated`). The row's last tool ends `WINDOW_DRAG_STRIP_PX` left of the buttons
+      (`CAPTION_BUTTONS_WIDTH_PX` wide). In fullscreen Windows hides the buttons but the overlay still
+      reports their room (Electron 45), so the row keeps its end inset; frost's window is fullscreen on
+      Windows only while a page is (HTML fullscreen), and then the page covers the row.
+    - **Linux:** unchanged: the window keeps its native frame and title bar (no `frame`, `titleBarStyle`
+      or `titleBarOverlay`); tiling window managers such as Hyprland draw none at all.
+    - Never `frame: false`. The window's `title` stays `frost` for the taskbar, the Dock and Mission
+      Control; on macOS and Windows it is no longer drawn. On Windows the menu bar goes with the title
+      bar (Window, above): its accelerators keep working, Alt no longer shows it.
+    - **Insets come from the overlay, not from the platform:** the window turns on Chromium's Window
+      Controls Overlay (Electron's `titleBarOverlay`) on macOS and Windows, and the row pads itself by
+      its CSS variables: the start by `env(titlebar-area-x)` (the traffic lights' zone) where that is
+      more than `--space-4`, the end by the window's width less `env(titlebar-area-x)` and
+      `env(titlebar-area-width)` (the caption buttons) plus the drag strip. They follow resizing and
+      macOS fullscreen, and are absent on Linux, where the row keeps `--space-4` at both ends. The width rules above hold on the row's content box (`100cqw`),
+      so the shrink order is the same with the insets in place.
+    - **Dragging:** the row is the window's drag area (`app-region: drag`): its free space above and
+      below the 34px controls, the traffic lights' zone, the tablist's padding and the gaps between
+      tabs, and the strip beside the caption buttons. Every control in it is `no-drag`: each child of
+      the row but the tablist and the loading line (the navigation group, the address bar, New tab,
+      the toggles and any tool added later), and each tab (its × included). No rule outside the chrome
+      row's sets `app-region`. On Linux, with its native frame, the drag area does nothing.
+    - **Only the chrome drags, never a page:** without a native title bar Electron takes drag regions
+      from every view of the window, a tab's page view included, and has no switch per view. So on
+      macOS and Windows (`rowIsTitleBar`) each tab view's document gets `PAGE_NO_DRAG_CSS` as a user
+      style sheet on every main-frame navigation (`createTabView`): a page's own `app-region: drag`
+      (or `window-drag`), `!important` or not, in a shadow tree or on a pseudo-element with a box
+      (`PAGE_NO_DRAG_SELECTORS`), resolves to none, so the page sends no region at all. On Linux,
+      where the native frame makes Electron ignore every region, nothing is inserted. The selectors also
+      name the built-in controls' parts a page can style (`PAGE_NO_DRAG_CONTROL_PARTS`, such as
+      `::-webkit-slider-thumb`). Known limit: a box-making pseudo-element or a control part a later
+      Chromium adds is not covered until it is listed (Electron has no switch; a page that drags from
+      one only loses its own clicks there). No rule names `::first-letter`: one on every block would
+      split its text.
+    - **Minimum window width** with the controls: `CHROME_MIN_CONTENT_WIDTH_PX` plus
+      `chromeRowInset(platform)`, the room the row gives the window controls (0 on Linux).
 - **Keyboard contract of the chrome row.** Nothing a keyboard user could do with two rows is lost:
   - **Tab order** follows `CHROME_ROW`: Back, Forward, Reload (each only while enabled), the active
     tab (the tablist's one Tab stop), the address bar, New tab, the SEO sidebar toggle, the
-    render-profile toggle; Shift+Tab walks it back (from the address bar to the active tab). With two
+    render-profile toggle, the AI agent's toggle, the Settings button; Shift+Tab walks it back (from the address bar to the active tab). With two
     rows the tab strip came first and the address bar after the navigation tools.
   - **In the tablist** (as above): Left/Right to the previous/next tab, wrapping; Home/End to the
     first/last; Enter or Space activates the focused tab (moving focus never activates); Delete closes
@@ -112,7 +161,9 @@ Phase 1 Task 2. Each scenario maps to one named test.
   reserved the same way (`page-commands.feature.md`). The menu keeps the standard Edit roles (undo, redo, cut,
   copy, paste, select all) so the address bar's clipboard works on macOS, and nothing else claims
   Cmd/Ctrl+W. Close Window is Cmd/Ctrl+Shift+W; Quit is Cmd+Q on macOS and Ctrl+Shift+Q elsewhere.
-  On Linux/Windows the menu bar auto-hides (Alt reveals it).
+  On Linux the menu bar auto-hides (Alt reveals it). On Windows the hidden title bar (The chrome row,
+  below) leaves no menu bar to reveal: Alt shows nothing, while the menu's accelerators still work
+  (checked with real key presses on CI's Windows runner: Ctrl+, opens Settings, Ctrl+Y History).
 - **No window** (macOS, after the last window closed): tab commands do not touch hidden tabs. New
   Tab opens the window (which starts with one empty tab); the other tab commands are no-ops.
 - **`MAX_TABS`:** with `MAX_TABS` tabs open a new-tab request is refused (no tab opens) and raises
@@ -245,16 +296,28 @@ Phase 1 Task 2. Each scenario maps to one named test.
 - **Scenario: menu-bar-auto-hides-off-macos** — `createMainWindow()` sets `autoHideMenuBar: true`
   on Linux/Windows and `false` on macOS; the webPreferences are unchanged.
 - **Scenario: window-has-a-minimum-content-width** — `createMainWindow()` sets the window's minimum
-  width to `CHROME_MIN_CONTENT_WIDTH_PX` plus the frame's width (its size less its content size; the
-  minimum height is kept), and `CHROME_MIN_CONTENT_WIDTH_PX` equals, from `tokens.css` and `CHROME_ROW`,
+  width to `CHROME_MIN_CONTENT_WIDTH_PX` plus `chromeRowInset(process.platform)` plus the frame's width
+  (its size less its content size; the minimum height is kept), on macOS, Linux and Windows, and
+  `CHROME_MIN_CONTENT_WIDTH_PX` equals, from `tokens.css` and `CHROME_ROW`,
   `2 × --space-4` (the row's padding) + one `--h-control` per tool (`CHROME_ROW` but the tablist and the
-  address bar: 6) + one `--space-1` per gap (between the row's items and inside the navigation group:
-  `CHROME_ROW`'s length less one, 7) + `TAB_MIN_WIDTH_PX + 2 × --space-1` (one tab, ring room) +
-  `ADDRESS_MIN_WIDTH_PX`: 588.
-- **Scenario: window-keeps-native-controls** — on macOS, Linux and Windows `createMainWindow()` sets
-  none of `frame`, `titleBarStyle`, `titleBarOverlay` and `trafficLightPosition` (the OS draws the
-  title bar, its controls and its drag area); no renderer stylesheet sets `-webkit-app-region` or
-  `app-region`.
+  address bar: 8) + one `--space-1` per gap (between the row's items and inside the navigation group:
+  `CHROME_ROW`'s length less one, 9) + `TAB_MIN_WIDTH_PX + 2 × --space-1` (one tab, ring room) +
+  `ADDRESS_MIN_WIDTH_PX`: 664 (626 before the Settings button joined the row, 588 before the AI agent's toggle).
+- **Scenario: window-row-is-the-title-bar** — on macOS `createMainWindow()` sets `titleBarStyle:
+  'hidden'`, `trafficLightPosition: TRAFFIC_LIGHT_POSITION` and `titleBarOverlay: true`; on Windows
+  `titleBarStyle: 'hidden'` and `titleBarOverlay` of `TITLE_BAR_OVERLAY_HEIGHT_PX` (= `CHROME_ROW_HEIGHT_PX`)
+  in the OS theme's `TITLE_BAR_OVERLAY_COLOURS`; on Linux none of `frame`, `titleBarStyle`,
+  `titleBarOverlay` and `trafficLightPosition`; never `frame`; `title` is `frost` and the webPreferences
+  are unchanged on all three.
+- **Scenario: title-bar-overlay-follows-the-theme** — on Windows, when `nativeTheme` turns dark and
+  emits `updated`, the window's overlay is set to the dark colours, and back to the light ones; once
+  the window is closed the theme no longer touches it. On macOS and Linux the theme never sets an
+  overlay.
+- **Scenario: title-bar-insets** — `chromeRowInset` is 0 on Linux, `TRAFFIC_LIGHTS_ZONE_PX − --space-4` on
+  macOS (the traffic lights' zone, `TRAFFIC_LIGHT_POSITION.x` on both sides of the 54px lights) and
+  `CAPTION_BUTTONS_WIDTH_PX + WINDOW_DRAG_STRIP_PX − --space-4` on Windows; `CHROME_ROW_PADDING_PX` is
+  `--space-4`; `WINDOW_DRAG_STRIP_PX` is at least 40; the traffic lights' box (`y` + 16 + `y`) is
+  `CHROME_ROW_HEIGHT_PX` high.
 
 ## Chrome row styles (`apps/desktop/src/__tests__/chrome-grid-styles.test.ts`)
 - **Scenario: chrome-row-is-one-fixed-track** — the chrome grid's first track is `var(--h-chrome)`
@@ -268,7 +331,23 @@ Phase 1 Task 2. Each scenario maps to one named test.
   beside one tab, whichever is less, and never negative; no rule of the chrome names the retired
   `.tabstrip` or `.toolbar`.
 
+- **Scenario: title-bar-overlay-colours-are-the-row-tokens** — `TITLE_BAR_OVERLAY_COLOURS.light` is
+  `tokens.css`'s light `--bg-window` and `--text-muted`, `.dark` its dark ones; the row's background is
+  `var(--bg-window)` and the tools' colour `var(--text-muted)`, so the caption buttons cannot drift from
+  the row.
+- **Scenario: chrome-row-pads-by-the-window-controls** — the row's start padding is the larger of
+  `--space-4` and `env(titlebar-area-x, 0px)`, its end padding `--space-4` plus the window's width less
+  `env(titlebar-area-x, 0px)` and `env(titlebar-area-width, 100vw)` (never negative), plus
+  `WINDOW_DRAG_STRIP_PX − --space-4` once that end inset is not 0; with the variables absent (Linux) both
+  come to `--space-4`.
+- **Scenario: only-the-chrome-row-sets-app-region** — `app-region` (or `-webkit-app-region`) appears in
+  no stylesheet rule but the chrome row's: `.chrome-row` is `drag`, and `.chrome-row > :not(.tabs,
+  .progress)` and `.chrome-row .tab` are `no-drag`; nothing else names it.
+
 ## End to end (`apps/desktop/e2e/tabs.e2e.ts`, real Electron, loopback pages)
+Widths below are the row's without the window controls' room: on macOS and Windows a window width or
+a test-only row width in these scenarios adds `chromeRowInset(platform)`, so the row's content (and the
+shrink order) is the same on all three platforms.
 - **Scenario: new-tab-button-opens-empty-tab** — "+" adds a tab at the end labelled `New Tab`,
   active, with the start view shown, the address bar focused and empty, and no view attached.
 - **Scenario: tabs-keep-own-url-and-history** — two tabs loaded with different pages and
@@ -303,7 +382,7 @@ Phase 1 Task 2. Each scenario maps to one named test.
   find bar's) and the page area come after the row, and the tab's view starts at the page area's top.
 - **Scenario: chrome-row-tab-order** — with a page loaded in a background tab and the active one
   (Back enabled), Tab from Back walks Forward when enabled, Reload, the active tab, the address bar,
-  New tab, the SEO sidebar toggle and the render-profile toggle, in that order, and Shift+Tab walks
+  New tab, the SEO sidebar toggle, the render-profile toggle, the AI agent's toggle and the Settings button, in that order, and Shift+Tab walks
   back; Mod+L (via the menu, as its accelerator does) focuses the address bar from the page, and the
   tablist's keys still work from the tab Tab lands on.
 - **Scenario: narrow-tabs-scroll-and-address-keeps-its-width** — in an 800px wide window with many
@@ -316,12 +395,27 @@ Phase 1 Task 2. Each scenario maps to one named test.
   `ADDRESS_BASIS_PX`; every tool (`CHROME_ROW` but the tablist and the address bar) stays
   `--h-control` square (34×34) throughout.
 - **Scenario: narrowest-window-keeps-the-row-whole** — the window's minimum width less its frame's is
-  `CHROME_MIN_CONTENT_WIDTH_PX` (a pixel more at a fractional display scale); with its content exactly that wide and several tabs, the row holds every `CHROME_ROW` control inside
+  `CHROME_MIN_CONTENT_WIDTH_PX + chromeRowInset(platform)` (a pixel more at a fractional display scale); with its content exactly that wide and several tabs, the row holds every `CHROME_ROW` control inside
   its box, the tablist shows one whole tab (at least `TAB_MIN_WIDTH_PX`), the address bar is
   `ADDRESS_MIN_WIDTH_PX` wide and every tool 34×34.
 - **Scenario: focus-never-scrolls-the-row** — with the row made narrower than its contents (a test-only
-  width on it), focusing the clipped render-profile toggle leaves the row's `scrollLeft` at 0 and Back
+  width on it), focusing the clipped Settings button (the row's last control) leaves the row's `scrollLeft` at 0 and Back
   at the row's left padding.
+- **Scenario: chrome-row-is-the-title-bar** — on macOS and Windows the content starts at the window's
+  top (content bounds' top and height equal the window's) and the Window Controls Overlay is visible;
+  on macOS Back starts at the overlay's `titlebar-area-x`, which is `TRAFFIC_LIGHTS_ZONE_PX`, the
+  overlay's height is the row's (the lights' box) and the lights' position is `TRAFFIC_LIGHT_POSITION`; on Windows the last tool ends at least `WINDOW_DRAG_STRIP_PX`
+  left of the caption buttons (the overlay's titlebar area's right edge, `CAPTION_BUTTONS_WIDTH_PX` from
+  the window's right edge) and the overlay is the row's height; on Linux there is no visible
+  overlay and the row's padding is `--space-4` at both ends. On all three the row's `app-region` is
+  `drag` and every control in it (each `CHROME_ROW` control's element, each tab and its ×, and every
+  focusable element in the row) resolves to `no-drag` on itself or an ancestor inside the row.
+- **Scenario: page-cannot-drag-the-window** — a page whose style sheet and inline style set
+  `app-region: drag !important` on its root, body, a button, the button's `::before` and an element in
+  a shadow tree: on macOS and Windows all five resolve `none`, and again in the next document the
+  tab loads; on Linux they stay `drag` (nothing is inserted; the frame ignores them).
+- **Scenario: fullscreen-row-takes-the-full-width** (macOS) — in native fullscreen the traffic lights'
+  inset is gone: Back starts at the row's `--space-4`; leaving fullscreen brings the inset back.
 - **Scenario: arrow-focus-brings-the-whole-tab-in** — in a 1280px window with 20 tabs and the first
   active, ArrowRight from tab to tab past the tablist's visible edge, then ArrowLeft back: after each
   move the focused tab's whole pill (× included) is inside the tablist's box.

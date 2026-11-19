@@ -1,12 +1,13 @@
-/* Agent panel (Phase 5 Task 6b; specs/agent-panel.spec.ts, AGENT_PANEL_WIDTH / AGENT_RAIL_WIDTH).
+/* Agent panel (Phase 5 Task 6b; specs/agent-panel.spec.ts, AGENT_PANEL_WIDTH).
    Imported by AgentPanel.tsx and bundled by Vite with the chrome's styles (app://, CSP style-src
    'self'): no inline styles anywhere. Every `.agent` rule lives in this file. It sits in the
    workspace row between the page column and the SEO sidebar; like the SEO panel it gives way
    (shrinks) before the page goes under --page-min-width. Light and dark follow the OS.
    Signal (specs/design-tokens.feature.md, The agent panel): every rule reads Signal tokens, its text
-   the --text-* type tokens (Geist). Collapsed or open, it is a floating sheet
-   (specs/workspace-layout.feature.md): the rail or the panel is --bg-sheet at --r-lg with --e-sheet
-   and a transparent border forced colours draw; this wrapper draws nothing of its own. */
+   the --text-* type tokens (Geist). Open, it is a floating sheet (specs/workspace-layout.feature.md):
+   the panel is --bg-sheet at --r-lg with --e-sheet and a transparent border forced colours draw;
+   this wrapper draws nothing of its own. Collapsed, it renders nothing in the row: its toggle is the
+   chrome row's (AgentToggle.tsx, a .tool drawn pressed by styles.css's .sidebar-toggle rules). */
 
 .agent {
   position: relative;
@@ -18,12 +19,6 @@
   font: var(--text-body);
 }
 
-/* Collapsed, the wrapper is its rail's width and never shrinks: in a window too narrow for every
-   sheet, the rail stays whole with its gap to the window's edge (specs/workspace-layout.feature.md). */
-.agent[data-open='false'] {
-  flex: none;
-}
-
 /* Phase 11 Task 10: the open panel's separator, in the gap past its left edge next to the page
    (`.pane-separator` in styles.css draws it). */
 .agent-separator {
@@ -33,7 +28,7 @@
 /* Tight gaps under TIGHT_WORKSPACE_BELOW (the chrome's query in styles.css): offset by the 4px gap, the
    8px separator also covers the panel's own 4px edge; its line stays in the middle of the gap (this
    sheet loads before styles.css, hence the second class). */
-@container chrome (width < 748px) {
+@container chrome (width < 700px) {
   .agent-separator {
     left: calc(-1 * var(--space-1));
   }
@@ -43,55 +38,14 @@
   }
 }
 
-/* Collapsed: the rail and its toggle (1px less padding inside the border). It doesn't clip: its one
-   toggle never reaches the corners, and the toggle's focus ring reaches past the rail's content box. */
-.agent-rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  flex: none;
-  width: var(--agent-rail-width);
-  padding: calc(var(--space-3) - 1px) 0;
-  border: 1px solid transparent;
-  border-radius: var(--r-lg);
-  background: var(--bg-sheet);
-  box-shadow: var(--e-sheet);
-}
-
-.agent-rail-toggle {
+/* The chrome row's toggle (AgentToggle.tsx): its badge's anchor. */
+.agent-toggle-tool {
   position: relative;
-  display: grid;
-  place-items: center;
-  width: var(--h-control);
-  height: var(--h-control);
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
-  color: var(--text-muted);
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
 }
 
-.agent-rail-toggle:hover {
-  background: var(--bg-hover);
-  color: var(--accent);
-}
-
-.agent-rail-toggle:focus-visible {
-  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
-  outline: 2px solid transparent;
-  outline-offset: 2px;
-  box-shadow: var(--focus-ring);
-}
-
-.agent-rail-toggle .icon {
-  width: var(--icon-size);
-  height: var(--icon-size);
-}
-
-.agent-rail-badge {
+/* While the panel is collapsed: a turn running (--accent) or an approval waiting (--warn), cut out of
+   the chrome row's --bg-window. */
+.agent-toggle-badge {
   position: absolute;
   top: var(--space-1);
   right: var(--space-1);
@@ -99,10 +53,10 @@
   height: 8px;
   border-radius: var(--r-pill);
   background: var(--accent);
-  box-shadow: 0 0 0 2px var(--bg-sheet);
+  box-shadow: 0 0 0 2px var(--bg-window);
 }
 
-.agent-rail-badge[data-badge='approval'] {
+.agent-toggle-badge[data-badge='approval'] {
   background: var(--warn);
 }
 

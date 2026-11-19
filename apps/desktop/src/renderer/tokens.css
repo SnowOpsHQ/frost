@@ -46,7 +46,6 @@
 
   /* ---- Agent panel (was in components/agent/agent.css) */
   --agent-panel-width: 380px;
-  --agent-rail-width: 40px;
 }
 
 /* ==== 2. Signal tokens (the self-aliases included; Signal-only names unused until the surface PRs) */

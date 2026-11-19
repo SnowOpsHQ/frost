@@ -1,8 +1,10 @@
-// Spec: specs/tabs.spec.ts (MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, RESERVED_TAB_SHORTCUTS, CHROME_ROW, CHROME_ROW_HEIGHT_PX, TAB_MIN_WIDTH_PX, ADDRESS_BASIS_PX, ADDRESS_MIN_WIDTH_PX, CHROME_MIN_CONTENT_WIDTH_PX) · Acceptance: specs/tabs.feature.md (End to end)
+// Spec: specs/tabs.spec.ts (MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, RESERVED_TAB_SHORTCUTS, CHROME_ROW, CHROME_ROW_HEIGHT_PX, TAB_MIN_WIDTH_PX, ADDRESS_BASIS_PX, ADDRESS_MIN_WIDTH_PX, CHROME_MIN_CONTENT_WIDTH_PX),
+// specs/title-bar.spec.ts (chromeRowInset, TRAFFIC_LIGHT_POSITION, TRAFFIC_LIGHTS_ZONE_PX, CAPTION_BUTTONS_WIDTH_PX, WINDOW_DRAG_STRIP_PX) · Acceptance: specs/tabs.feature.md (End to end)
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { ADDRESS_BASIS_PX, ADDRESS_MIN_WIDTH_PX, CHROME_MIN_CONTENT_WIDTH_PX, CHROME_ROW, CHROME_ROW_HEIGHT_PX, MAX_TABS, NEW_TAB_LABEL, NOTICE_MESSAGES, TAB_MIN_WIDTH_PX } from '@app/specs/browser.spec';
+import { CAPTION_BUTTONS_WIDTH_PX, chromeRowInset, rowIsTitleBar, TRAFFIC_LIGHT_POSITION, TRAFFIC_LIGHTS_ZONE_PX, WINDOW_DRAG_STRIP_PX, type TitleBarPlatform } from '@app/specs/title-bar.spec';
 import { closeApp, launchApp } from './harness';
 import { chromeHelpers } from './helpers';
 
@@ -21,6 +23,11 @@ async function startSiteServer() {
         window.seen = [];
         addEventListener('keydown', (event) => { seen.push(event.key); event.preventDefault(); event.stopImmediatePropagation(); }, true);
       </script>`);
+    else if (path === '/dragger')
+      // A page that claims the window's drag area for itself, every way it can (page-cannot-drag-the-window).
+      html(`<title>Dragger</title><style>html, body, button, button::before { app-region: drag !important; } button::before { content: 'x'; }</style>
+        <button id="b" style="app-region: drag !important">Click me</button><div id="host"></div>
+        <script>document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = '<style>span { app-region: drag !important; }</style><span id="s">shadow</span>';</script>`);
     else if (path === '/slow') held.push(response);
     else {
       const name = path.slice(1).toUpperCase() || 'ROOT';
@@ -45,11 +52,13 @@ async function startSiteServer() {
 
 let app: ElectronApplication;
 let page: Page;
-const { browseContents, attachedViewIds, contentsIdAt, menu, strip, activeTab, address, chromeCaughtUp, go, closeAllTabs, press } = chromeHelpers(
+const { browseContents, attachedViewIds, contentsIdAt, menu, run, strip, activeTab, address, chromeCaughtUp, go, closeAllTabs, press } = chromeHelpers(
   () => app,
   () => page,
 );
 let site: Awaited<ReturnType<typeof startSiteServer>>;
+/** The room the row gives the window's controls here (title-bar.spec.ts): the same row content needs this much more window. */
+const INSET = chromeRowInset(process.platform as TitleBarPlatform);
 
 test.beforeAll(async () => {
   site = await startSiteServer();
@@ -471,9 +480,9 @@ async function openTabs(count: number): Promise<void> {
   if (count > have) await expect(address()).toBeFocused();
 }
 
-/** Opens enough tabs to overflow the tablist in an 800px wide window; restores the window after. */
+/** Opens enough tabs to overflow the tablist in an 800px wide window (plus the window controls' room); restores the window after. */
 async function withNarrowWindowAndManyTabs(body: () => Promise<void>): Promise<void> {
-  await withContentWidth(800, async () => {
+  await withContentWidth(800 + INSET, async () => {
     await openTabs(12);
     await body();
   });
@@ -560,11 +569,12 @@ test('narrowest-window-keeps-the-row-whole', async () => {
     const win = BrowserWindow.getAllWindows()[0]!;
     return win.getMinimumSize()[0]! - (win.getSize()[0]! - win.getContentSize()[0]!);
   });
-  // Never less; a fractional display scale may round the frame's width by a pixel.
-  expect(minContent).toBeGreaterThanOrEqual(CHROME_MIN_CONTENT_WIDTH_PX);
-  expect(minContent).toBeLessThanOrEqual(CHROME_MIN_CONTENT_WIDTH_PX + 1);
+  // Never less; a fractional display scale may round the frame's width by a pixel. On macOS and Windows
+  // the row also gives the window's controls their room.
+  expect(minContent).toBeGreaterThanOrEqual(CHROME_MIN_CONTENT_WIDTH_PX + INSET);
+  expect(minContent).toBeLessThanOrEqual(CHROME_MIN_CONTENT_WIDTH_PX + INSET + 1);
   await withContentWidth(
-    CHROME_MIN_CONTENT_WIDTH_PX,
+    CHROME_MIN_CONTENT_WIDTH_PX + INSET,
     async () => {
       await openTabs(4);
       const facts = await rowFacts();
@@ -581,18 +591,134 @@ test('narrowest-window-keeps-the-row-whole', async () => {
   );
 });
 
+/** The Window Controls Overlay as the chrome sees it: whether it is visible, and the free title bar area's rect. */
+const overlay = () =>
+  page.evaluate(() => {
+    const wco = (navigator as unknown as { windowControlsOverlay?: { visible: boolean; getTitlebarAreaRect(): DOMRect } }).windowControlsOverlay;
+    const rect = wco?.visible ? wco.getTitlebarAreaRect() : null;
+    return { visible: wco?.visible === true, rect: rect && { x: rect.x, width: rect.width, height: rect.height }, innerWidth };
+  });
+
+test('chrome-row-is-the-title-bar', async () => {
+  await go(`${site.origin}/a`);
+  await openTabs(3);
+  const win = await app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows()[0]!;
+    return { bounds: w.getBounds(), content: w.getContentBounds(), lights: process.platform === 'darwin' ? w.getWindowButtonPosition() : null };
+  });
+  const facts = await row().evaluate((el, ids) => {
+    // The nearest app-region set on the element or an ancestor inside the row (app-region is not inherited).
+    const region = (node: Element) => {
+      for (let at: Element | null = node; at !== null && at !== el.parentElement; at = at.parentElement) {
+        const value = getComputedStyle(at).getPropertyValue('app-region').trim();
+        if (value === 'drag' || value === 'no-drag') return value;
+      }
+      return 'none';
+    };
+    const named = ids.filter((id) => id !== 'tab-strip').map((id) => el.querySelector(`[data-testid="${id}"]`)!);
+    const focusable = [...el.querySelectorAll('button, input, select, textarea, a[href], [tabindex], [role="tab"], .tab, [data-testid="tab-close"]')];
+    const controls = [...new Set([...named, ...focusable])];
+    const label = (node: Element) => node.getAttribute('data-testid') ?? node.getAttribute('aria-label') ?? node.className;
+    const style = getComputedStyle(el);
+    const parts = [...el.children].filter((child) => !child.classList.contains('progress'));
+    return {
+      row: region(el),
+      dragging: controls.filter((node) => region(node) !== 'no-drag').map(label),
+      count: controls.length,
+      tabs: el.querySelectorAll('.tab').length,
+      padding: [parseFloat(style.paddingLeft), parseFloat(style.paddingRight)],
+      first: parts[0]!.getBoundingClientRect().left,
+      last: parts.at(-1)!.getBoundingClientRect().right,
+    };
+  }, [...CHROME_ROW]);
+  // Dragging (every platform): the row drags the window, none of its controls does.
+  expect(facts.row).toBe('drag');
+  expect(facts.tabs).toBe(3);
+  expect(facts.count).toBeGreaterThan(CHROME_ROW.length + 3);
+  expect(facts.dragging).toEqual([]);
+  const { visible, rect, innerWidth } = await overlay();
+  if (process.platform === 'linux') {
+    // Linux keeps its native frame: no overlay, --space-4 at both ends.
+    expect(visible).toBe(false);
+    expect(facts.padding).toEqual([12, 12]);
+    return;
+  }
+  // macOS and Windows: no title bar strip above the row (the content is the whole window), and the
+  // overlay, as high as the row, says where the window's controls are.
+  expect(win.content).toEqual(win.bounds);
+  expect(visible).toBe(true);
+  expect(rect!.height).toBe(CHROME_ROW_HEIGHT_PX);
+  if (process.platform === 'darwin') {
+    expect(win.lights).toEqual(TRAFFIC_LIGHT_POSITION);
+    // The traffic lights' zone, and Back right of it.
+    expect(rect!.x).toBe(TRAFFIC_LIGHTS_ZONE_PX);
+    expect(facts.first).toBe(TRAFFIC_LIGHTS_ZONE_PX);
+    expect(facts.padding[1]).toBe(12);
+  } else {
+    // The caption buttons at the end, and the drag strip between them and the last tool.
+    expect(rect!.x).toBe(0);
+    expect(innerWidth - (rect!.x + rect!.width)).toBeCloseTo(CAPTION_BUTTONS_WIDTH_PX, 0);
+    expect(rect!.x + rect!.width - facts.last).toBeGreaterThanOrEqual(WINDOW_DRAG_STRIP_PX - 0.5);
+    expect(facts.padding[0]).toBe(12);
+  }
+});
+
+// Acceptance: specs/tabs.feature.md (Dragging: only the chrome drags, never a page)
+test('page-cannot-drag-the-window', async () => {
+  // The page's own `app-region: drag !important` (style sheet, inline, a pseudo-element, a shadow tree) loses to
+  // the user sheet main inserts where the row is the title bar; Linux's frame ignores regions, so nothing is inserted.
+  const expected = Array<string>(5).fill(rowIsTitleBar(process.platform as TitleBarPlatform) ? 'none' : 'drag');
+  const regions = (id: number) =>
+    run(
+      id,
+      `(() => {
+        const region = (el, pseudo) => getComputedStyle(el, pseudo).getPropertyValue('app-region').trim();
+        const button = document.getElementById('b');
+        return [region(document.documentElement), region(document.body), region(button), region(button, '::before'), region(document.getElementById('host').shadowRoot.getElementById('s'))];
+      })()`,
+    );
+  for (const url of [`${site.origin}/dragger`, `${site.origin}/dragger?next`]) {
+    // Each a new document in the same tab (its URL names it, so the check never reads the one before).
+    await go(url);
+    const id = await contentsIdAt(url);
+    await expect.poll(() => regions(id)).toEqual(expected);
+  }
+});
+
+test('fullscreen-row-takes-the-full-width', async () => {
+  test.skip(process.platform !== 'darwin', 'the traffic lights leave the row only in macOS native fullscreen');
+  const start = () => row().evaluate((el) => parseFloat(getComputedStyle(el).paddingLeft));
+  const fullScreen = (flag: boolean) => app.evaluate(({ BrowserWindow }, on) => BrowserWindow.getAllWindows()[0]!.setFullScreen(on), flag);
+  const isFullScreen = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isFullScreen());
+  expect(await start()).toBe(TRAFFIC_LIGHTS_ZONE_PX);
+  await fullScreen(true);
+  try {
+    await expect.poll(isFullScreen, { timeout: 15_000 }).toBe(true);
+    await expect.poll(start, { timeout: 15_000 }).toBe(12);
+    expect((await overlay()).visible).toBe(false);
+  } finally {
+    await fullScreen(false);
+    await expect.poll(isFullScreen, { timeout: 15_000 }).toBe(false);
+  }
+  await expect.poll(start, { timeout: 15_000 }).toBe(TRAFFIC_LIGHTS_ZONE_PX);
+  expect((await overlay()).visible).toBe(true);
+});
+
 test('focus-never-scrolls-the-row', async () => {
   await openTabs(3);
   // A test-only width, narrower than the row's contents (the window's minimum keeps a real one whole).
   await row().evaluate((el) => el.style.setProperty('width', '300px'));
   try {
-    await page.getByTestId('render-profile-toggle').focus();
-    await expect(page.getByTestId('render-profile-toggle')).toBeFocused();
+    // The row's last control, the furthest past its clipped right end.
+    await page.getByTestId(CHROME_ROW.at(-1)!).focus();
+    await expect(page.getByTestId(CHROME_ROW.at(-1)!)).toBeFocused();
     const facts = await row().evaluate((el) => ({
       scrollLeft: el.scrollLeft,
       back: el.querySelector('[data-testid="back"]')!.getBoundingClientRect().left - el.getBoundingClientRect().left,
+      padding: parseFloat(getComputedStyle(el).paddingLeft),
     }));
-    expect(facts).toEqual({ scrollLeft: 0, back: 12 });
+    // At the row's start padding: --space-4, or the traffic lights' zone on macOS.
+    expect(facts).toEqual({ scrollLeft: 0, back: facts.padding, padding: process.platform === 'darwin' ? TRAFFIC_LIGHTS_ZONE_PX : 12 });
   } finally {
     await row().evaluate((el) => el.style.removeProperty('width'));
   }
@@ -619,9 +745,13 @@ test('arrow-focus-brings-the-whole-tab-in', async () => {
   });
 });
 
-/** Runs `body` with the row forced `width` wide (test-only: a tiled window can be narrower than its minimum). */
+/**
+ * Runs `body` with the row's content as in a row `width` wide without window controls (test-only: a tiled
+ * window can be narrower than its minimum): on macOS and Windows the row is `INSET` wider, the room its
+ * padding gives the controls.
+ */
 async function withRowWidth(width: number, body: () => Promise<void>): Promise<void> {
-  await row().evaluate((el, w) => el.style.setProperty('width', `${w}px`), width);
+  await row().evaluate((el, w) => el.style.setProperty('width', `${w}px`), width + INSET);
   try {
     await body();
   } finally {
@@ -722,7 +852,7 @@ test('below-the-minimum-the-address-bar-gives-way', async () => {
     await activeTab().focus();
     await expect.poll(focusedPillInside).toBe(true);
   });
-  // The address bar keeps its padding and border (24px), so the tools stay whole down to 372px.
+  // The address bar keeps its padding and border (24px), so the tools stay whole down to 448px.
   await withRowWidth(CHROME_MIN_CONTENT_WIDTH_PX - ADDRESS_MIN_WIDTH_PX + 24, async () => {
     const facts = await rowFacts();
     expect(facts.inside).toBe(true);

@@ -21,11 +21,11 @@ import type { ModelId, ModelProvider, ModelRoute } from './agent-tools.spec';
  * before the page goes under `PAGE_MIN_WIDTH` (`seo-sidebar.spec.ts`), and the page area shrinks
  * to make room, so main lays the tab's view out clear of both.
  *
- * Collapsed, the agent panel is a rail `AGENT_RAIL_WIDTH` wide holding its toggle; open, it is
- * `AGENT_PANEL_WIDTH` wide with a collapse button in its header (no rail).
+ * Collapsed, the agent panel takes no room in the row (no rail, no gap: the page column reaches the
+ * workspace's right inset); its toggle is a chrome-row tool (`agent-toggle` in `CHROME_ROW`,
+ * `tabs.spec.ts`, before the Settings button). Open, it is `AGENT_PANEL_WIDTH` wide with a collapse button in its header.
  */
 export const AGENT_PANEL_WIDTH = 380;
-export const AGENT_RAIL_WIDTH = 40;
 
 /**
  * Open / closed persists in the chrome's own `localStorage` (`app://app`, never the browse

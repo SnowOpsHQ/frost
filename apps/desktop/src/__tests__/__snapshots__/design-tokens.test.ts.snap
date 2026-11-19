@@ -21,7 +21,6 @@ exports[`legacy-token-values-are-pinned 1`] = `
     "--accent-hover": "#4338ca",
     "--accent-soft": "rgb(79 70 229 / 0.1)",
     "--agent-panel-width": "380px",
-    "--agent-rail-width": "40px",
     "--bg-active": "rgb(24 24 27 / 0.09)",
     "--bg-hover": "rgb(24 24 27 / 0.05)",
     "--danger": "#dc2626",

@@ -6,11 +6,11 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
-import { AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
 import { SIGNAL_TOKENS } from '@app/specs/design-tokens.spec';
 import { RENDER_FRAME } from '@app/specs/render-profile.spec';
 import { SIDEBAR_RAIL_WIDTH } from '@app/specs/seo-sidebar.spec';
 import { ADDRESS_BASIS_PX, CHROME_ROW, TAB_MIN_WIDTH_PX } from '@app/specs/tabs.spec';
+import { TITLE_BAR_OVERLAY_COLOURS, WINDOW_DRAG_STRIP_PX } from '@app/specs/title-bar.spec';
 import {
   NARROW_PANEL_WRAPS,
   NARROW_WINDOW,
@@ -100,7 +100,7 @@ test('chrome-row-is-one-fixed-track', () => {
   expect(address).toMatch(/min-width:\s*min\(var\(--address-basis\),\s*max\(0px,\s*var\(--row-free\) - var\(--one-tab\)\)\);/);
   // The room for the tablist and the address bar: the row's own content width (an inline-size
   // container) less its tools and gaps, counted from CHROME_ROW, so a new tool can't go uncounted.
-  expect([ROW_TOOLS, ROW_GAPS]).toEqual([6, 7]);
+  expect([ROW_TOOLS, ROW_GAPS]).toEqual([8, 9]);
   expect(row).toMatch(/container-type:\s*inline-size;/);
   const free = row.match(/--row-free:\s*calc\(100cqw - (\d+) \* var\(--h-control\) - (\d+) \* var\(--space-1\)\);/);
   expect(free, '--row-free').not.toBeNull();
@@ -119,6 +119,47 @@ test('chrome-row-is-one-fixed-track', () => {
       .map(({ selector }) => `${file}: ${selector}`),
   );
   expect(stale).toEqual([]);
+});
+
+test('title-bar-overlay-colours-are-the-row-tokens', () => {
+  // specs/tabs.feature.md (The row is the window's title bar): Windows draws its caption buttons on the
+  // row's background with the tools' icon colour, light and dark, from title-bar.spec.ts's literals.
+  const tokens = read('tokens.css');
+  const dark = tokens.indexOf('@media (prefers-color-scheme: dark)');
+  expect(dark).toBeGreaterThan(0);
+  const hex = (css: string, name: string) => css.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6});`))?.[1]?.toLowerCase();
+  const theme = (css: string) => ({ color: hex(css, '--bg-window'), symbolColor: hex(css, '--text-muted') });
+  expect(theme(tokens.slice(0, dark))).toEqual(TITLE_BAR_OVERLAY_COLOURS.light);
+  expect(theme(tokens.slice(dark))).toEqual(TITLE_BAR_OVERLAY_COLOURS.dark);
+  // …and those are the row's colours.
+  expect(rule('styles.css', '.chrome-row')).toMatch(/background:\s*var\(--bg-window\);/);
+  expect(rule('styles.css', '.tool')).toMatch(/color:\s*var\(--text-muted\);/);
+});
+
+test('chrome-row-pads-by-the-window-controls', () => {
+  // specs/tabs.feature.md (The row is the window's title bar): the Window Controls Overlay's variables,
+  // present on macOS and Windows and absent on Linux (each falls back so its inset is 0).
+  const row = rule('styles.css', '.chrome-row');
+  expect(row).toMatch(/--controls-start:\s*env\(titlebar-area-x, 0px\);/);
+  expect(row).toMatch(/--controls-end:\s*max\(0px, 100vw - env\(titlebar-area-x, 0px\) - env\(titlebar-area-width, 100vw\)\);/);
+  expect(row).toMatch(new RegExp(`--drag-strip:\\s*${WINDOW_DRAG_STRIP_PX}px;`));
+  expect(row).toMatch(/padding-block:\s*0;/);
+  // The traffic lights' zone, or --space-4 where there is none.
+  expect(row).toMatch(/padding-left:\s*max\(var\(--space-4\), var\(--controls-start\)\);/);
+  // The caption buttons and the drag strip beside them, or --space-4 where there are none.
+  expect(row).toMatch(/padding-right:\s*calc\(var\(--space-4\) \+ var\(--controls-end\) \+ sign\(var\(--controls-end\)\) \* \(var\(--drag-strip\) - var\(--space-4\)\)\);/);
+  expect(row).not.toMatch(/(^|;)\s*padding:/);
+});
+
+test('only-the-chrome-row-sets-app-region', () => {
+  // specs/tabs.feature.md (The row is the window's title bar: dragging): the row drags; each of its
+  // children but the tablist and the loading line, and each tab, does not; no other rule names it.
+  const setters = CSS_FILES.flatMap((file) =>
+    rules(read(file))
+      .filter(({ body }) => /(^|[\s;])(-webkit-)?app-region\s*:/.test(body))
+      .map(({ selector, body }) => `${file}: ${selector.replace(/\s+/g, ' ')} → ${[...body.matchAll(/app-region\s*:\s*([^;]+);/g)].map((m) => m[1]!.trim()).join(' ')}`),
+  );
+  expect(setters).toEqual(['styles.css: .chrome-row → drag', 'styles.css: .chrome-row > :not(.tabs, .progress), .chrome-row .tab → no-drag']);
 });
 
 test('no-style-drops-a-chrome-slot', () => {
@@ -248,19 +289,23 @@ test('workspace-layout-values', () => {
   const token = (name: string) => Object.values(SIGNAL_TOKENS).flat().find((t) => t.name === name)?.light;
   expect(token(WORKSPACE_GAP.token)).toBe(`${WORKSPACE_GAP.px}px`);
   expect(token(SHEET_RADIUS.token)).toBe(`${SHEET_RADIUS.px}px`);
-  expect(workspaceRowChrome({ sidebar: true, agent: false })).toBe(SIDEBAR_RAIL_WIDTH + AGENT_RAIL_WIDTH + 3 * WORKSPACE_GAP.px);
-  expect(workspaceRowChrome({ sidebar: false, agent: false })).toBe(SIDEBAR_RAIL_WIDTH + AGENT_RAIL_WIDTH + 2 * WORKSPACE_GAP.px);
+  // Collapsed, the agent takes no room: no rail and no page | agent gap.
+  expect(workspaceRowChrome({ sidebar: true, agent: false })).toBe(SIDEBAR_RAIL_WIDTH + 2 * WORKSPACE_GAP.px);
+  expect(workspaceRowChrome({ sidebar: false, agent: false })).toBe(SIDEBAR_RAIL_WIDTH + WORKSPACE_GAP.px);
   expect(workspaceRowChrome({ sidebar: true, agent: true })).toBe(SIDEBAR_RAIL_WIDTH + 3 * WORKSPACE_GAP.px);
   expect(workspaceRowChrome({ sidebar: false, agent: true })).toBe(SIDEBAR_RAIL_WIDTH + 2 * WORKSPACE_GAP.px);
   expect(workspaceRowWidth(1280)).toBe(1280 - 2 * WORKSPACE_GAP.px);
   // The window's minimum: the SEO sheet with the agent collapsed (specs/workspace-layout.feature.md, A narrow window).
-  expect(NARROW_WINDOW).toEqual({ width: 588, seoSheet: 160 });
+  expect(NARROW_WINDOW).toEqual({ width: 664, seoSheet: 280 });
   // Tight gaps where, with --space-3 ones and the agent collapsed, the SEO sheet would fall under its minimum.
-  expect(TIGHT_WORKSPACE_BELOW).toBe(748);
+  expect(TIGHT_WORKSPACE_BELOW).toBe(700);
   expect(token(WORKSPACE_GAP_TIGHT.token)).toBe(`${WORKSPACE_GAP_TIGHT.px}px`);
-  expect([workspaceGap(747), workspaceGap(748), workspaceGap(776), workspaceGap(588)]).toEqual([4, 8, 8, 4]);
-  expect(workspaceRowWidth(588)).toBe(580);
-  expect(workspaceRowChrome({ sidebar: true, agent: false }, 4)).toBe(SIDEBAR_RAIL_WIDTH + AGENT_RAIL_WIDTH + 12);
+  expect([workspaceGap(699), workspaceGap(700), workspaceGap(776), workspaceGap(664), workspaceGap(626), workspaceGap(588)]).toEqual([4, 8, 8, 4, 4, 4]);
+  expect(workspaceRowWidth(664)).toBe(656);
+  expect(workspaceRowChrome({ sidebar: true, agent: false }, 4)).toBe(SIDEBAR_RAIL_WIDTH + 8);
+  // The earlier minimums (626px with the agent's toggle alone, 588px before it), which a tiling window manager may still impose: the sheet is 242px and 204px.
+  expect(workspaceRowWidth(626) - 320 - workspaceRowChrome({ sidebar: true, agent: false }, workspaceGap(626))).toBe(242);
+  expect(workspaceRowWidth(588) - 320 - workspaceRowChrome({ sidebar: true, agent: false }, workspaceGap(588))).toBe(204);
   expect(SEO_BODY_NARROW_PADDING).toEqual({ token: '--space-1', belowContentWidth: 298 });
   expect(pageViewRadius({ fullscreen: false, framed: false })).toBe(16);
   expect(pageViewRadius({ fullscreen: true, framed: false })).toBe(0);
@@ -295,7 +340,7 @@ test('workspace-is-padded-and-gapped', () => {
     expect(drawn, selector).toEqual([]);
   }
   // The gaps replace the rules: no --divider edge on a sheet or a wrapper.
-  for (const selector of ['.workspace-stack', '.seo', '.seo-panel', '.seo-rail', '.agent', '.agent-main', '.agent-rail', '.status-bar', '.devtools', '.projects-sheet', ".projects-sheet[data-running='true']", '.palette-sheet'])
+  for (const selector of ['.workspace-stack', '.seo', '.seo-panel', '.seo-rail', '.agent', '.agent-main', '.status-bar', '.devtools', '.projects-sheet', ".projects-sheet[data-running='true']", '.palette-sheet'])
     for (const [property, value] of resolved(['components/agent/agent.css', 'styles.css'], selector))
       expect(/^border/.test(property) && value.includes('--divider'), `${selector} { ${property}: ${value} }`).toBe(false);
   // The command palette's band: the canvas's padding, the gap to the page card under the card.
@@ -307,7 +352,7 @@ test('workspace-is-padded-and-gapped', () => {
 });
 
 test('sheets-are-rounded-and-raised', () => {
-  expect(WORKSPACE_SHEETS.length).toBe(11);
+  expect(WORKSPACE_SHEETS.length).toBe(10);
   for (const sheet of WORKSPACE_SHEETS) {
     const files = sheet.stylesheet === 'styles.css' ? ['styles.css'] : [sheet.stylesheet, 'styles.css'];
     const own = resolved(files, sheet.selector);
@@ -317,17 +362,15 @@ test('sheets-are-rounded-and-raised', () => {
     // The edge forced colours draw: a whole-pixel transparent border inside the sheet, or an outline outside it.
     expect(own.get(sheet.edge), sheet.name).toBe('1px solid transparent');
     if (sheet.edge === 'outline') expect(own.has('border'), sheet.name).toBe(false);
-    // It clips its content to its corners (`clip`, or the scroll box it already was); the agent rail
-    // doesn't (its toggle's focus ring reaches past its content box).
-    if ('clips' in sheet) expect(own.get('overflow') ?? 'visible', sheet.name).toBe('visible');
-    else expect(['clip', 'hidden', 'auto'], sheet.name).toContain(own.get('overflow'));
+    // It clips its content to its corners (`clip`, or the scroll box it already was).
+    expect(['clip', 'hidden', 'auto'], sheet.name).toContain(own.get('overflow'));
   }
   // Each sheet's own rule is where its fill lives (the page column's sheets share one shape rule).
   for (const sheet of WORKSPACE_SHEETS) expect(resolved([sheet.stylesheet], sheet.selector).get('background'), sheet.name).toBe(`var(${sheet.fill})`);
-  // A rail's items keep their place inside its border; the agent rail's badge is cut out of the sheet.
+  // A rail's items keep their place inside its border.
   expect(resolved(['styles.css'], '.seo-rail').get('padding')).toBe('calc(var(--space-3) - 1px) 0');
-  expect(resolved(['components/agent/agent.css'], '.agent-rail').get('padding')).toBe('calc(var(--space-3) - 1px) 0');
-  expect(resolved(['components/agent/agent.css'], '.agent-rail-badge').get('box-shadow')).toBe('0 0 0 2px var(--bg-sheet)');
+  // The collapsed agent has no sheet: its toggle's badge is cut out of the chrome row's fill.
+  expect(resolved(['components/agent/agent.css'], '.agent-toggle-badge').get('box-shadow')).toBe('0 0 0 2px var(--bg-window)');
   // The SEO sheet's body: the canvas's 16px in.
   expect(resolved(['styles.css'], '.seo-body').get('padding')).toBe('var(--space-5)');
 });
@@ -350,8 +393,9 @@ test('page-area-collapses-hide-it', () => {
 });
 
 test('narrow-window-styles', () => {
-  // The collapsed agent never shrinks: its rail stays whole in a window too narrow for every sheet.
-  expect(resolved(['components/agent/agent.css'], ".agent[data-open='false']").get('flex')).toBe('none');
+  // Collapsed, the agent renders nothing in the row: no stylesheet styles a collapsed agent or its retired rail.
+  for (const file of CSS_FILES)
+    for (const { selector } of rules(read(file))) expect(/\.agent\[data-open='false'\]|\.agent-rail/.test(selector), `${file}: ${selector}`).toBe(false);
   // Under the panel's minimum (its content box, inside the 1px border) the SEO body's padding is the narrow one.
   expect(resolved(['styles.css'], '.seo-panel').get('container')).toBe('seo-panel / inline-size');
   const plain = read('styles.css').replace(/\/\*[\s\S]*?\*\//g, '');

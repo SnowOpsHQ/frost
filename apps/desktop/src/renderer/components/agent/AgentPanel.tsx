@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 // Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types).
 import type { TabState } from '@app/specs/browser.spec';
 import { AGENT_PANEL_TITLE } from '@app/specs/agent-panel.spec';
 import { agentActions } from '../../agent-actions';
 import { agentPaletteSources, onAgentPanelRequest, setPaletteSkills } from '../../agent-palette';
-import { chatHeading, railBadge, runningChatId, skillRunChatId } from '../../agent-view';
-import { useAgentState } from '../../hooks/useAgentState';
+import { chatHeading, runningChatId, skillRunChatId } from '../../agent-view';
 import { ChevronIcon, PlusIcon } from '../../icons';
 import { registerPaletteActions } from '../../palette/registry';
 import { usePaneLayout } from '../../sidebar-layout';
@@ -19,14 +18,16 @@ import { AgentGrants } from './AgentGrants';
 import { AgentSettings } from './AgentSettings';
 import { AgentSkills } from './AgentSkills';
 import { AgentSparkIcon, ChatsIcon, SlidersIcon } from './agent-icons';
-import { useAgentPanelOpen } from './useAgentPanelOpen';
+import type { AgentPanelControl } from './useAgentPanel';
 import './agent.css';
 
 // The AI agent panel (spec `agent-panel.spec.ts`; acceptance `agent-panel.feature.md`). Docked in
 // the workspace row between the page column and the SEO sidebar: page | agent | SEO. Both may be
 // open; each panel gives way before the page goes under its minimum, and the page area shrinks so
 // main lays the tab's view out clear of it (`PageArea` reports its box on every resize).
-// Collapsed it is a narrow rail with its toggle; the palette's "Toggle AI agent" works either way.
+// Collapsed it renders nothing in the row (its toggle is the chrome row's `AgentToggle`); the
+// palette's "Toggle AI agent" works either way. Its open state and main's `AgentState` come from
+// `useAgentPanel` (held by `App.tsx`, shared with the toggle).
 // Everything it shows is main's `AgentState` (`agent.watch`); intents go over the sender-guarded
 // `agent.*` procedures (`agent-actions.ts`). Styling is agent.css only (bundled; strict CSP), and
 // model, page and tool text are React text only. Phase 11 Task 10: the open panel's width is the
@@ -42,33 +43,15 @@ type View = 'chat' | 'chats' | 'settings' | 'grants' | 'skills';
 
 const VIEW_TITLES: Readonly<Record<View, string>> = { chat: AGENT_PANEL_TITLE, chats: 'Chats', settings: 'Agent settings', grants: 'Site grants', skills: 'Skills' };
 
-export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
-  const state = useAgentState();
-  // `remembered` is the user's own choice (persisted); a new approval opens the panel for now
-  // (`autoOpened`) without changing it.
-  const [remembered, setRemembered] = useAgentPanelOpen();
-  const [autoOpened, setAutoOpened] = useState(false);
-  const open = remembered || autoOpened;
-  const auto = useRef(autoOpened);
-  auto.current = autoOpened;
-  /** The user opens or collapses the panel: that is remembered, and any auto-open ends. */
-  const setOpen = useCallback(
-    (next: boolean | ((was: boolean) => boolean)) => {
-      const wasAuto = auto.current;
-      setAutoOpened(false);
-      setRemembered((was) => (typeof next === 'function' ? next(was || wasAuto) : next));
-    },
-    [setRemembered],
-  );
+export function AgentPanel({ tab, agent }: { readonly tab: TabState | undefined; readonly agent: AgentPanelControl }) {
+  const { state, open, setOpen, show, focusAfter, toggleRef: toggle } = agent;
   const [view, setView] = useState<View>('chat');
   const aside = useRef<HTMLElement>(null);
   const { separator } = usePaneLayout('agent', open, aside);
-  const toggle = useRef<HTMLButtonElement>(null);
   const settingsToggle = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLTextAreaElement | null>(null);
   // The composer's skill picker: the focus target while a picked skill replaces the message field.
   const picker = useRef<HTMLSelectElement | null>(null);
-  const focusAfter = useRef<'input' | 'toggle' | 'settings' | null>(null);
   // Bumped by each palette request, so focus moves even when the panel already shows that view.
   const [requestSeq, setRequestSeq] = useState(0);
   // The latest state, for the palette's requests (a skill runs in the chat on screen).
@@ -84,11 +67,6 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
     setPaletteSkills({ skills: skills ?? [], running });
   }, [skills, running]);
   useEffect(() => () => setPaletteSkills({ skills: [], running: false }), []);
-
-  const show = (next: boolean, focus: 'input' | 'toggle' | null = next ? 'input' : 'toggle') => {
-    focusAfter.current = focus;
-    setOpen(next);
-  };
 
   // The palette's requests.
   useEffect(
@@ -121,14 +99,8 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
           void agentActions.newChat();
         }
       }),
-    [setOpen],
+    [setOpen, focusAfter],
   );
-
-  // A new approval request opens the panel, so it is never missed (the remembered choice stays).
-  const approvalId = state?.approval?.request.id ?? null;
-  useEffect(() => {
-    if (approvalId !== null) setAutoOpened(true);
-  }, [approvalId]);
 
   // Focus follows an explicit open or collapse (never a state update); the composer may only be
   // there once the first state arrived.
@@ -137,27 +109,16 @@ export function AgentPanel({ tab }: { readonly tab: TabState | undefined }) {
     const target = focusAfter.current;
     if (target === 'toggle' && !open) toggle.current?.focus();
     else if (target === 'settings' && open && view === 'settings') settingsToggle.current?.focus();
-    else if (target === 'input' && open && view === 'chat') {
+    else if (target === 'input' && open) {
       const field = input.current ?? picker.current;
       if (field === null) return;
       field.focus();
     }
     focusAfter.current = null;
-  }, [open, view, loaded, requestSeq]);
+  }, [open, view, loaded, requestSeq, focusAfter, toggle]);
 
-  const badge = railBadge(state);
-  if (!open) {
-    return (
-      <aside ref={aside} className="agent" data-testid="agent-panel" data-open="false" aria-label={AGENT_PANEL_TITLE}>
-        <nav className="agent-rail" aria-label={AGENT_PANEL_TITLE}>
-          <button ref={toggle} type="button" className="agent-rail-toggle" data-testid="agent-toggle" aria-expanded="false" aria-label="Open the AI agent" title="Open the AI agent" onClick={() => show(true)}>
-            <AgentSparkIcon />
-            {badge !== null ? <span className="agent-rail-badge" data-testid="agent-rail-badge" data-badge={badge} aria-hidden="true" /> : null}
-          </button>
-        </nav>
-      </aside>
-    );
-  }
+  // Collapsed, it takes no room in the row: no rail, no gap (the page column takes the width).
+  if (!open) return null;
 
   const active = state?.active ?? null;
   const covered = tab?.fullscreen != null;

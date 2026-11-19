@@ -95,17 +95,28 @@ input {
    the window's minimum (CHROME_MIN_CONTENT_WIDTH_PX, exactly the row with one tab and that width),
    and below it (a tiling window manager ignores the minimum) on toward nothing, before any tool. It
    measures its own width (an inline-size container), not the window's. The loading line runs along
-   its foot. */
+   its foot.
+   On macOS and Windows it is also the window's title bar (specs/tabs.feature.md, The row is the
+   window's title bar): the traffic lights or the caption buttons are drawn over its ends, and it pads
+   itself by the Window Controls Overlay's variables (absent on Linux, where both ends keep --space-4):
+   the lights' zone at the start, the caption buttons and a drag strip (WINDOW_DRAG_STRIP_PX) at the
+   end. 100cqw is its content box, so the widths above hold inside the insets. It drags the window;
+   every control in it does not. */
 .chrome-row {
   /* TAB_MIN_WIDTH_PX and ADDRESS_BASIS_PX (specs/tabs.spec.ts). */
   --tab-min: 84px;
   --address-basis: 360px;
   /* One whole tab with its ring room: the least the tablist shows. */
   --one-tab: calc(var(--tab-min) + 2 * var(--space-1));
-  /* The room for the tablist and the address bar: the row's content width less its six tools (Back,
-     Forward, Reload, New tab and the two toggles) and its seven gaps (CHROME_ROW). Read where it is
-     used, inside the row, so 100cqw is the row's own width. */
-  --row-free: calc(100cqw - 6 * var(--h-control) - 7 * var(--space-1));
+  /* The room for the tablist and the address bar: the row's content width less its eight tools (Back,
+     Forward, Reload, New tab, the three toggles: SEO sidebar, render profile, AI agent, and Settings) and its
+     nine gaps (CHROME_ROW). Read where it is used, inside the row, so 100cqw is the row's own width. */
+  --row-free: calc(100cqw - 8 * var(--h-control) - 9 * var(--space-1));
+  /* The window's controls (title-bar.spec.ts): the traffic lights' zone at the start; the caption
+     buttons at the end (the window's width less the free title bar area); 0 without an overlay. */
+  --controls-start: env(titlebar-area-x, 0px);
+  --controls-end: max(0px, 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  --drag-strip: 40px;
   container-type: inline-size;
   position: relative;
   display: flex;
@@ -113,10 +124,22 @@ input {
   gap: var(--space-1);
   min-width: 0;
   height: var(--h-chrome);
-  padding: 0 var(--space-4);
+  padding-block: 0;
+  padding-left: max(var(--space-4), var(--controls-start));
+  /* The drag strip instead of --space-4 only where caption buttons are (sign() is 1 there, else 0). */
+  padding-right: calc(var(--space-4) + var(--controls-end) + sign(var(--controls-end)) * (var(--drag-strip) - var(--space-4)));
   overflow: clip;
   background: var(--bg-window);
   font: var(--text-body);
+  app-region: drag;
+}
+
+/* The controls take their clicks back from the title bar: every child of the row but the tablist and
+   the loading line (a tool added later too), and each tab with its ×; the tablist's padding and the gaps
+   between its tabs drag. */
+.chrome-row > :not(.tabs, .progress),
+.chrome-row .tab {
+  app-region: no-drag;
 }
 
 /* The tablist: as wide as its tabs, it shrinks first and then scrolls sideways (no scrollbar). Each
@@ -377,7 +400,8 @@ input {
   color: color-mix(in srgb, var(--text-faint) 50%, transparent);
 }
 
-/* The toolbar's SEO sidebar toggle: pressed while the sidebar is open. */
+/* The toolbar's panel toggles, the SEO sidebar's and the AI agent's (AgentToggle.tsx): pressed while
+   their panel is open. */
 .sidebar-toggle[aria-pressed='true'] {
   background: var(--accent-soft);
   color: var(--accent);
@@ -7883,7 +7907,7 @@ input {
 
 /* The drawer's gap under the row in a narrow workspace (specs/workspace-layout.feature.md, A narrow
    window: the chrome's query, kept in this section with every .devtools rule). */
-@container chrome (width < 748px) {
+@container chrome (width < 700px) {
   .devtools {
     max-height: calc(100% - var(--devtools-page-min) - var(--space-1));
     margin-top: var(--space-1);
@@ -11103,14 +11127,14 @@ input {
 
 /* ---- Workspace: tight gaps in a narrow window ----------------------------------------------- */
 
-/* specs/workspace-layout.feature.md, A narrow window: under TIGHT_WORKSPACE_BELOW (748px of workspace,
+/* specs/workspace-layout.feature.md, A narrow window: under TIGHT_WORKSPACE_BELOW (700px of workspace,
    where --space-3 gaps would leave the SEO sheet under its minimum with the agent collapsed), every
    gap and inset of the workspace is --space-1 together, the bands' too, so their edges stay on the
    sheets' (the two gaps inside the page column, the palette's and a Projects run's, cost no width
    and stay). The separators keep their 8px hit area: offset by the 4px gap, they also cover the pane's
    own 4px edge beside it (never the page card), their line in the middle of the gap. The DevTools
    drawer's section and the agent's stylesheet repeat this query for the drawer and the separator. Last in the file, after the rules it overrides. */
-@container chrome (width < 748px) {
+@container chrome (width < 700px) {
   .workspace-stack {
     padding: 0 var(--space-1);
   }

@@ -265,7 +265,8 @@ export const LEGACY_TOKEN_MIGRATION = [
   // Layout constants: kept, no visual token
   { legacy: '--page-min-width', kind: 'alias', signal: null, was: '320px', note: 'layout constant: the name stays, no visual token' },
   { legacy: '--agent-panel-width', kind: 'alias', signal: null, was: '380px', note: 'layout constant: the name stays, no visual token' },
-  { legacy: '--agent-rail-width', kind: 'alias', signal: null, was: '40px', note: 'layout constant: the name stays, no visual token' },
+  // The agent toggle's PR (agent-panel.feature.md, Toggle): the collapsed agent takes no room, so its rail's width went.
+  { legacy: '--agent-rail-width', kind: 'retire', signal: null, was: '40px', note: 'none: the collapsed agent has no rail (its toggle is the chrome row\'s)', removed: true },
   { legacy: '--settings-width', kind: 'alias', signal: null, was: '820px', note: 'layout constant: the name stays, no visual token' },
   { legacy: '--settings-nav-width', kind: 'alias', signal: null, was: '168px', note: 'layout constant: the name stays, no visual token' },
   { legacy: '--history-width', kind: 'alias', signal: null, was: '760px', note: 'layout constant: the name stays, no visual token' },
@@ -472,7 +473,7 @@ export interface CascadeContext {
  * The states every cascade check runs in (`TEXT_COLOUR_RULES`, `TEXT_TYPE_RULES`, `FOCUS_RING_RULES`,
  * `FORCED_COLOURS_BUSY`, `FORCED_COLOURS_PRESSED`, `FORCED_COLOURS_KEPT`, `DISABLED_CONTROLS`, `PRESSED_EDGES`,
  * `STATE_EDGES` and `TAB_STRIP`'s active tab), each in light and dark: the default window, where every container
- * is wider than its queries and motion is allowed; reduced motion; and the narrowest window (588px,
+ * is wider than its queries and motion is allowed; reduced motion; and the narrowest window (664px,
  * `workspace-layout.spec.ts` `NARROW_WINDOW`), where every width query the stylesheets hold (each an upper
  * bound) applies at once. A rule in a reduced-motion or width block that undid a guarded colour, ring, edge,
  * type or `forced-color-adjust` fails its check there.
@@ -604,7 +605,7 @@ export interface ForcedColoursPressed extends ForcedColoursBusy {
  * over it. An entry with `rest` (and `match`) also pins the unchosen item's edge (`ForcedColoursPressed`).
  */
 export const FORCED_COLOURS_PRESSED = [
-  { stylesheet: 'styles.css', element: ['.tool', ".sidebar-toggle[aria-pressed='true']"], why: 'the SEO sidebar toggle, pressed (the sidebar open)' },
+  { stylesheet: 'styles.css', element: ['.tool', ".sidebar-toggle[aria-pressed='true']"], why: 'the SEO sidebar\'s and the AI agent\'s toggles (both .sidebar-toggle), pressed (their panel open)' },
   { stylesheet: 'styles.css', element: ['.tool', ".render-toggle[aria-pressed='true']"], why: 'the render-profile toggle, pressed (its editor bar open)' },
   // The panels' shared controls (Links, Images, Social and Schema's PR): pressed is a fill (--accent-soft,
   // or the chosen segment's raised --bg-surface), which forced colours replace.
@@ -2695,7 +2696,7 @@ export const FOCUS_RING_RULES = [
   {
     stylesheet: 'styles.css',
     element: ['.tool', TOOL_HOVER, ".sidebar-toggle[aria-pressed='true']", '.tool:focus-visible'],
-    why: 'the SEO sidebar toggle, pressed (the sidebar open), focused and hovered: its --accent-soft fill keeps the ring',
+    why: 'the SEO sidebar\'s and the AI agent\'s toggles (both .sidebar-toggle), pressed (their panel open), focused and hovered: the --accent-soft fill keeps the ring',
   },
   { stylesheet: 'styles.css', element: ['.tab', TAB_HOVER, TAB_FOCUS], why: 'an inactive tab, focused (the tablist\'s roving focus) and hovered' },
   { stylesheet: 'styles.css', element: ['.tab', ".tab[data-active='true']", TAB_FOCUS], why: 'the active tab, focused: its --e-raised edge gives way to --focus-ring' },

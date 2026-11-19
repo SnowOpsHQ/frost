@@ -1,9 +1,9 @@
-// Spec: specs/agent-panel.spec.ts (AGENT_PANEL_WIDTH, AGENT_RAIL_WIDTH)
+// Spec: specs/agent-panel.spec.ts (AGENT_PANEL_WIDTH)
 // Acceptance: specs/agent-panel.feature.md (agent-styles-are-delimited)
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
-import { AGENT_PANEL_WIDTH, AGENT_RAIL_WIDTH } from '@app/specs/agent-panel.spec';
+import { AGENT_PANEL_WIDTH } from '@app/specs/agent-panel.spec';
 
 const read = (relative: string) => readFileSync(fileURLToPath(new URL(`../renderer/${relative}`, import.meta.url)), 'utf8');
 const COMPONENTS = fileURLToPath(new URL('../renderer/components/agent/', import.meta.url));
@@ -15,7 +15,8 @@ test('agent-styles-are-delimited', () => {
   // Its widths are design tokens (specs/design-tokens.spec.ts), declared in tokens.css.
   const tokens = read('tokens.css');
   expect(tokens).toContain(`--agent-panel-width: ${AGENT_PANEL_WIDTH}px;`);
-  expect(tokens).toContain(`--agent-rail-width: ${AGENT_RAIL_WIDTH}px;`);
+  // Collapsed, the agent takes no room: its rail's width is gone (its toggle is the chrome row's).
+  expect(tokens).not.toContain('--agent-rail-width');
   // Approved code wraps: nothing hides past the block's right edge.
   const codeRule = css.slice(css.indexOf('.agent-code {'), css.indexOf('}', css.indexOf('.agent-code {')));
   expect(codeRule).toContain('white-space: pre-wrap;');

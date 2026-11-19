@@ -38,6 +38,12 @@
       "rationale": "Reviewed (Phase 5 execute_javascript): runs only code the user approved for this one call (approval broker, via 'approval' only), in the dedicated agent isolated world of a browse tab (never main world, app pages or main), page-checked, time- and size-capped; agent-page-tools.feature.md, test execute-js-never-main-world."
     },
     {
+      "id": "DANGEROUS_FUNCTIONS_JS_CHECK",
+      "file": "apps/desktop/src/main/window.ts",
+      "source": "webContents.on('did-navigate', () => void webContents.insertCSS(PAGE_NO_DRAG_CSS, { cssOrigin: 'user' }).catch(() => {}));",
+      "rationale": "Reviewed: the inserted CSS is the constant PAGE_NO_DRAG_CSS (specs/title-bar.spec.ts), no user or page input; it only resets app-region so a browsed page cannot drag the window once the title bar is hidden; tabs.feature.md (Dragging), tests tab-view-pages-cannot-drag-the-window and page-cannot-drag-the-window."
+    },
+    {
       "id": "CERTIFICATE_VERIFY_PROC_JS_CHECK",
       "file": "apps/desktop/src/main/update/service.ts",
       "source": "if (UPDATE_TEST_CERT_PATTERN.test(pin)) updateSession.setCertificateVerifyProc(pinnedCertificateVerifier(pin));",

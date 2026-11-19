@@ -709,8 +709,8 @@ export function chatHeading(active: AgentActiveChatView | null): string {
   return active === null || active.title.trim() === '' ? 'New chat' : active.title;
 }
 
-/** The rail toggle's badge: an approval waiting (most urgent), a turn running, or nothing. */
-export function railBadge(state: Pick<AgentState, 'approval' | 'running'> | null): 'approval' | 'running' | null {
+/** The chrome row's agent toggle's badge while the panel is collapsed: an approval waiting (most urgent), a turn running, or nothing. */
+export function toggleBadge(state: Pick<AgentState, 'approval' | 'running'> | null): 'approval' | 'running' | null {
   if (state === null) return null;
   if (state.approval !== null) return 'approval';
   return state.running ? 'running' : null;

@@ -24,6 +24,11 @@ Electronegativity sees them.
 - **Scenario: tab-view-has-no-preload** — no `preload` key at all.
 - **Scenario: tab-view-disables-dialogs** — `disableDialogs` is `true` (`browse-guard.feature.md`,
   JavaScript dialogs).
+- **Scenario: tab-view-pages-cannot-drag-the-window** — on macOS and Windows each main-frame
+  navigation of the view's WebContents (`did-navigate`) inserts `PAGE_NO_DRAG_CSS` with
+  `cssOrigin: 'user'` (`tabs.feature.md`, Dragging), and a rejected insert (the page is gone) is
+  swallowed; on Linux nothing is inserted. `PAGE_NO_DRAG_CSS` is one `app-region: initial !important`
+  rule per `PAGE_NO_DRAG_SELECTORS` entry.
 
 ## Session classification: the browse-class registry (`apps/desktop/src/main/browser/__tests__/browse-class.test.ts`; installers: `browse-class-installers.test.ts`)
 "Is this a tab's session?" has one answer: `browser/browse-class.ts` (`BROWSE_CLASS_PARTITIONS` in

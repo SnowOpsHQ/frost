@@ -52,7 +52,7 @@ import {
   modelOptionGroups,
   modelOptions,
   protectionMessage,
-  railBadge,
+  toggleBadge,
   reasoningChoice,
   reasoningSelect,
   runningChatId,
@@ -318,9 +318,9 @@ describe('agent panel view model', () => {
     expect(chatHeading(null)).toBe('New chat');
     expect(visibleNotice({ kind: 'busy', message: 'm', seq: 3 }, 2)).not.toBeNull();
     expect(visibleNotice({ kind: 'busy', message: 'm', seq: 3 }, 3)).toBeNull();
-    expect(railBadge(null)).toBeNull();
-    expect(railBadge(state({ running: true }))).toBe('running');
-    expect(railBadge(state({ running: true, approval: { request: approval(), queued: 0 } }))).toBe('approval');
+    expect(toggleBadge(null)).toBeNull();
+    expect(toggleBadge(state({ running: true }))).toBe('running');
+    expect(toggleBadge(state({ running: true, approval: { request: approval(), queued: 0 } }))).toBe('approval');
   });
 
   test('skill-picker-grouped-by-category', () => {

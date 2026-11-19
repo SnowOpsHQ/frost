@@ -14,17 +14,18 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
 ## Decisions
 - **Floating sheets.** The workspace (between the chrome row, with any band under it, and the status
   bar) is the window's `--bg-window` holding rounded sheets, left to right: the SEO rail, the SEO
-  sheet while the sidebar is open, the page column, and the agent panel (its rail when collapsed). The
+  sheet while the sidebar is open, the page column, and the agent panel while it is open. Collapsed,
+  the agent takes no room (no rail and no gap: the page column reaches the workspace's right inset;
+  its toggle is the chrome row's, `agent-panel.feature.md`, Toggle). The
   sheets are `WORKSPACE_GAP` (`--space-3`, 8px) apart and the same in from the window's left and
   right edges (the workspace's inline padding), but in a workspace narrower than
-  `TIGHT_WORKSPACE_BELOW` (748px), where they are `--space-1` (A narrow window); none at the top (the chrome row's own room, or a
+  `TIGHT_WORKSPACE_BELOW` (700px), where they are `--space-1` (A narrow window); none at the top (the chrome row's own room, or a
   band's `--space-3` margin under it) or at the bottom (the status bar's). The gaps replace the rules
   that ruled the pieces off: the workspace's top `--divider`, the sidebar's right edge, the panel's
   left edge, the agent panel's left edge, the status bar's top rule and the DevTools drawer's top
   edge are gone.
 - **Sheets** (`WORKSPACE_SHEETS`): every one has `SHEET_RADIUS` (`--r-lg`) corners and clips its
-  content to them (but the agent rail, whose one toggle never reaches its corners and whose focus
-  ring reaches past its content box). The SEO rail, the SEO sheet, the agent rail, the open agent panel and the DevTools
+  content to them. The SEO rail, the SEO sheet, the open agent panel and the DevTools
   drawer are `--bg-sheet` with `--e-sheet` ("rail, sidebar, agent panel")
   and a transparent 1px border inside their own widths (forced colours drop the shadow and repaint
   the fill, and draw the border). The page card (`.page-area`) is `--bg-surface` with
@@ -35,8 +36,8 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   border included, and a border would move the sheets' content. The SEO sidebar's and agent panel's
   wrappers (`.seo`, `.agent`) are plain flex boxes with no fill or edge of their own; the SEO sidebar
   holds its rail and sheet `WORKSPACE_GAP` apart. A rail's items keep their place inside its border
-  (1px less padding). The collapsed agent rail is a sheet like the SEO rail (the canvas draws neither
-  collapsed agent nor its rail), so its badge's halo is the sheet's fill.
+  (1px less padding). The collapsed agent has no sheet, as on the canvas, which draws no collapsed
+  agent: its toggle and badge are in the chrome row, the badge's halo the row's `--bg-window`.
 - **The page card and the native view.** The tab's `WebContentsView` is laid over exactly the page
   card's box (the page area, as before: `setPageBounds`), with no gap and no overlap, and main rounds
   its corners to the card's: `pageViewRadius` through `View.setBorderRadius()` (Electron 45: one
@@ -55,45 +56,49 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   moves it sideways at one size. It observes the row's other sheets (the SEO sidebar, the agent
   panel) as well as itself. (Before, the view stayed where the card had been.)
 - **Window chrome width.** Inside the workspace's inset the row spends `workspaceRowChrome` on
-  anything but the page and the open panels (the two rails and two gaps, a third gap while the SEO
-  sheet is open). `sidebar-layout.ts` counts it where it counted the two 1px edges, so each panel
+  anything but the page and the open panels (the SEO rail and the SEO sidebar | page gap, plus the
+  rail | sheet gap while the SEO sheet is open and the page | agent gap while the agent panel is). `sidebar-layout.ts` counts it where it counted the two 1px edges, so each panel
   still gives way before the page goes under `PAGE_MIN_WIDTH`, in the same order (the agent panel to
   its minimum, then the SEO sheet). In the tiled 776px window with the SEO sheet open and the agent
-  collapsed, the page keeps `PAGE_MIN_WIDTH` and the SEO sheet narrows from 360 to 328px (it was 360,
-  with the page at 326); at the 588px minimum (tight gaps) the page keeps 320 and the sheet is 160px
-  (178 before); with the sidebar collapsed the page is 484px (498 before). The gaps never touch the
+  collapsed, the SEO sheet keeps its 360px and the page is 336px (with the collapsed agent's 40px rail
+  and its gap the sheet narrowed to 328px beside a 320px page); at the 664px minimum (tight gaps) the
+  page keeps 320 and the sheet is 280px, at the 626px and 588px minimums the row had before (which a
+  tiling window manager may still impose) 242px and 204px (160 at 588 with the collapsed agent's rail);
+  with the sidebar collapsed the page is 704px at 776 and 604px at 664. The gaps never touch the
   chrome row, whose width rules (`tabs.feature.md`) are unchanged, so no control leaves the row.
   `sidebar-layout.ts` and the DevTools drawer count the gap the workspace's width gives
   (`workspaceGap`); main's bounds come from the page card's measured box, so they follow.
-- **A narrow window** (`NARROW_WINDOW`). The collapsed agent panel never shrinks (`flex: none` on
-  its wrapper): its rail stays `AGENT_RAIL_WIDTH` wide with its gap to the window's edge, where flex
-  shrink had squeezed the wrapper to 24px and cut the rail's corner and toggle. Below the panel's
+- **A narrow window** (`NARROW_WINDOW`). The collapsed agent panel renders nothing in the row, so
+  nothing of it can be squeezed (its 40px rail needed `flex: none` on its wrapper, where flex shrink
+  had squeezed it to 24px and cut the rail's corner and toggle). Below the panel's
   minimum (`SIDEBAR_PANEL_WIDTH_RANGE.min`, a 298px content box inside its border; only a window too
   narrow for it gets there) the SEO body's padding is `--space-1` (`SEO_BODY_NARROW_PADDING`, a
   container query on the panel), not the canvas's `--space-5`.
   **Tight gaps** (`WORKSPACE_GAP_TIGHT`, the owner's choice on #52, round 2). In a workspace narrower
-  than `TIGHT_WORKSPACE_BELOW` (748px: where, with `--space-3` gaps and the agent collapsed, the SEO
-  sheet would fall under its minimum beside the page's), every gap and inset of the workspace is
+  than `TIGHT_WORKSPACE_BELOW` (700px: where, with `--space-3` gaps and the agent collapsed, the SEO
+  sheet would fall under its minimum beside the page's; 748px while the collapsed agent was a rail),
+  every gap and inset of the workspace is
   `--space-1` together: the window's edges, rail | sheet, sheet | page, page | agent, the DevTools
   drawer's gap, and the bands' inset and gap above the workspace, so their edges stay on the sheets'.
   The two gaps inside the page column above the page card (the command palette's band and a Projects
   run's band) stay `--space-3`: they cost no width, and Projects' rules keep to its own container's
   queries (`projects-sheet-stacks-by-its-own-width`). One rule:
-  `@container chrome (width < 748px)` on `.chrome` (`container: chrome / inline-size`), whose width
+  `@container chrome (width < 700px)` on `.chrome` (`container: chrome / inline-size`), whose width
   is the workspace's (its stack spans the chrome's one column); the DevTools drawer's section
   (`devtools-styles-are-delimited`) and the agent's stylesheet repeat the same query for the drawer
   and the separator. Corners stay `--r-lg` and the native view's radius is unchanged. At
-  the 588px minimum the sheet is 160px and its body's content box 150px, 140px beside its vertical
-  scrollbar. `main` renders a 191px sheet there (content 156px) only because its collapsed agent
-  rail is squeezed to about 27px and clipped (fixed in round 1); with a whole 40px rail it would be
-  178px (content about 144px). So at 588px the body is 16px narrower than `main` renders it (4px
-  narrower than `main` with a whole rail). The room is accepted; what costs the text is the parts that
+  the 664px minimum the sheet is 280px and its body's content box 270px, less its vertical
+  scrollbar; at 626px and 588px (below the minimum: a tiled window) 242px and 204px, content 232px
+  and 194px. Round 1 set the
+  rules below at 588px with the collapsed agent's rail, a 160px sheet (content 150px, 140px beside
+  the scrollbar): the room was accepted; what costs the text is the parts that
   keep everything on one line, so under the panel's minimum (the same `seo-panel` query) they wrap
   (`NARROW_PANEL_WRAPS`): Overview's score card puts its ring above its words (it left them about 8px
   beside the 84px ring), the AI-readiness tile's score row likewise (`ai-readiness.css`, which holds the
   tile's rules and loads before `styles.css`), a section head puts its badge under its title, and the
   panels' toggles and actions wrap a long label onto a second line, their height automatic from
-  `--h-chip` up. The bar, agent collapsed at 588px: Overview's, On-Page's, Links' and Changes' bodies
+  `--h-chip` up. The bar, agent collapsed at the minimum (set at 588px with the rail, and held at 664,
+  626 and 588px without it): Overview's, On-Page's, Links' and Changes' bodies
   don't scroll sideways (as on `main`) and Overview's first card clips no more words than `main`'s
   (1); Page Speed, Content and Visibility scrolled sideways on `main` too. Measured: Overview, On-Page
   and Links no longer scroll and Overview's first card clips no word. Changes' capture card stacks too
@@ -101,15 +106,18 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   three columns, about 26px short, their labels overlapping), their group's corner `--r-lg` in place
   of the shared segmented control's pill (a pill three rows tall was drawn as a disc), and the Project picker puts its select
   under its label (12px short), so Changes doesn't scroll sideways either. None of this applies at a
-  width the panel's minimum fits, so nothing changes at 748px and wider.
+  width the panel's minimum fits, so nothing changes at 700px and wider.
   Two consequences of the tight layout, deliberate: the SEO separator's 8px hit area covers the
   panel's last 4px, which with classic scrollbars (Linux, Windows) is its border and about 3px of the
-  body's scrollbar, so pressing the scrollbar's right edge under 748px starts a resize (the separator
-  can't reach under the native view on the other side); and crossing 748px is a step, not a slope:
-  the tight gaps free 20px, so at 747px the SEO sheet is 19px wider than at 748px and the page card
-  starts 7px further right.
+  body's scrollbar, so pressing the scrollbar's right edge under 700px starts a resize (the separator
+  can't reach under the native view on the other side); and crossing 700px is a step, not a slope:
+  the tight gaps free 16px (the two insets and two gaps, the agent collapsed), so at 699px the SEO
+  sheet is 15px wider than at 700px and the page card starts 3px further right.
   Options that change behaviour (the sheet opening collapsed, the page giving way) were not needed.
-  The window's minimum stays 588px.
+  The window's minimum is 664px since the Settings button joined the chrome row (`tabs.feature.md`;
+  626px with the agent's toggle alone, 588px before). At the default 1280px window nothing moved but
+  the rail: the gaps and inset are `--space-3`, the SEO sheet its 360px, and the page card takes the
+  rail's 40px and its gap (the Settings button takes 38px from the address bar, not from the workspace).
 - **Resizing.** A pane's separator (`.pane-separator`) moves from the pane's own edge into the gap
   beside the page, its 2px line in the middle of the gap (still only on hover, drag and focus). It is
   8px wide (`--space-3`) at every width: with `--space-3` gaps it fills the gap; with tight gaps it
@@ -160,21 +168,22 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   now in): the body's padding is `--space-5` (it was `--space-4`), so every panel's content is 8px
   narrower. The canvas also stands Overview's cards 16px apart; each panel's PR decided its own cards
   stand `--space-4` apart (their wrappers' gaps), so they stay, as do the body's and the skeleton's
-  gaps. The canvas has no collapsed agent rail, DevTools drawer, render-profile frame, Projects run
-  band or narrow window; those follow the rules above.
+  gaps. The canvas has no DevTools drawer, render-profile frame, Projects run band or narrow window;
+  those follow the rules above.
 
 ## Known differences
 - **`devtools-drawer-light`'s tab text is greyscale** where the base's had subpixel (LCD)
   antialiasing; dark keeps it. A CI probe (run 43893592708) in that capture found no layer for the
   tab in either theme, light greyscale both before and after dark (so not capture timing), and 16
   other layers composited for overlap in that state (the rail's scroller, the SEO sheet, the page
-  card, the agent rail, the drawer, the separator, the palette's status). The cause wasn't found; the
+  card, the agent rail (since removed), the drawer, the separator, the palette's status). The cause wasn't found; the
   baseline keeps the render.
 
 ## Scenarios
 - **Scenario: workspace-layout-values** (`apps/desktop/src/__tests__/chrome-grid-styles.test.ts`) —
   `WORKSPACE_GAP` and `SHEET_RADIUS` are their tokens' values in `SIGNAL_TOKENS`;
-  `workspaceRowChrome` counts the rails and two or three gaps; `workspaceRowWidth` takes the inset off
+  `workspaceRowChrome` counts the SEO rail and one to three gaps (the page | agent gap only while the
+  agent is open, nothing else for the collapsed agent); `workspaceRowWidth` takes the inset off
   both sides; `pageViewRadius` is 16, 0 in fullscreen (framed or not) and 12 framed;
   `RENDER_DEVICE_OUTLINE_RADIUS` is 13.
 - **Scenario: workspace-is-padded-and-gapped** (same file) — `.workspace-stack` has inline padding
@@ -187,12 +196,12 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   (its stylesheet, then `styles.css`, which loads last) `border-radius: var(--r-lg)`, its `fill` as
   its background, its `elevation` as its box-shadow, its edge (`border: 1px solid transparent`, or
   `outline: 1px solid transparent`) and an overflow that clips (`clip`, or the `hidden` / `auto` it
-  had; the agent rail none).
+  had).
 - **Scenario: page-area-collapses-hide-it** (same file) — every rule that sets the page area's
   `height: 0` is in `PAGE_AREA_COLLAPSES` and sets `visibility: hidden`; the Projects run's rule that
   gives it back its height sets `visibility: visible`.
-- **Scenario: narrow-window-styles** (`chrome-grid-styles.test.ts`) — `.agent[data-open='false']` is
-  `flex: none`; `.seo-panel` is the `seo-panel` inline-size container, and only under
+- **Scenario: narrow-window-styles** (`chrome-grid-styles.test.ts`) — no renderer stylesheet styles a
+  collapsed agent (`.agent[data-open='false']`, the retired `.agent-rail`): it renders nothing; `.seo-panel` is the `seo-panel` inline-size container, and only under
   `SIDEBAR_PANEL_WIDTH_RANGE.min` less its 2px of border is `.seo-body`'s padding
   `SEO_BODY_NARROW_PADDING`, and each `NARROW_PANEL_WRAPS` rule wraps there (its stylesheet's
   `seo-panel` query) and nowhere outside it, the query coming after every top-level rule of each
@@ -202,10 +211,11 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
 - **Scenario: entrance-animations-end** (same file) — no rule in any renderer stylesheet runs an
   animation with `both` or `forwards` fill.
 - **Scenario: narrow-window-keeps-the-sheets-whole** (e2e `workspace.e2e.ts`) — the chrome laid out
-  588px wide with the SEO sheet open on Overview and the agent collapsed: the agent rail is
-  `AGENT_RAIL_WIDTH` wide with `WORKSPACE_GAP_TIGHT` to the chrome's right edge, the gaps between the
+  `NARROW_WINDOW.width` (664px) wide, and again at the earlier minimums 626px and 588px, with the SEO sheet open on
+  Overview and the agent collapsed: no agent panel is rendered and the page card ends
+  `WORKSPACE_GAP_TIGHT` from the chrome's right edge, the gaps between the
   sheets `WORKSPACE_GAP_TIGHT`, the SEO sheet the row less the page's minimum and `workspaceRowChrome`
-  (160px), the page `PAGE_MIN_WIDTH`; the workspace's gap is `WORKSPACE_GAP_TIGHT` at a chrome one pixel
+  (280px; 242 at 626, 204 at 588), the page `PAGE_MIN_WIDTH`; the workspace's gap is `WORKSPACE_GAP_TIGHT` at a chrome one pixel
   under `TIGHT_WORKSPACE_BELOW` and `WORKSPACE_GAP` at it and in a 776px chrome; the SEO body's
   padding is `--space-1` (it is `--space-5` at a width the panel's minimum fits); on Overview the
   body doesn't scroll sideways, and neither the score card's text column (and each line in it) nor
@@ -213,6 +223,12 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   its box counts, which comparing boxes with the body's edge missed); on Changes the body doesn't
   scroll sideways and neither each screenshot kind (and its label) nor the Project picker (its label
   and select) is cut inside its own box. The visual set's `narrow-window` capture draws Overview.
+- **Scenario: default-width-keeps-its-layout** (same file) — the chrome laid out 1280px wide with the
+  SEO sheet open: the inset and gaps are `WORKSPACE_GAP`, the SEO sheet `SIDEBAR_PANEL_WIDTH`, and with
+  the agent collapsed the page card ends `WORKSPACE_GAP` from the chrome's right edge (the row less
+  `workspaceRowChrome` and the sheet); with it open the agent panel is `AGENT_PANEL_WIDTH` wide,
+  `WORKSPACE_GAP` past the page card and from the edge, and the page card is as much narrower as the
+  panel and its gap.
 - **Scenario: separators-sit-in-the-gap** (same file) — `.pane-separator` is `WORKSPACE_GAP` wide
   with its line centred; the SEO separator sits `WORKSPACE_GAP` past the sidebar's right edge, the
   agent's as far past its left.
@@ -236,7 +252,8 @@ DevTools drawer, the sheets of the page column), `components/agent/agent.css`, `
   each state (the SEO sidebar open and collapsed, at its narrowest and widest; the agent panel open
   and collapsed; the find bar and the render-profile editor bar, alone and together; the DevTools
   drawer; the palette's band; two window sizes; a narrow chrome with the page held at its minimum,
-  the agent panel opening and collapsing beside the open SEO sheet) the view's bounds equal the page card's box (`x`, `y`,
+  the agent panel opening and collapsing beside the open SEO sheet; with the agent collapsed the card
+  reaches the workspace's right inset) the view's bounds equal the page card's box (`x`, `y`,
   `width`, `height` each within 1px), the sheets beside it stand `WORKSPACE_GAP` off it, and the
   radius main last set on the view is `pageViewRadius` of that state, read from a spy the test puts on
   the `View` prototype's `setBorderRadius` (Electron has no getter: this proves the value main passed

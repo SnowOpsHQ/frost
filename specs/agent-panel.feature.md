@@ -1,6 +1,6 @@
 # Feature: The agent panel (renderer)
 
-Spec: `specs/agent-panel.spec.ts` (`AGENT_PANEL_WIDTH`, `AGENT_RAIL_WIDTH`, `AGENT_PANEL_STORAGE_KEY`,
+Spec: `specs/agent-panel.spec.ts` (`AGENT_PANEL_WIDTH`, `AGENT_PANEL_STORAGE_KEY`,
 `AGENT_PALETTE_*_ID`, the words: routes, models, model providers (`AGENT_MODEL_PROVIDER_LABELS`), key slots, `AGENT_KEY_PROTECTION_MESSAGES`,
 `AGENT_SET_KEY_MESSAGES`, `AGENT_TOOL_STATUS_LABELS`, `AGENT_APPROVAL_BUTTONS`,
 `AGENT_ANSWER_MESSAGES`), `specs/agent-session.spec.ts` (`AgentState`, `APPROVAL_ENABLE_DELAY_MS`,
@@ -15,16 +15,27 @@ to one named test.
   panel) | page | agent, floating sheets `WORKSPACE_GAP` apart (`workspace-layout.feature.md`).
   Both panels may be open; each gives way before the page goes under
   `PAGE_MIN_WIDTH`, and the page area shrinks (its box is reported to main, so the tab's view never
-  covers a panel). Collapsed, the agent is a rail `AGENT_RAIL_WIDTH` wide with its toggle (and a
-  badge while a turn runs or an approval waits); open, a panel `AGENT_PANEL_WIDTH` wide. It starts
-  closed and remembers the user's open / closed choice (`AGENT_PANEL_STORAGE_KEY`). A new approval
-  request opens it for now without changing that choice.
-- **Toggle.** The rail's button and the palette's "Toggle AI agent" (plus "AI agent settings" and
-  "New AI agent chat"). No keyboard shortcut: shortcuts are main's menu table, not the panel's.
-  Each palette request moves focus into what it shows, even when the panel was already there (the
-  palette restores none): "AI agent settings" to the head's settings button, "New AI agent chat" and
-  "Run skill: {name}" to the composer, the toggle to the composer or the rail's button. The composer's
-  focus is its message field, or its skill picker while a picked skill replaces that field.
+  covers a panel). Collapsed, the agent takes no room in the row: no rail and no gap, so the page
+  column reaches the workspace's right inset (it was a 40px rail with its toggle, which the owner
+  found took space when not in use); open, a panel `AGENT_PANEL_WIDTH` wide. It starts closed and
+  remembers the user's open / closed choice (`AGENT_PANEL_STORAGE_KEY`). A new approval request
+  opens it for now without changing that choice.
+- **Toggle.** A chrome-row tool (`agent-toggle`, `CHROME_ROW` in `tabs.spec.ts`; after the
+  render-profile toggle and before the Settings button, near the right edge where the panel opens): a `.tool` with the agent's spark
+  icon, named "AI agent", pressed (`aria-pressed`) while the panel is open and drawn pressed as the
+  SEO sidebar's toggle is (the same `.sidebar-toggle` rules and guards), its title saying what a
+  click does ("Open the AI agent" / "Collapse the AI agent"). While the panel is collapsed it carries
+  the badge the rail's button had (`toggleBadge`: an approval waiting, else a turn running), cut out
+  of the row's `--bg-window`. The open panel keeps its header's Collapse button. The palette has
+  "Toggle AI agent" (plus "AI agent settings" and "New AI agent chat"). No keyboard shortcut:
+  shortcuts are main's menu table, not the panel's. The open state is one source of truth
+  (`useAgentPanel`, held by `App.tsx` and passed to the row and the panel, as the SEO sidebar's is).
+  **Focus:** opening (the row's toggle, the palette's toggle) moves focus to the composer; collapsing
+  (the header's Collapse, the row's toggle, the palette's toggle) moves it to the row's toggle. Each
+  palette request moves focus into what it shows, even when the panel was already there (the palette
+  restores none): "AI agent settings" to the head's settings button, "New AI agent chat" and "Run
+  skill: {name}" to the composer. The composer's focus is its message field, or its skill picker
+  while a picked skill replaces that field. A new approval opening the panel moves no focus.
 - **State.** The panel renders main's `AgentState` only, long-polled over `agent.watch` with backoff
   on error and a short pause after an answer that didn't advance the version (never a tight loop);
   unmounting aborts the poll in flight. Intents go over the sender-guarded `agent.*` procedures, each with a
@@ -84,7 +95,14 @@ to one named test.
 - **Scenario: approval-code-hint-and-destination** — the hint while code overflows; the "Opens" line.
 - **Scenario: agent-panel-swapped-approval-starts-disarmed** (`agent-panel.test.ts`) — the next
   request's card is disarmed for a whole delay.
-- **Scenario: agent-panel-approval-opens-without-changing-the-preference** (`agent-panel.test.ts`).
+- **Scenario: agent-panel-approval-opens-without-changing-the-preference** (`agent-panel.test.ts`) —
+  collapsed, the panel renders nothing and the row's toggle is unpressed; a new approval opens it
+  (the toggle pressed, its badge gone) and the stored choice stays closed; Collapse and the row's
+  toggle are remembered.
+- **Scenario: agent-toggle-badge-and-focus** (`agent-panel.test.ts`) — collapsed, the row's toggle
+  carries the badge (`running`, then `approval` over it) and none while open; opening from the
+  toggle focuses the composer (also when the panel kept another view, such as Agent settings), and collapsing from the header's Collapse, the toggle or the palette's
+  toggle focuses the toggle.
 - **Scenario: agent-panel-palette-requests-move-focus** (`agent-panel.test.ts`; issue #25) — from the
   palette, settings focuses the settings button and a skill run (or a new chat) the composer (its
   skill picker while a skill is picked, again when the run's turn ends), with the panel closed or
@@ -121,7 +139,8 @@ to one named test.
   origin; Allow once is disabled for the delay; allowed, the tab navigates and the scripted text
   streams in; the context meter shows the step's tokens.
 - **Scenario: agent-panel-keeps-the-page-view-clear** — open, the tab's view ends at the panel's left
-  edge; collapsed, it widens again.
+  edge; collapsed, it widens again, the page card reaching the workspace's right inset (no rail, no
+  gap) and the view with it.
 - **Scenario: agent-approval-deny** — denied: no navigation, the card says Denied, the chat goes on.
 - **Scenario: agent-stop** — Stop during an approval: the card expires and the turn ends.
 - **Scenario: agent-execute-js-asks-every-time** — each run asks, with the full code and the note;

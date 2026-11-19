@@ -27,7 +27,7 @@ import {
   AGENT_TOOL_STATUS_LABELS,
 } from '@app/specs/agent-panel.spec';
 import { PAGE_MIN_WIDTH, SIDEBAR_PANEL_WIDTH } from '@app/specs/seo-sidebar.spec';
-import { WORKSPACE_GAP, workspaceRowChrome } from '@app/specs/workspace-layout.spec';
+import { WORKSPACE_GAP, workspaceGap, workspaceRowChrome } from '@app/specs/workspace-layout.spec';
 import {
   AGENT_GRANTS_EXPLAINER,
   CHAT_EXPORT_MESSAGES,
@@ -155,9 +155,13 @@ async function launchWith(steps: Step[], start: string | null = '/start', option
     await go(`${site.origin}${start}`);
     id = await contentsIdAt(`${site.origin}${start}`);
   }
-  if (options.userDataDir === undefined) await expect(panel()).toHaveAttribute('data-open', 'false');
+  // A new profile starts closed: the panel renders nothing, its toggle (the chrome row's) unpressed.
+  if (options.userDataDir === undefined) {
+    await expect(panel()).toHaveCount(0);
+    await expect(page.getByTestId('agent-toggle')).toHaveAttribute('aria-pressed', 'false');
+  }
   // A kept profile remembers the panel open.
-  if ((await panel().getAttribute('data-open')) !== 'true') {
+  if ((await page.getByTestId('agent-toggle').getAttribute('aria-pressed')) !== 'true') {
     await page.getByTestId('agent-toggle').click();
     await expect(panel()).toHaveAttribute('data-open', 'true');
     await expect(page.getByTestId('agent-input')).toBeFocused();
@@ -261,14 +265,19 @@ test('agent-panel-keeps-the-page-view-clear', async () => {
     return view !== null && view.x + view.width <= Math.ceil(await panelLeft());
   }).toBe(true);
   const openWidth = (await viewBounds())!.width;
-  // Collapsed: the page widens again; the rail stays clear of it too.
+  // Collapsed: the panel renders nothing (no rail, no gap), and the page card and its view widen to
+  // the workspace's right inset (within a pixel: a scaled display measures in fractions).
   await page.getByTestId('agent-collapse').click();
-  await expect(panel()).toHaveAttribute('data-open', 'false');
+  await expect(panel()).toHaveCount(0);
+  await expect(page.getByTestId('agent-toggle')).toBeFocused();
   await expect.poll(async () => (await viewBounds())!.width).toBeGreaterThan(openWidth);
-  await expect.poll(async () => {
-    const view = (await viewBounds())!;
-    return view.x + view.width <= Math.ceil(await panelLeft());
-  }).toBe(true);
+  await expect
+    .poll(async () => {
+      const [view, card, width] = await Promise.all([viewBounds(), page.getByTestId('page-area').boundingBox(), page.evaluate(() => innerWidth)]);
+      const inset = width - workspaceGap(width);
+      return Math.abs(card!.x + card!.width - inset) <= 1 && Math.abs(view!.x + view!.width - (card!.x + card!.width)) <= 1;
+    })
+    .toBe(true);
 });
 
 // Phase 11 Task 10 (`agent-panel.feature.md`, Resize): the separator on the panel's page side.
