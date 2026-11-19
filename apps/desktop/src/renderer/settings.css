@@ -567,9 +567,11 @@
   }
 }
 
-/* The narrowest sheet: the four retentions two by two (a pill track would clip them). */
+/* The narrowest sheet: the four retentions two by two across the card, under the label (a pill track
+   would clip them). */
 @container settings (max-width: 340px) {
   .settings-segmented {
+    flex: 1 1 100%;
     grid-auto-flow: row;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     border-radius: var(--r-md);
