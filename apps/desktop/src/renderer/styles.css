@@ -1550,7 +1550,7 @@ input {
 /* Cards: --bg-surface at --r-md with --e-ring for their edge; the transparent 1px border is the edge
    forced colours draw. */
 .seo-section,
-.seo-score-card,
+.seo-summary,
 .seo-issues {
   padding: var(--space-4) calc(var(--space-2) + var(--space-3));
   border: 1px solid transparent;
@@ -1719,11 +1719,31 @@ input {
   gap: var(--space-4);
 }
 
+/* The summary (seo-sidebar.feature.md, Overview, the summary): the health score, the AI-readiness tile
+   (ai-readiness.css), the counts and "Highlight everything" in one card, a --divider above the tile and
+   above the counts. Each score is a row, its 64px ring beside its words (the value --text-title); under
+   the panel's minimum the rings are 48px and stay beside them (the seo-panel query, last in this file). */
+.seo-summary {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+}
+
 .seo-score-card {
   display: flex;
   align-items: center;
-  gap: var(--space-5);
-  padding: var(--space-5);
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.seo-summary .seo-ring {
+  width: 64px;
+  height: 64px;
+}
+
+.seo-summary .seo-ring-value {
+  font: var(--text-title);
+  letter-spacing: -0.01em;
 }
 
 /* The ring's arc is its band's graphics colour on a --track circle; the band's word beside it names it. */
@@ -1816,20 +1836,34 @@ input {
   font: var(--text-small);
 }
 
-/* Counts by severity: pills on --bg-subtle, the severity's icon, the number and its word. */
+/* Counts by severity: pills on --bg-subtle, the severity's icon, the number and its word. In the summary
+   they fill its width, each growing to share it; where three don't fit, whole pills wrap to a second line
+   and grow to fill it too. */
 .seo-counts {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
 }
 
+.seo-summary .seo-counts {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
+}
+
+.seo-summary .seo-panel-tools {
+  margin-top: var(--space-2);
+}
+
 .seo-count {
   display: inline-flex;
+  flex: 1 0 auto;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
   min-width: 0;
   height: var(--h-chip);
-  padding: 0 var(--space-4) 0 var(--space-3);
+  padding: 0 var(--space-3);
   border: 1px solid transparent;
   border-radius: var(--r-pill);
   background: var(--bg-subtle);
@@ -9262,18 +9296,55 @@ input {
   font: var(--text-small);
 }
 
-/* The probe table: one column per agent; a cell that differs from the browser is marked. */
-.visibility-table {
-  min-width: 560px;
+/* The probes compared one crawler at a time (specs/serp-panels.feature.md, Decisions; design-tokens.feature.md,
+   The panels at 300px): the crawlers' chips (the snippet editor's .seo-chip-button), one that differs
+   from the browser carrying a warning glyph and its count, then the table. */
+.visibility-agents {
+  margin-bottom: var(--space-3);
 }
 
-/* The fact column stays in view while the agents scroll sideways. */
-.visibility-table thead th:first-child,
-.visibility-table tbody th {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  background: var(--bg-surface);
+.visibility-agent-differs {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) / 2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The glyph is graphics: --warn (3:1), its shape saying it without hue; the count takes the chip's text colour. */
+.visibility-agent-differs .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--warn);
+}
+
+/* Three fixed columns, the panel's width (it was eight at a 560px minimum, scrolling 997px sideways at
+   360px): the fact 30%, the browser's and the chosen crawler's values 35% each. The fact starts at the
+   card's padding edge (the card has its own); the last column keeps its end padding, so a marked
+   cell's tint holds its text. */
+.visibility-table {
+  table-layout: fixed;
+}
+
+.visibility-table thead th:first-child {
+  width: 30%;
+}
+
+.visibility-table thead th + th {
+  width: 35%;
+}
+
+.visibility-table th:first-child,
+.visibility-table td:first-child {
+  padding-inline-start: 0;
+}
+
+/* A value wraps in its column: between words, a word wider than the column inside itself. */
+.visibility-table th {
+  overflow-wrap: break-word;
+}
+
+.visibility-table td {
+  overflow-wrap: break-word;
 }
 
 /* An agent told something the browser was not: --warn-ink with a --warn underline (not hue alone). */
@@ -9295,12 +9366,18 @@ input {
   font-weight: 600;
 }
 
+/* A header needs no end padding (the next column's start padding parts them): "smartphone" holds its
+   line in the 300px panel's 79px column. */
+.visibility-table thead th {
+  padding-inline-end: 0;
+}
+
+/* A canonical URL is whole on its lines (the page text's `anywhere`); it was one line cut by an ellipsis
+   (PageText's .seo-ellipsis). */
 .visibility-table td .seo-page-text {
   display: block;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  text-overflow: clip;
 }
 
 .visibility-disclosure {
@@ -9314,10 +9391,18 @@ input {
   font: var(--text-small);
 }
 
+/* A robots.txt file read: its URL whole on its lines (it was cut by an ellipsis at 300px), when it was
+   read after it, on the next line where they don't fit together. */
 .visibility-robots-file {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   min-width: 0;
+}
+
+.visibility-robots-file .seo-page-text {
+  white-space: normal;
+  text-overflow: clip;
 }
 
 .visibility-robots-file .seo-note {
@@ -11248,11 +11333,25 @@ input {
     padding: var(--space-1);
   }
 
-  /* What keeps everything on one line wraps (NARROW_PANEL_WRAPS): the score card's ring above its
-     words, a section head's badge under its title, a long toggle or action label onto a second line. */
+  /* What keeps everything on one line wraps (NARROW_PANEL_WRAPS): Overview's summary keeps each ring
+     beside its words, the rings 48px and the card's padding --space-3 (the 64px ring stacked above them
+     would grow the card tall), a section head's badge under its title, a long toggle or action label
+     onto a second line. */
+  .seo-summary {
+    padding: var(--space-3);
+  }
+
   .seo-score-card {
-    flex-direction: column;
-    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .seo-summary .seo-ring {
+    width: 48px;
+    height: 48px;
+  }
+
+  .seo-summary .seo-ring-value {
+    font: var(--text-heading);
   }
 
   .seo-section-head {

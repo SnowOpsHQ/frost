@@ -13,7 +13,7 @@ import { AGENT_PANEL_WIDTH } from '@app/specs/agent-panel.spec';
 import { PAGE_MIN_WIDTH, SIDEBAR_PANEL_WIDTH } from '@app/specs/seo-sidebar.spec';
 import { NARROW_WINDOW, pageViewRadius, TIGHT_WORKSPACE_BELOW, WORKSPACE_GAP, WORKSPACE_GAP_TIGHT, workspaceGap, workspaceRowChrome, workspaceRowWidth } from '@app/specs/workspace-layout.spec';
 import { closeApp, launchApp } from './harness';
-import { chromeHelpers } from './helpers';
+import { chromeHelpers, cutText } from './helpers';
 
 let app: ElectronApplication;
 let page: Page;
@@ -295,6 +295,10 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
     // A width the panel's minimum fits: the canvas's 16px.
     await page.setViewportSize({ width: 900, height });
     await expect.poll(padding).toBe('16px');
+    // Overview's summary at the default panel width: one card, each 64px ring beside its words, nothing cut,
+    // and the issues straight under it, --space-4 (12px) down (seo-sidebar.feature.md, Overview, the summary).
+    expect(await summaryLayout()).toEqual({ rings: [64, 64], beside: [true, true], issuesGap: 12 });
+    expect(await cutText(page.locator('.seo-summary'))).toEqual([]);
     // The window's minimum, and the earlier ones (626px before the Settings button joined the chrome row,
     // 588px before the agent's toggle did), which a tiling window manager may still impose: the same rules
     // hold at each.
@@ -344,6 +348,9 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
         };
       });
       expect(facts).toEqual({ cardInside: true, bodyScrolls: false, textCut: [], controlCut: false });
+      // The summary's rings stay beside their words, 48px under the panel's minimum (they stacked above them).
+      expect(await summaryLayout(), `${width}px`).toEqual({ rings: [48, 48], beside: [true, true], issuesGap: 12 });
+      expect(await cutText(page.locator('.seo-summary')), `${width}px`).toEqual([]);
       // Changes: its capture card's Screenshot row and Project picker stack, so the body doesn't scroll
       // sideways and no screenshot kind (nor its label) or Project picker part is cut inside its own box
       // (overlapping kinds were cut that way, inside a body that only just fitted).
@@ -382,6 +389,27 @@ test('narrow-window-keeps-the-sheets-whole', async () => {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
   }
 });
+
+/**
+ * Overview's summary card: each score row's ring width, whether the ring sits beside its words (it ends
+ * where the text column starts or before, their vertical extents overlapping), and the gap from the card
+ * to the issues under it.
+ */
+async function summaryLayout(): Promise<{ rings: number[]; beside: boolean[]; issuesGap: number }> {
+  return page.locator('.seo-summary').evaluate((summary) => {
+    const rows = [summary.querySelector('.seo-score-card'), summary.querySelector('[data-testid="ai-readiness-tile"] .ai-score')];
+    const rings: number[] = [];
+    const beside: boolean[] = [];
+    for (const row of rows) {
+      const ring = row?.querySelector('.seo-ring')?.getBoundingClientRect();
+      const text = row?.querySelector('.seo-score-text')?.getBoundingClientRect();
+      rings.push(ring ? Math.round(ring.width) : -1);
+      beside.push(!!ring && !!text && ring.right <= text.left + 0.5 && ring.top < text.bottom && text.top < ring.bottom);
+    }
+    const issues = summary.parentElement!.querySelector('.seo-issues')!.getBoundingClientRect();
+    return { rings, beside, issuesGap: Math.round(issues.top - summary.getBoundingClientRect().bottom) };
+  });
+}
 
 /**
  * The view's corners as the screen shows them (`page-view-corner-is-drawn-rounded`): the screen captured by

@@ -2,17 +2,20 @@
 // PROBE_ROBOTS_SERVED_NOTE, PROBE_LIMITS), specs/ai-readiness.spec.ts (AI_READINESS_COPY, aiReadinessScore,
 // aiScoreBasis), specs/intent-classifier.spec.ts (INTENT_ENABLE_PROMPT, INTENT_MODEL,
 // INTENT_DOWNLOAD_MB, INTENT_MODEL_DIR), specs/serp-selector-pack.spec.ts (the e2e pack seams), specs/fetcher.spec.ts (E2E_PUBLIC_HOSTS_SWITCH)
-// Acceptance: specs/serp-panels.feature.md (End to end), specs/ai-readiness.feature.md (End to end); review
+// Acceptance: specs/serp-panels.feature.md (End to end; Decisions: the probes compare one agent with the browser
+// at a time), specs/design-tokens.feature.md (The panels at 300px: Visibility's probe table),
+// specs/ai-readiness.feature.md (End to end); review
 // focus probes-are-bounded. The site is `probe-site.ts` (robots.txt, `/llms.txt`, the pages).
 import { readdir } from 'node:fs/promises';
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { AI_READINESS_COPY, aiReadinessScore, aiScoreBasis, type AiCheckStatus, type AiReadinessCheckId } from '@app/specs/ai-readiness.spec';
 import { E2E_PUBLIC_HOSTS_SWITCH } from '@app/specs/fetcher.spec';
 import { INTENT_DOWNLOAD_MB, INTENT_ENABLE_PROMPT, INTENT_MODEL, INTENT_MODEL_DIR, INTENT_STATE_MESSAGES } from '@app/specs/intent-classifier.spec';
 import { SERP_E2E_PACK_KEY_SWITCH, SERP_E2E_PACK_URL_SWITCH } from '@app/specs/serp-selector-pack.spec';
 import { PROBE_AGENTS, PROBE_DISCLOSURE, PROBE_LIMITS, PROBE_MODELLED_DIRECTIVES_NOTE, PROBE_ROBOTS_SERVED_NOTE } from '@app/specs/visibility-probes.spec';
+import { NARROW_WINDOW } from '@app/specs/workspace-layout.spec';
 import { closeApp, launchApp } from './harness';
-import { chromeHelpers } from './helpers';
+import { atNarrowestPanel, chromeHelpers, cutText } from './helpers';
 import { CRAWLER, LLMS_TXT_TITLE, SECOND_HOST, SITE_HOST, startProbeSite, type ProbeSite } from './probe-site';
 import { PACK_PATH, PACK_VERSION, SEARCH_HOST, signedTestPack } from './serp-fixtures';
 
@@ -32,6 +35,19 @@ const sidebar = () => chrome.getByTestId('seo-sidebar');
 const railItem = (panel: string) => chrome.locator(`[data-testid="seo-rail-item"][data-panel="${panel}"]`);
 const crawlerRequests = (path?: string) => site.seen.filter((entry) => CRAWLER.test(entry.userAgent) && (path === undefined || entry.path === path));
 const cell = (fact: string, agent: string) => chrome.locator(`[data-testid="visibility-fact"][data-fact="${fact}"] [data-testid="visibility-cell"][data-agent="${agent}"]`);
+/** A crawler's chip (the browser has none: it is the comparison's baseline column). */
+const chip = (agent: string) => chrome.locator(`[data-testid="visibility-agent"][data-agent="${agent}"]`);
+const CRAWLERS = PROBE_AGENTS.filter((agent) => agent.kind !== 'browser').map((agent) => agent.id);
+
+/** Chooses `agent`'s chip, so the comparison shows its column beside the browser's. */
+async function choose(agent: string): Promise<void> {
+  if ((await chip(agent).getAttribute('aria-pressed')) !== 'true') await chip(agent).click();
+  await expect(chip(agent)).toHaveAttribute('aria-pressed', 'true');
+  await expect(chrome.getByTestId('visibility-table')).toHaveAttribute('data-agent', agent);
+}
+
+/** The columns the comparison shows, by agent. */
+const columns = () => chrome.getByTestId('visibility-column').evaluateAll((items) => items.map((item) => item.getAttribute('data-agent')));
 
 async function openVisibility(): Promise<void> {
   if ((await sidebar().getAttribute('data-open')) !== 'true' || (await chrome.getByTestId('seo-panel').getAttribute('data-panel')) !== 'visibility') await railItem('visibility').click();
@@ -77,22 +93,34 @@ test('visibility-probes-per-agent', async () => {
   expect(crawlerRequests()).toEqual([]);
   await chrome.getByTestId('visibility-run').click();
   await expect(chrome.getByTestId('visibility-summary')).toHaveAttribute('data-status', 'done', { timeout: RUN_WAIT });
-  // One column per agent, the browser first.
-  const agents = await chrome.getByTestId('visibility-agent').evaluateAll((items) => items.map((item) => item.getAttribute('data-agent')));
-  expect(agents).toEqual(PROBE_AGENTS.map((agent) => agent.id));
+  // A chip per crawler, in order; the three that differ carry their counts, the others none.
+  const chips = await chrome.getByTestId('visibility-agent').evaluateAll((items) => items.map((item) => ({ agent: item.getAttribute('data-agent'), differences: Number(item.getAttribute('data-differences')) })));
+  expect(chips.map((item) => item.agent)).toEqual(CRAWLERS);
+  expect(chips.filter((item) => item.differences > 0).map((item) => item.agent)).toEqual(['googlebot', 'gptbot', 'claudebot']);
+  for (const item of chips) await expect(chip(item.agent!)).toHaveAttribute('data-differs', String(item.differences > 0));
+  // The comparison opens on the first crawler that differs, beside the browser.
+  await expect(chip('googlebot')).toHaveAttribute('aria-pressed', 'true');
+  expect(await columns()).toEqual(['browser', 'googlebot']);
   // robots.txt disallows GPTBot only; Googlebot alone is told noindex; ClaudeBot's page is smaller.
-  await expect(cell('robots', 'gptbot')).toContainText('Disallowed');
-  await expect(cell('robots', 'gptbot')).toHaveAttribute('data-diff', 'true');
-  await expect(cell('robots', 'bingbot')).toContainText('Allowed');
-  await expect(cell('robots', 'bingbot')).toHaveAttribute('data-diff', 'false');
   await expect(cell('noindex', 'googlebot')).toContainText('Yes');
   await expect(cell('noindex', 'googlebot')).toHaveAttribute('data-diff', 'true');
   await expect(cell('noindex', 'browser')).toContainText('No');
-  await expect(cell('noindex', 'bingbot')).toHaveAttribute('data-diff', 'false');
-  await expect(cell('wordCount', 'claudebot')).toHaveAttribute('data-diff', 'true');
   await expect(cell('status', 'browser')).toHaveText('200');
-  // The browser's column is the baseline: never marked.
-  await expect(chrome.locator('[data-testid="visibility-cell"][data-agent="browser"][data-diff="true"]')).toHaveCount(0);
+  await choose('gptbot');
+  expect(await columns()).toEqual(['browser', 'gptbot']);
+  await expect(cell('robots', 'gptbot')).toContainText('Disallowed');
+  await expect(cell('robots', 'gptbot')).toHaveAttribute('data-diff', 'true');
+  await choose('bingbot');
+  await expect(cell('robots', 'bingbot')).toContainText('Allowed');
+  await expect(cell('robots', 'bingbot')).toHaveAttribute('data-diff', 'false');
+  await expect(cell('noindex', 'bingbot')).toHaveAttribute('data-diff', 'false');
+  await choose('claudebot');
+  await expect(cell('wordCount', 'claudebot')).toHaveAttribute('data-diff', 'true');
+  // The browser's column is the baseline: never marked, whichever crawler is beside it.
+  for (const agent of CRAWLERS) {
+    await choose(agent);
+    await expect(chrome.locator('[data-testid="visibility-cell"][data-agent="browser"][data-diff="true"]')).toHaveCount(0);
+  }
   // The notes.
   await expect(chrome.getByTestId('visibility-modelled-note')).toContainText(PROBE_MODELLED_DIRECTIVES_NOTE);
   await expect(chrome.getByTestId('visibility-robots-note')).toHaveText(PROBE_ROBOTS_SERVED_NOTE);
@@ -101,6 +129,81 @@ test('visibility-probes-per-agent', async () => {
   expect(crawlerRequests('/robots.txt')).toEqual([]);
   expect(site.seen.filter((entry) => entry.path === '/robots.txt').length).toBeLessThanOrEqual(1);
 });
+
+test('visibility-comparison-fits', async () => {
+  await load(`${site.origin}/page`);
+  await openVisibility();
+  await chrome.getByTestId('visibility-run').click();
+  await expect(chrome.getByTestId('visibility-summary')).toHaveAttribute('data-status', 'done', { timeout: RUN_WAIT });
+  const table = chrome.getByTestId('visibility-table');
+  const probes = chrome.getByTestId('visibility-probes');
+  // For each crawler: nothing scrolls sideways, no text is cut, and the three columns share the table's width.
+  const fits = async (where: string) => {
+    for (const agent of CRAWLERS) {
+      await choose(agent);
+      const facts = await table.evaluate((el) => {
+        const width = el.getBoundingClientRect().width;
+        return {
+          tableScrolls: el.scrollWidth > el.clientWidth,
+          shares: [...el.querySelectorAll('thead th')].map((th) => Math.round((th.getBoundingClientRect().width / width) * 100)),
+        };
+      });
+      expect(facts, `${where}: ${agent}`).toEqual({ tableScrolls: false, shares: [30, 35, 35] });
+      expect(await sidewaysScroll(chrome.locator('.seo-body')), `${where}: ${agent}`).toBe(0);
+      expect(await cutText(probes), `${where}: ${agent}`).toEqual([]);
+    }
+    // The canonical URL is whole on its lines: no ellipsis, nothing hidden.
+    const canonical = cell('canonical', 'browser').locator('.seo-page-text');
+    expect(await canonical.evaluate((el) => ({ overflow: getComputedStyle(el).textOverflow, cut: el.scrollWidth > el.clientWidth, text: el.textContent })), where).toEqual({ overflow: 'clip', cut: false, text: `${site.origin}/page` });
+  };
+  await fits('360px');
+  await atNarrowestPanel(chrome, () => fits('300px'));
+  const height = await chrome.evaluate(() => innerHeight);
+  try {
+    await chrome.setViewportSize({ width: NARROW_WINDOW.width, height });
+    await expect.poll(() => chrome.evaluate(() => innerWidth)).toBe(NARROW_WINDOW.width);
+    await fits('664px window');
+  } finally {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.disableDeviceEmulation());
+  }
+  // The keyboard reaches each chip in order, and Space chooses one: the caption and the column follow.
+  await chip(CRAWLERS[0]!).focus();
+  for (const agent of CRAWLERS.slice(1)) {
+    await chrome.keyboard.press('Tab');
+    await expect(chip(agent)).toBeFocused();
+  }
+  await chrome.keyboard.press('Space');
+  const last = PROBE_AGENTS.find((agent) => agent.id === CRAWLERS.at(-1))!;
+  await expect(chip(last.id)).toHaveAttribute('aria-pressed', 'true');
+  await expect(chrome.locator('[data-testid="visibility-agent"][aria-pressed="true"]')).toHaveCount(1);
+  await expect(table.locator('caption')).toHaveText(`${last.label} compared with the browser`);
+  expect(await columns()).toEqual(['browser', last.id]);
+  expect(await chip(last.id).getAttribute('aria-controls')).toBe(await table.getAttribute('id'));
+  // Still a table: its headers and cells in Chromium's accessibility tree.
+  expect(await axRoles(table)).toEqual({ table: 1, columnheader: 3, rowheader: 9, cell: 18 });
+});
+
+/** How far `scroller` scrolls sideways (0: it doesn't). */
+function sidewaysScroll(scroller: Locator): Promise<number> {
+  return scroller.evaluate((el) => el.scrollWidth - el.clientWidth);
+}
+
+/** The table, header and cell roles Chromium's accessibility tree holds for `table` and under it. */
+async function axRoles(table: Locator): Promise<Record<string, number>> {
+  const cdp = await chrome.context().newCDPSession(chrome);
+  try {
+    const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+    const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: `[data-testid="${await table.getAttribute('data-testid')}"]` });
+    const counts: Record<string, number> = {};
+    for (const role of ['table', 'columnheader', 'rowheader', 'cell']) {
+      const { nodes } = await cdp.send('Accessibility.queryAXTree', { nodeId, role });
+      counts[role] = nodes.filter((node) => !node.ignored).length;
+    }
+    return counts;
+  } finally {
+    await cdp.detach();
+  }
+}
 
 test('visibility-probes-stop', async () => {
   await load(`${site.origin}/slow`);
@@ -250,12 +353,16 @@ test('probes-eight-agents-and-llms-txt', async () => {
   await openAiReadiness();
   const before = aiSeen().length;
   await runProbes();
-  // One column per agent: the browser and seven crawlers, OAI-SearchBot and ChatGPT-User among them.
-  const agents = await chrome.getByTestId('visibility-agent').evaluateAll((items) => items.map((item) => item.getAttribute('data-agent')));
+  // Eight agents: the browser (the comparison's baseline column) and a chip per crawler, OAI-SearchBot and
+  // ChatGPT-User among them.
+  const crawlers = await chrome.getByTestId('visibility-agent').evaluateAll((items) => items.map((item) => item.getAttribute('data-agent')));
+  const agents = [(await columns())[0], ...crawlers];
   expect(agents).toEqual(PROBE_AGENTS.map((agent) => agent.id));
   expect(agents).toHaveLength(8);
   expect(agents).toEqual(expect.arrayContaining(['oai-searchbot', 'chatgpt-user']));
+  await choose('oai-searchbot');
   await expect(cell('robots', 'oai-searchbot')).toContainText('Disallowed');
+  await choose('chatgpt-user');
   await expect(cell('robots', 'chatgpt-user')).toContainText('Allowed');
   // /llms.txt once, after the agents, as frost (no crawler's user agent); its outcome and title shown.
   await expect(aiCheck('llms-txt')).toHaveAttribute('data-status', 'pass');

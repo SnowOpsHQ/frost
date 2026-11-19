@@ -189,3 +189,24 @@ describe('Overview score card', () => {
     expect(one('.seo-score-text')!.textContent).toContain('No errors or warnings · 7 checks passed');
   });
 });
+
+describe('Overview summary', () => {
+  test('overview-summary-is-one-card', async () => {
+    // The health score, the AI-readiness tile, the counts and "Highlight everything" are one card, in that
+    // order, before the issues (seo-sidebar.feature.md, Overview, the summary); "Open AI readiness" sits in the
+    // tile's words, under its basis, and every count keeps its test id.
+    await show({}, 7);
+    const summary = one('.seo-summary')!;
+    expect(summary).not.toBeNull();
+    const parts = ['.seo-score-card', '[data-testid="ai-readiness-tile"]', '.seo-counts', '[data-testid="seo-highlight-all"]'].map((selector) => summary.querySelector(selector));
+    for (const part of parts) expect(part).not.toBeNull();
+    for (let i = 1; i < parts.length; i++) expect(parts[i - 1]!.compareDocumentPosition(parts[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(summary.compareDocumentPosition(one('.seo-issues')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(summary.contains(one('.seo-issues'))).toBe(false);
+    for (const severity of ['error', 'warning', 'info']) expect(summary.querySelector(`[data-testid="seo-count-${severity}"]`)).not.toBeNull();
+    const open = summary.querySelector('[data-testid="ai-readiness-open"]')!;
+    const words = summary.querySelector('[data-testid="ai-readiness-tile"] .seo-score-text')!;
+    expect(words.contains(open)).toBe(true);
+    expect(words.querySelector('[data-testid="ai-readiness-basis"]')!.compareDocumentPosition(open) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
