@@ -941,6 +941,28 @@ const tabAndAddress = () =>
     };
   }, TYPICAL_ORIGIN);
 
+test('narrowing-keeps-the-active-tab-in-view', async () => {
+  await openTabs(3);
+  await strip().nth(2).click();
+  await expect(strip().nth(2)).toHaveAttribute('aria-selected', 'true');
+  // Focus elsewhere: only the resize may bring the tab back, not a focus.
+  await menu('focus-address-bar');
+  await expect(address()).toBeFocused();
+  const activePillInside = () =>
+    tablist().evaluate((list) => {
+      const pill = list.querySelector('[role="tab"][aria-selected="true"]')?.closest('.tab')?.getBoundingClientRect();
+      const box = list.getBoundingClientRect();
+      return pill !== undefined && pill.left >= box.left - 0.5 && pill.right <= box.right + 0.5;
+    });
+  await withRowWidth(1280, async () => {
+    await expect.poll(activePillInside).toBe(true);
+    // Straight from 1280 to the minimum (withRowWidth's own width, without restoring in between).
+    await row().evaluate((el, w) => el.style.setProperty('width', `${w}px`), CHROME_MIN_CONTENT_WIDTH_PX + INSET);
+    await expect.poll(activePillInside, 'the active tab after the row narrowed').toBe(true);
+    await expect(address()).toBeFocused();
+  });
+});
+
 test('narrow-row-shares-room-with-one-tab', async () => {
   await withRowWidth(CHROME_MIN_CONTENT_WIDTH_PX, async () => {
     // An empty tab: readable, its label whole.

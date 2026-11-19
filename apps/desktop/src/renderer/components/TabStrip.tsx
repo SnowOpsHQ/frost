@@ -40,6 +40,31 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
   useEffect(() => {
     if (active) showWhole(ref.current);
   }, [active]);
+  // The tablist narrowing (a window or row resize) brings the active tab back in only when it cut a
+  // tab that was whole in view; one the user scrolled away stays put (`tabs.feature.md`).
+  useEffect(() => {
+    const list = ref.current?.closest<HTMLElement>('[role="tablist"]');
+    if (!active || !list) return;
+    const whole = () => {
+      const pill = ref.current?.closest('.tab')?.getBoundingClientRect();
+      const box = list.getBoundingClientRect();
+      return pill !== undefined && pill.left >= box.left - 0.5 && pill.right <= box.right + 0.5;
+    };
+    let wasWhole = whole();
+    const remember = () => {
+      wasWhole = whole();
+    };
+    const resized = new ResizeObserver(() => {
+      if (wasWhole && !whole()) showWhole(ref.current);
+      wasWhole = whole();
+    });
+    resized.observe(list);
+    list.addEventListener('scroll', remember, { passive: true });
+    return () => {
+      resized.disconnect();
+      list.removeEventListener('scroll', remember);
+    };
+  }, [active]);
   const activate = () => void actions.activateTab(tab.id);
   const close = () => void actions.closeTab(tab.id);
   return (
