@@ -99,25 +99,32 @@ export const TAB_MIN_WIDTH_PX = 84;
 
 /**
  * Narrowest the active tab gets at or above the window's minimum (CSS px): its glyph, its × and a
- * readable label between them: 62px of label, the whole of `NEW_TAB_LABEL` or about ten characters of a
- * title. So a tab alone in a narrow window keeps a title (at 84px the active tab, its × shown, had
- * 14px: "C.."). With many tabs the background ones shrink on to `TAB_MIN_WIDTH_PX` and then the
+ * readable label between them: 56px of label (the tab's padding, glyph, gaps and × take 66), the whole
+ * of `NEW_TAB_LABEL` (52px) or about eight characters of a title. So a tab alone in a narrow window
+ * keeps a title (at 84px the active tab, its × shown, had 14px: "C.."). With many tabs the background ones shrink on to `TAB_MIN_WIDTH_PX` and then the
  * tablist scrolls, as browsers keep the active tab wider than the rest. Below the window's minimum (a
  * tiled window) it gives way to `TAB_MIN_WIDTH_PX` before the address bar goes under
  * `ADDRESS_MIN_WIDTH_PX`.
  */
-export const ACTIVE_TAB_MIN_WIDTH_PX = 132;
+export const ACTIVE_TAB_MIN_WIDTH_PX = 122;
 
 /**
  * Narrowest the address bar gets at or above the window's minimum, however many tabs are open (CSS
- * px): room, beside the security badge, for the scheme and host of a typical URL
- * (`https://www.example.com`, about 135px of `--text-body`). It was 240 until the second polish round,
- * which left the one tab of a narrow window at 84px; the 48px went to that tab (`ACTIVE_TAB_MIN_WIDTH_PX`).
+ * px): room, beside the security badge (its padding, border, badge and gap take 46), for 156px of text,
+ * the scheme and host of a typical URL (`TYPICAL_ORIGIN`). It was 240 until the second polish round,
+ * which left the one tab of a narrow window at 84px; 38px went to that tab (`ACTIVE_TAB_MIN_WIDTH_PX`).
  * The tablist gives way first: its tabs shrink, then it scrolls. Below the window's minimum (a tiled
  * window) the active tab gives way to `TAB_MIN_WIDTH_PX`, and then the address bar on down to its own
  * padding, before the tools.
  */
-export const ADDRESS_MIN_WIDTH_PX = 192;
+export const ADDRESS_MIN_WIDTH_PX = 202;
+
+/**
+ * The yardstick for "a typical URL's scheme and host" (`ADDRESS_MIN_WIDTH_PX`): 24 characters, 140px of
+ * `--text-body`. Hosts with many wide letters run longer (`https://www.example.com` is 157px, 1px over);
+ * the visual baseline's `http://visual.frost-e2e.net` (153px) fits too.
+ */
+export const TYPICAL_ORIGIN = 'https://en.wikipedia.org' as const;
 
 /**
  * The address bar's preferred width (CSS px): it keeps this while the tabs shrink and then scroll, and
@@ -132,8 +139,9 @@ export const ADDRESS_BASIS_PX = 360;
  * needs to fit whole, from the tokens: its padding (2 × `--space-4` = 24), eight `--h-control` tools
  * (Back, Forward, Reload, New tab, the SEO, render-profile and AI agent toggles and Settings: 272), nine
  * `--space-1` gaps (36), the active tab with its ring room (`ACTIVE_TAB_MIN_WIDTH_PX` + 2 × `--space-1` =
- * 140) and `ADDRESS_MIN_WIDTH_PX` (192). It was 626 before the Settings button joined the row, and 588
- * before the AI agent's toggle did; the second polish round kept it, moving 48px from the address bar's
- * minimum to the tab's.
+ * 130) and `ADDRESS_MIN_WIDTH_PX` (202). It was 626 before the Settings button joined the row, and 588
+ * before the AI agent's toggle did; the second polish round kept it (the narrow window's SEO sheet,
+ * `NARROW_WINDOW` in `workspace-layout.spec.ts`, is derived from it), moving 38px from the address
+ * bar's minimum to the tab's and taking 6px from their gaps.
  */
 export const CHROME_MIN_CONTENT_WIDTH_PX = 664;
