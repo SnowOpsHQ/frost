@@ -1184,9 +1184,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
     compares it with the browser in three fixed columns (`serp-panels.feature.md`, Decisions: the
     probes compare one agent with the browser at a time): `table-layout: fixed`, the fact 30% and each
     value 35% (`.visibility-table`, no `min-width`), a value wrapping in its column (`overflow-wrap:
-    break-word`; a URL `anywhere`, `.visibility-table td .seo-page-text`, no longer one line with an
-    ellipsis), the fact column no longer sticky (nothing scrolls under it), the wrap's sideways scroll
-    gone with the wrap (`.serp-table-wrap` is the ownership table's alone). At 300px, the default 360px
+    break-word`; a URL `anywhere`, `.visibility-table td .seo-page-text`, no longer PageText's one line
+    with an ellipsis), a header without end padding (the first round broke "smartphon|e" at 300px), the
+    fact column no longer sticky (nothing scrolls under it), the wrap's sideways scroll gone with the
+    wrap (`.serp-table-wrap` is the ownership table's alone); robots.txt as read wraps its URL too
+    (`.visibility-robots-file`: it was cut by an ellipsis at 300px). At 300px, the default 360px
     and the 664px window nothing scrolls sideways and no chip, header, cell, note or robots.txt line is
     cut (`visibility-comparison-fits`).
   - **Not here:** the Changes panel's capture card at the 588px window, which `workspace-layout.feature.md`

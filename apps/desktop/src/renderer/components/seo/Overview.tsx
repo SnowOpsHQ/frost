@@ -168,11 +168,12 @@ export function Issue({ finding }: { readonly finding: Finding }) {
 function AiReadinessTile({ audit, tab, onOpenPanel }: { readonly audit: SeoAudit; readonly tab: TabState; readonly onOpenPanel: (panel: SeoPanelId) => void }) {
   const probes = useProbes(tab.id);
   return (
-    <section className="seo-section ai-tile" data-testid="ai-readiness-tile" aria-label={AI_READINESS_COPY.tileTitle}>
-      <AiScoreSummary ring={aiTileView(audit, probes)} eyebrow={AI_READINESS_COPY.tileTitle} />
-      <button type="button" className="seo-link-button ai-tile-open" data-testid="ai-readiness-open" onClick={() => onOpenPanel('visibility')}>
-        {AI_READINESS_COPY.openLabel}
-      </button>
+    <section className="ai-tile" data-testid="ai-readiness-tile" aria-label={AI_READINESS_COPY.tileTitle}>
+      <AiScoreSummary ring={aiTileView(audit, probes)} eyebrow={AI_READINESS_COPY.tileTitle}>
+        <button type="button" className="seo-link-button ai-tile-open" data-testid="ai-readiness-open" onClick={() => onOpenPanel('visibility')}>
+          {AI_READINESS_COPY.openLabel}
+        </button>
+      </AiScoreSummary>
     </section>
   );
 }
@@ -259,41 +260,45 @@ export function Overview({
   const blocking = audit.counts.error + audit.counts.warning;
   return (
     <div className="seo-overview" data-testid="seo-overview">
-      <section className="seo-score-card">
-        <ScoreRing score={audit.score} band={audit.band} />
-        <div className="seo-score-text">
-          <span className="seo-eyebrow">Health score</span>
-          <span className="seo-band" data-band={audit.band} data-testid="seo-band" data-indexable={audit.indexable}>
-            {audit.indexable ? band.label : NOT_INDEXABLE_LABEL}
-          </span>
-          {audit.indexable ? null : (
-            <span className="seo-score-summary seo-not-indexable" data-testid="seo-not-indexable">
-              <PageText value={audit.indexability.reasons.join(' · ')} lines={2} />
-            </span>
-          )}
-          <span className="seo-score-summary">
-            {blocking === 0 ? 'No errors or warnings' : `${plural(blocking, ['issue', 'issues'])} to fix`} · {plural(passed, ['check', 'checks'])} passed
-          </span>
-        </div>
-      </section>
-      <AiReadinessTile audit={audit} tab={tab} onOpenPanel={onOpenPanel} />
       {audit.page.partial ? (
         <p className="seo-partial" data-testid="seo-partial">
           This page is very large: frost read part of it before its time limit, so some lists are incomplete.
         </p>
       ) : null}
-      <div className="seo-counts" role="list" aria-label="Issues by severity">
-        {SEO_SEVERITIES.map((severity) => (
-          <span key={severity} className="seo-count" role="listitem" data-severity={severity} data-testid={`seo-count-${severity}`} data-count={audit.counts[severity]}>
-            <SeverityGlyph severity={severity} />
-            <span className="seo-count-value">{formatCount(audit.counts[severity])}</span>
-            <span className="seo-count-label">{audit.counts[severity] === 1 ? SEVERITY_LABEL[severity][0] : SEVERITY_LABEL[severity][1]}</span>
-          </span>
-        ))}
-      </div>
-      {/* Links, headings and lazy images outlined on the page at once (Phase 11, `all`). */}
-      <div className="seo-panel-tools">
-        <HighlightToggle tab={tab} mode="all" label="Highlight everything" testId="seo-highlight-all" />
+      {/* The summary (seo-sidebar.feature.md, Overview, the summary): the scores, the counts and the
+          highlight in one card, the issues straight under it. */}
+      <div className="seo-summary">
+        <section className="seo-score-card">
+          <ScoreRing score={audit.score} band={audit.band} />
+          <div className="seo-score-text">
+            <span className="seo-eyebrow">Health score</span>
+            <span className="seo-band" data-band={audit.band} data-testid="seo-band" data-indexable={audit.indexable}>
+              {audit.indexable ? band.label : NOT_INDEXABLE_LABEL}
+            </span>
+            {audit.indexable ? null : (
+              <span className="seo-score-summary seo-not-indexable" data-testid="seo-not-indexable">
+                <PageText value={audit.indexability.reasons.join(' · ')} lines={2} />
+              </span>
+            )}
+            <span className="seo-score-summary">
+              {blocking === 0 ? 'No errors or warnings' : `${plural(blocking, ['issue', 'issues'])} to fix`} · {plural(passed, ['check', 'checks'])} passed
+            </span>
+          </div>
+        </section>
+        <AiReadinessTile audit={audit} tab={tab} onOpenPanel={onOpenPanel} />
+        <div className="seo-counts" role="list" aria-label="Issues by severity">
+          {SEO_SEVERITIES.map((severity) => (
+            <span key={severity} className="seo-count" role="listitem" data-severity={severity} data-testid={`seo-count-${severity}`} data-count={audit.counts[severity]}>
+              <SeverityGlyph severity={severity} />
+              <span className="seo-count-value">{formatCount(audit.counts[severity])}</span>
+              <span className="seo-count-label">{audit.counts[severity] === 1 ? SEVERITY_LABEL[severity][0] : SEVERITY_LABEL[severity][1]}</span>
+            </span>
+          ))}
+        </div>
+        {/* Links, headings and lazy images outlined on the page at once (Phase 11, `all`). */}
+        <div className="seo-panel-tools">
+          <HighlightToggle tab={tab} mode="all" label="Highlight everything" testId="seo-highlight-all" />
+        </div>
       </div>
       <section className="seo-issues">
         <header className="seo-section-head">

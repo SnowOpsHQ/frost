@@ -189,6 +189,51 @@ export function probeTable(state: ProbesState): ProbeTable | null {
   return { columns, rows };
 }
 
+export interface ProbeChoice {
+  readonly agent: ProbeAgentId;
+  readonly label: string;
+  readonly modelled: boolean;
+  /** How many of the table's rows mark this crawler as differing from the browser (0: none). */
+  readonly differences: number;
+}
+
+export interface ProbeComparisonRow {
+  readonly fact: ProbeTableFact;
+  readonly label: string;
+  /** The browser's cell (never marked). */
+  readonly baseline: ProbeCell;
+  /** The chosen crawler's cell, marked as the table marks it. */
+  readonly cell: ProbeCell;
+}
+
+export interface ProbeComparison {
+  /** Every crawler in the run, in table order: what the panel's chips offer. */
+  readonly choices: readonly ProbeChoice[];
+  readonly baseline: ProbeColumn;
+  readonly column: ProbeColumn;
+  readonly rows: readonly ProbeComparisonRow[];
+}
+
+/**
+ * One crawler compared with the browser (`serp-panels.feature.md`, Decisions: the probes compare one agent
+ * with the browser at a time): `agent` when the run holds it as a crawler, else the first crawler that
+ * differs, else the first crawler. `null` when the run has no browser row or no crawler rows.
+ */
+export function probeComparison(table: ProbeTable, agent: ProbeAgentId | null): ProbeComparison | null {
+  const at = table.columns.findIndex((column) => column.baseline);
+  if (at < 0) return null;
+  const crawlers = table.columns.map((column, index) => ({ column, index })).filter(({ column }) => !column.baseline);
+  if (crawlers.length === 0) return null;
+  const choices = crawlers.map(({ column, index }) => ({ agent: column.agent, label: column.label, modelled: column.modelled, differences: table.rows.filter((row) => row.cells[index]!.diff).length }));
+  const chosen = crawlers.find(({ column }) => column.agent === agent) ?? crawlers.find((_, i) => choices[i]!.differences > 0) ?? crawlers[0]!;
+  return {
+    choices,
+    baseline: table.columns[at]!,
+    column: chosen.column,
+    rows: table.rows.map((row) => ({ fact: row.fact, label: row.label, baseline: row.cells[at]!, cell: row.cells[chosen.index]! })),
+  };
+}
+
 /** One line on where the run stands. */
 export function probeSummary(state: ProbesState): string {
   if (state.status === 'idle') return PROBE_STATUS_LABELS.idle;
