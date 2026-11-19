@@ -51,12 +51,16 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
       return pill !== undefined && pill.left >= box.left - 0.5 && pill.right <= box.right + 0.5;
     };
     let wasWhole = whole();
+    let width = list.clientWidth;
+    // A scroll at the width last seen is the user's; one at a new width is the resize clamping the
+    // strip (scroll events run before resize observations), which the observer below judges.
     const remember = () => {
-      wasWhole = whole();
+      if (list.clientWidth === width) wasWhole = whole();
     };
     const resized = new ResizeObserver(() => {
       if (wasWhole && !whole()) showWhole(ref.current);
       wasWhole = whole();
+      width = list.clientWidth;
     });
     resized.observe(list);
     list.addEventListener('scroll', remember, { passive: true });

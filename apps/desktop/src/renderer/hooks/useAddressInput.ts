@@ -48,7 +48,10 @@ export function useAddressInput(tab: AddressTarget) {
     } else if (event.key === 'Escape') {
       event.preventDefault();
       dispatch({ type: 'cancel' });
-      requestAnimationFrame(() => input.current?.select());
+      // Only if focus is still here: select() would take it back from the other field (two on a new tab).
+      requestAnimationFrame(() => {
+        if (input.current !== null && document.activeElement === input.current) input.current.select();
+      });
     }
   };
 
