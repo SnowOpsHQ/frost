@@ -7,7 +7,7 @@ named test.
 
 ## Layout
 The app window shows the chrome (`app://app`): one chrome row (`tabs.feature.md`, The chrome row:
-back, forward, reload ⇄ stop, the tab strip, the address bar, new tab and the toolbar's toggles), the
+back, forward, reload ⇄ stop, the tab strip, new tab, the address bar and the toolbar's toggles), the
 bands under it, the **page area**, and a slim status bar holding the IPC connection indicator
 (`data-testid="ping"`, Phase 0). The active tab's `WebContentsView` is attached to the window's
 `contentView` exactly over the page area. An empty tab has no visible view: the page area shows

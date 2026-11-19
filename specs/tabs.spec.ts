@@ -71,39 +71,58 @@ export type TabCommand = keyof typeof RESERVED_TAB_SHORTCUTS;
 
 /**
  * The chrome row (`tabs.feature.md`, The chrome row): one `--h-chrome` (56px) row holding, in this DOM
- * order, which is also the Tab order, the navigation tools, the tablist, the address bar (the tablist's
- * sibling, never inside it), the new-tab button and the toolbar's toggles, the AI agent's (its panel
+ * order, which is also the Tab order, the navigation tools, the tablist, the new-tab button right after
+ * it (it follows the last tab, and stays at the tablist's end once the tablist scrolls: it is the
+ * tablist's sibling, never inside it, since a `tablist` holds only `tab`s and a scroller would scroll
+ * it away), the address bar, the toolbar's toggles, the AI agent's (its panel
  * opens at the window's right edge, near it; `agent-panel.feature.md`, Toggle) and, last, the Settings button
  * (`SETTINGS_BUTTON`, `account-settings.spec.ts`). Each entry is the control's
  * `data-testid`; the tablist contributes only its active tab to the Tab order (roving tabindex), and a
  * disabled tool (Back or Forward with nowhere to go, Reload on an empty tab) is skipped. The canvas
  * also draws an "Ask frost" button, a score on the SEO sidebar toggle and a "More tabs" menu: none of
- * them is part of merging the rows, so none is here yet.
+ * them is part of merging the rows, so none is here yet. New tab followed the address bar until the
+ * second polish round.
  */
-export const CHROME_ROW = ['back', 'forward', 'reload', 'tab-strip', 'address', 'new-tab', 'seo-toggle', 'render-profile-toggle', 'agent-toggle', 'settings-open'] as const;
+export const CHROME_ROW = ['back', 'forward', 'reload', 'tab-strip', 'new-tab', 'address', 'seo-toggle', 'render-profile-toggle', 'agent-toggle', 'settings-open'] as const;
 export type ChromeRowControl = (typeof CHROME_ROW)[number];
 
 /** The chrome row's height in CSS px: Signal's `--h-chrome` (`design-tokens.spec.ts`). */
 export const CHROME_ROW_HEIGHT_PX = 56;
 
 /**
- * Narrowest a tab gets before the tablist scrolls sideways (CSS px). frost draws no favicons, so a
- * glyph-only tab (the canvas's 34px) could not be told from its neighbours: at 84px a tab keeps its
- * glyph and the first few characters of its label.
+ * Narrowest a background (inactive) tab gets before the tablist scrolls sideways (CSS px). frost draws
+ * no favicons, so a glyph-only tab (the canvas's 34px) could not be told from its neighbours: at 84px a
+ * background tab, which shows no × until hovered, keeps its glyph and the first few characters of its
+ * label.
  */
 export const TAB_MIN_WIDTH_PX = 84;
 
 /**
- * Narrowest the address bar gets at or above the window's minimum, however many tabs are open (CSS
- * px): the canvas's minimum for the active tab's address slot, room for a host and the start of its
- * path beside the security badge. The tablist gives way first: it shrinks, then scrolls. Below the
- * window's minimum (a tiled window) the address bar gives way before the tools and the one tab.
+ * Narrowest the active tab gets at or above the window's minimum (CSS px): its glyph, its × and a
+ * readable label between them: 62px of label, the whole of `NEW_TAB_LABEL` or about ten characters of a
+ * title. So a tab alone in a narrow window keeps a title (at 84px the active tab, its × shown, had
+ * 14px: "C.."). With many tabs the background ones shrink on to `TAB_MIN_WIDTH_PX` and then the
+ * tablist scrolls, as browsers keep the active tab wider than the rest. Below the window's minimum (a
+ * tiled window) it gives way to `TAB_MIN_WIDTH_PX` before the address bar goes under
+ * `ADDRESS_MIN_WIDTH_PX`.
  */
-export const ADDRESS_MIN_WIDTH_PX = 240;
+export const ACTIVE_TAB_MIN_WIDTH_PX = 132;
+
+/**
+ * Narrowest the address bar gets at or above the window's minimum, however many tabs are open (CSS
+ * px): room, beside the security badge, for the scheme and host of a typical URL
+ * (`https://www.example.com`, about 135px of `--text-body`). It was 240 until the second polish round,
+ * which left the one tab of a narrow window at 84px; the 48px went to that tab (`ACTIVE_TAB_MIN_WIDTH_PX`).
+ * The tablist gives way first: its tabs shrink, then it scrolls. Below the window's minimum (a tiled
+ * window) the active tab gives way to `TAB_MIN_WIDTH_PX`, and then the address bar on down to its own
+ * padding, before the tools.
+ */
+export const ADDRESS_MIN_WIDTH_PX = 192;
 
 /**
  * The address bar's preferred width (CSS px): it keeps this while the tabs shrink and then scroll, and
- * gives way (down to `ADDRESS_MIN_WIDTH_PX`) only once the tablist is down to one whole tab.
+ * gives way (down to `ADDRESS_MIN_WIDTH_PX`) only once the tablist is down to the active tab, whole, at
+ * `ACTIVE_TAB_MIN_WIDTH_PX`.
  */
 export const ADDRESS_BASIS_PX = 360;
 
@@ -112,7 +131,9 @@ export const ADDRESS_BASIS_PX = 360;
  * window managers may ignore it): what the chrome row
  * needs to fit whole, from the tokens: its padding (2 × `--space-4` = 24), eight `--h-control` tools
  * (Back, Forward, Reload, New tab, the SEO, render-profile and AI agent toggles and Settings: 272), nine
- * `--space-1` gaps (36), one tab with its ring room (`TAB_MIN_WIDTH_PX` + 2 × `--space-1` = 92) and
- * `ADDRESS_MIN_WIDTH_PX` (240). It was 626 before the Settings button joined the row, and 588 before the AI agent's toggle did.
+ * `--space-1` gaps (36), the active tab with its ring room (`ACTIVE_TAB_MIN_WIDTH_PX` + 2 × `--space-1` =
+ * 140) and `ADDRESS_MIN_WIDTH_PX` (192). It was 626 before the Settings button joined the row, and 588
+ * before the AI agent's toggle did; the second polish round kept it, moving 48px from the address bar's
+ * minimum to the tab's.
  */
 export const CHROME_MIN_CONTENT_WIDTH_PX = 664;
