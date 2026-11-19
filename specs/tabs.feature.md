@@ -74,7 +74,9 @@ Phase 1 Task 2. Each scenario maps to one named test.
     a click, Delete's neighbour), and again once a Delete's closed tab is gone from the strip, the
     focused tab's whole pill, its × included, is scrolled into view with the tablist's
     scroll padding; so is the active tab whenever it changes. A tab opened or closed in the
-    background leaves the strip where the user scrolled it.
+    background leaves the strip where the user scrolled it. When the tablist narrows (the window or
+    the row resized) and that cuts an active tab that was whole in view, it is scrolled back in whole;
+    one the user had scrolled out of view stays where it was.
   - **Never scrolled itself:** the row clips what does not fit (`overflow: clip`), so focusing a
     control cannot scroll the row and move Back off the window's edge.
   - **Minimum window width:** the window asks for content at least `CHROME_MIN_CONTENT_WIDTH_PX` wide,
@@ -477,6 +479,9 @@ shrink order) is the same on all three platforms.
 - **Scenario: arrow-focus-brings-the-whole-tab-in** — in a 1280px window with 20 tabs and the first
   active, ArrowRight from tab to tab past the tablist's visible edge, then ArrowLeft back: after each
   move the focused tab's whole pill (× included) is inside the tablist's box.
+- **Scenario: narrowing-keeps-the-active-tab-in-view** — three tabs, the third active and whole in a
+  1280px row, focus in the address bar (not in the strip): the row narrowed to
+  `CHROME_MIN_CONTENT_WIDTH_PX` leaves the active tab's whole pill (× included) inside the tablist.
 - **Scenario: delete-keeps-focus-on-the-neighbour-tab** — Delete on the active tab whose right
   neighbour is an empty tab, and again on one whose right neighbour shows a page: focus stays on the
   neighbour's `role="tab"` (neither the address bar nor that page's WebContents takes it), and
