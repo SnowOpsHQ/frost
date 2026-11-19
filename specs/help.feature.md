@@ -97,6 +97,26 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
   `dismissed` and the checklist is gone on every later new tab; when every item is done it is gone too.
 - **Scenario: setup-checklist-storage-tolerant** (`start-view.test.ts`) — a missing, malformed or
   unreachable `SETUP_CHECKLIST_STORAGE_KEY` reads as nothing done and not dismissed.
+- **The checklist's layout (Decision, UI polish round 2).** The rows are one grid: the step mark, the
+  label and the action are columns shared by every row (CSS subgrid), and each action is as wide as the
+  widest, so the actions' left and right edges line up instead of each pill hugging the card's right
+  edge at its own width; "Done" sits in that column too. A card narrower than
+  `SETUP_CHECKLIST_COLUMNS_MIN_PX` (its content box: the page area beside the SEO sidebar in a narrow
+  window) puts each action under its label, at the label's left edge, at its own width. Rejected:
+  shorter action labels (they name where each one goes); one fixed button width (it clips
+  "Open Search Console settings" or wastes room on "Open projects").
+- **Progress at a glance (Decision, UI polish round 2).** Under the header, a meter of one segment per
+  item, in the items' order, filled (`--ok`, as the step marks) for each item done; it is decorative
+  (`aria-hidden`): "N of M done" beside the title says it in words. "Hide this checklist" is a quiet
+  chip-height text button at the header's end (`--text-muted`, `--bg-hover` on hover), so it reads as a
+  control, not a caption. Rejected: a percentage or a ring (one more number beside "N of M done"); moving
+  Hide to a footer (a row for one link).
+- **Scenario: setup-checklist-meter** (`start-view.test.ts`) — the meter has one segment per item, in
+  order, and a segment is marked done exactly when its item is; it is hidden from assistive technology.
+- **Scenario: setup-checklist-layout** (e2e `browser-polish.e2e.ts`) — in a card at
+  least `SETUP_CHECKLIST_COLUMNS_MIN_PX` wide every action has the same left and right edge and sits
+  right of its label; in a narrower one (the window's minimum with the SEO sidebar open) each action's
+  left edge is its label's; at both, no text is cut, with and without "Jump back in" shown.
 
 ## End to end (`apps/desktop/e2e/browser-polish.e2e.ts`)
 - **Scenario: help-shortcuts-sheet** — Help › Keyboard Shortcuts opens the sheet listing every group;
@@ -106,6 +126,5 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
 - **Scenario: whats-new-after-version-change** — a first launch shows no What's New; after the
   stored version is changed, the next launch shows it with the running version's notes; closed, the
   launch after shows nothing.
-- **Scenario: setup-checklist** — a fresh profile's new tab lists the five items, none done; Show
-  shortcuts opens the shortcuts sheet and marks that item done; Hide this checklist removes it from
-  later new tabs.
+- **Scenario: setup-checklist** — a fresh profile's new tab lists the five items, none done; Show shortcuts opens the shortcuts sheet and marks that item done (its
+  meter segment fills); Hide this checklist removes it from later new tabs.

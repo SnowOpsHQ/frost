@@ -175,7 +175,12 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   flat `--bg-surface` (`--bg-page` until the base face; `--start-glow`: "no gradient washes"); the FrostMark is `--accent` (`--start-mark`),
   in the tab row's empty-tab glyph too; the mark eases in over `--dur-slow` with `--ease-out`. The
   wordmark is `--text-display` (the type scale's largest: it was 44px at weight 300, which Geist isn't
-  bundled in) and the hint `--text-body` in `--text-muted`. "Jump back in" takes `--text-caps` for its
+  bundled in). Under it (UI polish round 2; the hint that repeated the address bar's placeholder is gone)
+  the search field is the address bar's face at a larger size: an `--r-pill` on `--bg-surface` with
+  `--e-raised` and a transparent 1px border (the edge forced colours draw), 44px tall (`--h-field` plus
+  `--space-2`), its glyph `--text-faint`, its text `--text-heading` at weight 400 (typed text, not a heading) with a
+  `--text-faint` placeholder, and `--focus-ring` around the whole field
+  while it holds focus (`:focus-within`, beside a transparent 2px outline). "Jump back in" takes `--text-caps` for its
   title, and its tiles are `--bg-surface` cards at `--r-md` with `--e-ring` in place of their border
   (`--jump-tile-edge`; a transparent 1px border stays, the edge forced colours draw), the label in
   `--text-body` at its emphasis weight and the host in `--text-small`
@@ -185,7 +190,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   `--accent` (it was an accent border) and lifts 1px over `--dur-fast`; a focused one takes
   `--focus-ring` beside a transparent 2px outline (forced colours drop the shadow and draw the
   outline). The setup checklist under it (`help.css`), which read `--jump-tile-edge` for its border
-  and `--jump-tile-bg` for its fill, takes `--e-ring` and `--bg-surface` the same way.
+  and `--jump-tile-bg` for its fill, takes `--e-ring` and `--bg-surface` the same way. Its progress meter
+  (UI polish round 2, `help.feature.md`) is one 4px `--r-pill` segment per item on `--bg-active`,
+  filled `--ok` when done (a graphic, 3:1, as the step marks), kept under forced colours
+  (`FORCED_COLOURS_KEPT`) for the same reason; "Hide this checklist" is a chip-height `--text-muted`
+  text button that lays `--bg-hover` under itself on hover.
 - **The agent panel** (every rule of `components/agent/agent.css`) follows the Migration notes and
   the approved agent screen, where they agree: Geist on the `--text-*` tokens (the panel's own text at `--text-body`, its title at `--text-title`, secondary lines at `--text-small`,
   code, the context meter and skill instructions at `--text-mono`, chips at `--text-micro`); the open

@@ -335,3 +335,11 @@ export const SETUP_CHECKLIST_TEXT = {
   done: 'Done',
   progress: (done: number, total: number) => `${done} of ${total} done`,
 } as const;
+
+/**
+ * The checklist's layout (help.feature.md, Chrome: setup-checklist-layout). A card at least this wide (its
+ * content box, px) lays each row out as three aligned columns: the step mark, the label, and the action, every
+ * action as wide as the widest so their left and right edges line up. Narrower (the page area beside the SEO
+ * sidebar in a narrow window), each action goes under its label, at the label's left edge.
+ */
+export const SETUP_CHECKLIST_COLUMNS_MIN_PX = 440;

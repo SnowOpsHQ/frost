@@ -723,6 +723,9 @@ export const FORCED_COLOURS_KEPT = [
   // canvas, so a step done and one not done were the same ring; the marks keep their colours there.
   { stylesheet: 'help.css', element: ['.setup-check'], why: 'Help\'s setup checklist: a step not done (a --switch-off ring)' },
   { stylesheet: 'help.css', element: ['.setup-check', ".setup-item[data-done='true'] .setup-check"], why: 'Help\'s setup checklist: a step done (an --ok disc)' },
+  // UI polish round 2: the checklist's progress meter, a segment per item, filled --ok as its step's mark.
+  { stylesheet: 'help.css', element: ['.setup-meter-step'], why: 'Help\'s setup checklist meter: a step not done (a --bg-active segment)' },
+  { stylesheet: 'help.css', element: ['.setup-meter-step', ".setup-meter-step[data-done='true']"], why: 'Help\'s setup checklist meter: a step done (an --ok segment)' },
 ] as const satisfies readonly ForcedColoursBusy[];
 
 /**
@@ -770,7 +773,7 @@ export const SIGNAL_SURFACES = [
   // `.palette`, `.palette-sheet`, `.palette-option`, … and `.palette-status` (specs/command-palette.spec.ts).
   { name: 'command palette', stylesheet: 'styles.css', selectorPrefix: '.palette' },
   // The new-tab view (specs/browser-chrome.feature.md, browser-polish.feature.md): `.start`, `.start-mark`,
-  // `.start-wordmark`, `.start-hint`, then "Jump back in": `.jump`, `.jump-title`, `.jump-tile`, `.jump-monogram`, ….
+  // `.start-wordmark`, `.start-search`, `.start-search-input`, then "Jump back in": `.jump`, `.jump-title`, `.jump-tile`, `.jump-monogram`, ….
   { name: 'new tab', stylesheet: 'styles.css', selectorPrefix: '.start' },
   { name: 'new tab: Jump back in', stylesheet: 'styles.css', selectorPrefix: '.jump' },
   // Every rule in the panel's own stylesheet (specs/agent-panel.feature.md, agent-styles-are-delimited).
@@ -2684,6 +2687,11 @@ export const FOCUS_RING_RULES = [
     element: ['.setup-action', '.setup-action:hover', '.setup-action:focus-visible'],
     why: 'a setup checklist action, focused and hovered',
   },
+  {
+    stylesheet: 'help.css',
+    element: ['.setup-dismiss', '.setup-dismiss:hover', '.setup-dismiss:focus-visible'],
+    why: 'the setup checklist\'s "Hide this checklist", focused and hovered: its --bg-hover fill keeps the ring',
+  },
   // The browser chrome (its surface PR): the shared `.tool` (the toolbar's, and the agent panel's and
   // SEO sidebar's header tools), the tabs, the new-tab button, the address bar and the permission prompt.
   { stylesheet: 'styles.css', element: ['.tool', TOOL_HOVER, '.tool:focus-visible'], why: 'a toolbar tool, focused and hovered' },
@@ -2702,6 +2710,7 @@ export const FOCUS_RING_RULES = [
   { stylesheet: 'styles.css', element: ['.tab', ".tab[data-active='true']", TAB_FOCUS], why: 'the active tab, focused: its --e-raised edge gives way to --focus-ring' },
   { stylesheet: 'styles.css', element: ['.new-tab', '.new-tab:hover', '.new-tab:active', '.new-tab:focus-visible'], why: 'the new-tab button, focused, hovered and pressed' },
   { stylesheet: 'styles.css', element: ['.address', '.address:focus-within'], why: 'the address bar, focused (:focus-within): its --e-raised edge gives way to --focus-ring' },
+  { stylesheet: 'styles.css', element: ['.start-search', '.start-search:focus-within'], why: 'the new tab\'s search field, focused (:focus-within): its --e-raised edge gives way to --focus-ring, as the address bar\'s' },
   { stylesheet: 'styles.css', element: ['.prompt-button', PROMPT_BUTTON_HOVER, '.prompt-button:focus-visible'], why: 'the permission prompt\'s Allow or Block, focused and hovered' },
   { stylesheet: 'styles.css', element: ['.prompt-dismiss', PROMPT_DISMISS_HOVER, '.prompt-dismiss:focus-visible'], why: 'the permission prompt\'s dismiss button, focused and hovered' },
   // Overview and On-Page (their surface PR): the focusable controls inside them that are their own. An

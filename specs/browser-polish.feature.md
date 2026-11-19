@@ -115,6 +115,41 @@ are read from `ci_project_pages` / `ci_versions` in the same database file.
   pages, then up to `JUMP_BACK_IN_RECENT` other recent ones, from `recent_visits` only. Each tile is
   a frost-drawn monogram of the host, the title and the host (no favicon, nothing remote) and opens
   its page in the tab. (`jump-back-in-dedupes`, e2e `new-tab-page-jump-back-in`)
+- **The start view, top to bottom:** the FrostMark, the `frost` wordmark, a search field, "Jump back in"
+  (when there are visits) and the setup checklist (`help.feature.md`), one centred column: the field,
+  "Jump back in" and the checklist share one width (`min(640px, 92%)`), so their edges line up.
+- **One way to say it (Decision, UI polish round 2).** `ADDRESS_PROMPT` ("Search or enter address") is
+  the address bar's placeholder and the search field's placeholder and accessible name; the start view
+  has no tagline (it repeated the address bar's placeholder under the wordmark). Rejected: a different
+  wording for the field ("Search the web…") — two wordings for one action read as two behaviours; a
+  product tagline in its place — the field already says what the page is for.
+- **The search field is the address bar's path, not a second one (Decision, UI polish round 2).** Both
+  fields take their behaviour from one hook (`renderer/hooks/useAddressInput.ts`) over the address
+  field's reducer (`address-field.ts`): Enter hands the text, exactly as typed, to `browser.navigate`
+  (main makes the URL-or-search decision, the scheme rules and the validation, `main/browser/address.ts`)
+  and moves focus to the page; a blank Enter does nothing; the submitted text stays until the
+  navigation commits or fails; Escape drops what was typed and selects the field; a blur drops it; focus
+  selects everything, and the click that focused keeps the selection. Only the field's frame differs (a
+  larger pill with the search glyph, never a security badge: an empty tab has no page). Rejected: a
+  field that hands its focus and text to the address bar — the caret would jump from the middle of the
+  page to the row on the first key, and the field would be a picture of a field.
+- **One focus target (Decision, UI polish round 2).** A new tab still puts the caret in the address bar
+  (`tabs.feature.md`, new-tab-focuses-address-bar; Cmd/Ctrl+L), never in the search field: the field
+  takes focus only from a click or Tab (its place in the tab order is the page area's). So typing straight after Cmd/Ctrl+T goes where it always went.
+- **Scenario: start-search-is-the-address-bar-path** (`renderer/__tests__/start-search.test.ts`) — the
+  same keystrokes in the address bar (on an empty tab) and in the search field send the same
+  `browser.navigate` inputs (`example.com`, `  two words ` as typed, nothing for a blank Enter) and leave
+  the same text in each field after Enter, Escape and a blur; the field is named `ADDRESS_PROMPT`, has it
+  as its placeholder, and the start view holds no other text saying it.
+- **Scenario: start-search-loads-page** (e2e `browser.e2e.ts`) — on the start view the address bar is
+  focused; clicking the search field, typing `127.0.0.1:<port>/a` and Enter loads
+  `http://127.0.0.1:<port>/a` in the tab (the address bar shows it, the start view is gone); typing then
+  Escape leaves the field empty and focused; non-web input (`javascript:alert(1)`) becomes the search
+  URL, as in the address bar.
+- **Scenario: start-view-column** (e2e `browser-polish.e2e.ts`) — at the default window, in the window's
+  minimum (`NARROW_WINDOW`) with the SEO sidebar open and with it closed: the search field, "Jump back in"
+  and the checklist have the same left and right edges, nothing in the start view scrolls sideways, and
+  no text in it is cut (`cutText`).
 
 ## Search engines
 - `SEARCH_ENGINES` is a typed table of `https:` templates; `{q}` is only ever the encoded query.
