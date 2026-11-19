@@ -107,13 +107,16 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
   shorter action labels (they name where each one goes); one fixed button width (it clips
   "Open Search Console settings" or wastes room on "Open projects").
 - **Progress at a glance (Decision, UI polish round 2).** Under the header, a meter of one segment per
-  item, in the items' order, filled (`--ok`, as the step marks) for each item done; it is decorative
+  item that fills from the start (left): with N items done its first N segments are filled (`--ok`, as
+  the step marks), whichever items they are, so it reads as progress, not as a map of the list (filled
+  in the items' order it showed gaps, e.g. only the last two segments with items 4 and 5 done); it is decorative
   (`aria-hidden`): "N of M done" beside the title says it in words. "Hide this checklist" is a quiet
   chip-height text button at the header's end (`--text-muted`, `--bg-hover` on hover), so it reads as a
   control, not a caption. Rejected: a percentage or a ring (one more number beside "N of M done"); moving
   Hide to a footer (a row for one link).
-- **Scenario: setup-checklist-meter** (`start-view.test.ts`) — the meter has one segment per item, in
-  order, and a segment is marked done exactly when its item is; it is hidden from assistive technology.
+- **Scenario: setup-checklist-meter** (`start-view.test.ts`) — the meter has one segment per item, and
+  with N items done exactly its first N segments are filled, whichever items are done (e.g. the
+  privacy item alone fills the first); it is hidden from assistive technology.
 - **Scenario: setup-checklist-layout** (e2e `browser-polish.e2e.ts`) — in a card at
   least `SETUP_CHECKLIST_COLUMNS_MIN_PX` wide every action has the same left and right edge and sits
   right of its label; in a narrower one (the window's minimum with the SEO sidebar open) each action's
@@ -128,5 +131,5 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
 - **Scenario: whats-new-after-version-change** — a first launch shows no What's New; after the
   stored version is changed, the next launch shows it with the running version's notes; closed, the
   launch after shows nothing.
-- **Scenario: setup-checklist** — a fresh profile's new tab lists the five items, none done; Show shortcuts opens the shortcuts sheet and marks that item done (its
-  meter segment fills); Hide this checklist removes it from later new tabs.
+- **Scenario: setup-checklist** — a fresh profile's new tab lists the five items, none done; Show shortcuts opens the shortcuts sheet and marks that item done (the
+  meter's first segment fills); Hide this checklist removes it from later new tabs.
