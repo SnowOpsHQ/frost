@@ -102,10 +102,23 @@ are read from `ci_project_pages` / `ci_versions` in the same database file.
   `clear-range-other-range-while-clearing-refused`).
 - **Scenario: history view project filter and change counts** (`renderer/__tests__/use-history-view.test.ts`)
   — the view lists with the chosen project and shows a row's change count.
+- **Decision (UI polish round 2, 2026-11-19): retention is a segmented control.** The four retentions
+  were four full-width radio cards, each a row as tall as a setting with a description. They are now one
+  row card, "Keep history for" with a segmented control beside it (Forever, 90 days, 30 days, 7 days),
+  above the "Keep visits to project pages" row: still a `radiogroup` (named by that visible label) of
+  `radio` buttons with `aria-checked`, each its own Tab stop and test id (`history-retention`,
+  `data-retention`), so the keyboard path, the busy state (`aria-disabled`) and main's confirmation are
+  unchanged. The chosen segment is --accent-soft with an --accent edge (as a pressed chip and the radio
+  cards' chosen row). When the sheet is too narrow for the four in one line beside the label, the control
+  goes under the label, and in the narrowest sheet it is two by two. Rejected: a select (a choice of
+  four short values reads better all at once, and the radio rows elsewhere in Settings are radios too);
+  arrow keys that check as they move (each shorter retention asks in main's dialog, so moving through
+  the group would ask on every step).
 - **Scenario: settings-history** (`renderer/__tests__/settings-history.test.ts`) — the Settings view's
   History section shows main's retention and keep-project-pages choice and sends a change; the
   checked choice is main's answer (a cancelled change reverts, with a note); a failed first read
-  shows an error with "Try again", never "Loading…" for ever.
+  shows an error with "Try again", never "Loading…" for ever. The retentions are one radio group named
+  by its visible label "Keep history for", in one row card with it (a segmented control).
 - **Scenario: history-project-filter-and-clear-hour** (e2e `browser-polish.e2e.ts`) — with a project
   holding one visited page, the project filter lists only it; "Last hour" asks in main, Cancel keeps
   the rows, Clear removes them.

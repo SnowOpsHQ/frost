@@ -1,6 +1,7 @@
 # Feature: the Settings view (account, plan, telemetry and Search Console)
 
-Spec: `specs/account-settings.spec.ts` (`SETTINGS_SECTIONS`, `SETTINGS_TITLE`, `SETTINGS_MENU`,
+Spec: `specs/account-settings.spec.ts` (`SETTINGS_SECTIONS`, `SETTINGS_OPTIONAL_SECTIONS`,
+`settingsSectionsShown`, `settingsLanding`, `SETTINGS_SCROLL_SPY`, `settingsSectionInView`, `SETTINGS_TITLE`, `SETTINGS_MENU`,
 `SETTINGS_PALETTE_ACTIONS`, `FEATURE_LABELS`, `SETTINGS_CONFIRM_ARM_MS`, `SETTINGS_RETRY`,
 `SPAN_ATTRIBUTE_WORDS`, `SCRUB_RULE_WORDS`, `ACCOUNT_SETTINGS_TEXT`, `TELEMETRY_SETTINGS_TEXT`,
 `GSC_SETTINGS_TEXT`, `MAX_PENDING_SETTINGS_WATCHES`) and `specs/account-settings.schema.ts`
@@ -37,6 +38,31 @@ to one named test.
   asks again (focus returns to the section); it is not a toggle (no `aria-pressed`), because a sign-in
   waiting for its confirmation may hold the sheet open and that rule lives in one place (`holdsSheet`,
   Close and Esc). It is a `.tool` like the row's other tools and, like them, never a window drag area.
+- **Unconfigured sections are left out (UI polish round 2, 2026-11-19).** A build with no account
+  service or no Search Console client used to give each its own top section saying only "… isn't
+  configured in this build". Such a section has nothing to set, so once main says so (`account.watch`
+  answers `unconfigured`; `gsc.watch` answers `configured: false`) it is left out of the section list
+  and the sheet (`SETTINGS_OPTIONAL_SECTIONS`, `settingsSectionsShown`). Until main has answered it
+  shows, with "Loading…" (the UI never guesses). Rejected: a compact muted "not available" line in
+  place (still two headings and two list entries with nothing to do, at the top of the sheet), and
+  moving them to the end (the list would reorder itself by build). **Where requests land:** a request
+  for a section that is not shown lands on the first shown one, the top of the sheet
+  (`settingsLanding`); the reducer keeps the section asked for, and the sheet resolves it as it
+  renders, so the gear (`SETTINGS_BUTTON.section` stays `account`), the menu's Settings…, Mod+, and the
+  palette's "Settings" all open the sheet at its top in such a build, focused on that section's
+  heading. "Search Console settings" is offered in the palette only while its section is shown
+  (`whileShown`); "Sign in to frost" already needs `signed-out`. Other ways in that ask for Search
+  Console (the start view's checklist) land on the top too.
+- **The section list follows the scroll (2026-11-19).** The list marks (`aria-current`) the section in
+  view, not only the one last asked for: the last whose heading is at or above a third of the content's
+  height from its top, the first while none is, and the last once the content is scrolled to its end
+  (`SETTINGS_SCROLL_SPY`, `settingsSectionInView`). A section asked for (a click in the list, the gear,
+  the palette, the menu) is current at once, even when the content cannot scroll its heading to the
+  top, and stays current until the content is scrolled again.
+- **Telemetry's "no endpoint" notes are quiet (2026-11-19).** "This build has no endpoint for this, so
+  nothing is sent" is information, not a warning (nothing is wrong and nothing is sent): it is muted text
+  under the channel's description (still in the switch's description), not an amber notice. The
+  run-only notice ("Saved for this run only") stays a notice: it says a choice will not last.
 - **The confirmation cannot be clicked by accident.** Its button says "Confirm sign-in" (not "Sign in"),
   sits inside the confirmation card after Cancel (not where Sign in was), and takes no activation for
   `SETTINGS_CONFIRM_ARM_MS` after it appears and again after the window regains focus or becomes
@@ -79,6 +105,7 @@ to one named test.
 - `telemetry-view-reflects-main` — the switches show `consent` exactly; before main's first answer the section is "Loading…" with no switches.
 - `telemetry-view-read-failure` — a failed read shows an error with no switches; retries back off (`settingsRetryDelay`).
 - `telemetry-view-not-configured` — a channel this build has no endpoint for says nothing is sent (the switch still works, the note describes it).
+- `telemetry-note-is-quiet` (`settings-telemetry.test.ts`) — the "no endpoint" note is muted text in the switch's description, not a notice; the run-only note stays a notice.
 - `telemetry-view-run-only` — `persisted: false` says the choice is saved for this run only.
 
 ## Search Console (`apps/desktop/src/renderer/__tests__/settings-gsc-view.test.ts`)
@@ -90,6 +117,13 @@ to one named test.
 ## Shared watches (`apps/desktop/src/renderer/__tests__/settings-store.test.ts`)
 - `watch-store-shares-one-poll` — two subscribers share one long-poll; each answer reaches both; the last unsubscribe stops it.
 - `watch-store-backs-off` — failed polls are retried after `settingsRetryDelay` delays; a success resets them.
+
+## Sections shown and the section list (`apps/desktop/src/renderer/__tests__/settings-nav.test.ts`)
+- `settings-sections-left-out-when-unconfigured` — every section shows while main has not answered or says it is configured; Account is left out once the account is `unconfigured`, Search Console once it is not `configured`, and the rest keep `SETTINGS_SECTIONS` order.
+- `settings-request-lands-on-a-shown-section` — a request for a shown section lands there; one for a left-out section lands on the first shown one.
+- `settings-section-in-view` — the last heading at or above a third of the visible height is current, the first while none is, the last at the end of the scroll; content that does not scroll keeps the first.
+- `settings-sheet-leaves-out-unconfigured` — with accounts `unconfigured` and Search Console not `configured`, the sheet has no Account or Search Console entry or section; the gear's request lands on Data sources (current, its heading focused); a request for Search Console does too.
+- `settings-nav-follows-the-request` — a request marks its section current (`aria-current="true"` on it alone), and a click in the list marks the clicked one.
 
 ## Opening and closing (`apps/desktop/src/renderer/__tests__/settings-open.test.ts`)
 - `settings-opens-on-request` — a request opens Settings on its section and asks for focus each time.
@@ -104,7 +138,7 @@ to one named test.
 - `settings-button-is-a-plain-tool` — the gear is a `.tool` button named "Settings" with the title `SETTINGS_BUTTON.title`, after the AI agent's toggle and last in the row, and it is not a pressed toggle (no `aria-pressed`).
 
 ## Palette (`apps/desktop/src/renderer/__tests__/settings-palette.test.ts`)
-- `settings-palette-actions` — the four actions, in the Browser group, each open its section and move focus themselves; "Sign in to frost" is offered only while signed out.
+- `settings-palette-actions` — the four actions, in the Browser group, each open its section and move focus themselves; "Sign in to frost" is offered only while signed out; "Search Console settings" only while Search Console is shown (not once main says it is not `configured`).
 - `settings-palette-registers-with-others` — they register beside the built-in and browser-polish actions with no duplicate ID.
 
 ## Main (`apps/desktop/src/main/account/__tests__/settings-requests.test.ts`)
@@ -120,6 +154,8 @@ to one named test.
 - `settings-opens-from-palette-and-menu` — the palette's "Settings" and the menu item (its accelerator Mod+,: a synthetic key never reaches the native menu, so the item is clicked) open the sheet on Account with focus there; Esc and Close close it; History and Settings never show together; "Sign in to frost" is offered while signed out.
 - `settings-opens-from-the-row-button` — clicking the row's gear opens the sheet on Account with focus there; clicking it again with the sheet open asks again (focus returns to Account after moving to another section) and does not close it; Esc closes it.
 - `settings-button-tab-order` — Tab from the AI agent's toggle reaches the gear next (the row's last Tab stop), Shift+Tab goes back to the agent's toggle; its name is "Settings" and its title is `SETTINGS_BUTTON.title`.
+- `settings-nav-follows-scroll` — scrolled to the end, History is the current entry (and Account is not); scrolled to Data sources' heading, Data sources is; a click on Locations marks it and focuses its heading.
+- `settings-unconfigured-build` (a second launch with no account service or Search Console client) — the sheet lists no Account or Search Console entry or section; the gear opens it at the top (Data sources current and focused); the palette offers "Settings" but not "Search Console settings".
 - `settings-sheet-not-covered-by-page` — while Settings shows, the tab's view is zero-high (nothing drawn over the sheet).
 - `settings-sign-in-needs-confirmation` — Sign in opens the authorize page; after the browser leg the view asks "Sign in to frost as <email>?" with the fingerprint the browser shows, the question focused; an immediate click and Enter on "Confirm sign-in" do nothing; Esc does not hide it silently (it cancels, tested in the unit tests); a deliberate click after the delay signs in; then the account shows as active.
 - `settings-telemetry-toggles-follow-main` — the switches start off, show main's answers, and keep their state across a restart on the same profile.
