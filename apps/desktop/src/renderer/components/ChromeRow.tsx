@@ -11,7 +11,7 @@ import { TabStrip } from './TabStrip';
 
 // The browser chrome's one row (`App.tsx`; specs `tabs.feature.md`, The chrome row, and
 // `browser-chrome.feature.md`, Layout): in DOM order, which is the Tab order (`CHROME_ROW` in
-// `tabs.spec.ts`), the navigation tools, the tablist, the address bar as its next sibling, New tab and
+// `tabs.spec.ts`), the navigation tools, the tablist, New tab as its next sibling, the address bar,
 // the toolbar's toggles, the AI agent's, and the Settings button last; the loading line along its foot. Styling is the bundled styles.css only
 // (strict CSP).
 
@@ -62,11 +62,12 @@ export function ChromeRow({
           {loading ? <StopIcon /> : <ReloadIcon />}
         </button>
       </nav>
+      {/* New tab follows the tabs: the tablist's next sibling, so it never scrolls away with them (`tabs.feature.md`). */}
       <TabStrip state={state} />
-      <AddressBar tab={tab} focusSeq={state?.focusAddressBarSeq} />
       <button type="button" className="new-tab" data-testid="new-tab" aria-label="New tab" title="New tab" onClick={() => void actions.newTab()}>
         <PlusIcon />
       </button>
+      <AddressBar tab={tab} focusSeq={state?.focusAddressBarSeq} />
       {/* The SEO sidebar's panel (spec `seo-sidebar.feature.md`): also View › SEO Sidebar, Mod+Shift+S. */}
       <button
         type="button"

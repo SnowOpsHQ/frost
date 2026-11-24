@@ -7,7 +7,7 @@ import { INTENT_LIMITS } from '@app/specs/intent-classifier.spec';
 import { SERP_PARAM_LIMITS } from '@app/specs/serp.spec';
 import { PROBE_AGENT_IDS, PROBE_AGENTS, PROBE_MODELLED_DIRECTIVES_NOTE, PROBE_OUTCOME_MESSAGES, PROBE_ROBOTS_SERVED_NOTE, PROBE_ROBOTS_VERDICT_LABELS, PROBE_STATUS_LABELS, PROBE_TRUNCATED_NOTE, type ProbeAgentId } from '@app/specs/visibility-probes.spec';
 import type { ProbeDiff, ProbeRow, ProbesState } from '@app/specs/visibility-probes.schema';
-import { CLASSIFY_QUERY_MAX, PROBE_TABLE_FACTS, classifyQueryInput, forgetProbes, formatBytes, knownProbes, probeNotes, probeSummary, probeTable, rememberProbes } from '../visibility-view';
+import { CLASSIFY_QUERY_MAX, PROBE_TABLE_FACTS, classifyQueryInput, forgetProbes, formatBytes, knownProbes, probeComparison, probeNotes, probeSummary, probeTable, rememberProbes } from '../visibility-view';
 
 const URL_A = 'https://tea.example/guide';
 
@@ -155,6 +155,47 @@ describe('Visibility panel view model', () => {
     expect(probeSummary(IDLE)).toBe(PROBE_STATUS_LABELS.idle);
     expect(probeSummary(state({ status: 'running', rows: [row('browser'), row('googlebot', { outcome: 'pending' }), row('bingbot', { outcome: 'pending' })] }))).toBe('Probing… 1 of 3 answered');
     expect(probeSummary(state({ status: 'stopped', diffs: [] }))).toBe('Stopped');
+  });
+
+  test('probe-comparison', () => {
+    const marked = state({
+      rows: PROBE_AGENT_IDS.map((agent) => (agent === 'gptbot' ? row(agent, { robots: { url: 'https://tea.example/robots.txt', verdict: 'disallowed', rule: { allow: false, raw: 'Disallow: /', line: 4 }, groupAgents: ['GPTBot'], groupLine: 3, fallback: false } }) : agent === 'claudebot' ? row(agent, { wordCount: 300, bytes: 9_000 }) : row(agent))),
+      diffs: [diff('googlebot', []), diff('bingbot', []), diff('gptbot', ['robots']), diff('claudebot', ['wordCount', 'bytes', 'text'], { textSimilarity: 0.71 }), diff('perplexitybot', []), diff('oai-searchbot', []), diff('chatgpt-user', [])],
+    });
+    const table = probeTable(marked)!;
+    // No choice yet: the first crawler that differs; each crawler with the rows that differ, in table order.
+    const first = probeComparison(table, null)!;
+    expect(first.column.agent).toBe('gptbot');
+    expect(first.baseline).toMatchObject({ agent: 'browser', baseline: true });
+    expect(first.choices.map((choice) => [choice.agent, choice.differences])).toEqual([
+      ['googlebot', 0],
+      ['bingbot', 0],
+      ['gptbot', 1],
+      ['claudebot', 3],
+      ['perplexitybot', 0],
+      ['oai-searchbot', 0],
+      ['chatgpt-user', 0],
+    ]);
+    expect(first.choices.find((choice) => choice.agent === 'googlebot')).toMatchObject({ label: PROBE_AGENTS[1]!.label, modelled: false });
+    expect(first.choices.find((choice) => choice.agent === 'gptbot')!.modelled).toBe(true);
+    // A row per fact: the browser's cell and the crawler's, marked where the table marks it.
+    expect(first.rows.map((r) => r.fact)).toEqual([...PROBE_TABLE_FACTS]);
+    expect(first.rows.find((r) => r.fact === 'robots')).toMatchObject({ label: 'robots.txt', baseline: { text: 'Allowed', diff: false }, cell: { text: 'Disallowed', diff: true } });
+    expect(first.rows.filter((r) => r.cell.diff).map((r) => r.fact)).toEqual(['robots']);
+    // A chosen crawler.
+    const claude = probeComparison(table, 'claudebot')!;
+    expect(claude.column.agent).toBe('claudebot');
+    expect(claude.rows.filter((r) => r.cell.diff).map((r) => r.fact)).toEqual(['wordCount', 'bytes', 'text']);
+    expect(claude.rows.find((r) => r.fact === 'wordCount')).toMatchObject({ baseline: { text: '420' }, cell: { text: '300' } });
+    expect(claude.rows.find((r) => r.fact === 'text')!.cell.text).toBe('71% alike');
+    // The browser is never the choice, nor an agent the run doesn't hold: the default instead.
+    expect(probeComparison(table, 'browser')!.column.agent).toBe('gptbot');
+    const fewer = probeTable(state({ rows: [row('browser'), row('googlebot'), row('bingbot')], diffs: [diff('googlebot', []), diff('bingbot', [])] }))!;
+    expect(probeComparison(fewer, 'claudebot')!.column.agent).toBe('googlebot');
+    // None differs: the first crawler.
+    expect(probeComparison(probeTable(state())!, null)!.column.agent).toBe('googlebot');
+    // No crawler rows: no comparison.
+    expect(probeComparison(probeTable(state({ rows: [row('browser')], diffs: [] }))!, null)).toBeNull();
   });
 
   test('probe-notes', () => {

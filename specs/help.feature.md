@@ -93,10 +93,44 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
   the stored privacy / shortcuts marks show as done; each item's button opens where it is done. The
   shortcuts mark is set when the shortcuts sheet opens, not by the click: while a sign-in waits for its
   confirmation in Settings the sheet stays shut and the item stays undone (issue #25).
+- **Only what this build has (Decision, UI polish round 2).** Settings leaves out a section this build
+  has nothing for (`account-settings.feature.md`), so "Connect Search Console" would open Settings at
+  its top, on something else. While main says this build has no Search Console client (`gsc.watch`'s
+  `configured: false`) the checklist leaves that item out (`setupItemsShown`): "N of M done", the meter
+  and "every item done" count the items listed. Until main answers, every item shows. Rejected: keeping
+  the item with its button disabled (a step no one can take, counted against them forever).
+- **Scenario: setup-checklist-follows-the-build** (`start-view.test.ts`) — with Search Console not
+  configured the checklist lists every item but `search-console`, its progress and meter count those
+  items, and doing them all hides the checklist; configured, all five are listed.
 - **Scenario: setup-checklist-dismiss** (`start-view.test.ts`) — Hide this checklist stores
   `dismissed` and the checklist is gone on every later new tab; when every item is done it is gone too.
 - **Scenario: setup-checklist-storage-tolerant** (`start-view.test.ts`) — a missing, malformed or
   unreachable `SETUP_CHECKLIST_STORAGE_KEY` reads as nothing done and not dismissed.
+- **The checklist's layout (Decision, UI polish round 2).** The rows are one grid: the step mark, the
+  label and the action are columns shared by every row (CSS subgrid), and each action is as wide as the
+  widest, so the actions' left and right edges line up instead of each pill hugging the card's right
+  edge at its own width; "Done" sits in that column too. A card narrower than
+  `SETUP_CHECKLIST_COLUMNS_MIN_PX` (its content box: the page area beside the SEO sidebar in a narrow
+  window) puts each action under its label, at the label's left edge, at its own width, and "N of M
+  done" on its own line under the title and Hide (so Hide never wraps onto a line alone). Rejected:
+  shorter action labels (they name where each one goes); one fixed button width (it clips
+  "Open Search Console settings" or wastes room on "Open projects").
+- **Progress at a glance (Decision, UI polish round 2).** Under the header, a meter of one segment per
+  item that fills from the start (left): with N items done its first N segments are filled (`--ok`, as
+  the step marks), whichever items they are, so it reads as progress, not as a map of the list (filled
+  in the items' order it showed gaps, e.g. only the last two segments with items 4 and 5 done); it is decorative
+  (`aria-hidden`): "N of M done" beside the title says it in words. "Hide this checklist" is a quiet
+  chip-height text button at the header's end (`--text-muted`, `--bg-hover` on hover), so it reads as a
+  control, not a caption. Rejected: a percentage or a ring (one more number beside "N of M done"); moving
+  Hide to a footer (a row for one link).
+- **Scenario: setup-checklist-meter** (`start-view.test.ts`) — the meter has one segment per item, and
+  with N items done exactly its first N segments are filled, whichever items are done (e.g. the
+  privacy item alone fills the first); it is hidden from assistive technology.
+- **Scenario: setup-checklist-layout** (e2e `browser-polish.e2e.ts`) — in a card at
+  least `SETUP_CHECKLIST_COLUMNS_MIN_PX` wide every action has the same left and right edge and sits
+  right of its label; in a narrower one (the window's minimum with the SEO sidebar open) each action's
+  left edge is its label's; at both, no text is cut (start-view-column), with and without "Jump back in"
+  shown.
 
 ## End to end (`apps/desktop/e2e/browser-polish.e2e.ts`)
 - **Scenario: help-shortcuts-sheet** — Help › Keyboard Shortcuts opens the sheet listing every group;
@@ -106,6 +140,6 @@ Spec: `specs/help.spec.ts` (`HELP_MENU`, `HELP_URLS`, `KEYBOARD_SHORTCUTS`, `SHO
 - **Scenario: whats-new-after-version-change** — a first launch shows no What's New; after the
   stored version is changed, the next launch shows it with the running version's notes; closed, the
   launch after shows nothing.
-- **Scenario: setup-checklist** — a fresh profile's new tab lists the five items, none done; Show
-  shortcuts opens the shortcuts sheet and marks that item done; Hide this checklist removes it from
-  later new tabs.
+- **Scenario: setup-checklist** — a fresh profile's new tab (this suite's build has no Search Console
+  client) lists the items `setupItemsShown(false)` names, none done, and no Search Console item; Show shortcuts opens the shortcuts sheet and marks that item done (the
+  meter's first segment fills); Hide this checklist removes it from later new tabs.

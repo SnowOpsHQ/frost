@@ -29,11 +29,13 @@ const usage = (counts: Partial<Record<DataProvider, [number, number]>> = {}): Da
   providers: Object.fromEntries(DATA_PROVIDERS.map((p) => [p, { thisMonth: counts[p]?.[0] ?? 0, lastMonth: counts[p]?.[1] ?? 0 }])) as DataUsageView['providers'],
 });
 const NO_SERP: DataSerpProviderView = { provider: null, choices: [] };
+/** Every gate open (the rows as they are once a provider's terms are cleared). */
+const OPEN = Object.fromEntries(DATA_PROVIDERS.map((p) => [p, { available: true }])) as Record<DataProvider, { available: boolean }>;
 
 describe('settings data sources view', () => {
   test('settings-data-sources-rows', () => {
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toContain('data-sources');
-    const section = dataSourcesSection(view('os', { serpapi: { hasKey: true } }), usage({ serpapi: [3, 41] }), NO_SERP);
+    const section = dataSourcesSection(view('os', { ...OPEN, serpapi: { available: true, hasKey: true } }), usage({ serpapi: [3, 41] }), NO_SERP);
     // Two groups, text labels only, in order.
     expect(section.groups.map((g) => [g.label, g.rows.map((r) => r.label)])).toEqual([
       [TEXT.groups.serp, ['SerpApi', 'DataForSEO', 'Serper']],
@@ -54,18 +56,25 @@ describe('settings data sources view', () => {
   });
 
   test('settings-data-sources-gated', () => {
-    // As shipped: every gate closed. Each row is disabled with the legal note; Clear only where a key is set.
-    const section = dataSourcesSection(view('os', { perplexity: { hasKey: true } }), usage(), NO_SERP);
+    // As shipped: every gate closed. Each row is one line: its name and the legal note, no fields or field
+    // notes; a key state and Clear only where a key is set, counts only where there are any.
+    const section = dataSourcesSection(view('os', { perplexity: { hasKey: true } }), usage({ serper: [0, 2] }), NO_SERP);
     for (const row of section.groups.flatMap((g) => g.rows)) {
+      expect(row.available, row.provider).toBe(false);
       expect(row.disabled, row.provider).toBe(true);
       expect(row.reason, row.provider).toBe(LEGAL_GATE_NOTE);
+      expect(row.fields, row.provider).toEqual([]);
+      expect(row.notes, row.provider).toEqual([]);
       expect(row.canClear, row.provider).toBe(row.provider === 'perplexity');
+      expect(row.keyState, row.provider).toBe(row.provider === 'perplexity' ? TEXT.keySet : null);
+      expect(row.usage, row.provider).toBe(row.provider === 'serper' ? TEXT.usage(0, 2) : null);
     }
     // A gate opened by injection (main's view): that row is live, the rest stay gated.
     const opened = dataSourcesSection(view('os', { serper: { available: true } }), usage(), NO_SERP);
     const rows = opened.groups.flatMap((g) => g.rows);
     expect(rows.filter((r) => !r.disabled).map((r) => r.provider)).toEqual(['serper']);
-    expect(rows.find((r) => r.provider === 'serper')!.reason).toBeNull();
+    expect(rows.find((r) => r.provider === 'serper')).toMatchObject({ available: true, reason: null, keyState: TEXT.noKey, usage: TEXT.usage(0, 0) });
+    expect(rows.find((r) => r.provider === 'serper')!.fields.map((f) => f.id)).toEqual(['key']);
   });
 
   test('settings-data-sources-weak-protection', () => {
@@ -73,8 +82,10 @@ describe('settings data sources view', () => {
       const section = dataSourcesSection(view(protection, { serpapi: { available: true }, perplexity: { available: true } }), usage(), NO_SERP);
       for (const row of section.groups.flatMap((g) => g.rows)) {
         expect(row.disabled, row.provider).toBe(true);
-        // An open row says why the keychain stops it; a gated one keeps the legal note.
-        expect(row.reason, row.provider).toBe(row.provider === 'serpapi' || row.provider === 'perplexity' ? TEXT.protection[protection] : LEGAL_GATE_NOTE);
+        // An open row says why the keychain stops it and keeps its (disabled) fields; a gated one keeps the legal note.
+        const open = row.provider === 'serpapi' || row.provider === 'perplexity';
+        expect(row.reason, row.provider).toBe(open ? TEXT.protection[protection] : LEGAL_GATE_NOTE);
+        expect(row.fields.length > 0, row.provider).toBe(open);
       }
     }
   });
@@ -214,7 +225,8 @@ const type = (input: HTMLInputElement, value: string) => {
 
 describe('settings data sources section', () => {
   test('settings-data-sources-shows-main-views', async () => {
-    main.status = view('os', { serpapi: { hasKey: true } });
+    // Every gate open: full rows (the gated ones' compact line is the next test).
+    main.status = view('os', { ...OPEN, serpapi: { available: true, hasKey: true } });
     main.usage = usage({ serpapi: [3, 41] });
     await render();
     expect(host.querySelectorAll('[data-testid="data-source"]')).toHaveLength(DATA_PROVIDERS.length);
@@ -234,24 +246,35 @@ describe('settings data sources section', () => {
   });
 
   test('settings-data-sources-gated-disabled-with-note', async () => {
-    // As shipped: every gate closed (main says `available: false`); Perplexity somehow has a key.
+    // As shipped: every gate closed (main says `available: false`); Perplexity somehow has a key, Serper sent 2 last month.
     main.status = view('os', { perplexity: { hasKey: true } });
+    main.usage = usage({ serper: [0, 2] });
     await render();
     for (const provider of DATA_PROVIDERS) {
-      for (const input of row(provider).querySelectorAll<HTMLInputElement>('input')) expect(input.disabled, provider).toBe(true);
-      expect(inside(provider, 'data-source-save').getAttribute('aria-disabled'), provider).toBe('true');
+      // One compact line: the name and the legal note, nothing to fill in or save.
+      expect(row(provider).dataset['available'], provider).toBe('false');
+      expect(row(provider).dataset['disabled'], provider).toBe('true');
+      expect(row(provider).classList.contains('settings-data-source-unavailable'), provider).toBe(true);
+      expect(row(provider).querySelectorAll('input'), provider).toHaveLength(0);
+      expect(row(provider).querySelector('[data-testid="data-source-save"]'), provider).toBeNull();
       expect(inside(provider, 'data-source-reason').textContent, provider).toBe(LEGAL_GATE_NOTE);
-      expect(inside(provider, 'data-source-clear').getAttribute('aria-disabled'), provider).toBe(provider === 'perplexity' ? null : 'true');
+      expect(row(provider).textContent, provider).not.toContain(TEXT.dataForSeoBoth);
+      expect(row(provider).textContent, provider).not.toContain(TEXT.openAiSeparateKey);
     }
-    // Save on a gated row sends nothing.
-    act(() => inside('serpapi', 'data-source-save').click());
-    expect(setKeyCalls).toEqual([]);
-    // Clear on a gated row without a key is disabled (styled by `.settings-button[aria-disabled='true']`,
-    // as on an open row): pressing it asks nothing and clears nothing.
-    expect(inside('serpapi', 'data-source-clear').className).toBe('settings-button');
-    act(() => inside('serpapi', 'data-source-clear').click());
-    expect(row('serpapi').querySelector('[data-testid="data-source-clear-question"]')).toBeNull();
-    expect(clearCalls).toEqual([]);
+    // Perplexity's key: "Key set" and an enabled Clear (clearing is never gated), which asks first.
+    expect(inside('perplexity', 'data-source-key-state').textContent).toBe(TEXT.keySet);
+    expect(inside('perplexity', 'data-source-clear').getAttribute('aria-disabled')).toBeNull();
+    act(() => inside('perplexity', 'data-source-clear').click());
+    await act(async () => inside('perplexity', 'data-source-clear-confirm').click());
+    expect(clearCalls).toEqual(['perplexity']);
+    // ... and once cleared the row has no key state and no Clear; focus goes to what it says, not the body.
+    expect(row('perplexity').querySelector('[data-testid="data-source-key-state"]')).toBeNull();
+    expect(row('perplexity').querySelector('[data-testid="data-source-clear"]')).toBeNull();
+    expect(inside('perplexity', 'data-source-message').textContent).toBe(TEXT.cleared);
+    expect(document.activeElement).toBe(inside('perplexity', 'data-source-message'));
+    // No key, no Clear; counts only where there are any.
+    expect(row('serpapi').querySelector('[data-testid="data-source-key-state"], [data-testid="data-source-clear"], [data-testid="data-source-usage"]')).toBeNull();
+    expect(inside('serper', 'data-source-usage').textContent).toBe(TEXT.usage(0, 2));
   });
 
   test('settings-data-sources-weak-explains-and-disables', async () => {

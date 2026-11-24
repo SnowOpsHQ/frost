@@ -87,15 +87,16 @@ input {
 /* ---- Chrome row --------------------------------------------------------------------------- */
 
 /* The tab row and the toolbar as one --h-chrome row on --bg-window (specs/tabs.feature.md, The chrome
-   row): the navigation tools, the tablist, the address bar, New tab and the toggles, --space-1 apart
-   and --space-4 in from the window's edges. It never wraps, and it clips rather than scrolls (focus
-   must never scroll Back off the edge). The tools never shrink. The tablist gives way first: its
-   tabs shrink to --tab-min, then it scrolls, while the address bar keeps --address-basis; only once
-   the tablist is down to one whole tab (a narrow window) does the address bar give way: to 240px at
-   the window's minimum (CHROME_MIN_CONTENT_WIDTH_PX, exactly the row with one tab and that width),
-   and below it (a tiling window manager ignores the minimum) on toward nothing, before any tool. It
-   measures its own width (an inline-size container), not the window's. The loading line runs along
-   its foot.
+   row): the navigation tools, the tablist, New tab right after it, the address bar and the toggles,
+   --space-1 apart and --space-4 in from the window's edges. It never wraps, and it clips rather than
+   scrolls (focus must never scroll Back off the edge). The tools never shrink. The tablist gives way
+   first: its background tabs shrink to --tab-min and the active one to --active-tab-min, then it
+   scrolls, while the address bar keeps --address-basis; only once the tablist is down to the active
+   tab, whole (a narrow window), does the address bar give way: to --address-min at the window's
+   minimum (CHROME_MIN_CONTENT_WIDTH_PX, exactly the row with that tab and that width). Below it (a
+   tiling window manager ignores the minimum) the active tab gives way to --tab-min, then the address
+   bar on toward nothing, before any tool. It measures its own width (an inline-size container), not
+   the window's. The loading line runs along its foot.
    On macOS and Windows it is also the window's title bar (specs/tabs.feature.md, The row is the
    window's title bar): the traffic lights or the caption buttons are drawn over its ends, and it pads
    itself by the Window Controls Overlay's variables (absent on Linux, where both ends keep --space-4):
@@ -103,11 +104,17 @@ input {
    end. 100cqw is its content box, so the widths above hold inside the insets. It drags the window;
    every control in it does not. */
 .chrome-row {
-  /* TAB_MIN_WIDTH_PX and ADDRESS_BASIS_PX (specs/tabs.spec.ts). */
+  /* TAB_MIN_WIDTH_PX, ACTIVE_TAB_MIN_WIDTH_PX, ADDRESS_MIN_WIDTH_PX and ADDRESS_BASIS_PX
+     (specs/tabs.spec.ts). */
   --tab-min: 84px;
+  --active-tab-min: 122px;
+  --address-min: 202px;
   --address-basis: 360px;
-  /* One whole tab with its ring room: the least the tablist shows. */
-  --one-tab: calc(var(--tab-min) + 2 * var(--space-1));
+  /* The active tab's least width: its readable minimum while the room beside the address bar's minimum
+     allows (at or above the window's minimum), less below, never under --tab-min. */
+  --active-tab-room: clamp(var(--tab-min), var(--row-free) - 2 * var(--space-1) - var(--address-min), var(--active-tab-min));
+  /* The active tab, whole, with its ring room: the least the tablist shows. */
+  --one-tab: calc(var(--active-tab-room) + 2 * var(--space-1));
   /* The room for the tablist and the address bar: the row's content width less its eight tools (Back,
      Forward, Reload, New tab, the three toggles: SEO sidebar, render profile, AI agent, and Settings) and its
      nine gaps (CHROME_ROW). Read where it is used, inside the row, so 100cqw is the row's own width. */
@@ -168,7 +175,8 @@ input {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  /* The label to its ×: the active tab's minimum (ACTIVE_TAB_MIN_WIDTH_PX) counts on it. */
+  gap: var(--space-1);
   /* An explicit width too: the scrolling tablist sizes itself from its tabs' intrinsic widths. The
      minimum is TAB_MIN_WIDTH_PX (specs/tabs.spec.ts): the glyph and a few letters of the label, since no
      favicon tells one narrow tab from another. */
@@ -193,9 +201,11 @@ input {
 
 /* In dark no fill tells the active tab from the others (TAB_STRIP): a 2px --accent line along its foot
    does, 3:1 or more off every tab's fill. A focused active tab shows --focus-ring in its place. Forced
-   colours drop the fill and the shadows: the transparent outline marks the active tab there. */
+   colours drop the fill and the shadows: the transparent outline marks the active tab there. It keeps
+   a readable label beside its × (--active-tab-room) while background tabs shrink on to --tab-min. */
 .tab[data-active='true'] {
   z-index: 1;
+  min-width: var(--active-tab-room);
   background: var(--bg-surface);
   box-shadow:
     var(--e-raised),
@@ -327,11 +337,15 @@ input {
   height: var(--icon-sm);
 }
 
-/* The transparent border is the edge forced colours draw. */
+/* The tablist's next sibling: right after the last tab, and at the tablist's end, in view, once it
+   scrolls. Its margins move it 4px toward the tabs (into the gap; the tablist's padding still keeps a
+   focused tab's ring room) and as far from the address bar, so it reads as the tabs' and the row's
+   width is unchanged. The transparent border is the edge forced colours draw. */
 .new-tab {
   display: grid;
   place-items: center;
   flex: none;
+  margin-inline: calc(-1 * var(--space-1)) var(--space-1);
   width: var(--h-control);
   height: var(--h-control);
   padding: 0;
@@ -433,15 +447,17 @@ input {
 
 /* ---- Address bar -------------------------------------------------------------------------- */
 
-/* An --h-field pill on --bg-surface with --e-raised, the tablist's next sibling; the transparent border
-   is the edge forced colours draw (1px less padding). Focus rings the whole field. It takes the room
-   the tabs leave and keeps --address-basis however many tabs are open; only the room left beside one
-   whole tab, in a narrow window, takes it under that (240px at the window's minimum, less below it). */
+/* An --h-field pill on --bg-surface with --e-raised, after New tab; the transparent border is the edge
+   forced colours draw (1px less padding). Focus rings the whole field. It takes the room the tabs leave
+   and keeps --address-basis however many tabs are open; only the room left beside the active tab,
+   whole, in a narrow window, takes it under that (--address-min at the window's minimum, less below
+   it). */
 .address {
   flex: 1 1 var(--address-basis);
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  /* The badge to the text: the address bar's minimum (ADDRESS_MIN_WIDTH_PX) counts on it. */
+  gap: var(--space-2);
   min-width: min(var(--address-basis), max(0px, var(--row-free) - var(--one-tab)));
   height: var(--h-field);
   padding: 0 calc(var(--space-4) - 1px);
@@ -754,18 +770,26 @@ input {
 }
 
 /* Signal (specs/design-tokens.feature.md, The new-tab view): flat --bg-surface, no gradient wash; the
-   FrostMark in --accent, the wordmark and hint on the --text-* type tokens (Geist). */
+   FrostMark in --accent, the wordmark and the search field on the --text-* type tokens (Geist). One
+   centred column (specs/browser-polish.feature.md, New-tab page) that scrolls rather than clipping when
+   "Jump back in" and the setup checklist make it taller than the page. */
 .start {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center;
   gap: var(--space-2);
-  padding-bottom: 8vh;
+  padding: var(--space-7) 0 8vh;
+  overflow-y: auto;
   background: var(--bg-surface);
   text-align: center;
+}
+
+/* Their own heights in a column that scrolls: a flex item would shrink instead (the mark went to nothing). */
+.start > * {
+  flex: none;
 }
 
 .mark {
@@ -788,10 +812,62 @@ input {
   letter-spacing: -0.02em;
 }
 
-.start-hint {
-  margin: var(--space-1) 0 0;
-  color: var(--text-muted);
-  font: var(--text-body);
+/* The search field (UI polish round 2): the address bar's face, larger. As wide as "Jump back in" and the
+   checklist under it; the label is the pill, so a click anywhere on it (the glyph too) focuses the input. */
+.start-search {
+  width: min(640px, 92%);
+  margin-top: var(--space-5);
+}
+
+/* An --r-pill on --bg-surface with --e-raised; the transparent border is the edge forced colours draw (1px
+   less padding). Focus rings the whole field, as the address bar's. */
+.start-search-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: calc(var(--h-field) + var(--space-2));
+  padding: 0 calc(var(--space-5) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--bg-surface);
+  box-shadow: var(--e-raised);
+  cursor: text;
+  transition: box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.start-search-field:focus-within {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+.start-search-icon {
+  color: var(--text-faint);
+}
+
+/* Typed text, not a heading: --text-heading's size at weight 400. */
+.start-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: var(--text-heading);
+  font-weight: 400;
+  text-align: start;
+  user-select: text;
+  cursor: text;
+}
+
+.start-search-input::placeholder {
+  color: var(--text-faint);
+}
+
+.start-search-input::selection {
+  background: var(--accent-soft);
 }
 
 @keyframes mark-in {
@@ -1474,7 +1550,7 @@ input {
 /* Cards: --bg-surface at --r-md with --e-ring for their edge; the transparent 1px border is the edge
    forced colours draw. */
 .seo-section,
-.seo-score-card,
+.seo-summary,
 .seo-issues {
   padding: var(--space-4) calc(var(--space-2) + var(--space-3));
   border: 1px solid transparent;
@@ -1643,11 +1719,31 @@ input {
   gap: var(--space-4);
 }
 
+/* The summary (seo-sidebar.feature.md, Overview, the summary): the health score, the AI-readiness tile
+   (ai-readiness.css), the counts and "Highlight everything" in one card, a --divider above the tile and
+   above the counts. Each score is a row, its 64px ring beside its words (the value --text-title); under
+   the panel's minimum the rings are 48px and stay beside them (the seo-panel query, last in this file). */
+.seo-summary {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+}
+
 .seo-score-card {
   display: flex;
   align-items: center;
-  gap: var(--space-5);
-  padding: var(--space-5);
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.seo-summary .seo-ring {
+  width: 64px;
+  height: 64px;
+}
+
+.seo-summary .seo-ring-value {
+  font: var(--text-title);
+  letter-spacing: -0.01em;
 }
 
 /* The ring's arc is its band's graphics colour on a --track circle; the band's word beside it names it. */
@@ -1740,20 +1836,34 @@ input {
   font: var(--text-small);
 }
 
-/* Counts by severity: pills on --bg-subtle, the severity's icon, the number and its word. */
+/* Counts by severity: pills on --bg-subtle, the severity's icon, the number and its word. In the summary
+   they fill its width, each growing to share it; where three don't fit, whole pills wrap to a second line
+   and grow to fill it too. */
 .seo-counts {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
 }
 
+.seo-summary .seo-counts {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
+}
+
+.seo-summary .seo-panel-tools {
+  margin-top: var(--space-2);
+}
+
 .seo-count {
   display: inline-flex;
+  flex: 1 0 auto;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
   min-width: 0;
   height: var(--h-chip);
-  padding: 0 var(--space-4) 0 var(--space-3);
+  padding: 0 var(--space-3);
   border: 1px solid transparent;
   border-radius: var(--r-pill);
   background: var(--bg-subtle);
@@ -9186,18 +9296,55 @@ input {
   font: var(--text-small);
 }
 
-/* The probe table: one column per agent; a cell that differs from the browser is marked. */
-.visibility-table {
-  min-width: 560px;
+/* The probes compared one crawler at a time (specs/serp-panels.feature.md, Decisions; design-tokens.feature.md,
+   The panels at 300px): the crawlers' chips (the snippet editor's .seo-chip-button), one that differs
+   from the browser carrying a warning glyph and its count, then the table. */
+.visibility-agents {
+  margin-bottom: var(--space-3);
 }
 
-/* The fact column stays in view while the agents scroll sideways. */
-.visibility-table thead th:first-child,
-.visibility-table tbody th {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  background: var(--bg-surface);
+.visibility-agent-differs {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) / 2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The glyph is graphics: --warn (3:1), its shape saying it without hue; the count takes the chip's text colour. */
+.visibility-agent-differs .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--warn);
+}
+
+/* Three fixed columns, the panel's width (it was eight at a 560px minimum, scrolling 997px sideways at
+   360px): the fact 30%, the browser's and the chosen crawler's values 35% each. The fact starts at the
+   card's padding edge (the card has its own); the last column keeps its end padding, so a marked
+   cell's tint holds its text. */
+.visibility-table {
+  table-layout: fixed;
+}
+
+.visibility-table thead th:first-child {
+  width: 30%;
+}
+
+.visibility-table thead th + th {
+  width: 35%;
+}
+
+.visibility-table th:first-child,
+.visibility-table td:first-child {
+  padding-inline-start: 0;
+}
+
+/* A value wraps in its column: between words, a word wider than the column inside itself. */
+.visibility-table th {
+  overflow-wrap: break-word;
+}
+
+.visibility-table td {
+  overflow-wrap: break-word;
 }
 
 /* An agent told something the browser was not: --warn-ink with a --warn underline (not hue alone). */
@@ -9219,12 +9366,18 @@ input {
   font-weight: 600;
 }
 
+/* A header needs no end padding (the next column's start padding parts them): "smartphone" holds its
+   line in the 300px panel's 79px column. */
+.visibility-table thead th {
+  padding-inline-end: 0;
+}
+
+/* A canonical URL is whole on its lines (the page text's `anywhere`); it was one line cut by an ellipsis
+   (PageText's .seo-ellipsis). */
 .visibility-table td .seo-page-text {
   display: block;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  text-overflow: clip;
 }
 
 .visibility-disclosure {
@@ -9238,10 +9391,18 @@ input {
   font: var(--text-small);
 }
 
+/* A robots.txt file read: its URL whole on its lines (it was cut by an ellipsis at 300px), when it was
+   read after it, on the next line where they don't fit together. */
 .visibility-robots-file {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   min-width: 0;
+}
+
+.visibility-robots-file .seo-page-text {
+  white-space: normal;
+  text-overflow: clip;
 }
 
 .visibility-robots-file .seo-note {
@@ -11172,11 +11333,25 @@ input {
     padding: var(--space-1);
   }
 
-  /* What keeps everything on one line wraps (NARROW_PANEL_WRAPS): the score card's ring above its
-     words, a section head's badge under its title, a long toggle or action label onto a second line. */
+  /* What keeps everything on one line wraps (NARROW_PANEL_WRAPS): Overview's summary keeps each ring
+     beside its words, the rings 48px and the card's padding --space-3 (the 64px ring stacked above them
+     would grow the card tall), a section head's badge under its title, a long toggle or action label
+     onto a second line. */
+  .seo-summary {
+    padding: var(--space-3);
+  }
+
   .seo-score-card {
-    flex-direction: column;
-    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .seo-summary .seo-ring {
+    width: 48px;
+    height: 48px;
+  }
+
+  .seo-summary .seo-ring-value {
+    font: var(--text-heading);
   }
 
   .seo-section-head {

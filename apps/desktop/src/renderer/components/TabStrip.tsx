@@ -40,6 +40,35 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
   useEffect(() => {
     if (active) showWhole(ref.current);
   }, [active]);
+  // The tablist narrowing (a window or row resize) brings the active tab back in only when it cut a
+  // tab that was whole in view; one the user scrolled away stays put (`tabs.feature.md`).
+  useEffect(() => {
+    const list = ref.current?.closest<HTMLElement>('[role="tablist"]');
+    if (!active || !list || typeof ResizeObserver === 'undefined') return;
+    const whole = () => {
+      const pill = ref.current?.closest('.tab')?.getBoundingClientRect();
+      const box = list.getBoundingClientRect();
+      return pill !== undefined && pill.left >= box.left - 0.5 && pill.right <= box.right + 0.5;
+    };
+    let wasWhole = whole();
+    let width = list.clientWidth;
+    // A scroll at the width last seen is the user's; one at a new width is the resize clamping the
+    // strip (scroll events run before resize observations), which the observer below judges.
+    const remember = () => {
+      if (list.clientWidth === width) wasWhole = whole();
+    };
+    const resized = new ResizeObserver(() => {
+      if (wasWhole && !whole()) showWhole(ref.current);
+      wasWhole = whole();
+      width = list.clientWidth;
+    });
+    resized.observe(list);
+    list.addEventListener('scroll', remember, { passive: true });
+    return () => {
+      resized.disconnect();
+      list.removeEventListener('scroll', remember);
+    };
+  }, [active]);
   const activate = () => void actions.activateTab(tab.id);
   const close = () => void actions.closeTab(tab.id);
   return (
@@ -136,8 +165,9 @@ function Tab({ tab, active }: { readonly tab: TabState; readonly active: boolean
 
 /**
  * The tab strip: the chrome row's tablist (`ChromeRow.tsx`; spec `tabs.feature.md`, The chrome row). It
- * holds only tabs and scrolls sideways once they reach their minimum width; the address bar is its
- * next sibling and the new-tab button follows that. Roving tabindex: only the active tab is in the
+ * holds only tabs and scrolls sideways once they reach their minimum width; the new-tab button is its
+ * next sibling (so it follows the last tab and stays in view when the tabs scroll), the address bar
+ * the one after. Roving tabindex: only the active tab is in the
  * Tab order; Left/Right/Home/End move focus inside the tablist.
  */
 export function TabStrip({ state }: { readonly state: BrowserState | null }) {

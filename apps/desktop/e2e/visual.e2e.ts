@@ -22,7 +22,7 @@ import path from 'node:path';
 import { crc32 } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import { ACCOUNT_SETTINGS_TEXT, SETTINGS_MENU } from '@app/specs/account-settings.spec';
+import { SETTINGS_MENU } from '@app/specs/account-settings.spec';
 import { DATA_API_E2E_SWITCH, DATA_SOURCES_SETTINGS_TEXT, LEGAL_GATES_E2E_SWITCH } from '@app/specs/data-sources.spec';
 import { AGENT_E2E_SCRIPT_SWITCH } from '@app/specs/agent-session.spec';
 import { HISTORY_MENU_ID, JUMP_BACK_IN_TITLE } from '@app/specs/browser-polish.spec';
@@ -689,12 +689,15 @@ test.describe('page surfaces', () => {
     await audit('/guide');
     await menu(SETTINGS_MENU.id);
     await expect(page.getByTestId('settings-view')).toBeVisible();
-    // Account, Search Console, Data sources and AI checks each say "Loading…" until main answers
-    // (settings-account.tsx, settings-gsc.tsx, settings-data-sources.tsx, settings-ai-checks.tsx): every one has answered.
+    // Data sources and AI checks each say "Loading…" until main answers
+    // (settings-data-sources.tsx, settings-ai-checks.tsx): every one has answered.
     await expect(page.getByTestId('settings-content')).not.toContainText('Loading…');
-    await expect(page.getByTestId('settings-content')).toContainText(ACCOUNT_SETTINGS_TEXT.unconfigured);
+    // This build has no account service or Search Console client: both are left out, so the sheet
+    // opens at its top, Data sources (account-settings.feature.md, "Unconfigured sections are left out").
+    await expect(page.locator('#settings-section-account, #settings-section-search-console')).toHaveCount(0);
+    await expect(page.locator('.settings-nav-item[aria-current="true"]')).toHaveAttribute('data-testid', 'settings-nav-data-sources');
     await capture('settings');
-    // Lower down (Data sources sits between Search Console and AI checks): the rest of the sections.
+    // Lower down: the rest of the sections (Telemetry, History).
     await capture('settings-lower', { scroll: { selector: '.settings-content', to: 'end' } });
     await page.getByTestId('settings-close').click();
     await expect(page.getByTestId('settings-view')).toHaveCount(0);

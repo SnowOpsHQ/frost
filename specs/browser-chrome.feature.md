@@ -7,11 +7,12 @@ named test.
 
 ## Layout
 The app window shows the chrome (`app://app`): one chrome row (`tabs.feature.md`, The chrome row:
-back, forward, reload ⇄ stop, the tab strip, the address bar, new tab and the toolbar's toggles), the
+back, forward, reload ⇄ stop, the tab strip, new tab, the address bar and the toolbar's toggles), the
 bands under it, the **page area**, and a slim status bar holding the IPC connection indicator
 (`data-testid="ping"`, Phase 0). The active tab's `WebContentsView` is attached to the window's
 `contentView` exactly over the page area. An empty tab has no visible view: the page area shows
-frost's start view (wordmark + "Search or enter address") and the address bar is focused.
+frost's start view (the wordmark and a search field, `browser-polish.feature.md`, New-tab page) and the
+address bar is focused.
 
 ## Tab view factory — `createTabView()` (`apps/desktop/src/main/browser/__tests__/tab-view.test.ts`)
 `window.ts` is on the Semgrep `webcontents-factory` allowlist; prefs are literals there so
@@ -205,8 +206,9 @@ The address bar's text is a pure reducer (`renderer/address-field.ts`): what the
   `false` (a no-op) clears the submitted text, so the field shows the tab's URL again.
 
 ## End to end (`apps/desktop/e2e/browser.e2e.ts`, real Electron, loopback server)
-- **Scenario: empty-tab-shows-start-view** — at launch the start view is visible, the address bar
-  is focused, no browse-session WebContents is shown, and the window title is `frost`.
+- **Scenario: empty-tab-shows-start-view** — at launch the start view is visible with its search field
+  (named `ADDRESS_PROMPT`), the address bar is focused, no browse-session WebContents is shown, and the
+  window title is `frost`.
 - **Scenario: typing-url-loads-page** — typing `127.0.0.1:<port>/a` + Enter loads
   `http://127.0.0.1:<port>/a` in a tab view on `BROWSE_PARTITION`; the address bar shows the
   committed URL and the window title is `<page title> — frost`.

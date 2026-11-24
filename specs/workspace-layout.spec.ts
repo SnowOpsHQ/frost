@@ -139,12 +139,19 @@ export const NARROW_WINDOW = {
 export const SEO_BODY_NARROW_PADDING = { token: '--space-1', belowContentWidth: SIDEBAR_PANEL_WIDTH_RANGE.min - 2 } as const;
 
 /**
- * What wraps under the panel's minimum (the `seo-panel` query; `workspace-layout.feature.md`, A narrow
- * window): each rule's selector, the stylesheet that holds it, and the declarations it takes there.
+ * What wraps (or shrinks) under the panel's minimum (the `seo-panel` query; `workspace-layout.feature.md`, A
+ * narrow window): each rule's selector, the stylesheet that holds it, and the declarations it takes there.
+ * Overview's summary keeps each ring beside its words, the rings 48px (UI polish round 2: they stacked above
+ * them, the cards growing tall); Visibility's AI-readiness score row still stacks (`.ai-score`), the
+ * Overview's tile overriding it (`.ai-tile .ai-score`).
  */
 export const NARROW_PANEL_WRAPS = [
-  { stylesheet: 'styles.css', selector: '.seo-score-card', set: { 'flex-direction': 'column', 'align-items': 'flex-start' } },
+  { stylesheet: 'styles.css', selector: '.seo-summary', set: { padding: 'var(--space-3)' } },
+  { stylesheet: 'styles.css', selector: '.seo-score-card', set: { gap: 'var(--space-3)' } },
+  { stylesheet: 'styles.css', selector: '.seo-summary .seo-ring', set: { width: '48px', height: '48px' } },
+  { stylesheet: 'styles.css', selector: '.seo-summary .seo-ring-value', set: { font: 'var(--text-heading)' } },
   { stylesheet: 'ai-readiness.css', selector: '.ai-score', set: { 'flex-direction': 'column', 'align-items': 'flex-start' } },
+  { stylesheet: 'ai-readiness.css', selector: '.ai-tile .ai-score', set: { 'flex-direction': 'row', 'align-items': 'center', gap: 'var(--space-3)' } },
   { stylesheet: 'styles.css', selector: '.seo-section-head', set: { 'flex-wrap': 'wrap' } },
   { stylesheet: 'styles.css', selector: '.seo-toggle', set: { height: 'auto', 'min-height': 'var(--h-chip)', 'white-space': 'normal' } },
   { stylesheet: 'styles.css', selector: '.seo-action', set: { height: 'auto', 'min-height': 'var(--h-chip)', 'white-space': 'normal' } },
