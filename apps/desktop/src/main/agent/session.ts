@@ -315,7 +315,8 @@ interface Turn {
   entriesBefore: number;
 }
 
-const NETWORK_TARGETS: readonly LockdownTarget[] = ['fetch', 'WebSocket', 'WebSocketStream', 'EventSource', 'XMLHttpRequest'];
+/** The globals that open a connection, as main checks the runtime's lockdown report (`network-globals.test.ts` keeps them equal to the runtime's). */
+export const NETWORK_TARGETS: readonly LockdownTarget[] = ['fetch', 'WebSocket', 'WebSocketStream', 'EventSource', 'XMLHttpRequest'];
 /** The tools a turn offers when it runs no skill: the whole catalogue. */
 const ALL_TOOLS: readonly AgentToolName[] = AGENT_TOOL_NAMES;
 const L = AGENT_PROTOCOL_LIMITS;
