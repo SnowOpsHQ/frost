@@ -167,11 +167,16 @@ describe('projects view', () => {
     expect(changeCountText(4, true)).toBe('4 changes');
     expect(runActive('running')).toBe(true);
     expect(runActive('waiting-for-tab')).toBe(true);
+    expect(runActive('waiting-for-start-tab')).toBe(true);
     for (const ended of ['idle', 'done', 'cancelled', 'tab-closed', 'failed'] as const) expect(runActive(ended)).toBe(false);
     expect(runProgressText(run({ current: 2 }))).toBe(`${RUN_STATE_LABELS.running} 2 of 3`);
     expect(runProgressText(run({ state: 'waiting-for-tab', current: 1 }))).toBe(`${RUN_STATE_LABELS['waiting-for-tab']} 1 of 3`);
+    expect(runProgressText(run({ state: 'waiting-for-start-tab', current: 1 }))).toBe(`${RUN_STATE_LABELS['waiting-for-start-tab']} 1 of 3`);
     // A rerun's late first tab waits for the tab it started from, before the run has a tab of its own.
-    expect(RUN_STATE_LABELS['waiting-for-tab']).toContain('the tab you started from');
+    expect(RUN_STATE_LABELS['waiting-for-start-tab']).toContain('the tab you started from');
+    // Any other wait ends only with the run's own tab in front: its label names no other tab.
+    expect(RUN_STATE_LABELS['waiting-for-tab']).toContain('the run’s tab');
+    expect(RUN_STATE_LABELS['waiting-for-tab']).not.toContain('the tab you started from');
     const targets = [
       { kind: 'page' as const, label: 'a', outcome: 'captured' as const, changeCount: 0, screenshot: null },
       { kind: 'page' as const, label: 'b', outcome: 'timed-out' as const, changeCount: null, screenshot: null },

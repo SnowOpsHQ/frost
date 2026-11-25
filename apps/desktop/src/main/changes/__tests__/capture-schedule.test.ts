@@ -37,7 +37,7 @@ function fakeRuns() {
     state = { ...state, ...change, version: state.version + 1 };
     for (const waiter of waiters.splice(0)) waiter(state);
   };
-  const active = () => state.state === 'running' || state.state === 'waiting-for-tab';
+  const active = () => state.state === 'running' || state.state === 'waiting-for-tab' || state.state === 'waiting-for-start-tab';
   const runs = {
     running: vi.fn(() => (active() ? state.projectId : null)),
     state: vi.fn(() => state),
@@ -244,6 +244,19 @@ describe('automatic starts (the flag injected; never shipped on)', () => {
     set({ state: 'waiting-for-tab' });
     await tick(3);
     expect(runs.cancel).toHaveBeenCalledOnce();
+    schedule.stop();
+  });
+
+  test('auto-run-yields-while-it-waits-for-the-tab-it-started-from', async () => {
+    const { schedule, startRun, runs, set, current } = setup({ autoCaptureAvailable: true });
+    schedule.start();
+    await tick();
+    expect(startRun).toHaveBeenCalledOnce();
+    // Its late first tab waits for the tab it started from to be in front: the user is elsewhere, so it gives way.
+    set({ state: 'waiting-for-start-tab' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runs.cancel).toHaveBeenCalledOnce();
+    expect(current().state).toBe('cancelled');
     schedule.stop();
   });
 
