@@ -372,10 +372,11 @@ Phase 1 Task 2. Each scenario maps to one named test.
   whichever is less, and never negative; no rule of the chrome names the retired `.tabstrip` or
   `.toolbar`.
 - **Scenario: new-tab-follows-the-tablist** — the rendered order (the new-tab button right after the
-  tablist, the address bar's box right after it) is checked on the rendered row, by `chrome-row-dom-order`
-  (`renderer/__tests__/chrome-row.test.ts`), not on `ChromeRow.tsx`'s source text; `.new-tab` is `flex: none` and its inline
-  margins are `-1 × --space-1` before and `--space-1` after (it moves 4px toward the tabs and away
-  from the address bar, so the row's width is unchanged); no tablist rule is `position: sticky`.
+  tablist, the address bar's box right after it) is checked on the rendered row, by
+  `chrome-row-dom-order` (`renderer/__tests__/chrome-row.test.ts`), not on `ChromeRow.tsx`'s source
+  text; `.new-tab` is `flex: none` and its inline margins are `-1 × --space-1` before and `--space-1`
+  after (it moves 4px toward the tabs and away from the address bar, so the row's width is
+  unchanged); no tablist rule is `position: sticky`.
 
 - **Scenario: title-bar-overlay-colours-are-the-row-tokens** — `TITLE_BAR_OVERLAY_COLOURS.light` is
   `tokens.css`'s light `--bg-window` and `--text-muted`, `.dark` its dark ones; the row's background is

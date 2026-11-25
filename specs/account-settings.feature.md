@@ -42,7 +42,8 @@ to one named test.
   service or no Search Console client used to give each its own top section saying only "… isn't
   configured in this build". Such a section has nothing to set, so once main says so (`account.watch`
   answers `unconfigured`; `gsc.watch` answers `configured: false`) it is left out of the section list
-  and the sheet (and, even from an already open palette, its "Search Console settings" action) (`SETTINGS_OPTIONAL_SECTIONS`, `settingsSectionsShown`). Until main has answered it
+  and the sheet (`SETTINGS_OPTIONAL_SECTIONS`, `settingsSectionsShown`). Its "Search Console settings"
+  palette action goes too, even from an already open palette. Until main has answered it
   shows, with "Loading…" (the UI never guesses). Rejected: a compact muted "not available" line in
   place (still two headings and two list entries with nothing to do, at the top of the sheet), and
   moving them to the end (the list would reorder itself by build). **Where requests land:** a request
@@ -129,7 +130,7 @@ to one named test.
 - `settings-nav-follows-the-request` — a request marks its section current (`aria-current="true"` on it alone), and a click in the list marks the clicked one.
 - `settings-nav-survives-a-section-leaving` — scrolled (not asked) to Search Console while main has not answered, then main says Search Console is not configured: with no scroll, exactly one shown section is current.
 - `settings-nav-keeps-a-request-through-layout` — Telemetry asked for near the end of the content; Search Console then left out (the content shorter, its scroll clamped) and the content resized (clamped again): Telemetry stays current through both scrolls the layout caused; a scroll by the user afterwards hands the list back to the section in view.
-- `settings-nav-keeps-a-request-when-the-clamp-is-seen-first` — the other ordering of the same layout: Telemetry asked for; the content already shorter and its scroll clamped when the sheet works out the list again for Search Console leaving, the clamp's scroll event only after that; then the content resized (a `ResizeObserver` stands in for jsdom's missing one), the clamped scroll seen by the resize before its scroll event: Telemetry stays current through both; a scroll by the user to the top hands the list back to Account.
+- `settings-nav-keeps-a-request-when-the-clamp-is-seen-first` — the other ordering of the same layout: Telemetry asked for; the content already shorter and its scroll clamped when the sheet works out the list again for Search Console leaving, the clamp's scroll event only after that; then the content resized with its clamp seen by the resize before its scroll event (a `ResizeObserver` stands in for jsdom's missing one): Telemetry stays current through both; a scroll by the user to the top hands the list back to Account. The one test guards the scroll handler's clamp branch and `recompute`'s pin together, not either alone.
 - `settings-nav-keeps-a-request-through-a-resize-seen-last` — Telemetry asked for, then the content resized and its scroll clamped, the scroll event before the resize is seen: Telemetry stays current; a scroll by the user to the top hands the list back to Account.
 
 ## Opening and closing (`apps/desktop/src/renderer/__tests__/settings-open.test.ts`)

@@ -43,6 +43,7 @@ const offered = (id: string) => host.querySelector(`[data-action="${id}"]`) !== 
 beforeEach(() => {
   // jsdom lays nothing out: the page column must look tall enough for the sheet.
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ height: 2000, width: 1000, top: 0, left: 0, right: 1000, bottom: 2000, x: 0, y: 0, toJSON: () => ({}) });
+  // jsdom has no scrollIntoView (nothing to spy on): define it here, and `afterEach` removes it.
   Element.prototype.scrollIntoView = () => undefined;
   host = document.createElement('div');
   document.body.append(host);
@@ -51,6 +52,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+  delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   vi.restoreAllMocks();
 });
 
