@@ -181,6 +181,23 @@ export function createPaletteRegistry(): PaletteRegistry {
     version += 1;
     for (const listener of [...listeners]) listener();
   };
+  // A watcher that throws never breaks the palette (like a predicate or a source): a failed start has
+  // nothing to stop, and a failed stop leaves the other watchers still stopped. Each start gets its own
+  // `invalidate`, so two watchers subscribing it to one store never collapse into one entry.
+  const begin = (start: (invalidate: () => void) => () => void): (() => void) | null => {
+    try {
+      return start(() => invalidate());
+    } catch {
+      return null;
+    }
+  };
+  const end = (stop: (() => void) | null | undefined): void => {
+    try {
+      stop?.();
+    } catch {
+      // Contained: the watcher's own teardown failed, nothing else depends on it.
+    }
+  };
 
   return {
     register(...sources) {
@@ -231,11 +248,11 @@ export function createPaletteRegistry(): PaletteRegistry {
 
     subscribe(listener) {
       listeners.add(listener);
-      if (listeners.size === 1) for (const start of watchers.keys()) watchers.set(start, start(invalidate));
+      if (listeners.size === 1) for (const start of watchers.keys()) watchers.set(start, begin(start));
       return () => {
         if (!listeners.delete(listener) || listeners.size > 0) return;
         for (const [start, stop] of watchers) {
-          stop?.();
+          end(stop);
           watchers.set(start, null);
         }
       };
@@ -245,9 +262,14 @@ export function createPaletteRegistry(): PaletteRegistry {
     invalidate,
 
     watch(start) {
-      watchers.set(start, listeners.size > 0 ? start(invalidate) : null);
+      // Like `register`, a duplicate is a programming error: it would overwrite (and leak) the stop.
+      if (watchers.has(start)) throw new Error('palette watch: this start is already registered');
+      watchers.set(start, listeners.size > 0 ? begin(start) : null);
+      let watching = true;
       return () => {
-        watchers.get(start)?.();
+        if (!watching) return;
+        watching = false;
+        end(watchers.get(start));
         watchers.delete(start);
       };
     },
