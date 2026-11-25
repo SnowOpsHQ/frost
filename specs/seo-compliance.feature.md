@@ -170,6 +170,7 @@ Each line maps to one named test.
 - What the accessibility section shows for each run state and report → `a11y-view-states`
 - Upgraded mixed content in the signals; partial and timed-out notes → `compliance-notes`
 - Progress, impact counts and node lists → `a11y-progress-and-counts`
+- The other status messages: scoring, timed out, failed and invalid are said by the same live status, which stays mounted while its text changes, and are not live regions of their own (`apps/desktop/src/renderer/__tests__/compliance-run-progress.test.ts`) → `a11y-status-messages-announced-by-one-region`
 - The run's progress: the card's live status is mounted empty before the run, the same element gets only the running message when the run starts, the ticking elapsed seconds sit outside it (`apps/desktop/src/renderer/__tests__/compliance-run-progress.test.ts`) → `a11y-progress-announced-once`
 
 ## End to end (`apps/desktop/e2e/seo-compliance.e2e.ts`)
