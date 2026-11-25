@@ -136,8 +136,10 @@ named test.
   label throws at registration; a dynamic source's bad or duplicate ids are dropped.
 - **Scenario: registry-resolves-dynamic-sources** — a function source is asked with the context
   each time.
-- **Scenario: registry-signals-changes-in-availability-inputs** — `invalidate` calls each
-  `subscribe`d listener and bumps `version`; a `watch`ed input source is started only while a listener
+- **Scenario: registry-signals-changes-in-availability-inputs** — the `invalidate` a watched `start`
+  receives calls each `subscribe`d listener and bumps `version` (it is not part of the registry's own
+  interface); the first `subscribe` bumps `version` too, so an answer that landed between rendering and
+  subscribing is still seen; a `watch`ed input source is started only while a listener
   is subscribed (stopped with the last) and may call `invalidate` to make an open palette resolve again; a `start` or stop that throws is contained,
   and watching the same `start` twice throws.
 - **Scenario: availability-filters-and-never-throws** — unavailable actions are left out; a predicate
