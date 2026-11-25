@@ -9,7 +9,7 @@ import { SearchParamsSchema, type SearchParams } from '@app/specs/serp-search-pa
 import { SerpSnapshotSchema, type SerpSnapshot } from '@app/specs/serp-snapshot.schema';
 import { MAX_SERP_FILTERS_JSON_BYTES, MAX_SERP_READING_JSON_BYTES, SEARCH_KEY_VERSION } from '@app/specs/workspace-db.spec';
 import type { SearchParamsOf, SerpReadingOf } from './serp-params';
-import { CAPTURE_BUSY, CAPTURE_STALE_RETRIES, DiffSummarySchema, type CaptureAnswer, type CaptureRefusal, type HistoryVersion } from '@app/specs/changes.schema';
+import { CAPTURE_BUSY, CAPTURE_STALE_RETRIES, DiffSummarySchema, type CaptureAnswer, type CaptureRefusal, type HistoryVersion, type PagesAnswer, type PagesInput, type VersionAnswer, type VersionInput } from '@app/specs/changes.schema';
 import { RenderProfileSchema } from '@app/specs/render-profile.schema.spec';
 import { isDefaultTabOverrides, type TabOverrides } from '@app/specs/render-profile.spec';
 import type { z } from 'zod';
@@ -89,6 +89,10 @@ export interface CaptureOptions {
 /** Main's changes service: the procedures' (`ChangesService`) and Phase 5's reads (`ChangesReadService`). */
 export interface MainChangesService extends ChangesService, ChangesReadService {
   capture(tabId: number, options?: CaptureOptions): Promise<CaptureAnswer>;
+  /** One version's snapshot (`null`: none, or unreadable); `getVersion` answers it. */
+  version(input: VersionInput): Promise<VersionAnswer>;
+  /** Captured pages, most recently captured first; `listPages` answers them. */
+  pages(input: PagesInput): Promise<PagesAnswer>;
   /** Tells `listener` of each capture saved, with its project (retention enforces the project's policy; `retention.ts`). */
   onCaptured(listener: (projectId: string) => void): void;
 }

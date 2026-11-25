@@ -154,7 +154,7 @@ export interface HistoryInput {
   limit?: number;
 }
 
-/** `changes.version`: one version's snapshot. */
+/** `getVersion` (`CHANGES_READ_API`): one version's snapshot. */
 export interface VersionInput {
   versionId: string;
 }
@@ -165,7 +165,7 @@ export interface DiffInput {
   toVersionId: string;
 }
 
-/** `changes.pages`: captured pages (one project's when given), most recently captured first. */
+/** `listPages` (`CHANGES_READ_API`): captured pages (one project's when given), most recently captured first. */
 export interface PagesInput {
   projectId?: string;
   limit?: number;

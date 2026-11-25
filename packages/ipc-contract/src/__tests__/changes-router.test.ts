@@ -4,7 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { describe, expect, test, vi } from 'vitest';
 import { CAPTURE_LIMITS } from '@app/specs/capture.spec';
 import { MAX_HISTORY_PAGE } from '@app/specs/capture-db.spec';
-import type { CaptureAnswer, HistoryAnswer, PagesAnswer } from '@app/specs/changes.spec';
+import type { CaptureAnswer, HistoryAnswer } from '@app/specs/changes.spec';
 import { IPC_SENDER_ERROR_CODE } from '@app/specs/ipc-sender.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import { APP_ORIGIN } from '@app/specs/security-policy.spec';
@@ -18,15 +18,12 @@ const V2 = '01920000-0000-7000-8000-000000000002';
 const PROJECT = '01920000-0000-7000-8000-0000000000aa';
 const CAPTURED: CaptureAnswer = { status: 'captured', captureId: V1, versionId: V2, newVersion: true, changeCount: 3 };
 const HISTORY: HistoryAnswer = { versions: [], next: { createdAt: 5, id: V1 } };
-const PAGES: PagesAnswer = { pages: [{ url: PAGE, captureCount: 2, lastCapturedAt: 9 }] };
 
 function fakeChanges() {
   return {
     capture: vi.fn(async (_tabId: number, _options: { projectId?: string }): Promise<CaptureAnswer> => CAPTURED),
     history: vi.fn(async () => HISTORY),
-    version: vi.fn(async () => null),
     diff: vi.fn(async () => null),
-    pages: vi.fn(async () => PAGES),
   } satisfies ChangesService;
 }
 
@@ -57,9 +54,7 @@ async function errorOf(run: Promise<unknown>): Promise<TRPCError> {
 const VALID_INPUT: Record<string, unknown> = {
   capture: { tabId: 1, projectId: PROJECT },
   history: { url: PAGE, projectId: PROJECT, cursor: { createdAt: 5, id: V1 }, limit: 20 },
-  version: { versionId: V1 },
   diff: { fromVersionId: V1, toVersionId: V2 },
-  pages: { projectId: PROJECT, limit: 10 },
 };
 const PROCEDURES = Object.keys(VALID_INPUT);
 const untouched = (changes: ReturnType<typeof fakeChanges>) => {
@@ -107,9 +102,7 @@ describe('changes router', () => {
         { url: PAGE, extra: 1 },
         ...badIds.map((projectId) => ({ url: PAGE, projectId })),
       ],
-      version: [{}, undefined, { versionId: V1, extra: 1 }, ...badIds.map((versionId) => ({ versionId }))],
       diff: [{ fromVersionId: V1 }, { toVersionId: V2 }, { fromVersionId: V1, toVersionId: V2, extra: 1 }, ...badIds.map((toVersionId) => ({ fromVersionId: V1, toVersionId })), ...badIds.map((fromVersionId) => ({ fromVersionId, toVersionId: V2 }))],
-      pages: [{ limit: 0 }, { limit: MAX_HISTORY_PAGE + 1 }, { limit: '5' }, { extra: 1 }, ...badIds.map((projectId) => ({ projectId }))],
     };
     for (const name of PROCEDURES) {
       for (const input of bad[name]!) {
@@ -133,12 +126,8 @@ describe('changes router', () => {
     expect(changes.history).toHaveBeenCalledExactlyOnceWith(VALID_INPUT.history);
     await expect(procedure(ctxFor(changes), 'history')({ url: PAGE })).resolves.toEqual(HISTORY);
     expect(changes.history).toHaveBeenLastCalledWith({ url: PAGE });
-    await expect(procedure(ctxFor(changes), 'version')(VALID_INPUT.version)).resolves.toBeNull();
-    expect(changes.version).toHaveBeenCalledExactlyOnceWith({ versionId: V1 });
     await expect(procedure(ctxFor(changes), 'diff')(VALID_INPUT.diff)).resolves.toBeNull();
     expect(changes.diff).toHaveBeenCalledExactlyOnceWith({ fromVersionId: V1, toVersionId: V2 });
-    await expect(procedure(ctxFor(changes), 'pages')({})).resolves.toEqual(PAGES);
-    expect(changes.pages).toHaveBeenLastCalledWith({});
     // Phase 5 reads the same operations through CHANGES_READ_API, exported from this package.
     expect(Object.keys(CHANGES_READ_API).sort()).toEqual(['diff', 'getVersion', 'history', 'listPages', 'listScreenshots']);
   });

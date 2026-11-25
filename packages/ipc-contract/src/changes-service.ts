@@ -29,12 +29,8 @@ export interface ChangesService {
   capture(tabId: number, options: { readonly projectId?: string }): Promise<CaptureAnswer>;
   /** The page's versions, newest first, a page at a time. */
   history(input: HistoryInput): Promise<HistoryAnswer>;
-  /** One version's snapshot (`null`: none, or unreadable). */
-  version(input: VersionInput): Promise<VersionAnswer>;
   /** The diff of two versions of one lane: stored, else computed (`null` for two lanes or an unreadable version). */
   diff(input: DiffInput): Promise<DiffAnswer>;
-  /** Captured pages, most recently captured first. */
-  pages(input: PagesInput): Promise<PagesAnswer>;
 }
 
 /**

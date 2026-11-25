@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { CaptureInputSchema, DiffInputSchema, HistoryInputSchema, PagesInputSchema, VersionInputSchema } from '@app/specs/changes.schema';
+import { CaptureInputSchema, DiffInputSchema, HistoryInputSchema } from '@app/specs/changes.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import {
   CancelAreaInputSchema,
@@ -26,8 +26,8 @@ const requireChanges = middleware(({ ctx, next }) => {
 
 /**
  * `capture` answers `CaptureAnswer` (captured, or refused with a reason); `history` the page's
- * versions newest first; `version` one version's snapshot (`null`: none); `diff` two versions' diff
- * (`null`: different lanes or unreadable); `pages` the captured pages.
+ * versions newest first; `diff` two versions' diff (`null`: different lanes or unreadable). One
+ * version's snapshot and the captured pages are main's reads only (`ChangesReadService`).
  */
 export const changesRouter = router({
   capture: publicProcedure
@@ -40,21 +40,11 @@ export const changesRouter = router({
     .use(requireChanges)
     .input(HistoryInputSchema)
     .query(({ ctx, input }) => ctx.changes.history(input)),
-  version: publicProcedure
-    .use(enforceSender)
-    .use(requireChanges)
-    .input(VersionInputSchema)
-    .query(({ ctx, input }) => ctx.changes.version(input)),
   diff: publicProcedure
     .use(enforceSender)
     .use(requireChanges)
     .input(DiffInputSchema)
     .query(({ ctx, input }) => ctx.changes.diff(input)),
-  pages: publicProcedure
-    .use(enforceSender)
-    .use(requireChanges)
-    .input(PagesInputSchema)
-    .query(({ ctx, input }) => ctx.changes.pages(input)),
 });
 
 /** Hands the procedure main's `ScreenshotsService` (after `enforceSender`; fails closed without it). */

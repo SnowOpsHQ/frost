@@ -48,13 +48,13 @@ export const HistoryCursorSchema = z.strictObject({ createdAt: time, id });
 /** `changes.history`: a page's versions (one project's when given), newest first, a page at a time. */
 export const HistoryInputSchema = z.strictObject({ url: pageUrl, projectId: id.optional(), cursor: HistoryCursorSchema.optional(), limit: limit.optional() }) satisfies z.ZodType<HistoryInput>;
 
-/** `changes.version`: one version's snapshot. */
+/** `getVersion` (`CHANGES_READ_API`): one version's snapshot. */
 export const VersionInputSchema = z.strictObject({ versionId: id }) satisfies z.ZodType<VersionInput>;
 
 /** `changes.diff`: two versions of one lane (main refuses two lanes with `null`). */
 export const DiffInputSchema = z.strictObject({ fromVersionId: id, toVersionId: id }) satisfies z.ZodType<DiffInput>;
 
-/** `changes.pages`: captured pages (one project's when given), most recently captured first. */
+/** `listPages` (`CHANGES_READ_API`): captured pages (one project's when given), most recently captured first. */
 export const PagesInputSchema = z.strictObject({ projectId: id.optional(), limit: limit.optional() }) satisfies z.ZodType<PagesInput>;
 
 // ---- Answers -----------------------------------------------------------------------------------
