@@ -89,7 +89,8 @@ export function chatMarkdown(chat: ChatSnapshot, exportedAt: number, serverNameO
     }
     lines.push('## Agent', '');
     if (entry.text !== '') lines.push(inertMarkdown(entry.text), '');
-    for (const card of entry.tools) lines.push(`**${inertMarkdown(labelOf(card.toolName, serverNameOf))}**`, '', toolBlock(card), '');
+    // Inside the bold label a `*` or `_` in a server's name would close or nest the emphasis: escaped too.
+    for (const card of entry.tools) lines.push(`**${inertMarkdown(labelOf(card.toolName, serverNameOf)).replace(/[*_]/g, '\\$&')}**`, '', toolBlock(card), '');
   }
   return `${lines.join('\n').trimEnd()}\n`;
 }

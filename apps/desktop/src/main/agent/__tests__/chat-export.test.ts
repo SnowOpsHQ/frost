@@ -251,6 +251,8 @@ hidden
       expect(chatMarkdown(WITH_MCP, EXPORTED_AT, () => null)).toContain('**Untrusted tool from docs**');
       expect(chatMarkdown(WITH_MCP, EXPORTED_AT)).toContain('**Untrusted tool from docs**');
       expect(chatMarkdown(WITH_MCP, EXPORTED_AT, () => '[x](https://evil.example/) <b>')).toContain('**Untrusted tool from \\[x\\](https://evil.example/) \\<b\\>**');
+      // Inside the bold label, emphasis delimiters in a name are text, not markup.
+      expect(chatMarkdown(WITH_MCP, EXPORTED_AT, () => 'Team *Docs* __v2__')).toContain('**Untrusted tool from Team \\*Docs\\* \\_\\_v2\\_\\_**');
     });
 
     test('the service names the server from its own list', async () => {

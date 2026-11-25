@@ -125,7 +125,8 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
 - **Scenario: export-markdown-hostile-text-is-inert** — images, links, HTML, a forged heading and a
   fence in a reply or the title come out escaped.
 - **Scenario: export-names-mcp-servers** — an MCP tool card's label in both formats says the server's name
-  (Markdown: escaped), not its id; a server main no longer holds is named by its id.
+  (Markdown: escaped, its `*` and `_` too, since the label is bold), not its id; a server main no longer
+  holds is named by its id.
 - **Scenario: export-json-golden** — the `ChatExportV1` object.
 - **Scenario: export-has-no-ids-hashes-or-keys** — neither format carries a chat, call or approval
   id, an input hash or the key; tool output says untrusted.
