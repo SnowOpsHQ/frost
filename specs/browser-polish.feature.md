@@ -189,6 +189,7 @@ are read from `ci_project_pages` / `ci_versions` in the same database file.
 
 ## Router
 - `find.search` / `step` / `close`, `history.list` / `jumpBackIn` / `remove` / `clearAll` /
-  `reopenClosedTab` / `show` / `retention` / `setRetention` / `clearRange` (Phase 11) and `settings.setSearchEngine` / `searchEngine` start with
-  `enforceSender`, validate their input strictly and fail closed without their service.
+  `reopenClosedTab` / `show` / `retention` / `setRetention` / `clearRange` (Phase 11) and `settings.setSearchEngine` start with
+  `enforceSender`, validate their input strictly and fail closed without their service. The engine in
+  use reaches the chrome in the browser state, not through a `settings.*` query.
   (`polish-router-guards-and-validates`)

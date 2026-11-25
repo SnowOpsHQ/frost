@@ -215,6 +215,8 @@ export function createHistoryService(options: HistoryServiceOptions): MainHistor
 export interface SearchEngineSetting extends SettingsService {
   /** The stored choice, read before the first window opens (the default until then). */
   load(): Promise<void>;
+  /** The engine in use (the browser state and the page menus read it in main). */
+  searchEngine(): SearchEngineId;
 }
 
 export function createSearchEngineSetting(options: {

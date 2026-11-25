@@ -85,7 +85,6 @@ export interface HistoryService {
 }
 
 export interface SettingsService {
-  searchEngine(): SearchEngineId;
   /** Stores the engine choice and uses it at once; `false` when it could not be stored. Never rejects. */
   setSearchEngine(engine: SearchEngineId): Promise<boolean>;
 }
