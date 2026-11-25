@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { BUSY_RENAME_CODES, RENAME_RETRY_WAITS_MS } from '@app/db/rename-over-sync';
 
 // Durable writes for main's small files (the agent's, Task 3 review; the skills export and
 // `private-file.ts`, through `writeFileAtomically`): after a new file is renamed over the
@@ -6,7 +7,11 @@ import path from 'node:path';
 // platforms refuse to open or flush a directory (Windows answers EISDIR or EPERM), and the file's
 // own data was flushed before the rename either way. The rename itself is tried again on Windows
 // when another program has a file open for a moment (`renameOver`): every file main replaces this
-// way goes through it (`durable.test.ts`, `main-renames-go-through-rename-over`).
+// way goes through it, or through its synchronous counterpart `renameOverSync` (`@app/db`, which
+// holds the busy codes and the waits for both): `durable.test.ts`, `main-renames-go-through-rename-over`.
+
+/** The waits between tries of a rename Windows refused as busy (`@app/db`, shared with `renameOverSync`). */
+export { RENAME_RETRY_WAITS_MS };
 
 /** The part of `node:fs/promises` the directory flush uses. */
 export interface DirectorySync {
@@ -26,15 +31,6 @@ export async function syncDirectoryOf(fs: DirectorySync, file: string): Promise<
     await handle?.close().catch(() => undefined);
   }
 }
-
-/**
- * What Windows answers a rename while another program has either file open: a virus scanner or an
- * indexer reading the file just written, or anything reading the one being replaced.
- */
-const BUSY_RENAME_CODES: readonly string[] = ['EPERM', 'EACCES', 'EBUSY'];
-
-/** The waits between tries of a rename Windows refused as busy: seven more tries, about 1.3 s in all. */
-export const RENAME_RETRY_WAITS_MS = [10, 20, 40, 80, 160, 320, 640] as const;
 
 /**
  * Renames `from` over `to`. On Windows a rename refused because a file is busy

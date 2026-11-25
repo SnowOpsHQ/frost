@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { renameOverSync } from '@app/db/rename-over-sync';
 import {
   TELEMETRY_CONSENT_FILE,
   TELEMETRY_CONSENT_FILE_MAX_BYTES,
@@ -88,7 +89,7 @@ export function createConsentStore(options: ConsentStoreOptions): ConsentStore {
       try {
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(temporary, `${JSON.stringify(content)}\n`, { encoding: 'utf8', mode: FILE_MODE });
-        fs.renameSync(temporary, file);
+        renameOverSync(fs, temporary, file);
         return true;
       } catch (error) {
         log(`telemetry: the consent could not be saved (${errorCode(error) ?? 'error'}); the next start is off`);

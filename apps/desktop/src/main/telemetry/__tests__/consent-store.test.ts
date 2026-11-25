@@ -129,6 +129,26 @@ describe('telemetry consent store', () => {
     expect(fs.readFileSync).toHaveBeenCalledTimes(1);
   });
 
+  test('consent-store-rename-waits-for-a-busy-file', () => {
+    // On Windows a rename refused because another program has the file open is tried again.
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      const { fs, files } = fakeFs();
+      const store = create(fs);
+      const rename = fs.renameSync.getMockImplementation()!;
+      fs.renameSync.mockImplementationOnce(() => {
+        throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      });
+      fs.renameSync.mockImplementation(rename);
+      expect(store.write({ usage: true, errors: true })).toBe(true);
+      expect(fs.renameSync).toHaveBeenCalledTimes(2);
+      expect(files.has(FILE)).toBe(true);
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+    }
+  });
+
   test('consent-store-writes-atomically', () => {
     const { fs, files, modes, calls } = fakeFs();
     const store = create(fs);
