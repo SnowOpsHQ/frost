@@ -1,10 +1,12 @@
 // Spec: specs/capture-db.spec.ts (UUIDV7_PATTERN, SHA256_HEX_PATTERN, CAPTURE_SOURCES, SCREENSHOT_KINDS, MAX_SNAPSHOT_JSON_BYTES,
 // MAX_DIFF_JSON_BYTES, MAX_PROFILE_JSON_BYTES, MAX_SEARCH_PARAMS_JSON_BYTES, MAX_RECT_JSON_BYTES, MAX_HISTORY_PAGE, UNFILED_PROJECT_ID)
 // Acceptance: specs/capture-db.feature.md (Captures)
+import type { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { MAX_HISTORY_PAGE, MAX_PROFILE_JSON_BYTES, MAX_SNAPSHOT_JSON_BYTES, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import { createDrizzle } from '../../client';
 import { createUuidv7, uuidv7 } from '../ids';
-import type { AppendCaptureInput } from '../repository';
+import { createChangeIntelRepository, type AppendCaptureInput } from '../repository';
 import { appended, capture, captureInput, count, counts, laneOf, openTestDb, screenshotInput, sha256, utf8, type TestDb } from './fixtures';
 
 const PAGE = 'https://example.com/guides/tea';
@@ -238,6 +240,59 @@ describe('captures', () => {
     // Another page's lane stays out.
     appended(await capture(t.repo, { url: OTHER, snapshot: '{"v":9}', at: 4_000 }));
     expect((await t.repo.history({ pageUrl: first })).entries).toHaveLength(2);
+  });
+
+  test('histories-answer-each-pages-history-in-one-read', async () => {
+    // `history-pages-newest-first` and `history-follows-the-lane` for many pages at once (the project
+    // detail's last captures, `projects.feature.md`, The service): each URL's first page exactly as
+    // `history` answers it, in a fixed number of statements whatever the number of URLs.
+    const project = (await t.repo.createProject('Site', 1))!;
+    let at = 1_000;
+    for (const snapshot of ['{"v":1}', '{"v":1}', '{"v":2}', '{"v":3}', '{"v":4}']) appended(await capture(t.repo, { url: PAGE, snapshot, at: (at += 100), projectId: project.id }));
+    appended(await capture(t.repo, { url: PAGE, snapshot: '{"v":5}', at: (at += 100) }));
+    appended(await capture(t.repo, { url: `${PAGE}#part`, snapshot: '{"v":1}', at: (at += 100), profile: PHONE, projectId: project.id }));
+    appended(await capture(t.repo, { url: OTHER, snapshot: '{"v":1}', at: (at += 100), projectId: project.id }));
+    // One search reached at two URLs shares its lane (`history-follows-the-lane`).
+    const first = 'https://www.google.com/search?q=tea&gl=us';
+    const second = 'https://www.google.com/search?q=tea&gl=us&ei=tracking';
+    const lane = laneOf('search:tea');
+    for (const [url, snapshot] of [[first, '{"s":1}'], [second, '{"s":1}'], [second, '{"s":2}']] as const) {
+      const latest = await t.repo.latestVersion(lane);
+      const diff = latest && latest.snapshotHash !== sha256(snapshot) ? { id: uuidv7((at += 100)), fromVersionId: latest.id, engineVersion: 1, diffJson: '{}', summaryJson: '{"main":2}', changeCount: 2 } : undefined;
+      appended(await t.repo.appendCapture(captureInput({ url, snapshot, at: (at += 100), laneKey: lane, projectId: project.id, ...(diff ? { diff } : {}) })));
+    }
+    // A tampered row is skipped by both (it still takes its place in the page).
+    t.raw
+      .prepare('INSERT INTO ci_versions (id, lane_key, page_url, render_profile, search_params, snapshot, snapshot_hash, snapshot_bytes, schema_version, parent_version_id, created_at) VALUES (?, ?, ?, NULL, NULL, ?, ?, 1, 1, NULL, ?)')
+      .run(uuidv7(), laneOf(PAGE), PAGE, '{}', 'bad-hash', 1_250);
+
+    const urls = [PAGE, `${PAGE}#other`, OTHER, first, second, 'https://example.com/never', 'javascript:alert(1)', PAGE];
+    for (const filter of [{ projectId: project.id, limit: 2 }, { projectId: project.id, limit: 20 }, { limit: 3 }, {}]) {
+      const found = await t.repo.histories({ pageUrls: urls, ...filter });
+      for (const url of urls) expect(found.get(url), `${url} ${JSON.stringify(filter)}`).toEqual((await t.repo.history({ pageUrl: url, ...filter })).entries);
+    }
+    expect((await t.repo.histories({ pageUrls: urls, projectId: project.id, limit: 20 })).get(PAGE)!.length).toBeGreaterThan(2);
+    expect((await t.repo.histories({ pageUrls: [PAGE], projectId: 'nope' })).get(PAGE)).toEqual([]);
+    expect((await t.repo.histories({ pageUrls: [] })).size).toBe(0);
+
+    // The statements it runs: the same for 2 URLs as for 40 (one for the versions, one for their diffs).
+    let statements = 0;
+    const counted = new Proxy(t.raw, {
+      get(target, key) {
+        const value: unknown = Reflect.get(target, key, target);
+        if (key === 'prepare' && typeof value === 'function') return (text: string) => ((statements += 1), value.call(target, text));
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as DatabaseSync;
+    const repo = createChangeIntelRepository(createDrizzle(counted));
+    const statementsFor = async (pageUrls: string[]) => {
+      statements = 0;
+      await repo.histories({ pageUrls, projectId: project.id, limit: 20 });
+      return statements;
+    };
+    const many = [...urls, ...Array.from({ length: 32 }, (_, i) => `https://example.com/page/${i}`)];
+    expect(await statementsFor([PAGE, first])).toBe(2);
+    expect(await statementsFor(many)).toBe(2);
   });
 
   test('screenshots-round-trip', async () => {

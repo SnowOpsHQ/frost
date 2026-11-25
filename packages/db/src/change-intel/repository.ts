@@ -26,6 +26,7 @@ import type { SessionDatabase } from '../client';
 import {
   batch,
   capped,
+  chunks,
   insertWhere,
   isCount,
   isHash,
@@ -272,6 +273,12 @@ export interface ChangeIntelRepository extends PurgeOperations, ReadingOperation
   version(id: string): Promise<StoredVersion | null>;
   /** A page's versions across lanes, newest first. */
   history(filter: { readonly pageUrl: string; readonly projectId?: string; readonly cursor?: ChangeIntelCursor | null; readonly limit?: number }): Promise<HistoryPage>;
+  /**
+   * `history`'s first page for each of `pageUrls` (each URL's `entries`, as `history({ pageUrl, projectId, limit })`
+   * answers them), read together: one statement for the versions and one for their diffs (one more of
+   * each per `IN_LIST_MAX` URLs or versions), not two per URL.
+   */
+  histories(filter: { readonly pageUrls: readonly string[]; readonly projectId?: string; readonly limit?: number }): Promise<Map<string, readonly HistoryEntry[]>>;
   diffFor(fromVersionId: string, toVersionId: string): Promise<StoredDiff | null>;
   screenshots(filter: { readonly pageUrl?: string; readonly projectId?: string; readonly cursor?: ChangeIntelCursor | null; readonly limit?: number }): Promise<ScreenshotPage>;
   screenshot(id: string): Promise<StoredScreenshot | null>;
@@ -374,6 +381,18 @@ function diffSummaryOf(row: DiffRow): (DiffSummary & { laneKey: string; toVersio
   const { id, laneKey, fromVersionId, toVersionId, engineVersion, summary, changeCount, createdAt } = row;
   if (!isId(id) || !isHash(laneKey) || !isId(fromVersionId) || !isId(toVersionId) || !isCount(engineVersion, 1) || !isJson(summary, MAX_DIFF_SUMMARY_JSON_BYTES) || !isCount(changeCount) || !isTime(createdAt)) return null;
   return { id, laneKey, fromVersionId, toVersionId, engineVersion, summaryJson: summary, changeCount, createdAt };
+}
+
+/** A history row's version with its capture count and time, or `null` when any of them fails its check. */
+function countedVersionOf(row: VersionRow & { captureCount: unknown; lastCapturedAt: unknown }): (VersionSummary & { captureCount: number; lastCapturedAt: number | null }) | null {
+  const version = versionOf(row);
+  return version && isCount(row.captureCount) && (row.lastCapturedAt === null || isTime(row.lastCapturedAt)) ? { ...version, captureCount: row.captureCount, lastCapturedAt: row.lastCapturedAt } : null;
+}
+
+/** Rows of a raw `db.all` as objects (the driver may answer each row as an array of columns, in select order). */
+function rowsOf<T extends Record<string, unknown>>(result: unknown, names: readonly (keyof T & string)[]): T[] {
+  if (!Array.isArray(result)) return [];
+  return result.map((row) => (Array.isArray(row) ? (Object.fromEntries(names.map((name, i) => [name, row[i]])) as T) : (row as T)));
 }
 
 const screenshotColumns = {
@@ -506,6 +525,21 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
     if (input.reading !== undefined && !isCaptureReading(input.reading)) return null;
     return { pageUrl };
   }
+
+  /**
+   * The stored diffs into the versions `ids` (one statement per `IN_LIST_MAX` ids), as a function adding
+   * to one of those versions its diff against its parent (`null`: none).
+   */
+  const diffsOf = async (ids: Iterable<string>): Promise<<V extends VersionSummary>(version: V) => V & { diff: DiffSummary | null }> => {
+    const diffOf = new Map<string, DiffSummary>();
+    for (const part of chunks([...ids])) {
+      for (const summary of (await db.select(diffColumns).from(ciDiffs).where(inArray(ciDiffs.toVersionId, part))).map(diffSummaryOf).filter(present)) {
+        const { id, fromVersionId, engineVersion, summaryJson, changeCount } = summary;
+        diffOf.set(`${fromVersionId} ${summary.toVersionId}`, { id, fromVersionId, engineVersion, summaryJson, changeCount });
+      }
+    }
+    return (version) => ({ ...version, diff: version.parentVersionId === null ? null : (diffOf.get(`${version.parentVersionId} ${version.id}`) ?? null) });
+  };
 
   const readingTaken = async (id: string): Promise<boolean> => (await db.select({ id: ciSerpReadings.id }).from(ciSerpReadings).where(eq(ciSerpReadings.id, id)).limit(1)).length > 0;
 
@@ -662,19 +696,59 @@ export function createChangeIntelRepository(db: SessionDatabase): ChangeIntelRep
         )
         .orderBy(desc(ciVersions.createdAt), desc(ciVersions.id))
         .limit(size + 1);
-      const page = found.slice(0, size);
-      const versions = page.flatMap((row) => {
-        const version = versionOf(row);
-        return version && isCount(row.captureCount) && (row.lastCapturedAt === null || isTime(row.lastCapturedAt)) ? [{ ...version, captureCount: row.captureCount, lastCapturedAt: row.lastCapturedAt }] : [];
-      });
-      const diffs = versions.length === 0 ? [] : await db.select(diffColumns).from(ciDiffs).where(inArray(ciDiffs.toVersionId, versions.map((v) => v.id)));
-      const diffOf = new Map<string, DiffSummary>();
-      for (const summary of diffs.map(diffSummaryOf).filter(present)) {
-        const { id, fromVersionId, engineVersion, summaryJson, changeCount } = summary;
-        diffOf.set(`${fromVersionId} ${summary.toVersionId}`, { id, fromVersionId, engineVersion, summaryJson, changeCount });
+      const versions = found.slice(0, size).map(countedVersionOf).filter(present);
+      const withDiff = await diffsOf(versions.map((version) => version.id));
+      return { entries: versions.map(withDiff), next: nextCursor(found, size) };
+    },
+
+    async histories({ pageUrls, projectId, limit }) {
+      if (projectId !== undefined && !isId(projectId)) return new Map(pageUrls.map((url) => [url, []]));
+      const keys = [...new Set(pageUrls.map(pageKey).filter(present))];
+      const inProject = projectId === undefined ? sql`` : sql` AND c.project_id = ${projectId}`;
+      // `history`'s query for every key at once: each key's versions (its page's, and every version of
+      // a lane one of its captures went into), ranked newest first by `(created_at, id)` per key, the
+      // first `pageSize(limit)` of each kept; the capture count and time are read for those only.
+      // `CROSS JOIN` keeps SQLite's join order (the few keys first), so each step is an index search.
+      type Row = VersionRow & { key: unknown; captureCount: unknown; lastCapturedAt: unknown };
+      const rows: Row[] = [];
+      for (const part of chunks(keys)) {
+        const found = await db.all(sql`
+          WITH keys(page_key) AS (VALUES ${sql.join(
+            part.map((key) => sql`(${key})`),
+            sql`, `,
+          )}),
+          lanes(page_key, lane_key) AS (SELECT DISTINCT keys.page_key, c.lane_key FROM keys CROSS JOIN ci_captures c ON c.page_url = keys.page_key),
+          matched(page_key, version_id) AS (
+            SELECT keys.page_key, v.id FROM keys CROSS JOIN ci_versions v ON v.page_url = keys.page_key
+            UNION
+            SELECT lanes.page_key, v.id FROM lanes CROSS JOIN ci_versions v ON v.lane_key = lanes.lane_key
+          ),
+          ranked AS (
+            SELECT matched.page_key AS page_key, v.id AS version_id, row_number() OVER (PARTITION BY matched.page_key ORDER BY v.created_at DESC, v.id DESC) AS place
+            FROM matched CROSS JOIN ci_versions v ON v.id = matched.version_id
+            ${projectId === undefined ? sql`` : sql`WHERE EXISTS (SELECT 1 FROM ci_captures c WHERE c.version_id = v.id AND c.project_id = ${projectId})`}
+          )
+          SELECT ranked.page_key AS "key", ${sql.join(
+            Object.entries(versionColumns).map(([name, column]) => sql`${column} AS ${sql.identifier(name)}`),
+            sql`, `,
+          )},
+            (SELECT count(*) FROM ci_captures c WHERE c.version_id = ci_versions.id${inProject}) AS "captureCount",
+            (SELECT max(c.created_at) FROM ci_captures c WHERE c.version_id = ci_versions.id${inProject}) AS "lastCapturedAt"
+          FROM ranked CROSS JOIN ci_versions ON ci_versions.id = ranked.version_id
+          WHERE ranked.place <= ${pageSize(limit)}
+          ORDER BY ranked.page_key, ranked.place`);
+        rows.push(...rowsOf<Row>(found, ['key', ...(Object.keys(versionColumns) as (keyof VersionRow)[]), 'captureCount', 'lastCapturedAt']));
       }
-      const entries = versions.map((version) => ({ ...version, diff: version.parentVersionId === null ? null : (diffOf.get(`${version.parentVersionId} ${version.id}`) ?? null) }));
-      return { entries, next: nextCursor(found, size) };
+      const byKey = new Map<string, (VersionSummary & { captureCount: number; lastCapturedAt: number | null })[]>();
+      for (const row of rows) {
+        const version = countedVersionOf(row);
+        if (version === null || typeof row.key !== 'string') continue;
+        const list = byKey.get(row.key) ?? [];
+        list.push(version);
+        byKey.set(row.key, list);
+      }
+      const withDiff = await diffsOf(new Set([...byKey.values()].flat().map((version) => version.id)));
+      return new Map(pageUrls.map((url) => [url, (byKey.get(pageKey(url) ?? '') ?? []).map(withDiff)]));
     },
 
     async diffFor(fromVersionId, toVersionId) {
