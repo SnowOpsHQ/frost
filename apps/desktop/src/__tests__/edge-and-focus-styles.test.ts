@@ -1,5 +1,5 @@
 // Spec: specs/design-tokens.spec.ts (the --e-ring and --focus-ring tokens)
-// Acceptance: specs/design-tokens.feature.md (ring-edges-keep-a-forced-colours-border, agent-focus-shows-the-ring)
+// Acceptance: specs/design-tokens.feature.md (ring-edges-keep-a-forced-colours-border, agent-focus-shows-the-ring, agent-pressed-tool-holds-on-hover)
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
@@ -34,4 +34,24 @@ test('agent-focus-shows-the-ring', () => {
     expect(body, `${selector} has the transparent outline`).toMatch(/outline:\s*2px solid transparent;/);
     expect(body, `${selector} offsets it`).toMatch(/outline-offset:\s*2px;/);
   }
+});
+
+/** A compound selector's weight as [ids, classes + attributes + pseudo-classes, types]; `:where()` weighs nothing. */
+function weight(selector: string): [number, number, number] {
+  const plain = selector.replace(/:where\([^)]*\)/g, '');
+  const count = (pattern: RegExp) => plain.match(pattern)?.length ?? 0;
+  return [count(/#[\w-]+/g), count(/\.[\w-]+|\[[^\]]*\]|:(?!:)[\w-]+/g), 0];
+}
+
+test('agent-pressed-tool-holds-on-hover', () => {
+  const pressed = ".tool.agent-head-tool[aria-pressed='true']";
+  const agent = read('components/agent/agent.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const selector = [...agent.matchAll(/([^{}]+)\{[^{}]*accent-soft[^{}]*\}/g)].map((match) => match[1]!.trim()).find((name) => name.includes('agent-head-tool') && name.includes('aria-pressed'));
+  expect(selector, 'the pressed agent-head tool keeps a pressed rule').toBeDefined();
+  // The hover is the chrome's `.tool:hover`; the agent's sheet loads before styles.css, so a tie goes to it.
+  const hover = weight('.tool:hover:where(:not(:disabled))');
+  expect(hover).toEqual([0, 2, 0]);
+  const [ids, classes] = weight(selector!);
+  expect(ids > hover[0] || (ids === hover[0] && classes > hover[1]), `${selector} outweighs .tool:hover`).toBe(true);
+  expect(selector).toBe(pressed);
 });
