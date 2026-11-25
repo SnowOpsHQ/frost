@@ -1,14 +1,18 @@
-// Spec: specs/capture-db.spec.ts (CHANGE_INTEL_TABLES, CAPTURED_TABLES, AUDIT_TABLES, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME),
+// Spec: specs/capture-db.spec.ts (CHANGE_INTEL_TABLES, CAPTURED_TABLES, AUDIT_TABLES, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME,
+// PROJECT_PAGES_URL_INDEX_MIGRATION_IDS),
 // specs/workspace-db.spec.ts (WORKSPACE_TABLES: Phase 10's tables and `ci_projects` columns)
 // Acceptance: specs/capture-db.feature.md (Schema), specs/workspace-db.feature.md (Tables, Triggers; API readings (Phase 12))
 import { DatabaseSync } from 'node:sqlite';
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, test } from 'vitest';
-import { AUDIT_TABLES, CAPTURED_TABLES, CHANGE_INTEL_TABLES, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME } from '@app/specs/capture-db.spec';
+import { AUDIT_TABLES, CAPTURED_TABLES, CHANGE_INTEL_TABLES, PROJECT_PAGES_URL_INDEX_MIGRATION_IDS, UNFILED_PROJECT_ID, UNFILED_PROJECT_NAME } from '@app/specs/capture-db.spec';
 import { SERP_API_READINGS_TABLES, WORKSPACE_TABLES } from '@app/specs/workspace-db.spec';
 import { AGENT_SKILL_PREFS_MIGRATIONS } from '../../agent-skill-prefs-migrations';
+import { createDrizzle } from '../../client';
+import { createHistoryRepository } from '../../history';
 import { MIGRATIONS, runMigrations } from '../../migrations';
-import { CHANGE_INTEL_MIGRATIONS } from '../migrations';
+import { CHANGE_INTEL_MIGRATIONS, PROJECT_PAGES_URL_INDEX_MIGRATIONS } from '../migrations';
+import { createChangeIntelRepository } from '../repository';
 import { ciCaptures, ciDiffs, ciProjectPages, ciProjectQueries, ciProjects, ciPurges, ciScreenshots, ciTombstones, ciVersions } from '../schema';
 import { ciSerpApiPurges } from '../serp-api-schema';
 import { ciEntryTags, ciProjectCompetitors, ciSerpReadings } from '../workspace-schema';
@@ -159,6 +163,59 @@ describe('change-intelligence migrations', () => {
     expect(() => runMigrations(new DatabaseSync(':memory:'))).not.toThrow();
   });
 
+  test('project-pages-url-index', async () => {
+    const db = new DatabaseSync(':memory:');
+    // Every statement the repositories prepare on `db`, by its SQL text.
+    const prepared: string[] = [];
+    const watched = new Proxy(db, {
+      get(target, key) {
+        const value: unknown = Reflect.get(target, key, target);
+        if (key === 'prepare' && typeof value === 'function') return (text: string) => (prepared.push(text), value.call(target, text));
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as DatabaseSync;
+    runMigrations(db);
+    const drizzle = createDrizzle(watched);
+    const projects = createChangeIntelRepository(drizzle);
+    const history = createHistoryRepository(drizzle);
+    /** The query plan of each statement `read` prepared that reads `ci_project_pages`. */
+    const plansOf = async (read: () => Promise<unknown>): Promise<string[][]> => {
+      prepared.length = 0;
+      await read();
+      const statements = prepared.filter((text) => text.includes('ci_project_pages'));
+      expect(statements.length).toBeGreaterThan(0);
+      return statements.map((text) => db.prepare(`EXPLAIN QUERY PLAN ${text}`).all().map((row) => String(row['detail'])));
+    };
+    const PAGE = 'https://example.com/a';
+    const SEARCH = /^SEARCH (p|ci_project_pages) USING (COVERING )?INDEX ci_project_pages_live_by_url \(url=\?/;
+    // A page's projects, and the history's prune that keeps project pages: a search of the index by
+    // URL, never a read of every project page.
+    for (const read of [() => projects.projectsForPage(PAGE), () => history.prune(Date.now(), true)]) {
+      for (const plan of await plansOf(read)) {
+        expect(plan.some((step) => SEARCH.test(step)), plan.join('\n')).toBe(true);
+        expect(plan.filter((step) => /^SCAN (p|ci_project_pages)\b/.test(step)), plan.join('\n')).toEqual([]);
+      }
+    }
+    // The history's list in one project: a search too (by project and URL, the unique live index).
+    for (const plan of await plansOf(() => history.list({ query: '', after: null, projectId: UNFILED_PROJECT_ID }))) {
+      expect(plan.filter((step) => /^SCAN (p|ci_project_pages)\b/.test(step)), plan.join('\n')).toEqual([]);
+    }
+
+    // The migration: its own, after every earlier one, adding just the index to a database that has them.
+    expect(PROJECT_PAGES_URL_INDEX_MIGRATIONS.map((m) => m.id)).toEqual([...PROJECT_PAGES_URL_INDEX_MIGRATION_IDS]);
+    const at = MIGRATIONS.indexOf(PROJECT_PAGES_URL_INDEX_MIGRATIONS[0]!);
+    expect(MIGRATIONS.slice(0, at).every((m) => m.id < PROJECT_PAGES_URL_INDEX_MIGRATION_IDS[0])).toBe(true);
+    const earlier = new DatabaseSync(':memory:');
+    runMigrations(earlier, MIGRATIONS.slice(0, at));
+    const indexes = (handle: DatabaseSync) => handle.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ci_project_pages' AND sql IS NOT NULL ORDER BY name").all().map((row) => ({ ...row }));
+    const before = indexes(earlier);
+    expect(runMigrations(earlier)).toEqual([...PROJECT_PAGES_URL_INDEX_MIGRATION_IDS]);
+    expect(indexes(earlier)).toEqual(indexes(db));
+    expect(indexes(earlier).filter((index) => !before.some((old) => old.name === index.name))).toEqual([
+      { name: 'ci_project_pages_live_by_url', sql: 'CREATE INDEX ci_project_pages_live_by_url ON ci_project_pages (url, project_id) WHERE deleted_at IS NULL' },
+    ]);
+  });
+
   test('change-intel-sql-is-portable', () => {
     const forbidden: [string, RegExp][] = [
       ['PRAGMA', /\bPRAGMA\b/i],
@@ -172,7 +229,7 @@ describe('change-intelligence migrations', () => {
       ['AUTOINCREMENT', /\bAUTOINCREMENT\b/i],
     ];
     expect(CHANGE_INTEL_MIGRATIONS.length).toBeGreaterThan(0);
-    for (const migration of CHANGE_INTEL_MIGRATIONS) {
+    for (const migration of [...CHANGE_INTEL_MIGRATIONS, ...PROJECT_PAGES_URL_INDEX_MIGRATIONS]) {
       for (const [what, pattern] of forbidden) expect(pattern.test(migration.sql), `${migration.id}: ${what}`).toBe(false);
     }
   });

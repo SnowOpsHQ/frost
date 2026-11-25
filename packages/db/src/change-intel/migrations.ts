@@ -215,3 +215,13 @@ export const CHANGE_INTEL_MIGRATIONS: readonly Migration[] = [
   { id: '0040_change_intelligence', sql: TABLES },
   { id: '0041_change_intelligence_guards', sql: GUARDS },
 ];
+
+/**
+ * Migration `0247_ci_project_pages_live_by_url` (`PROJECT_PAGES_URL_INDEX_MIGRATION_IDS`; issue #25):
+ * the live project pages by URL, which a page's projects (`projectsForPage`) and the browsing history's
+ * `prune` that keeps project pages search instead of reading every project page. Its own migration,
+ * spread last in `MIGRATIONS` after `0246`: `0040` is never edited.
+ */
+export const PROJECT_PAGES_URL_INDEX_MIGRATIONS: readonly Migration[] = [
+  { id: '0247_ci_project_pages_live_by_url', sql: 'CREATE INDEX ci_project_pages_live_by_url ON ci_project_pages (url, project_id) WHERE deleted_at IS NULL' },
+];
