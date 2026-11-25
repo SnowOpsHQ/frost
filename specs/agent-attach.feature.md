@@ -52,7 +52,9 @@ named test.
   answers for a menu that has since closed (another chat's, or one opened again) is dropped, never
   shown in the menu open now. So is main's answer to a tab picked in such a menu: the attach stands
   (its chip shows in its own chat), but the answer neither closes nor writes into the menu open now,
-  drops no `@` from the text, and moves no focus.
+  drops no `@` from the text, and moves no focus. The one exception is a refusal for the same chat:
+  closing and opening the menu again before the answer arrives does not lose it, the menu open now
+  shows its message (only selecting another chat drops a refusal).
 - **The menu is a group of buttons, not an ARIA menu.** Tab and Shift+Tab move through its tabs,
   Enter or Space picks one, Escape closes it and returns focus to the message field. It claims no
   `menu` / `menuitem` roles (and the Attach button no `aria-haspopup`), since it has no arrow-key
@@ -94,6 +96,8 @@ named test.
   `composer-at-menu-drops-a-stale-list` (`agent-components.test.ts`)
 - Scenario: a late attach answer for a tab picked in another chat's menu leaves this chat's menu,
   text and focus alone — `composer-at-menu-drops-a-stale-attach-answer` (`agent-components.test.ts`)
+- Scenario: a refusal for a pick made before the menu was closed and opened again still shows in the
+  menu open now — `composer-at-menu-keeps-a-refusal-after-reopening` (`agent-components.test.ts`)
 - Scenario: the `@` menu is a labelled group of buttons, with no menu roles —
   `composer-at-menu-is-a-group-of-buttons` (`agent-components.test.ts`)
 - Scenario: end to end with the scripted model — `attach-second-tab-and-read-it` (`e2e/agent.e2e.ts`)
