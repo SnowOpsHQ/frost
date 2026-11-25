@@ -10,6 +10,7 @@ import { chatExportObject, chatExportText, chatMarkdown } from '../chat-export';
 import { createMemoryChatsStore } from '../chat-history';
 import { encodeChat, type ChatSnapshot } from '../chat-record';
 import { createMemoryGrantsStore } from '../grants';
+import { createMemoryMcpStore } from '../mcp';
 import { createAgentServiceFrom, type AgentDialogs, type AgentServiceDeps } from '../service';
 import { createFakeChannel, createFakeFork, createFakeSafeStorage, type FakePort } from './fakes';
 import { KEY, setupSession } from './session-fakes';
@@ -88,7 +89,7 @@ afterEach(() => {
 });
 
 /** The agent service with `CHAT` stored, `dialogs`, and `writeExport` (default: main's own). */
-function exportService(userData: string, dialogs: AgentDialogs, writeExport?: AgentServiceDeps['writeExport']) {
+function exportService(userData: string, dialogs: AgentDialogs, writeExport?: AgentServiceDeps['writeExport'], extra: { readonly chat?: ChatSnapshot; readonly agentMcp?: ReturnType<typeof createMemoryMcpStore> } = {}) {
   return createAgentServiceFrom({
     app: { isPackaged: false, getPath: () => userData, commandLine: { getSwitchValue: () => '' }, once: () => undefined },
     electron: {
@@ -107,7 +108,7 @@ function exportService(userData: string, dialogs: AgentDialogs, writeExport?: Ag
     },
     browser: { getState: () => ({ activeTabId: null, tabs: [] }) } as never,
     webContents: {} as never,
-    sessionStore: { agentGrants: createMemoryGrantsStore(), agentChats: createMemoryChatsStore({ chats: [encodeChat(CHAT)] }) },
+    sessionStore: { agentGrants: createMemoryGrantsStore(), agentChats: createMemoryChatsStore({ chats: [encodeChat(extra.chat ?? CHAT)] }), ...(extra.agentMcp ? { agentMcp: extra.agentMcp } : {}) },
     buildDir: userData,
     dialogs,
     ...(writeExport ? { writeExport } : {}),
@@ -231,6 +232,49 @@ hidden
       expect(text).not.toContain(approval.inputSha256);
       expect(text).toContain('untrusted');
     }
+  });
+
+  // spec: specs/agent-data.feature.md — export-names-mcp-servers
+  describe('export-names-mcp-servers', () => {
+    const MCP_CARD = { callId: 'call-secret-3', toolName: 'mcp__docs__search', status: 'done' as const, code: null, inputPreview: '{"q":"tea"}', outputPreview: 'ok' };
+    const WITH_MCP: ChatSnapshot = { ...CHAT, entries: [{ kind: 'assistant', text: 'Looking.', tools: [MCP_CARD] }] };
+
+    test('the label says the server name, in both formats', () => {
+      const names = (toolName: string) => (toolName === MCP_CARD.toolName ? 'Team docs' : null);
+      expect(chatMarkdown(WITH_MCP, EXPORTED_AT, names)).toContain('**Untrusted tool from Team docs**');
+      expect(chatMarkdown(WITH_MCP, EXPORTED_AT, names)).not.toContain('from docs');
+      expect(chatExportObject(WITH_MCP, EXPORTED_AT, names).chat.messages[0]).toMatchObject({ tools: [{ label: 'Untrusted tool from Team docs' }] });
+      expect(chatExportText(WITH_MCP, 'json', EXPORTED_AT, names)).toContain('"label": "Untrusted tool from Team docs"');
+    });
+
+    test('a server main no longer holds is named by its id, and a name stays inert in Markdown', () => {
+      expect(chatMarkdown(WITH_MCP, EXPORTED_AT, () => null)).toContain('**Untrusted tool from docs**');
+      expect(chatMarkdown(WITH_MCP, EXPORTED_AT)).toContain('**Untrusted tool from docs**');
+      expect(chatMarkdown(WITH_MCP, EXPORTED_AT, () => '[x](https://evil.example/) <b>')).toContain('**Untrusted tool from \\[x\\](https://evil.example/) \\<b\\>**');
+    });
+
+    test('the service names the server from its own list', async () => {
+      const userData = mkdtempSync(path.join(tmpdir(), 'frost-agent-export-'));
+      dirs.push(userData);
+      const agentMcp = createMemoryMcpStore();
+      await agentMcp.saveServer({ id: 'docs', name: 'Team docs', transport: 'stdio', url: null, command: 'docs-server', args: '[]', envNames: '[]', readPaths: '[]', allowNetwork: false, enabled: false }, 1);
+      const writes: string[] = [];
+      const dialogs: AgentDialogs = {
+        confirmDeleteAllChats: async () => false,
+        confirmRetentionChange: async () => false,
+        confirmMcpStart: async () => false,
+        chooseSkillExportPath: async () => null,
+        chooseSkillImportFile: async () => null,
+        chooseExportPath: async () => path.join(userData, 'out.md'),
+      };
+      const service = exportService(userData, dialogs, async (_file, text) => void writes.push(text), { chat: WITH_MCP, agentMcp });
+      await vi.waitFor(() => expect(service.getState().chats.map((chat) => chat.id)).toEqual([WITH_MCP.id]));
+      // The servers load beside the chats: export until the list has the one the card names.
+      await vi.waitFor(async () => {
+        expect(await service.exportChat(WITH_MCP.id, 'markdown')).toBe('saved');
+        expect(writes.at(-1)).toContain('**Untrusted tool from Team docs**');
+      });
+    });
   });
 
   test('export-default-file-name', () => {

@@ -19,8 +19,13 @@ import type { ChatSnapshot, ToolCardSnapshot } from './chat-record';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
+/** The display name of the MCP server behind a tool name, or `null` when main no longer holds it (the label then falls back to the server's id). */
+export type McpServerNameOf = (toolName: string) => string | null;
+
+const labelOf = (toolName: string, serverNameOf: McpServerNameOf | undefined): string => toolLabel(toolName, serverNameOf?.(toolName) ?? null);
+
 /** The JSON export (`ChatExportV1`), as an object. */
-export function chatExportObject(chat: ChatSnapshot, exportedAt: number): ChatExportV1 {
+export function chatExportObject(chat: ChatSnapshot, exportedAt: number, serverNameOf?: McpServerNameOf): ChatExportV1 {
   const messages: ChatExportMessageV1[] = chat.entries.map((entry) =>
     entry.kind === 'user'
       ? { role: 'user', text: entry.text, ...(entry.skill !== undefined ? { skill: { id: entry.skill.id, name: entry.skill.name } } : {}) }
@@ -29,7 +34,7 @@ export function chatExportObject(chat: ChatSnapshot, exportedAt: number): ChatEx
           text: entry.text,
           tools: entry.tools.map((card) => ({
             tool: card.toolName,
-            label: toolLabel(card.toolName),
+            label: labelOf(card.toolName, serverNameOf),
             status: card.status,
             error: card.code,
             input: card.inputPreview,
@@ -71,7 +76,7 @@ function toolBlock(card: ToolCardSnapshot): string {
 }
 
 /** The Markdown export: a heading, the untrusted-output note, then each turn (its text inert, `inertMarkdown`); tool cards as fenced blocks. */
-export function chatMarkdown(chat: ChatSnapshot, exportedAt: number): string {
+export function chatMarkdown(chat: ChatSnapshot, exportedAt: number, serverNameOf?: McpServerNameOf): string {
   const lines: string[] = [`# ${chat.title.trim() === '' ? 'Untitled chat' : inertMarkdown(chat.title)}`, ''];
   lines.push(`Exported from frost on ${iso(exportedAt)}. Last updated ${iso(chat.updatedAt)}.${chat.modelId !== null ? ` Model: ${chat.modelId}.` : ''}`, '');
   lines.push(`> ${CHAT_EXPORT_UNTRUSTED_NOTE}`, '');
@@ -84,12 +89,12 @@ export function chatMarkdown(chat: ChatSnapshot, exportedAt: number): string {
     }
     lines.push('## Agent', '');
     if (entry.text !== '') lines.push(inertMarkdown(entry.text), '');
-    for (const card of entry.tools) lines.push(`**${toolLabel(card.toolName)}**`, '', toolBlock(card), '');
+    for (const card of entry.tools) lines.push(`**${inertMarkdown(labelOf(card.toolName, serverNameOf))}**`, '', toolBlock(card), '');
   }
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
 /** The export's text in `format`. */
-export function chatExportText(chat: ChatSnapshot, format: ChatExportFormat, exportedAt: number): string {
-  return format === 'json' ? `${JSON.stringify(chatExportObject(chat, exportedAt), null, 2)}\n` : chatMarkdown(chat, exportedAt);
+export function chatExportText(chat: ChatSnapshot, format: ChatExportFormat, exportedAt: number, serverNameOf?: McpServerNameOf): string {
+  return format === 'json' ? `${JSON.stringify(chatExportObject(chat, exportedAt, serverNameOf), null, 2)}\n` : chatMarkdown(chat, exportedAt, serverNameOf);
 }
