@@ -129,14 +129,26 @@ function parsedJson<T>(schema: z.ZodType<T>, json: string): T | undefined {
 
 /**
  * `diff`, or one keeping fewer changes (`truncated`; the summary still counts all) whose canonical
- * JSON fits `MAX_DIFF_JSON_BYTES`: each round keeps the first three quarters of the changes.
+ * JSON fits `MAX_DIFF_JSON_BYTES`: each round keeps the first three quarters of the changes. Each
+ * change is serialized once: the canonical JSON of a diff is its other fields' (the same whatever
+ * the changes) around the changes' own, joined by commas, so a round's size is a sum of kept parts.
  */
-function fitDiff(diff: SnapshotDiff): SnapshotDiff {
-  let current = diff;
-  while (current.changes.length > 0 && Buffer.byteLength(canonicalJson(current), 'utf8') > MAX_DIFF_JSON_BYTES) {
-    current = { ...current, changes: current.changes.slice(0, Math.floor((current.changes.length * 3) / 4)), truncated: true };
+export function fitDiff(diff: SnapshotDiff): SnapshotDiff {
+  const sizes = diff.changes.map((change) => utf8Bytes(canonicalJson(change)));
+  /** The canonical JSON's bytes keeping the first `count` changes, `truncated` as given. */
+  const bytesWith = (shell: number, count: number): number => {
+    let total = shell;
+    for (let index = 0; index < count; index++) total += sizes[index]! + (index > 0 ? 1 : 0);
+    return total;
+  };
+  const shellBytes = (truncated: boolean): number => utf8Bytes(canonicalJson({ ...diff, changes: [], truncated }));
+  let count = diff.changes.length;
+  let shell = shellBytes(diff.truncated);
+  while (count > 0 && bytesWith(shell, count) > MAX_DIFF_JSON_BYTES) {
+    count = Math.floor((count * 3) / 4);
+    shell = shellBytes(true);
   }
-  return current;
+  return count === diff.changes.length ? diff : { ...diff, changes: diff.changes.slice(0, count), truncated: true };
 }
 
 export function createChangesService(deps: ChangesServiceDeps): MainChangesService {
