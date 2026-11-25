@@ -104,9 +104,6 @@ export const AiChecksStateSchema = z.strictObject({
 });
 export type AiChecksState = z.infer<typeof AiChecksStateSchema>;
 
-/** `aiChecks.state`: the tab. */
-export const AiChecksTabInputSchema = z.strictObject({ tabId });
-export type AiChecksTabInput = z.infer<typeof AiChecksTabInputSchema>;
 /** `aiChecks.watch`: the tab and the version last seen. */
 export const AiChecksWatchInputSchema = z.strictObject({ tabId, sinceVersion: z.int().min(-1) });
 export type AiChecksWatchInput = z.infer<typeof AiChecksWatchInputSchema>;
