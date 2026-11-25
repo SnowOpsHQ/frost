@@ -129,6 +129,8 @@ to one named test.
 - `settings-nav-follows-the-request` — a request marks its section current (`aria-current="true"` on it alone), and a click in the list marks the clicked one.
 - `settings-nav-survives-a-section-leaving` — scrolled (not asked) to Search Console while main has not answered, then main says Search Console is not configured: with no scroll, exactly one shown section is current.
 - `settings-nav-keeps-a-request-through-layout` — Telemetry asked for near the end of the content; Search Console then left out (the content shorter, its scroll clamped) and the content resized (clamped again): Telemetry stays current through both scrolls the layout caused; a scroll by the user afterwards hands the list back to the section in view.
+- `settings-nav-keeps-a-request-when-the-clamp-is-seen-first` — the other ordering of the same layout: Telemetry asked for; the content already shorter and its scroll clamped when the sheet works out the list again for Search Console leaving, the clamp's scroll event only after that; then the content resized (a `ResizeObserver` stands in for jsdom's missing one), the clamped scroll seen by the resize before its scroll event: Telemetry stays current through both; a scroll by the user to the top hands the list back to Account.
+- `settings-nav-keeps-a-request-through-a-resize-seen-last` — Telemetry asked for, then the content resized and its scroll clamped, the scroll event before the resize is seen: Telemetry stays current; a scroll by the user to the top hands the list back to Account.
 
 ## Opening and closing (`apps/desktop/src/renderer/__tests__/settings-open.test.ts`)
 - `settings-opens-on-request` — a request opens Settings on its section and asks for focus each time.
