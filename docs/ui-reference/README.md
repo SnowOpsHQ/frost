@@ -12,8 +12,8 @@ bundled) and spacing are the tokens in `apps/desktop/src/renderer/tokens.css`
   is summoned on demand, so the page gets room by default.
 - **SEO panels:** Overview; On-Page; Content; Links; Images; Social; Schema; Indexability; Page
   Speed; Compliance; JavaScript; SERP; Visibility; Search Console; Changes; Inspector.
-- **Sheets in the page column:** History, Projects, the screenshot editor, Site crawl, AI answers,
-  Diagnostics, What's new, Settings and Help (keyboard shortcuts).
+- **Sheets in the page column:** the command palette, History, Projects, the screenshot editor, Site
+  crawl, AI answers, Diagnostics, What's new, Settings and Help (keyboard shortcuts).
 - **Settings sections:** Account, Search Console, Data sources, Locations, AI checks, Telemetry and
   History.
 
