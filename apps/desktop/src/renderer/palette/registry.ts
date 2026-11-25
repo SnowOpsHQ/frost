@@ -129,6 +129,15 @@ export interface PaletteRegistry {
   resolve(ctx: PaletteContext): PaletteAction[];
   /** The ids of every registered static action. */
   ids(): string[];
+  /** Calls `listener` whenever an availability input outside the context changed (a watcher's `invalidate`); answers the unsubscribe. */
+  subscribe(listener: () => void): () => void;
+  /** Changes with every `invalidate` and with the first `subscribe`: a snapshot for `useSyncExternalStore`. */
+  version(): number;
+  /**
+   * Registers an availability input: `start(invalidate)` runs while at least one listener is subscribed
+   * (an open palette), and answers its stop; nothing is watched while the palette is closed.
+   */
+  watch(start: (invalidate: () => void) => () => void): () => void;
 }
 
 const GROUP_IDS: ReadonlySet<string> = new Set(PALETTE_GROUPS.map((group) => group.id));
@@ -161,6 +170,31 @@ export function createPaletteRegistry(): PaletteRegistry {
     const ids = new Set<string>();
     for (const { source } of entries) if (typeof source !== 'function') ids.add(source.id);
     return ids;
+  };
+
+  const listeners = new Set<() => void>();
+  const watchers = new Map<(invalidate: () => void) => () => void, (() => void) | null>();
+  let version = 0;
+  const invalidate = () => {
+    version += 1;
+    for (const listener of [...listeners]) listener();
+  };
+  // A watcher that throws never breaks the palette (like a predicate or a source): a failed start has
+  // nothing to stop, and a failed stop leaves the other watchers still stopped. Each start gets its own
+  // `invalidate`, so two watchers subscribing it to one store never collapse into one entry.
+  const begin = (start: (invalidate: () => void) => () => void): (() => void) | null => {
+    try {
+      return start(() => invalidate());
+    } catch {
+      return null;
+    }
+  };
+  const end = (stop: (() => void) | null | undefined): void => {
+    try {
+      stop?.();
+    } catch {
+      // Contained: the watcher's own teardown failed, nothing else depends on it.
+    }
   };
 
   return {
@@ -209,6 +243,35 @@ export function createPaletteRegistry(): PaletteRegistry {
     },
 
     ids: () => [...staticIds()],
+
+    subscribe(listener) {
+      listeners.add(listener);
+      // An answer that landed between a render and this subscribe changed an input unseen: moving `version`
+      // makes `useSyncExternalStore`'s check after subscribing resolve again.
+      if (listeners.size === 1) version += 1;
+      if (listeners.size === 1) for (const start of watchers.keys()) watchers.set(start, begin(start));
+      return () => {
+        if (!listeners.delete(listener) || listeners.size > 0) return;
+        for (const [start, stop] of watchers) {
+          end(stop);
+          watchers.set(start, null);
+        }
+      };
+    },
+
+    version: () => version,
+    watch(start) {
+      // Like `register`, a duplicate is a programming error: it would overwrite (and leak) the stop.
+      if (watchers.has(start)) throw new Error('palette watch: this start is already registered');
+      watchers.set(start, listeners.size > 0 ? begin(start) : null);
+      let watching = true;
+      return () => {
+        if (!watching) return;
+        watching = false;
+        end(watchers.get(start));
+        watchers.delete(start);
+      };
+    },
   };
 }
 
@@ -221,6 +284,11 @@ export const paletteRegistry: PaletteRegistry = createPaletteRegistry();
  */
 export function registerPaletteActions(...sources: PaletteSource[]): () => void {
   return paletteRegistry.register(...sources);
+}
+
+/** Registers an availability input with the palette (`PaletteRegistry.watch`); answers the unwatch. */
+export function watchPaletteInputs(start: (invalidate: () => void) => () => void): () => void {
+  return paletteRegistry.watch(start);
 }
 
 /** The ready audit in `ctx`, or `null`. */

@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FocusEvent, type KeyboardEvent } from 'react';
 import type { SeoAuditResponse } from '@app/seo-core';
 // Type-only from browser.spec (its Zod schemas must stay out of this bundle: strict Trusted Types).
 import type { BrowserState, TabState } from '@app/specs/browser.spec';
@@ -54,6 +54,9 @@ function storage(): Storage | null {
     return null;
   }
 }
+
+/** A subscription to nothing: the palette listens for changes only while open. */
+const subscribeNothing = () => () => undefined;
 
 /** Where focus goes back to on close. */
 type Origin = { readonly kind: 'page' } | { readonly kind: 'chrome'; readonly element: HTMLElement | null };
@@ -201,7 +204,9 @@ export function CommandPalette({
     [state, tab, audit, sidebarOpen, onSidebarOpenChange, onPanelJump],
   );
 
-  const available = useMemo(() => (open ? paletteRegistry.resolve(ctx) : []), [open, ctx]);
+  // Availability inputs outside `ctx` (Settings reads main's answers) change while the palette is open.
+  const inputs = useSyncExternalStore(open ? paletteRegistry.subscribe : subscribeNothing, paletteRegistry.version);
+  const available = useMemo(() => (open ? paletteRegistry.resolve(ctx) : []), [open, ctx, inputs]);
   const ranked = useMemo(() => rankActions(query, available, recents), [query, available, recents]);
   const sections = useMemo(() => paletteSections(query, ranked), [query, ranked]);
   const flat = useMemo(() => sections.flatMap((section) => section.items), [sections]);

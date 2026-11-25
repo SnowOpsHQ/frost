@@ -15,7 +15,7 @@
  *   label: 'Reset the render profile',        // frost's own words, never page text
  *   group: 'page',                            // a PALETTE_GROUPS id
  *   keywords: ['emulation', 'device'],        // extra words the search matches
- *   available: (ctx) => ctx.tab?.url !== '',  // from ctx.tab / ctx.state / ctx.audit / ctx.sidebarOpen
+ *   available: (ctx) => ctx.tab?.url !== '',  // from ctx (tab / state / audit / sidebarOpen); other inputs: see below
  *   run: (ctx) => actions.clearRenderProfile(ctx.tab!.id).then(() => 'Render profile reset'),
  * });
  * ```
@@ -26,6 +26,13 @@
  * chrome-side commands (`ctx.chrome`); a string they resolve is shown briefly as a status line. A new
  * group is one more entry in `PALETTE_GROUPS`. A predicate or handler that throws never breaks the
  * palette: that action is left out, or reports `PALETTE_FAILED_MESSAGE`.
+ *
+ * `available` is asked again whenever `ctx` changes, but an input outside `ctx` (a store main answers,
+ * such as the account or Search Console state) changes without it. A feature whose availability reads
+ * such an input calls `watchPaletteInputs(start)` (`palette/registry.ts`): `start(invalidate)` runs only
+ * while the palette is open, subscribes to the input and calls `invalidate()` when it changes, and
+ * must return its stop. That is how an open palette resolves its list again (see `settings-palette.ts`,
+ * `watchSettingsAvailability`); without it the list stays as it was when the palette opened.
  */
 import type { SeoPanelId } from './seo-sidebar.spec';
 

@@ -112,12 +112,53 @@ describe('the sheet', () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    // A test's stand-in `ResizeObserver` (jsdom has none) goes with it.
+    vi.unstubAllGlobals();
   });
   const render = () => act(() => root.render(createElement(SettingsSlot, { tab: { id: 1, documentSeq: 1 }, historySeq: undefined, onOpen: () => undefined })));
   const navIds = () => [...host.querySelectorAll<HTMLElement>('.settings-nav-item')].map((item) => item.dataset['testid']!.replace('settings-nav-', ''));
   const sectionIds = () => [...host.querySelectorAll<HTMLElement>('.settings-section')].map((section) => section.dataset['testid']!.replace('settings-', ''));
   const current = () => [...host.querySelectorAll<HTMLElement>('.settings-nav-item[aria-current]')].map((item) => [item.dataset['testid'], item.getAttribute('aria-current')]);
   const focusedId = () => (document.activeElement as HTMLElement | null)?.id;
+  /** Lays the content out: seven headings 400px apart in a 600px view of 2800px (`view` changes it; a heading's
+   * place follows the headings still shown). */
+  const layOutContent = () => {
+    const box = host.querySelector<HTMLElement>('[data-testid="settings-content"]')!;
+    const view = { scrollTop: 0, clientHeight: 600, scrollHeight: 2800 };
+    Object.defineProperties(box, {
+      scrollTop: { get: () => view.scrollTop, configurable: true },
+      clientHeight: { get: () => view.clientHeight, configurable: true },
+      scrollHeight: { get: () => view.scrollHeight, configurable: true },
+    });
+    box.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+    const headings = () => [...host.querySelectorAll<HTMLElement>('.settings-section-title')];
+    for (const heading of headings()) heading.getBoundingClientRect = () => ({ top: headings().indexOf(heading) * 400 - view.scrollTop }) as DOMRect;
+    const scrolled = () => act(async () => void box.dispatchEvent(new Event('scroll')));
+    return { view, scrolled };
+  };
+  /** Stands in for the `ResizeObserver` jsdom lacks (until the test ends); the returned call reports a resize. */
+  const observeResizes = () => {
+    const observing = new Set<() => void>();
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        readonly #report: () => void;
+        constructor(callback: ResizeObserverCallback) {
+          this.#report = () => callback([], this as unknown as ResizeObserver);
+        }
+        observe() {
+          observing.add(this.#report);
+        }
+        unobserve() {
+          observing.delete(this.#report);
+        }
+        disconnect() {
+          observing.delete(this.#report);
+        }
+      },
+    );
+    return () => act(async () => observing.forEach((report) => report()));
+  };
 
   test('settings-sheet-leaves-out-unconfigured', async () => {
     // Before main answers: every section (each says "Loading…").
@@ -197,20 +238,7 @@ describe('the sheet', () => {
     store.account = account('signed-out');
     render();
     await act(async () => void requestSettings('account'));
-    // Lay the content out: seven headings 400px apart in a 600px view of 2800px.
-    const box = host.querySelector<HTMLElement>('[data-testid="settings-content"]')!;
-    const view = { scrollTop: 0, clientHeight: 600, scrollHeight: 2800 };
-    Object.defineProperties(box, {
-      scrollTop: { get: () => view.scrollTop, configurable: true },
-      clientHeight: { get: () => view.clientHeight, configurable: true },
-      scrollHeight: { get: () => view.scrollHeight, configurable: true },
-    });
-    box.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
-    const layOut = () =>
-      host.querySelectorAll<HTMLElement>('.settings-section-title').forEach((heading, index) => {
-        heading.getBoundingClientRect = () => ({ top: index * 400 - view.scrollTop }) as DOMRect;
-      });
-    layOut();
+    const { view, scrolled } = layOutContent();
     // Telemetry (sixth) asked for: its heading scrolled as far as the content goes.
     view.scrollTop = 2000;
     await act(async () => void requestSettings('telemetry'));
@@ -220,17 +248,70 @@ describe('the sheet', () => {
     render();
     view.scrollHeight = 2400;
     view.scrollTop = 1800;
-    layOut();
-    await act(async () => void box.dispatchEvent(new Event('scroll')));
+    await scrolled();
     expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
     // The sheet resized taller: clamped again, still the request's.
     view.clientHeight = 700;
     view.scrollTop = 1700;
-    await act(async () => void box.dispatchEvent(new Event('scroll')));
+    await scrolled();
     expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
     // The user scrolls to the top: the list follows the scroll again.
     view.scrollTop = 0;
-    await act(async () => void box.dispatchEvent(new Event('scroll')));
+    await scrolled();
+    expect(current()).toEqual([['settings-nav-account', 'true']]);
+  });
+
+  test('settings-nav-keeps-a-request-when-the-clamp-is-seen-first', async () => {
+    const resized = observeResizes();
+    store.account = account('signed-out');
+    render();
+    await act(async () => void requestSettings('account'));
+    const { view, scrolled } = layOutContent();
+    view.scrollTop = 2000;
+    await act(async () => void requestSettings('telemetry'));
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    // Main leaves Search Console out, and the content is already 400px shorter and its scroll clamped
+    // when the sheet works out the list again; the clamp's scroll event comes after.
+    view.scrollHeight = 2400;
+    view.scrollTop = 1800;
+    store.gsc = gsc(false);
+    render();
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    await scrolled();
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    // The sheet resized taller and its scroll clamped: the resize is seen before the scroll event.
+    view.clientHeight = 700;
+    view.scrollTop = 1700;
+    await resized();
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    await scrolled();
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    // The user scrolls to the top: the list follows the scroll again.
+    view.scrollTop = 0;
+    await scrolled();
+    expect(current()).toEqual([['settings-nav-account', 'true']]);
+  });
+
+  test('settings-nav-keeps-a-request-through-a-resize-seen-last', async () => {
+    const resized = observeResizes();
+    store.account = account('signed-out');
+    render();
+    await act(async () => void requestSettings('account'));
+    const { view, scrolled } = layOutContent();
+    // Telemetry asked for, scrolled to the end of the content.
+    view.scrollTop = 2200;
+    await act(async () => void requestSettings('telemetry'));
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    // The sheet resized taller and its scroll clamped: the scroll event comes before the resize is seen.
+    view.clientHeight = 700;
+    view.scrollTop = 2100;
+    await scrolled();
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    await resized();
+    expect(current()).toEqual([['settings-nav-telemetry', 'true']]);
+    // The user scrolls to the top: the list follows the scroll again.
+    view.scrollTop = 0;
+    await scrolled();
     expect(current()).toEqual([['settings-nav-account', 'true']]);
   });
 });

@@ -37,3 +37,15 @@ export function settingsPaletteSources(api: SettingsPaletteApi): PaletteSource[]
     }),
   );
 }
+
+/**
+ * The Settings actions read main's answers (`accountStatus`, `gscConfigured`) from outside the palette's
+ * context: this starts watching `stores` (while the palette is open) and says when one changes, so an
+ * open palette drops "Search Console settings" once main says there is none.
+ */
+export function watchSettingsAvailability(stores: readonly { subscribe(listener: () => void): () => void }[]): (invalidate: () => void) => () => void {
+  return (invalidate) => {
+    const stops = stores.map((store) => store.subscribe(invalidate));
+    return () => stops.forEach((stop) => stop());
+  };
+}

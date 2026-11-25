@@ -83,3 +83,94 @@ describe('palette registry', () => {
     expect(registry.ids()).toEqual(['shown', 'hidden', 'throws', 'by.state']);
   });
 });
+
+describe('palette registry change signal', () => {
+  test('registry-signals-changes-in-availability-inputs', () => {
+    const registry = createPaletteRegistry();
+    let invalidate!: () => void;
+    registry.watch((given) => ((invalidate = given), () => undefined));
+    const heard = vi.fn();
+    const off = registry.subscribe(heard);
+    const before = registry.version();
+    invalidate();
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(registry.version()).not.toBe(before);
+    off();
+    // The first subscribe moves `version` too: an answer between rendering and subscribing is seen.
+    const first = registry.version();
+    const offFirst = registry.subscribe(() => undefined);
+    expect(registry.version()).not.toBe(first);
+    const second = registry.version();
+    const offSecond = registry.subscribe(() => undefined);
+    expect(registry.version()).toBe(second);
+    offSecond();
+    offFirst();
+    // Stopped with the last listener: a late invalidate reaches nobody.
+    invalidate();
+    expect(heard).toHaveBeenCalledTimes(1);
+    // A watched input is started with the first listener and stopped with the last.
+    const stop = vi.fn();
+    const start = vi.fn((_invalidate: () => void) => stop);
+    const unwatch = registry.watch(start);
+    expect(start).not.toHaveBeenCalled();
+    const offA = registry.subscribe(() => undefined);
+    const offB = registry.subscribe(() => undefined);
+    expect(start).toHaveBeenCalledTimes(1);
+    offA();
+    expect(stop).not.toHaveBeenCalled();
+    offB();
+    expect(stop).toHaveBeenCalledTimes(1);
+    // Watching while a listener is subscribed starts at once; unwatching stops it.
+    const offC = registry.subscribe(() => undefined);
+    expect(start).toHaveBeenCalledTimes(2);
+    unwatch();
+    expect(stop).toHaveBeenCalledTimes(2);
+    offC();
+    expect(stop).toHaveBeenCalledTimes(2);
+  });
+
+  test('availability-filters-and-never-throws: a watcher that throws, or is registered twice, never breaks the registry', () => {
+    const registry = createPaletteRegistry();
+    // A start that throws registers nothing to stop; the other watchers still start.
+    const badStart = vi.fn((): (() => void) => {
+      throw new Error('start failed');
+    });
+    const badStop = vi.fn(() => {
+      throw new Error('stop failed');
+    });
+    const goodStop = vi.fn();
+    const goodStart = vi.fn((_invalidate: () => void) => goodStop);
+    registry.watch(badStart);
+    registry.watch(() => badStop);
+    registry.watch(goodStart);
+    let off = () => undefined as void;
+    expect(() => (off = registry.subscribe(() => undefined))).not.toThrow();
+    expect(goodStart).toHaveBeenCalledTimes(1);
+    // A stop that throws leaves the later watchers stopped.
+    expect(() => off()).not.toThrow();
+    expect(badStop).toHaveBeenCalledTimes(1);
+    expect(goodStop).toHaveBeenCalledTimes(1);
+    // Starting again after a failed start is still contained.
+    expect(() => registry.subscribe(() => undefined)()).not.toThrow();
+    // Registering the same start twice is refused and leaves the first registration intact.
+    const stop = vi.fn();
+    const start = vi.fn((_invalidate: () => void) => stop);
+    const unwatch = registry.watch(start);
+    const offLive = registry.subscribe(() => undefined);
+    expect(() => registry.watch(start)).toThrow();
+    expect(start).toHaveBeenCalledTimes(1);
+    unwatch();
+    expect(stop).toHaveBeenCalledTimes(1);
+    offLive();
+    // Each watcher gets its own invalidate, so one subscribing it to a shared store never stands for another.
+    const given: Array<() => void> = [];
+    registry.watch((invalidate) => (given.push(invalidate), () => undefined));
+    registry.watch((invalidate) => (given.push(invalidate), () => undefined));
+    registry.subscribe(() => undefined);
+    expect(given).toHaveLength(2);
+    expect(given[0]).not.toBe(given[1]);
+    const before = registry.version();
+    given[0]!();
+    expect(registry.version()).not.toBe(before);
+  });
+});

@@ -137,16 +137,8 @@ test('chrome-row-is-one-fixed-track', () => {
 
 test('new-tab-follows-the-tablist', () => {
   // specs/tabs.feature.md (Behaviour: "+" is the tablist's next sibling, not inside its scroller): it
-  // follows the last tab, and stays in view at the tablist's end once the tablist scrolls.
-  const lines = read('components/ChromeRow.tsx').split('\n');
-  const at = (pattern: RegExp) => lines.findIndex((line) => pattern.test(line));
-  const strip = at(/^\s*<TabStrip\b/);
-  const plus = at(/^\s*<button\b.*data-testid="new-tab"/);
-  const address = at(/^\s*<AddressBar\b/);
-  expect([strip, plus, address].every((i) => i > 0)).toBe(true);
-  expect(plus).toBe(strip + 1);
-  // The button's element is one line (its icon and closing tag on the next two), then the address bar.
-  expect(lines.slice(plus + 1, address).map((line) => line.trim())).toEqual(['<PlusIcon />', '</button>']);
+  // follows the last tab, and stays in view at the tablist's end once the tablist scrolls. The rendered
+  // order (tablist, "+", address bar) is `chrome-row-dom-order` (renderer/__tests__/chrome-row.test.ts).
   const button = rule('styles.css', '.new-tab');
   expect(button).toMatch(/flex:\s*none;/);
   // 4px toward the tabs (into the gap after the tablist's ring padding), 4px away from the address bar:

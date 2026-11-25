@@ -5,7 +5,7 @@ import type { AccountState, AccountStatus } from '@app/specs/account-state.schem
 import { ACCOUNT_SETTINGS_TEXT, SETTINGS_SECTIONS, SETTINGS_TITLE, settingsLanding, settingsSectionInView, settingsSectionsShown, type SettingsSectionId } from '@app/specs/account-settings.spec';
 import { CloseIcon } from './icons';
 import { actions } from './ipc';
-import { registerPaletteActions } from './palette/registry';
+import { registerPaletteActions, watchPaletteInputs } from './palette/registry';
 import { AccountSettings } from './settings-account';
 import { AiChecksSettings } from './settings-ai-checks';
 import { DataSourcesSettings } from './settings-data-sources';
@@ -14,7 +14,7 @@ import { HistorySettings } from './settings-history';
 import { LocationsSettings } from './settings-locations';
 import { accountStore, gscStore, settingsActions, useAccountState, useGscStatus, useSettingsMenuSeq } from './settings-hooks';
 import { closeCancelsSignIn, holdsSheet, isMenuRequest, onSettingsCloseAsked, onSettingsRequest, opensForConfirmation, requestSettings, SETTINGS_CLOSED, settingsOpened, settingsReducer } from './settings-open';
-import { settingsPaletteSources } from './settings-palette';
+import { settingsPaletteSources, watchSettingsAvailability } from './settings-palette';
 import { TelemetrySettings } from './settings-telemetry';
 import './settings.css';
 
@@ -44,6 +44,9 @@ const unregisterPaletteActions = registerPaletteActions(
   ...settingsPaletteSources({ openSettings: requestSettings, accountStatus: () => accountStore.current()?.status ?? null, gscConfigured: () => gscStore.current()?.configured ?? null }),
 );
 import.meta.hot?.dispose(unregisterPaletteActions);
+// Their availability reads main's answers, so an open palette resolves again when either changes.
+const unwatchPaletteInputs = watchPaletteInputs(watchSettingsAvailability([accountStore, gscStore]));
+import.meta.hot?.dispose(unwatchPaletteInputs);
 
 const headingId = (section: SettingsSectionId) => `settings-section-${section}`;
 
