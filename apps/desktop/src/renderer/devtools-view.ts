@@ -15,6 +15,7 @@ import {
   type RobotsVerdict,
 } from '@app/specs/devtools.spec';
 import { formatBytes as seoFormatBytes } from '@app/seo-core';
+import { SEO_CATEGORY_LABELS, type SeoCategory } from '@app/specs/seo-rules.spec';
 import { SEO_PANELS, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { WORKSPACE_GAP } from '@app/specs/workspace-layout.spec';
 
@@ -230,6 +231,11 @@ export function sortIssues<T extends { readonly severity: string; readonly ruleI
     return (ascending ? order : -order) || a.index - b.index;
   });
   return indexed.map((i) => i.finding);
+}
+
+/** A finding's category as the Issues tab writes it: its label (`Page speed`), else the id as it is. */
+export function issueCategoryLabel(category: string): string {
+  return SEO_CATEGORY_LABELS[category as SeoCategory] ?? category;
 }
 
 /**

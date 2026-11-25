@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { SeoAuditResponse } from '@app/seo-core';
 import { ISSUE_SORT_KEYS, type IssueSortKey } from '@app/specs/devtools.spec';
 import { SEO_PANELS, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
-import { panelForCategory, sortIssues } from '../../devtools-view';
+import { issueCategoryLabel, panelForCategory, sortIssues } from '../../devtools-view';
 import { ErrorGlyph, InfoGlyph, WarningGlyph } from '../../icons';
 
 // The Issues tab (spec `devtools.feature.md`, Issues): every finding of the audit the sidebar shows,
@@ -54,7 +54,7 @@ export function IssuesPanel({ audit, onOpenPanel }: { readonly audit: SeoAuditRe
                 <td>
                   <code>{finding.ruleId}</code>
                 </td>
-                <td>{finding.category}</td>
+                <td>{issueCategoryLabel(finding.category)}</td>
                 <td>
                   <button type="button" className="devtools-link" data-testid="devtools-issue-open" title={`Open the ${label} panel`} onClick={() => onOpenPanel(panel)}>
                     {finding.title}
