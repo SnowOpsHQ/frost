@@ -87,14 +87,26 @@ describe('palette registry', () => {
 describe('palette registry change signal', () => {
   test('registry-signals-changes-in-availability-inputs', () => {
     const registry = createPaletteRegistry();
+    let invalidate!: () => void;
+    registry.watch((given) => ((invalidate = given), () => undefined));
     const heard = vi.fn();
     const off = registry.subscribe(heard);
     const before = registry.version();
-    registry.invalidate();
+    invalidate();
     expect(heard).toHaveBeenCalledTimes(1);
     expect(registry.version()).not.toBe(before);
     off();
-    registry.invalidate();
+    // The first subscribe moves `version` too: an answer between rendering and subscribing is seen.
+    const first = registry.version();
+    const offFirst = registry.subscribe(() => undefined);
+    expect(registry.version()).not.toBe(first);
+    const second = registry.version();
+    const offSecond = registry.subscribe(() => undefined);
+    expect(registry.version()).toBe(second);
+    offSecond();
+    offFirst();
+    // Stopped with the last listener: a late invalidate reaches nobody.
+    invalidate();
     expect(heard).toHaveBeenCalledTimes(1);
     // A watched input is started with the first listener and stopped with the last.
     const stop = vi.fn();

@@ -30,11 +30,13 @@ vi.mock('../ipc', () => {
 // Importing the palette registers the built-ins; the settings view registers the Settings actions and what they read.
 const { CommandPalette } = await import('../components/CommandPalette');
 await import('../settings-view');
+const { gscStore } = await import('../settings-hooks');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let host: HTMLDivElement;
 let root: Root;
+let unsubscribeGsc: () => void;
 const state = (seq: number) => ({ commandPalette: { seq, returnFocus: 'chrome' } }) as unknown as BrowserState;
 const render = (seq: number) =>
   act(() => root.render(createElement(CommandPalette, { state: state(seq), tab: undefined, audit: null, sidebarOpen: false, onSidebarOpenChange: () => undefined, onPanelJump: () => undefined })));
@@ -48,9 +50,12 @@ beforeEach(() => {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
+  // As the real app's SettingsSlot does: the store polls whether or not the palette is open.
+  unsubscribeGsc = gscStore.subscribe(() => undefined);
 });
 afterEach(() => {
   act(() => root.unmount());
+  unsubscribeGsc();
   host.remove();
   delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   vi.restoreAllMocks();

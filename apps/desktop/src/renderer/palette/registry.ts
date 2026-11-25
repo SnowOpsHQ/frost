@@ -129,12 +129,10 @@ export interface PaletteRegistry {
   resolve(ctx: PaletteContext): PaletteAction[];
   /** The ids of every registered static action. */
   ids(): string[];
-  /** Calls `listener` whenever an availability input outside the context changed (`invalidate`); answers the unsubscribe. */
+  /** Calls `listener` whenever an availability input outside the context changed (a watcher's `invalidate`); answers the unsubscribe. */
   subscribe(listener: () => void): () => void;
-  /** Changes with every `invalidate`: a snapshot for `useSyncExternalStore`. */
+  /** Changes with every `invalidate` and with the first `subscribe`: a snapshot for `useSyncExternalStore`. */
   version(): number;
-  /** Says an input an action's availability reads (outside the context) changed: listeners resolve again. */
-  invalidate(): void;
   /**
    * Registers an availability input: `start(invalidate)` runs while at least one listener is subscribed
    * (an open palette), and answers its stop; nothing is watched while the palette is closed.
@@ -248,6 +246,9 @@ export function createPaletteRegistry(): PaletteRegistry {
 
     subscribe(listener) {
       listeners.add(listener);
+      // An answer that landed between a render and this subscribe changed an input unseen: moving `version`
+      // makes `useSyncExternalStore`'s check after subscribing resolve again.
+      if (listeners.size === 1) version += 1;
       if (listeners.size === 1) for (const start of watchers.keys()) watchers.set(start, begin(start));
       return () => {
         if (!listeners.delete(listener) || listeners.size > 0) return;
@@ -259,8 +260,6 @@ export function createPaletteRegistry(): PaletteRegistry {
     },
 
     version: () => version,
-    invalidate,
-
     watch(start) {
       // Like `register`, a duplicate is a programming error: it would overwrite (and leak) the stop.
       if (watchers.has(start)) throw new Error('palette watch: this start is already registered');
