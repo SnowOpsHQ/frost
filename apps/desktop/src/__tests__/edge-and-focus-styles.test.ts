@@ -36,22 +36,9 @@ test('agent-focus-shows-the-ring', () => {
   }
 });
 
-/** A compound selector's weight as [ids, classes + attributes + pseudo-classes, types]; `:where()` weighs nothing. */
-function weight(selector: string): [number, number, number] {
-  const plain = selector.replace(/:where\([^)]*\)/g, '');
-  const count = (pattern: RegExp) => plain.match(pattern)?.length ?? 0;
-  return [count(/#[\w-]+/g), count(/\.[\w-]+|\[[^\]]*\]|:(?!:)[\w-]+/g), 0];
-}
-
 test('agent-pressed-tool-holds-on-hover', () => {
-  const pressed = ".tool.agent-head-tool[aria-pressed='true']";
-  const agent = read('components/agent/agent.css').replace(/\/\*[\s\S]*?\*\//g, '');
-  const selector = [...agent.matchAll(/([^{}]+)\{[^{}]*accent-soft[^{}]*\}/g)].map((match) => match[1]!.trim()).find((name) => name.includes('agent-head-tool') && name.includes('aria-pressed'));
-  expect(selector, 'the pressed agent-head tool keeps a pressed rule').toBeDefined();
-  // The hover is the chrome's `.tool:hover`; the agent's sheet loads before styles.css, so a tie goes to it.
-  const hover = weight('.tool:hover:where(:not(:disabled))');
-  expect(hover).toEqual([0, 2, 0]);
-  const [ids, classes] = weight(selector!);
-  expect(ids > hover[0] || (ids === hover[0] && classes > hover[1]), `${selector} outweighs .tool:hover`).toBe(true);
-  expect(selector).toBe(pressed);
+  // The chrome's hover weighs two classes (`:where()` weighs nothing), and styles.css loads after the agent's
+  // sheet, so a tie goes to it: the pressed rule carries three (`.tool`, `.agent-head-tool`, the attribute).
+  expect(rule('styles.css', '.tool:hover:where(:not(:disabled))')).toMatch(/background:/);
+  expect(rule('components/agent/agent.css', ".tool.agent-head-tool[aria-pressed='true']")).toContain('accent-soft');
 });
