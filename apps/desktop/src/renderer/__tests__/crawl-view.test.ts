@@ -155,11 +155,11 @@ describe('the crawl view model', () => {
   });
 
   test('crawl-view-run-size-and-retention-note', () => {
-    expect(runSizeText(run().counts)).toBe('1.5 MB fetched');
-    expect(runSizeText({ pages: 1, queued: 0, refused: 0, failed: 0, bytes: 900 })).toBe('0.9 KB fetched');
+    expect(runSizeText(run().counts)).toBe('1.6 MB fetched');
+    expect(runSizeText({ pages: 1, queued: 0, refused: 0, failed: 0, bytes: 900 })).toBe('900 B fetched');
     const row = runRowOf(run(), view());
-    expect(row.size).toBe('1.5 MB fetched');
-    // The page count shows once, in the progress line (the card reads "12 pages recorded · … · 1.5 MB fetched").
+    expect(row.size).toBe('1.6 MB fetched');
+    // The page count shows once, in the progress line (the card reads "12 pages recorded · … · 1.6 MB fetched").
     expect(row.progress).toMatch(/^12 pages recorded · /);
     expect(`${row.progress} · ${row.size}`.match(/\bpages?\b/g)).toHaveLength(1);
     expect(row.progress).toContain('30 queued');
@@ -446,7 +446,7 @@ describe('the crawl sheet', () => {
     expect(q<HTMLButtonElement>('crawl-resume')!.disabled).toBe(true);
     expect(q('crawl-run')!.textContent).toContain(LEGAL_GATE_NOTE);
     // The run's size and "deleted per run"; viewing, exporting and deleting stay.
-    expect(q('crawl-run-size')!.textContent).toBe('1.5 MB fetched');
+    expect(q('crawl-run-size')!.textContent).toBe('1.6 MB fetched');
     expect(q('crawl-retention-note')!.textContent).toBe(CRAWL_VIEW_TEXT.retentionNote);
     expect(q<HTMLButtonElement>('crawl-export')!.disabled).toBe(false);
     expect(q<HTMLButtonElement>('crawl-delete')!.disabled).toBe(false);

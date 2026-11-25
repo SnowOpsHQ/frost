@@ -333,5 +333,5 @@ describe('summary', () => {
 test('formats', () => {
   expect([formatMs(0), formatMs(840.4), formatMs(999.6), formatMs(2_640), formatMs(12_345)]).toEqual(['0 ms', '840 ms', '1.0 s', '2.6 s', '12.3 s']);
   expect([formatCls(0), formatCls(0.004), formatCls(0.1), formatCls(0.1004), formatCls(0.123), formatCls(1.5)]).toEqual(['0.000', '0.004', '0.100', '0.100', '0.123', '1.500']);
-  expect([formatBytes(512), formatBytes(12_345), formatBytes(345_678), formatBytes(3_400_000), formatBytes(1_200_000_000)]).toEqual(['512 B', '12.3 kB', '346 kB', '3.4 MB', '1.2 GB']);
+  expect([formatBytes(512), formatBytes(12_345), formatBytes(345_678), formatBytes(3_400_000), formatBytes(1_200_000_000)]).toEqual(['512 B', '12.3 kB', '345.7 kB', '3.4 MB', '1.2 GB']);
 });

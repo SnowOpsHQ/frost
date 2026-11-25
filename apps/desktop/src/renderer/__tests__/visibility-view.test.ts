@@ -126,14 +126,14 @@ describe('Visibility panel view model', () => {
     expect(probeTable(state({ rows: [row('browser', { canonical: null, canonicals: { html: [], header: null, conflicts: [] } })] }))!.rows[5]!.cells[0]!.text).toBe('None');
     expect(cell(table, 'wordCount', 'browser').text).toBe('420');
     expect(cell(table, 'wordCount', 'claudebot').text).toBe('—');
-    expect(cell(table, 'bytes', 'browser').text).toBe('12.5 KB');
-    expect(cell(table, 'bytes', 'bingbot').text).toBe('5 MB (cut)');
+    expect(cell(table, 'bytes', 'browser').text).toBe('12.8 kB');
+    expect(cell(table, 'bytes', 'bingbot').text).toBe('5.2 MB (cut)');
     expect(cell(table, 'text', 'browser').text).toBe('Baseline');
     expect(cell(table, 'text', 'bingbot').text).toBe('42% alike');
     expect(cell(table, 'text', 'perplexitybot').text).toBe('—');
     expect(formatBytes(0)).toBe('0 B');
     expect(formatBytes(900)).toBe('900 B');
-    expect(formatBytes(1536)).toBe('1.5 KB');
+    expect(formatBytes(1536)).toBe('1.5 kB');
   });
 
   test('probe-diff-marks', () => {

@@ -205,7 +205,7 @@ test('robots-fetch-is-bounded-e2e', async () => {
     '/page': page200(),
   });
   await audit(`${big.origin}/page`);
-  await expect(page.getByTestId('seo-index-robots-outcome')).toHaveText('Fetched · 200 · 500 KiB (cut at the limit)');
+  await expect(page.getByTestId('seo-index-robots-outcome')).toHaveText('Fetched · 200 · 512.0 kB (cut at the limit)');
   // The rule past the cap was never read.
   await expect(agent('Googlebot')).toHaveAttribute('data-allowed', 'true');
   await page.getByTestId('seo-index-view-robots').click();

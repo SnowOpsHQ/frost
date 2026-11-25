@@ -14,6 +14,7 @@ import {
   type NetworkTypeFilter,
   type RobotsVerdict,
 } from '@app/specs/devtools.spec';
+import { formatBytes as seoFormatBytes } from '@app/seo-core';
 import { SEO_PANELS, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { WORKSPACE_GAP } from '@app/specs/workspace-layout.spec';
 
@@ -168,10 +169,7 @@ export function waterfall(entries: readonly Pick<NetworkEntry, 'key' | 'startedA
 
 /** A size in bytes as text (`—` unknown). */
 export function formatBytes(bytes: number | null): string {
-  if (bytes === null) return '—';
-  if (bytes < 1_000) return `${bytes} B`;
-  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} kB`;
-  return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  return bytes === null ? '—' : seoFormatBytes(bytes);
 }
 
 /** A duration as text (`—` still pending). */

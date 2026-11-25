@@ -98,7 +98,7 @@ describe('update bar view', () => {
   test('format-bytes', () => {
     expect(formatBytes(0)).toBe('0 B');
     expect(formatBytes(999)).toBe('999 B');
-    expect(formatBytes(1000)).toBe('1.0 KB');
+    expect(formatBytes(1000)).toBe('1.0 kB');
     expect(formatBytes(84_213_000)).toBe('84.2 MB');
     expect(formatBytes(1_073_741_824)).toBe('1.1 GB');
     expect(formatBytes(Number.NaN)).toBe('0 B');
