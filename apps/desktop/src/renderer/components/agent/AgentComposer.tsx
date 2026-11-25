@@ -105,6 +105,8 @@ export function AgentComposer({
   const [menu, setMenu] = useState<AttachMenu | null>(null);
   // Counts menu openings (and chat switches): a list or attach answer for an earlier one (another chat's) is dropped.
   const menuOpenings = useRef(0);
+  // Counts chat switches only: a refusal for a pick in this chat is shown even if the menu was closed and opened again meanwhile.
+  const chatSwitches = useRef(0);
   const wasRunning = useRef(running);
   const full = attachments.length >= MAX_CHAT_ATTACHMENTS;
   const offered = enabledSkills(skills);
@@ -161,17 +163,20 @@ export function AgentComposer({
   // Another chat selected: its own menu, if any, starts afresh.
   useEffect(() => {
     menuOpenings.current += 1;
+    chatSwitches.current += 1;
     setMenu(null);
   }, [chatId]);
   const attach = (tab: AgentAttachableTab) => {
     const at = menu?.at ?? null;
     const opening = menuOpenings.current;
+    const switches = chatSwitches.current;
     void agentActions.attachTab(chatId, tab.tabId, tab.origin).then((result) => {
-      if (opening !== menuOpenings.current) return;
+      if (switches !== chatSwitches.current) return;
       if (result !== 'attached') {
         setMenu((current) => (current === null ? null : { ...current, message: AGENT_ATTACH_MESSAGES[result] }));
         return;
       }
+      if (opening !== menuOpenings.current) return;
       setMenu(null);
       // The `@` that opened the menu is replaced by the chip.
       if (at !== null) setText((current) => withoutAtTrigger(current, at).text);
