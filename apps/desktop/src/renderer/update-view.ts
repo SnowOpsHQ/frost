@@ -1,3 +1,4 @@
+import { formatBytes as seoFormatBytes } from '@app/seo-core';
 import {
   UPDATE_ERROR_MESSAGES,
   UPDATE_PALETTE_MESSAGES,
@@ -46,17 +47,9 @@ export type UpdateBarView =
 
 const HIDDEN: UpdateBarView = { kind: 'hidden' };
 
-/** A byte count as the bar shows it (`B`, `KB`, `MB`, `GB`; decimal units, one decimal from KB). */
+/** A byte count as the bar shows it: the shared formatter (`512 B`, `84.2 MB`), with a size that is not a number as `0 B`. */
 export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 1000) return `${Math.max(0, Math.round(Number.isFinite(bytes) ? bytes : 0))} B`;
-  const units = ['KB', 'MB', 'GB'] as const;
-  let value = bytes / 1000;
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  return `${value.toFixed(1)} ${units[unit]}`;
+  return seoFormatBytes(Number.isFinite(bytes) ? Math.max(0, bytes) : 0);
 }
 
 /** The whole percentage of `bytes` of `total` (0 for no total; never above 100). */

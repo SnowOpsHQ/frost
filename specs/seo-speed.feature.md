@@ -167,6 +167,12 @@ many visits on many devices), which can be very different. The panel says so und
 - **Scenario: summary-counts-requests-and-bytes**, **summary-lists-are-capped**,
   **summary-third-party-share**, **navigation-phases**, **summary-notes-route-change-wayland-and-few-requests**,
   **speed-report-has-measured-findings-only**, **formats** (CLS always with three decimals).
+- **Scenario: byte-sizes-read-the-same-everywhere** — one byte formatter (`formatBytes`, seo-core) writes a
+  size in decimal SI units, `1 kB = 1,000 B`: `512 B`, `12.3 kB`, `345.7 kB`, `3.4 MB`, `1.2 GB`, one decimal from
+  `kB` up (so `123.4 kB` is what the Speed table shows). The Speed panel, the Network tab (`—` for an unknown size),
+  the robots.txt fetch line, the Visibility probe table, the update bar and the crawl run's size all use it, so one
+  byte count reads the same in each; no panel writes `KB` for 1,024 bytes. (`KiB` stays only where a cap is
+  quoted by its defined size, "500 KiB (512,000 bytes)".)
 
 ## Measurement, validation and main (`apps/desktop/src/main/seo/__tests__/vitals.test.ts`)
 - **Scenario: vitals-script-runs-in-the-speed-world** — `SPEED_WORLD_ID`, never 0, 999, `SEO_WORLD_ID` or

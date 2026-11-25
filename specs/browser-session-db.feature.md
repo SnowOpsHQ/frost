@@ -141,6 +141,10 @@ Spec: `specs/browser-session-db.spec.ts` (`DB_FILE_NAME`, `CORRUPT_FILE_INFIX`,
 - **Scenario: corrupt-db-moved-aside** — a garbage file (with stale sidecars) is renamed to
   `DB_FILE_NAME + CORRUPT_FILE_INFIX + <now>`, no stale sidecar is left next to the fresh migrated
   database, and exactly one line is logged.
+- **Scenario: moved-aside-rename-waits-for-a-busy-file** — on Windows the rename that moves a file
+  or a sidecar aside is tried again, as `renameOverSync` does (`agent-host.feature.md`,
+  `rename-over-sync-waits-for-a-busy-file`), while another program has it open at that instant,
+  instead of failing the startup into an in-memory session.
 - **Scenario: non-regular-file-moved-aside** — a directory in the file's place, a symlink to a
   valid database elsewhere, and a dangling symlink are each moved aside (the link itself, never
   its target, which stays untouched and is never created) and a fresh regular file opens.

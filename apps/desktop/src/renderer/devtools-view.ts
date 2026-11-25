@@ -14,6 +14,8 @@ import {
   type NetworkTypeFilter,
   type RobotsVerdict,
 } from '@app/specs/devtools.spec';
+import { formatBytes as seoFormatBytes } from '@app/seo-core';
+import { SEO_CATEGORY_LABELS, type SeoCategory } from '@app/specs/seo-rules.spec';
 import { SEO_PANELS, type SeoPanelId } from '@app/specs/seo-sidebar.spec';
 import { WORKSPACE_GAP } from '@app/specs/workspace-layout.spec';
 
@@ -168,10 +170,7 @@ export function waterfall(entries: readonly Pick<NetworkEntry, 'key' | 'startedA
 
 /** A size in bytes as text (`—` unknown). */
 export function formatBytes(bytes: number | null): string {
-  if (bytes === null) return '—';
-  if (bytes < 1_000) return `${bytes} B`;
-  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} kB`;
-  return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  return bytes === null ? '—' : seoFormatBytes(bytes);
 }
 
 /** A duration as text (`—` still pending). */
@@ -232,6 +231,11 @@ export function sortIssues<T extends { readonly severity: string; readonly ruleI
     return (ascending ? order : -order) || a.index - b.index;
   });
   return indexed.map((i) => i.finding);
+}
+
+/** A finding's category as the Issues tab writes it: its label (`Page speed`), else the id as it is. */
+export function issueCategoryLabel(category: string): string {
+  return SEO_CATEGORY_LABELS[category as SeoCategory] ?? category;
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   DB_SIDECAR_SUFFIXES,
 } from '@app/specs/browser-session-db.spec';
 import { runMigrations } from './migrations';
+import { renameOverSync } from './rename-over-sync';
 
 // Opening the browser-session database (spec `browser-session-db.feature.md`, Corrupt or
 // unusable file). Synchronous: main opens it once at startup. The app always gets a database.
@@ -101,10 +102,10 @@ function moveAside(file: string, now: number): string | null {
   const target = `${file}${CORRUPT_FILE_INFIX}${now}`;
   // Sidecars first: a hot journal must never be left next to a fresh database of the same name.
   for (const suffix of DB_SIDECAR_SUFFIXES) {
-    if (entryAt(`${file}${suffix}`) !== 'missing') renameSync(`${file}${suffix}`, `${target}${suffix}`);
+    if (entryAt(`${file}${suffix}`) !== 'missing') renameOverSync({ renameSync }, `${file}${suffix}`, `${target}${suffix}`);
   }
   if (entryAt(file) === 'missing') return null;
-  renameSync(file, target);
+  renameOverSync({ renameSync }, file, target);
   return target;
 }
 

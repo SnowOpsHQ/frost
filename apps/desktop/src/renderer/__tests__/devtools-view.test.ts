@@ -14,7 +14,7 @@ import {
   type NetworkEntry,
   type NetworkLogAnswer,
 } from '@app/specs/devtools.spec';
-import { SEO_CATEGORIES } from '@app/specs/seo-rules.spec';
+import { SEO_CATEGORIES, SEO_CATEGORY_LABELS } from '@app/specs/seo-rules.spec';
 import { SEO_PANELS } from '@app/specs/seo-sidebar.spec';
 import { WORKSPACE_GAP, WORKSPACE_GAP_TIGHT } from '@app/specs/workspace-layout.spec';
 import {
@@ -32,6 +32,7 @@ import {
   watchStep,
   NO_NETWORK_FILTER,
   openFromStorage,
+  issueCategoryLabel,
   panelForCategory,
   shortName,
   sortIssues,
@@ -171,6 +172,13 @@ describe('devtools drawer helpers', () => {
     for (const bar of bars.values()) expect(bar.x + bar.width).toBeLessThanOrEqual(WATERFALL_WIDTH);
     // One instant request fills the space from its start.
     expect(waterfall([{ key: 9, startedAt: 5, durationMs: 0 }]).get(9)).toEqual({ x: 0, width: WATERFALL_MIN_WIDTH });
+  });
+
+  // spec: specs/devtools.feature.md — issues-show-category-labels
+  test('issues-show-category-labels', () => {
+    expect(SEO_CATEGORIES.map(issueCategoryLabel)).toEqual(SEO_CATEGORIES.map((category) => SEO_CATEGORY_LABELS[category]));
+    expect([issueCategoryLabel('meta-description'), issueCategoryLabel('performance'), issueCategoryLabel('schema')]).toEqual(['Meta description', 'Page speed', 'Structured data']);
+    expect(issueCategoryLabel('no-such-category')).toBe('no-such-category');
   });
 
   test('issues-sorted', () => {

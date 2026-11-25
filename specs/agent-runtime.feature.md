@@ -69,6 +69,12 @@ Spec: `specs/agent-protocol.schema.ts` (`MainToRuntimeMessageSchema`, `RuntimeTo
 - **Scenario: lockdown-removes-network-globals** — `fetch`, `WebSocket`, `EventSource`,
   `XMLHttpRequest` (and `WebSocketStream`) are gone from the target; a non-configurable writable one
   is overwritten; a non-configurable read-only one is reported as not removed.
+- **Scenario: network-globals-lists-agree** (`apps/desktop/src/main/agent/__tests__/network-globals.test.ts`)
+  — the network globals are listed in three places that cannot import one another across the
+  runtime/main boundary: `NETWORK_GLOBALS` (`lockdown.ts`, what the runtime removes), the first
+  entries of `LOCKDOWN_TARGETS` (`specs/agent-protocol.schema.ts`, what `ready.lockdown` may name)
+  and `NETWORK_TARGETS` (`session.ts`, what main checks the report against). The three name the same
+  globals, so a global added to one and not the others fails the test.
 - **Scenario: lockdown-real-globals** — on the real `globalThis`, `fetch` and `WebSocket` are gone
   after lockdown (restored after the test).
 - **Scenario: lockdown-process-builtins** — `getBuiltinModule`, `binding`, `_linkedBinding` and

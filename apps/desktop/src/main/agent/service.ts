@@ -158,7 +158,7 @@ export function createAgentServiceFrom(deps: AgentServiceDeps): AgentSessionWith
     }
     if (file === null) return 'cancelled';
     try {
-      await writeExport(file, chatExportText(chat, format, now()));
+      await writeExport(file, chatExportText(chat, format, now(), (toolName) => mcp.serverNameOf(toolName)));
       return 'saved';
     } catch {
       log('agent: a chat export could not be written');

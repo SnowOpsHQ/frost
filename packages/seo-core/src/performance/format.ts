@@ -15,7 +15,7 @@ export function formatCls(value: number): string {
   return value.toFixed(3);
 }
 
-/** Bytes in SI units: `512 B`, `12.3 kB`, `3.4 MB`, `1.2 GB`. */
+/** Bytes in SI units (1 kB = 1,000 B), one decimal from kB up: `512 B`, `12.3 kB`, `345.7 kB`, `3.4 MB`, `1.2 GB`. Every panel's sizes come from here (`specs/seo-speed.feature.md`, byte-sizes-read-the-same-everywhere). */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '–';
   if (bytes < 1_000) return `${Math.round(bytes)} B`;
@@ -26,8 +26,7 @@ export function formatBytes(bytes: number): string {
     value /= 1_000;
     unit += 1;
   }
-  const digits = value < 100 ? 1 : 0;
-  return `${value.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${units[unit]}`;
+  return `${value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${units[unit]}`;
 }
 
 /** A metric's value in its unit (`formatCls` for CLS, `formatMs` for the others). */

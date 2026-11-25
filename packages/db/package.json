@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./driver-libsql": "./src/driver-libsql.ts",
     "./driver-node-sqlite": "./src/driver-node-sqlite.ts",
-    "./driver-types": "./src/driver-types.ts"
+    "./driver-types": "./src/driver-types.ts",
+    "./rename-over-sync": "./src/rename-over-sync.ts"
   },
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json",

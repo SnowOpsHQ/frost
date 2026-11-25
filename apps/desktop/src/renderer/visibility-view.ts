@@ -1,3 +1,4 @@
+import { formatBytes } from '@app/seo-core';
 import { INTENT_LIMITS } from '@app/specs/intent-classifier.spec';
 import { SERP_PARAM_LIMITS } from '@app/specs/serp.spec';
 import {
@@ -109,12 +110,8 @@ export interface ProbeTable {
   readonly rows: readonly ProbeTableRow[];
 }
 
-/** `n` bytes as B, KB or MB (one decimal, trailing `.0` dropped). */
-export function formatBytes(n: number): string {
-  if (n < 1024) return `${formatCount(n)} B`;
-  const [value, unit] = n < 1024 * 1024 ? [n / 1024, 'KB'] : [n / (1024 * 1024), 'MB'];
-  return `${(Math.round(value * 10) / 10).toLocaleString('en-US')} ${unit}`;
-}
+/** `n` bytes as the shared formatter writes them (`900 B`, `12.8 kB`, `5.2 MB`). */
+export { formatBytes };
 
 /** Whether the agent got an HTTP answer (a final status). */
 const answered = (row: ProbeRow): boolean => row.status !== null;

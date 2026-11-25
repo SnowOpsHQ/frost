@@ -60,21 +60,18 @@ test('main-renames-go-through-rename-over', async () => {
   /**
    * A call of the file system's own rename: awaited, returned or dropped by its imported name, or
    * called on a file-system object (`fs.rename(…)`, `deps.fs.rename(…)`, `fs.renameSync(…)`). A line
-   * that hands one to `renameOver` is the retrying rename itself.
+   * that hands one to `renameOver` is the retrying rename itself; a line that hands one to
+   * `renameOverSync` is the synchronous one.
    */
   const DIRECT = /(?:\b(?:await|return|void)\s+|\b(?:fs|nodeFs|promises)\.)rename(?:Sync)?\(/;
-  /** Files that still rename on their own, and why. */
-  const KNOWN: Readonly<Record<string, string>> = {
-    'telemetry/consent-store.ts': 'written synchronously (its callers read the answer at once); a refused rename answers false and telemetry stays as it was',
-  };
   const direct: string[] = [];
   for (const entry of await readdir(main, { recursive: true })) {
     const file = entry.split(path.sep).join('/');
     if (!file.endsWith('.ts') || file.split('/').includes('__tests__') || file === 'durable.ts') continue;
     const lines = (await readFile(path.join(main, entry), 'utf8')).split('\n');
-    if (lines.some((line) => DIRECT.test(line) && !line.includes('renameOver('))) direct.push(file);
+    if (lines.some((line) => DIRECT.test(line) && !line.includes('renameOver(') && !line.includes('renameOverSync('))) direct.push(file);
   }
-  expect(direct.sort()).toEqual(Object.keys(KNOWN).sort());
+  expect(direct).toEqual([]);
   // The check sees each way a rename is written, and `renameOver`'s own callers pass.
   for (const line of ['await rename(a, b);', 'await deps.fs.rename(temp, file);', 'fs.renameSync(a, b);', 'return rename(a, b);']) expect(DIRECT.test(line), line).toBe(true);
   for (const line of ['await renameOver({ rename }, a, b);', 'await renameOver(deps.fs, a, b);', '  rename(from: string, to: string): Promise<void>;', 'void history.rename(chat.id, title)']) expect(DIRECT.test(line), line).toBe(false);

@@ -10,7 +10,7 @@ Spec: `specs/projects.spec.ts` (`PROJECT_RUN_LIMITS`, `RUN_STATES`, `RUN_TARGET_
 `CAPTURE_SCHEDULE_NOTE`, `CADENCE_TEXT`), `specs/projects.spec.ts` (also
 `RUN_RETRY_REFUSALS`, `QUERY_DEVICE_PROFILES`, `SavedSearchInput`, `SEARCH_PARAM_URL_RULES`,
 `searchLocaleFor`, `searchUrlFor`, `queryLabel`, `PROJECT_REFUSALS`, `RUN_REFUSALS` and their messages,
-`CAPTURE_RUN_NOTE`, `QUERY_FIELD_MAX_CHARS`, `DELETE_PROJECT`, the answer types) and
+`CAPTURE_RUN_NOTE`, `SAVED_SEARCH_TEXT`, `QUERY_FIELD_MAX_CHARS`, `DELETE_PROJECT`, the answer types) and
 `specs/projects.schema.ts` (the Zod inputs and answers, `SavedSearchInputSchema`). A saved search is
 stored as Phase 3's search parameters (`specs/serp-search-params.schema.ts`). Storage: `ci_projects`, `ci_project_pages`, `ci_project_queries` and the purge
 path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `MAX_PROJECT_QUERIES`,
@@ -22,10 +22,10 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
 
 ## Projects
 - A project is a name, an optional render profile, its pages (`http(s)` URLs, stored without
-  userinfo or `#fragment`) and its search queries (saved searches: Phase 3's `SearchParams`, with
+  userinfo or `#fragment`) and its saved searches (Phase 3's `SearchParams`, with
   `engine`, `engineLabel`, `query`, `gl`, `hl`, `device`, `page`, `offset` and the canonical `url`). **Unfiled** is always there, listed first; it cannot be renamed or deleted.
 - Names are trimmed; blank or longer than `PROJECT_NAME_MAX_CHARS` is `invalid-name`. A page that is
-  not an `http(s)` URL frost can store is `invalid-url`; past a cap is `limit`. Adding a page or query
+  not an `http(s)` URL frost can store is `invalid-url`; past a cap is `limit`. Adding a page or saved search
   the project already holds answers that row.
 - "Add the current page" adds the active tab's page; with no web page it is `no-page`.
 - A project's render profile is Default (stored as none) or a profile; the sheet offers Default and
@@ -274,7 +274,7 @@ purge in `workspace-db.feature.md` (API readings (Phase 12)) and `retention.feat
 ## The service
 - Every method answers; none rejects. A refusal is typed (`PROJECT_REFUSALS`, `RUN_REFUSALS`); a
   database failure is `store-failed` and one log line with its code, never its message.
-- `get` answers the pages and queries, each with its last capture **in this project** and the change
+- `get` answers the pages and saved searches, each with its last capture **in this project** and the change
   count of its lane's latest version (a page's lane has no search parameters, or those the SERP
   service read when the page is a result page; a query's has its own, so a desktop and a mobile query
   of one URL are told apart): `null` for a first version.
@@ -284,7 +284,7 @@ purge in `workspace-db.feature.md` (API readings (Phase 12)) and `retention.feat
 1. Unfiled is `unfiled`; a project whose run is under way is `running`.
 2. Main asks in its own message box (`DELETE_PROJECT`, parented to the focused window, the name quoted
    and bidi-isolated; Cancel is the default): Cancel is `declined` and nothing changes.
-3. The project is tombstoned with its pages and queries.
+3. The project is tombstoned with its pages and saved searches.
 4. `planPurge({ mode: 'all' })` and `executePurge(…, 'project-deleted')`: every capture and screenshot
    of the project goes in one recorded purge; a version another project also captured stays.
 5. Each hash of the purge's `unreferencedHashes` is checked again with `isHashReferenced`, and its file
@@ -382,7 +382,7 @@ purge in `workspace-db.feature.md` (API readings (Phase 12)) and `retention.feat
   viewport screenshots", the honesty note, the progress (current of total, each target's outcome) and
   Cancel. A page or query shows its last capture and change count; a click opens it in the active tab.
 - While a run is under way the sheet is a band of fixed height (`data-running`) so the run's tab is on
-  screen, and its pages and queries do not open (the run's tab is in front).
+  screen, and its pages and saved searches do not open (the run's tab is in front).
 - The History sheet and this one never show together: opening one closes the other.
 - The page column gives way by `.page-column:has(> .projects-sheet)` (no attribute on `App.tsx`'s column).
 - Its retention and disk usage section is `retention.feature.md`'s (The project view).
@@ -441,7 +441,7 @@ purge in `workspace-db.feature.md` (API readings (Phase 12)) and `retention.feat
   sheet). The chrome reads the text with `normalizeTags` (a refused tag or more than
   `MAX_TAGS_PER_ENTRY` says `PROJECT_REFUSAL_MESSAGES['invalid-tag']` and sends nothing) and sends the
   entry's tags afterwards with `setTags`.
-- **Bulk add (Phase 10 Task 7).** "Bulk add…" (`projects-bulk-open`, in Overview's Search queries)
+- **Bulk add (Phase 10 Task 7).** "Bulk add…" (`projects-bulk-open`, in Overview's Saved searches)
   opens the Bulk add dialog (`BulkAdd.tsx`, `role="dialog"`, `projects-bulk`) in place of the query
   form; focus goes to its text, Esc or Close (`projects-bulk-close`) closes it and gives focus back
   to "Bulk add…". It has:
@@ -640,3 +640,6 @@ purge in `workspace-db.feature.md` (API readings (Phase 12)) and `retention.feat
 - **Scenario: projects-bulk-add-with-tags** — in `apps/desktop/e2e/rankings.e2e.ts` (`rankings.feature.md`,
   End to end): Bulk add with three lines × two devices and a tag makes six tagged saved searches, the
   Rankings tag filter shows only them, and nothing is requested.
+- **Scenario: saved-search-is-named-one-way** — the sheet's list, its form, its toast, the run refusal
+  `no-targets` and the delete dialog all say "saved search" (`SAVED_SEARCH_TEXT`); "query" is only the text field's
+  word and Bulk add's lines.

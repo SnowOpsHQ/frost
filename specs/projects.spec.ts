@@ -484,7 +484,7 @@ export type RunRefusal = (typeof RUN_REFUSALS)[number];
 export const RUN_REFUSAL_MESSAGES: Readonly<Record<RunRefusal, string>> = {
   busy: 'A capture run is already under way.',
   'not-found': 'That project no longer exists.',
-  'no-targets': 'Add a page or a query to capture first.',
+  'no-targets': 'Add a page or a saved search to capture first.',
   'no-tab': 'No tab could be opened for the run. Close a tab and try again.',
   'store-failed': 'The project could not be read.',
   declined: 'Nothing was started: no search was sent.',
@@ -638,6 +638,18 @@ export const PROJECT_SETTINGS_TEXT = {
   unfiled: 'Unfiled is where captures land when no project was chosen: it has no site, competitors or cadence.',
 } as const;
 
+/**
+ * What the project sheet calls a query with its engine, locale and device: a **saved search**, never "a query" (a query is the
+ * text one types, as in the form's "Query" field and Bulk add's "Queries" list). The list's heading, its empty note, the form's
+ * button and what it says once a search is saved; the refusals and the delete dialog say the same.
+ */
+export const SAVED_SEARCH_TEXT = {
+  heading: 'Saved searches',
+  empty: 'No saved searches yet.',
+  add: 'Add saved search',
+  added: 'Saved search added.',
+} as const;
+
 /** The tag editor of a page or saved search (Phase 10 Task 7; plan Decision 8). */
 export const TAG_EDITOR_TEXT = {
   /** The editor's accessible name, `{label}` the page's URL or the search's `queryLabel`. */
@@ -738,7 +750,7 @@ export const DELETE_PROJECT = {
     type: 'warning',
     message: 'Delete this project?',
     detail:
-      'This deletes the project {name}, its pages and queries, and every capture and screenshot filed in it. Versions another project also captured stay with that project. It cannot be undone.',
+      'This deletes the project {name}, its pages and saved searches, and every capture and screenshot filed in it. Versions another project also captured stay with that project. It cannot be undone.',
     buttons: ['Delete Project', 'Cancel'],
     defaultId: 1,
     cancelId: 1,

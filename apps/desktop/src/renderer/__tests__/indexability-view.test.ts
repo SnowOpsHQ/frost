@@ -32,8 +32,8 @@ describe('indexability view helpers', () => {
     expect(statusText(599)).toBe('599');
     expect(statusText(null)).toBe('Unknown');
     expect([200, 204, 301, 404, 503, null].map(statusTone)).toEqual(['ok', 'ok', 'warn', 'error', 'error', 'muted']);
-    // One unit throughout: KiB (1,024 bytes), so the cap reads "500 KiB".
-    expect([0, 1_023, 1_024, 12_800, 512_000].map(formatBytes)).toEqual(['0 B', '1,023 B', '1 KiB', '12.5 KiB', '500 KiB']);
+    // The shared formatter (decimal units, byte-sizes-read-the-same-everywhere): the 500 KiB cap reads 512.0 kB.
+    expect([0, 999, 1_000, 12_800, 512_000].map(formatBytes)).toEqual(['0 B', '999 B', '1.0 kB', '12.8 kB', '512.0 kB']);
   });
 
   test('source-notes', () => {
@@ -55,8 +55,8 @@ describe('indexability view helpers', () => {
     expect(robotsGroupText(agent())).toBe('User-agent: * (fallback)');
     expect(robotsGroupText(agent({ groupAgents: ['a', 'b', 'c', 'd', 'e'], fallback: false }))).toBe('User-agent: a, b, c, +2');
     expect(robotsGroupText(agent({ groupAgents: [] }))).toBe('No group');
-    expect(robotsFetchText(robots({ redirects: 1 }))).toBe('Fetched · 200 · 1.3 KiB · 1 redirect');
-    expect(robotsFetchText(robots({ bytes: 512_000, truncated: true }))).toBe('Fetched · 200 · 500 KiB (cut at the limit)');
+    expect(robotsFetchText(robots({ redirects: 1 }))).toBe('Fetched · 200 · 1.3 kB · 1 redirect');
+    expect(robotsFetchText(robots({ bytes: 512_000, truncated: true }))).toBe('Fetched · 200 · 512.0 kB (cut at the limit)');
     expect(robotsFetchText(robots({ outcome: 'forbidden', status: 403 }))).toBe('Access denied (no restrictions) · 403');
     expect(robotsFetchText(robots({ outcome: 'private-redirect', status: 302 }))).toBe('Unavailable (redirect to a private address) · 302');
     expect(robotsFetchText(robots({ outcome: 'pending', status: null }))).toBe('Fetching robots.txt…');

@@ -1,4 +1,4 @@
-import type { HreflangEntry, HttpReport, IndexabilityReport, RobotsAgentVerdict, RobotsReport } from '@app/seo-core';
+import { formatBytes, type HreflangEntry, type HttpReport, type IndexabilityReport, type RobotsAgentVerdict, type RobotsReport } from '@app/seo-core';
 import { ROBOTS_ALLOW_ALL_OUTCOMES, ROBOTS_OUTCOME_LABELS, type IndexabilityVerdict, type RobotsFetchOutcome } from '@app/specs/seo-indexability.spec';
 import { formatCount } from './seo-view';
 
@@ -65,12 +65,8 @@ export function sourceNote(http: HttpReport): string | null {
   }
 }
 
-/** A size in bytes as `512 B`, `12.5 KiB`, `500 KiB` (1 KiB = 1,024 bytes, the unit of the robots.txt cap), for robots.txt sizes. */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1_024) return `${formatCount(bytes)} B`;
-  const kib = bytes / 1_024;
-  return `${kib >= 100 ? formatCount(Math.round(kib)) : (Math.round(kib * 10) / 10).toLocaleString('en-US')} KiB`;
-}
+/** A size in bytes (`512 B`, `12.8 kB`, `512.0 kB`): the one formatter every panel uses (decimal units). */
+export { formatBytes };
 
 const ALLOW_ALL: ReadonlySet<RobotsFetchOutcome> = new Set(ROBOTS_ALLOW_ALL_OUTCOMES);
 
@@ -99,7 +95,7 @@ export function robotsGroupText(verdict: RobotsAgentVerdict): string {
   return `User-agent: ${agents.join(', ')}${verdict.fallback ? ' (fallback)' : ''}`;
 }
 
-/** The robots.txt fetch in one line: `Fetched · 200 · 1.2 KB · 1 redirect`. */
+/** The robots.txt fetch in one line: `Fetched · 200 · 1.2 kB · 1 redirect`. */
 export function robotsFetchText(robots: RobotsReport): string {
   const parts: string[] = [ROBOTS_OUTCOME_LABELS[robots.outcome]];
   if (robots.status !== null) parts.push(String(robots.status));

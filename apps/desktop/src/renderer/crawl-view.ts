@@ -1,3 +1,4 @@
+import { formatBytes } from '@app/seo-core';
 import { LEGAL_GATE_NOTE } from '@app/specs/data-sources.spec';
 import { SEO_CATEGORY_LABELS, SEO_RULE_SPECS, type SeoCategory } from '@app/specs/seo-rules.spec';
 // Type-only from the Zod spec (its schemas must stay out of this bundle: strict Trusted Types).
@@ -128,14 +129,9 @@ const REASON_TEXT: Readonly<Partial<Record<CrawlRunReason, string>>> = {
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
-/** Bytes as KB or MB, one decimal. */
-function bytesText(bytes: number): string {
-  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
-}
-
 /** A run's size: the bytes its fetches read (its page count is already in the run's progress line). */
 export function runSizeText(counts: CrawlRunView['counts']): string {
-  return `${bytesText(counts.bytes)} fetched`;
+  return `${formatBytes(counts.bytes)} fetched`;
 }
 
 /** One run as the sheet lists it: what it says and which controls it offers. */
