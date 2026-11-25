@@ -151,16 +151,26 @@ export function letterWords(sentence: string, code: string | null): string[] {
     .filter((term) => LETTER_WORD.test(term));
 }
 
-/** Readability of `text` in language `code` (`READABILITY_LANGUAGES` only; see the spec). */
-export function readability(text: string, code: string | null): Readability {
+/** A sentence of the text and its letter words. */
+export interface SentenceTerms {
+  readonly sentence: string;
+  readonly terms: readonly string[];
+}
+
+/** The sentences of `text` with their letter words (every sentence, including those without any): segmented once, for `readability` and `sentenceReport` to share. */
+export function sentenceTerms(text: string, code: string | null): SentenceTerms[] {
+  return sentencesOf(text, code).map((sentence) => ({ sentence, terms: letterWords(sentence, code) }));
+}
+
+/** Readability of `text` in language `code` (`READABILITY_LANGUAGES` only; see the spec); `parts` are `sentenceTerms(text, code)` when the caller has them. */
+export function readability(text: string, code: string | null, parts?: readonly SentenceTerms[]): Readability {
   if (text.trim() === '') return { status: 'not-available', reason: 'no-text' };
   const language = readabilityLanguage(code);
   if (language === null) return { status: 'not-available', reason: 'language' };
   let words = 0;
   let sentences = 0;
   let syllableCount = 0;
-  for (const sentence of sentencesOf(text, code)) {
-    const inSentence = letterWords(sentence, code);
+  for (const { terms: inSentence } of parts ?? sentenceTerms(text, code)) {
     if (inSentence.length === 0) continue;
     sentences += 1;
     words += inSentence.length;
