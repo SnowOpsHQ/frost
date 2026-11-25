@@ -342,9 +342,9 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
     return { tab: state.tabs.find((tab) => tab.id === tabId) ?? null, isActive: state.activeTabId === tabId };
   };
 
-  /** Publishes `waiting-for-tab` / `running` as the tab's place changes. */
-  const showActive = (isActive: boolean): void => {
-    const state: RunStateName = isActive ? 'running' : 'waiting-for-tab';
+  /** Publishes `running`, or the wait that applies (`waiting-for-tab`; `waiting-for-start-tab` before the run has a tab), as the tab's place changes. */
+  const showActive = (isActive: boolean, waiting: RunStateName = 'waiting-for-tab'): void => {
+    const state: RunStateName = isActive ? 'running' : waiting;
     if (current.state !== state) publish({ state });
   };
 
@@ -437,7 +437,7 @@ export function createCaptureRuns(deps: CaptureRunDeps): CaptureRuns {
         log('the run gave way: the tab it started from is gone');
         return 'cancelled';
       }
-      showActive(false);
+      showActive(false, 'waiting-for-start-tab');
       await pause(run, limits.captureRetryMs);
     }
   }

@@ -83,9 +83,11 @@ export type ProjectRunLimits = { readonly [K in keyof typeof PROJECT_RUN_LIMITS]
  * A run's state:
  * - `idle`: no run since the app started;
  * - `running`: visiting its targets, its tab the active one;
- * - `waiting-for-tab`: its tab is not the active one (the user switched away), or, before a late
- *   first tab opens, the tab it started from is not; it waits, and that time does not count against
- *   the target;
+ * - `waiting-for-tab`: its tab is not the active one (the user switched away); it waits, and that
+ *   time does not count against the target. Only its tab being in front again ends the wait;
+ * - `waiting-for-start-tab`: before a late first tab opens (after a search's spacing), the tab the run
+ *   started from is not the one in front; the run has no tab yet, and it waits for that tab to be in
+ *   front again;
  * - `done`: every target was visited;
  * - `cancelled`: Cancel ended it;
  * - `tab-closed`: its tab was closed, which ends it;
@@ -94,7 +96,7 @@ export type ProjectRunLimits = { readonly [K in keyof typeof PROJECT_RUN_LIMITS]
  *   page (a consent page, a challenge, …: `RunState.blockedReason`); the run stopped there, capturing
  *   nothing of that page.
  */
-export const RUN_STATES = ['idle', 'running', 'waiting-for-tab', 'done', 'cancelled', 'tab-closed', 'failed', 'blocked'] as const;
+export const RUN_STATES = ['idle', 'running', 'waiting-for-tab', 'waiting-for-start-tab', 'done', 'cancelled', 'tab-closed', 'failed', 'blocked'] as const;
 export type RunStateName = (typeof RUN_STATES)[number];
 /** The states a run ends in. */
 export const RUN_END_STATES = ['done', 'cancelled', 'tab-closed', 'failed', 'blocked'] as const satisfies readonly RunStateName[];
@@ -690,7 +692,8 @@ export const QUERY_FIELD_MAX_CHARS = { language: SERP_PARAM_LIMITS.maxLocaleChar
 export const RUN_STATE_LABELS: Readonly<Record<RunStateName, string>> = {
   idle: 'Not run yet',
   running: 'Capturing',
-  'waiting-for-tab': 'Waiting: bring the run’s tab, or the tab you started from, to the front to go on',
+  'waiting-for-tab': 'Waiting: bring the run’s tab to the front to go on',
+  'waiting-for-start-tab': 'Waiting: bring the run’s tab, or the tab you started from, to the front to go on',
   done: 'Done',
   cancelled: 'Cancelled',
   'tab-closed': 'Stopped: the run’s tab was closed',

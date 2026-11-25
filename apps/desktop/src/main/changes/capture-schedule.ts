@@ -58,7 +58,7 @@ export interface CaptureSchedule {
   runEnded(ended: RunState): void;
 }
 
-const RUNNING: ReadonlySet<RunState['state']> = new Set(['running', 'waiting-for-tab']);
+const RUNNING: ReadonlySet<RunState['state']> = new Set(['running', 'waiting-for-tab', 'waiting-for-start-tab']);
 
 export function createCaptureSchedule(deps: CaptureScheduleDeps): CaptureSchedule {
   const available = deps.autoCaptureAvailable ?? AUTO_CAPTURE_AVAILABLE;
@@ -83,7 +83,7 @@ export function createCaptureSchedule(deps: CaptureScheduleDeps): CaptureSchedul
   const follow = async (runId: string): Promise<void> => {
     let state = deps.runs.state();
     while (!stopped && state.runId === runId && RUNNING.has(state.state)) {
-      if (state.state === 'waiting-for-tab') {
+      if (state.state === 'waiting-for-tab' || state.state === 'waiting-for-start-tab') {
         log('an automatic run gave way to the user');
         deps.runs.cancel();
       }

@@ -170,7 +170,7 @@ export function changeCountText(changeCount: number | null, captured: boolean): 
 }
 
 /** Whether a run is under way. */
-export const runActive = (state: RunStateName): boolean => state === 'running' || state === 'waiting-for-tab';
+export const runActive = (state: RunStateName): boolean => state === 'running' || state === 'waiting-for-tab' || state === 'waiting-for-start-tab';
 
 /** A run's progress in a line: its state, and how far it got. */
 export function runProgressText(run: Pick<RunState, 'state' | 'current' | 'total' | 'omitted' | 'targets'>): string {

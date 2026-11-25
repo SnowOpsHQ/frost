@@ -171,7 +171,7 @@ path of `specs/capture-db.spec.ts` (caps `MAX_PROJECTS`, `MAX_PROJECT_PAGES`, `M
   are not result pages never wait. A run whose **first** target waits opens its tab only once the wait
   is over (no empty tab in front of the user meanwhile), and only with the tab remembered at Start in
   front, as a later group's tab opens only with the run's last tab in front: a new tab never takes the
-  front from the user. A user who moved to another tab meanwhile is waited for (`waiting-for-tab`, no
+  front from the user. A user who moved to another tab meanwhile is waited for (`waiting-for-start-tab`, no
   target's time) until that tab is in front again (the label names both tabs: the run has none yet); if it was closed meanwhile, the run gives way and
   ends `cancelled`, opening no tab; a browser that cannot be asked during that wait ends the run
   `cancelled` too. The first group's tab then opens, in front (a tab limit then is
@@ -335,7 +335,8 @@ purge in `workspace-db.feature.md` (API readings (Phase 12)) and `retention.feat
      under way) and the target's time lasts; its size is
      the page area's below the sheet's band;
   6. the outcome (`RUN_TARGET_OUTCOMES`), with the capture's change count.
-- **Timing:** while its tab is not active the run waits (`waiting-for-tab`) and that time does not
+- **Timing:** while its tab is not active the run waits (`waiting-for-tab`, whose label names only the
+  run's tab: the tab it started from does not end that wait) and that time does not
   count; a target gives up after `targetActiveTimeoutMs` of active time (`timed-out`). Time counts from
   one look at the tab to the next with it in front at both; time inside a capture or a screenshot
   counts the same way (an approximation).

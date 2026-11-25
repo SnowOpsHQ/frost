@@ -1525,6 +1525,19 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   a rule above the one it overrides, fails it.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
+- **Scenario: ring-edges-keep-a-forced-colours-border** (`apps/desktop/src/__tests__/edge-and-focus-styles.test.ts`; issue #25) — the
+  command palette's card (`.palette`), its key hints (`.palette-kbd`) and Help's key hints (`.help-kbd`) draw
+  their edge with `--e-ring`, a shadow forced colours drop, so each also has a `1px solid transparent` border
+  (the edge forced colours draw, as the settings cards'); the box stays the size it was: the hints' 1px of
+  padding the border takes comes off their horizontal padding (`calc(var(--space-2) - 1px)`) and, on Help's, the vertical 1px.
+- **Scenario: agent-focus-shows-the-ring** (`apps/desktop/src/__tests__/edge-and-focus-styles.test.ts`; issue #25) — a focused
+  attach-menu option (`.agent-attach-option`) and the agent's two focusable code blocks (`.agent-code`, `.agent-pre`) show
+  focus as the app's ring, as the approval card's and its buttons': `--focus-ring` beside a transparent 2px outline forced
+  colours draw (and the browser's own outline does not), not the option's faint `--accent-soft` fill alone.
+- **Scenario: agent-pressed-tool-holds-on-hover** (`apps/desktop/src/__tests__/edge-and-focus-styles.test.ts`; issue #25) — a pressed
+  agent-head tool (`.agent-head-tool[aria-pressed='true']`, its `--accent-soft` fill and `--accent` icon) keeps its
+  pressed look under the pointer: its selector outweighs `.tool:hover`'s `--bg-hover`, whichever stylesheet loads later
+  (the agent's loads before `styles.css`, so a tie goes to the hover).
 
 ## Unit, fonts (`apps/desktop/src/__tests__/fonts.test.ts`)
 - **Scenario: bundled-fonts-cover-the-type-scale** — the (family, weight) pairs of `BUNDLED_FONTS`

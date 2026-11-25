@@ -165,6 +165,30 @@ describe('capture run', () => {
     expect(afterRun).toHaveBeenCalledTimes(2);
   });
 
+  test('capture-run-later-group-waits-for-its-own-tab-only', async () => {
+    // Two groups: the page in one tab, the mobile search in the next. The first tab gives way to the
+    // second only with it in front (`waiting-for-tab`): the tab the run started from is not what ends it.
+    const targets = [...pages(A), query(PARAMS, SEARCH, 'mobile')];
+    const fake = setup({ ...readySerpFor(targets), limits: { querySpacingMs: 0, serpSettleWaitMs: 0 } });
+    fake.capture.mockImplementationOnce(async () => {
+      // The user goes back to the tab the run started from, as the first group's target is captured.
+      fake.state.activeTabId = 1;
+      return CAPTURED;
+    });
+    await fake.runs.start(plan(targets));
+    await run(RETRY * 6);
+    expect(fake.runs.state().state).toBe('waiting-for-tab');
+    expect(fake.browser.newTab).toHaveBeenCalledOnce();
+    // The tab it started from stays in front: the wait does not end, and the run's tab is the one named.
+    await run(RETRY * 20);
+    expect(fake.runs.state().state).toBe('waiting-for-tab');
+    expect(fake.browser.newTab).toHaveBeenCalledOnce();
+    fake.state.activeTabId = 10;
+    await run(RETRY * 12);
+    expect(fake.runs.state().state).toBe('done');
+    expect(fake.browser.newTab).toHaveBeenCalledTimes(2);
+  });
+
   test('capture-run-waits-for-active-tab', async () => {
     const { runs, browser, state, capture } = setup();
     capture.mockResolvedValueOnce({ status: 'refused', reason: 'no-audit' });
@@ -1197,7 +1221,7 @@ describe('searches in a run', () => {
     expect(fake.browser.newTab).not.toHaveBeenCalled();
     expect(fake.state.activeTabId).toBe(2);
     expect(at).toHaveLength(2);
-    expect(fake.runs.state()).toMatchObject({ state: 'waiting-for-tab', targets: [{ outcome: 'pending' }] });
+    expect(fake.runs.state()).toMatchObject({ state: 'waiting-for-start-tab', targets: [{ outcome: 'pending' }] });
     fake.state.activeTabId = 1;
     await run(RETRY * 6);
     expect(fake.browser.newTab).toHaveBeenCalledOnce();
@@ -1220,7 +1244,7 @@ describe('searches in a run', () => {
         if (away) {
           ended.state.activeTabId = 2;
           await run(SPACING);
-          expect(ended.runs.state().state, end).toBe('waiting-for-tab');
+          expect(ended.runs.state().state, end).toBe('waiting-for-start-tab');
         }
         ended.runs[end]();
         await run(SPACING);

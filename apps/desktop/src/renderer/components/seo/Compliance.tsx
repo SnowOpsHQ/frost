@@ -16,7 +16,7 @@ import type { A11yViolation, InsecureResource } from '@app/specs/seo-snapshot.sp
 import { OpenTabIcon } from '../../icons';
 import { actions } from '../../ipc';
 import { useNow } from '../../hooks/useNow';
-import { a11yNote, a11yView, countLabel, mixedNote, elapsedSeconds, headersUnknownNote, headerTone, impactCounts, nodesShown, runButtonLabel, runProgress, securitySignals, securitySummary, type A11yView } from '../../compliance-view';
+import { a11yLiveText, a11yNote, a11yView, countLabel, mixedNote, elapsedSeconds, headersUnknownNote, headerTone, impactCounts, nodesShown, runButtonLabel, runProgress, securitySignals, securitySummary, type A11yView } from '../../compliance-view';
 import type { Tone } from '../../indexability-view';
 import { formatCount, openableUrl } from '../../seo-view';
 import { Flash, PanelIssues, useFlash } from './actions';
@@ -345,9 +345,9 @@ export function AccessibilityCard({ tab, run, report, flash }: { readonly tab: T
   return (
     <Card title="Accessibility" icon={<AccessibilityIcon />} testId="seo-a11y">
       <div className="seo-a11y" data-testid="seo-a11y-state" data-state={view.kind}>
-        {/* Mounted empty in every state (a region inserted with its text is often not announced); visually hidden, out of the flex flow. */}
+        {/* Mounted empty in every state (a region inserted with its text is often not announced) and the only live region of the card: its text changes to the running, scoring, timed-out, failed or invalid message; visually hidden, out of the flex flow. */}
         <span className="visually-hidden" role="status" aria-live="polite" data-testid="seo-a11y-live">
-          {view.kind === 'running' ? A11Y_RUN_MESSAGES.running : ''}
+          {a11yLiveText(view)}
         </span>
         {view.kind === 'idle' ? (
           <div className="seo-a11y-intro">
@@ -359,24 +359,24 @@ export function AccessibilityCard({ tab, run, report, flash }: { readonly tab: T
         ) : null}
         {view.kind === 'running' ? <RunProgress startedAt={view.startedAt} /> : null}
         {view.kind === 'scoring' ? (
-          <p className="seo-note" role="status">
+          <p className="seo-note" aria-hidden="true">
             {A11Y_RUN_MESSAGES.done}
           </p>
         ) : null}
         {view.kind === 'timed-out' ? (
-          <p className="seo-a11y-problem" data-testid="seo-a11y-timed-out" role="status">
+          <p className="seo-a11y-problem" data-testid="seo-a11y-timed-out">
             <StopwatchIcon className="seo-inline-icon" />
-            <span>{a11yNote(view)}</span>
+            <span aria-hidden="true">{a11yNote(view)}</span>
           </p>
         ) : null}
         {view.kind === 'failed' ? (
-          <p className="seo-a11y-problem" data-testid="seo-a11y-failed" role="status">
-            <span>{view.message}</span>
+          <p className="seo-a11y-problem" data-testid="seo-a11y-failed">
+            <span aria-hidden="true">{view.message}</span>
           </p>
         ) : null}
         {view.kind === 'invalid' ? (
-          <p className="seo-a11y-problem" data-testid="seo-a11y-invalid" role="status">
-            <span>The page returned accessibility results frost could not read safely.</span>
+          <p className="seo-a11y-problem" data-testid="seo-a11y-invalid">
+            <span aria-hidden="true">The page returned accessibility results frost could not read safely.</span>
           </p>
         ) : null}
         <div className="seo-a11y-actions">

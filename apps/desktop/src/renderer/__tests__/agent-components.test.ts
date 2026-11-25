@@ -449,6 +449,25 @@ describe('agent panel components', () => {
     expect(document.activeElement).toBe(option);
   });
 
+  test('composer-at-menu-keeps-a-refusal-after-reopening', async () => {
+    const inputRef = createRef<HTMLTextAreaElement>();
+    let answer: (result: string) => void = () => undefined;
+    calls.attachTab.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    render(createElement(AgentComposer, { chatId: 'a', running: false, stopChatId: null, inputRef }));
+    click(byTestId('agent-attach'));
+    await flush();
+    click(host.querySelector('[data-testid="agent-attach-option"]'));
+    // The menu is closed (Escape) and opened again before main answers.
+    act(() => {
+      byTestId('agent-attach-menu')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(byTestId('agent-attach-menu')).toBeNull();
+    click(byTestId('agent-attach'));
+    await flush();
+    await act(async () => answer('full'));
+    expect(byTestId('agent-attach-message')!.textContent).toBe(AGENT_ATTACH_MESSAGES.full);
+  });
+
   test('composer-at-menu-is-a-group-of-buttons', async () => {
     const inputRef = createRef<HTMLTextAreaElement>();
     render(createElement(AgentComposer, { chatId: 'c', running: false, stopChatId: null, inputRef }));
