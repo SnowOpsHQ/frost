@@ -335,6 +335,15 @@
   overflow-wrap: anywhere;
 }
 
+/* Both are focusable (they scroll): the app's ring, not the browser's outline. */
+.agent-code:focus-visible,
+.agent-pre:focus-visible {
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
 .agent-approval-more {
   margin: 0;
   color: var(--warn-ink);
@@ -1346,4 +1355,11 @@
 .agent-attach-option:hover,
 .agent-attach-option:focus-visible {
   background: var(--accent-soft);
+}
+
+.agent-attach-option:focus-visible {
+  /* Transparent, so only forced colours (which drop box-shadows) draw it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
 }
