@@ -82,7 +82,6 @@ function fakeAccount(entitlements: Entitlements = entitled('active')) {
 
 /** Every account procedure, its type and a valid input. */
 const ACCOUNT_PROCEDURES: Record<string, { type: 'query' | 'mutation'; input?: unknown }> = {
-  entitlements: { type: 'query' },
   state: { type: 'query' },
   watch: { type: 'query', input: { sinceVersion: -1 } },
   signIn: { type: 'mutation' },
@@ -119,7 +118,7 @@ async function errorOf(run: Promise<unknown>): Promise<TRPCError> {
   return error as TRPCError;
 }
 
-const accountCaller = (ctx: IpcContext) => (appRouter.createCaller(ctx) as unknown as { account: { entitlements: () => Promise<unknown> } }).account;
+const accountCaller = (ctx: IpcContext) => (appRouter.createCaller(ctx) as unknown as { account: { state: () => Promise<unknown> } }).account;
 
 /** A Phase 5-style gated procedure, built the way the interface says: sender first, then the feature. */
 const handler = vi.fn(() => 'ran' as const);
@@ -237,20 +236,14 @@ describe('account router', () => {
   });
 
   test('account-without-service-fail-closed', async () => {
-    const error = await errorOf(accountCaller(ctxFor(undefined)).entitlements());
+    const error = await errorOf(accountCaller(ctxFor(undefined)).state());
     expect(error.code).toBe(IPC_INTERNAL_ERROR_CODE);
-    const shape = getTRPCErrorShape({ config: appRouter._def._config, error, type: 'query', path: 'account.entitlements', input: undefined, ctx: undefined });
+    const shape = getTRPCErrorShape({ config: appRouter._def._config, error, type: 'query', path: 'account.state', input: undefined, ctx: undefined });
     expect(shape.message).toBe(IPC_INTERNAL_ERROR_CODE);
   });
 
-  test('entitlements-answers-verified-state', async () => {
-    for (const value of [entitled('active'), entitled('grace', ['sync']), EXPIRED, NO_ENTITLEMENTS, INVALID_ENTITLEMENTS]) {
-      await expect(accountCaller(ctxFor(fakeAccount(value))).entitlements()).resolves.toEqual(value);
-    }
-  });
-
   test('answers-carry-no-secret', async () => {
-    const answer = await accountCaller(ctxFor(fakeAccount())).entitlements();
+    const answer = await accountCaller(ctxFor(fakeAccount())).state();
     const serialized = JSON.stringify(answer);
     for (const secret of [FAKE_SNAPSHOT, FAKE_TOKEN, 'eyJ']) expect(serialized).not.toContain(secret);
     // Every account procedure, across the states the flow goes through.
@@ -268,18 +261,21 @@ describe('account router', () => {
         for (const secret of SECRETS) expect(text, `${name} ${state.status}`).not.toContain(secret);
       }
     }
-    // A service that lets the snapshot (or a token) ride along is refused, masked; nothing is forwarded.
+    // A service whose state lets the snapshot (or a token) ride along with the entitlements is refused,
+    // masked; nothing is forwarded.
     for (const leak of [{ snapshot: FAKE_SNAPSHOT }, { token: FAKE_TOKEN }]) {
-      const leaky = { ...fakeAccount(), entitlements: () => ({ ...entitled('active'), ...leak }) as Entitlements };
-      const error = await errorOf(accountCaller(ctxFor(leaky)).entitlements());
+      const leaky = fakeAccount();
+      leaky.state.mockReturnValue(accountState(3, { entitlements: { ...entitled('active'), ...leak } as Entitlements }));
+      const error = await errorOf(accountCaller(ctxFor(leaky)).state());
       expect(error.code).toBe(IPC_INTERNAL_ERROR_CODE);
-      const shape = getTRPCErrorShape({ config: appRouter._def._config, error, type: 'query', path: 'account.entitlements', input: undefined, ctx: undefined });
+      const shape = getTRPCErrorShape({ config: appRouter._def._config, error, type: 'query', path: 'account.state', input: undefined, ctx: undefined });
       expect(JSON.stringify(shape)).not.toContain(FAKE_SNAPSHOT);
       expect(JSON.stringify(shape)).not.toContain(FAKE_TOKEN);
     }
-    // A value that breaks the fail-closed rule (expired yet pro) is refused too.
-    const broken = { ...fakeAccount(), entitlements: () => ({ ...EXPIRED, plan: 'pro', features: ['sync'] }) as Entitlements };
-    expect((await errorOf(accountCaller(ctxFor(broken)).entitlements())).code).toBe(IPC_INTERNAL_ERROR_CODE);
+    // Entitlements that break the fail-closed rule (expired yet pro) are refused too.
+    const broken = fakeAccount();
+    broken.state.mockReturnValue(accountState(3, { entitlements: { ...EXPIRED, plan: 'pro', features: ['sync'] } as Entitlements }));
+    expect((await errorOf(accountCaller(ctxFor(broken)).state())).code).toBe(IPC_INTERNAL_ERROR_CODE);
   });
 
   test('require-feature-passes-when-entitled', async () => {

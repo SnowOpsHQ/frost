@@ -158,8 +158,7 @@ focus "A snapshot cannot be forged or replayed past its life". Each line maps to
 ## Router (`packages/ipc-contract/src/__tests__/account-router.test.ts`)
 - `account-procedures-enforce-sender` — `account.*` rejects a foreign sender before the service is called.
 - `account-without-service-fail-closed` — without `services.account`, a masked internal error.
-- `entitlements-answers-verified-state` — `account.entitlements` answers `EntitlementsSchema` from the service.
-- `answers-carry-no-secret` — the serialized answer carries no snapshot or token; a service answer with extra members is refused (masked), not forwarded.
+- `answers-carry-no-secret` — the serialized answer carries no snapshot or token; a service state whose entitlements carry extra members (or break the fail-closed rule) is refused (masked), not forwarded. The chrome reads the entitlements in `account.state` (`AccountState.entitlements`); there is no procedure of their own.
 - `require-feature-passes-when-entitled` — `requireFeature(flag)` lets the call through for `active` and `grace` with the flag.
 - `require-feature-forbidden-when-not` — otherwise `FORBIDDEN` with message and `cause.code` `FEATURE_NOT_ENTITLED_CODE`, the handler not run.
 - `require-feature-after-sender` — a foreign sender gets the sender error first; the service is not asked.

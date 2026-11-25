@@ -243,7 +243,7 @@ export const TIMED_STATUSES: readonly EntitlementStatus[] = Object.freeze(['acti
 export const OFFLINE_GRACE_MS = OFFLINE_GRACE_SECONDS * 1000;
 
 /**
- * `EntitlementsReader.current()` and `account.entitlements`: the verified result, never the snapshot.
+ * `EntitlementsReader.current()` and `AccountState.entitlements`: the verified result, never the snapshot.
  *
  * - `plan` is a display label: a known `Plan` (a plan this build does not know is shown as
  *   `DEFAULT_PLAN`). Gating reads `features` only, which holds only flags this build knows.

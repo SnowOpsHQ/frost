@@ -134,9 +134,8 @@ test('account-sign-in-confirm-is-pro', async () => {
   // Confirmation in the app: the account named, nothing entitled yet.
   await expect.poll(async () => (await accountState()).status).toBe('confirming');
   const confirming = await accountState();
-  expect(confirming).toMatchObject({ user: { email: backend.user.email, name: backend.user.name }, entitlements: { plan: 'free', status: 'none' } });
+  expect(confirming).toMatchObject({ user: { email: backend.user.email, name: backend.user.name }, entitlements: { plan: 'free', features: [], status: 'none' } });
   expect(confirming.fingerprint).toBe(awaiting.fingerprint);
-  expect(await call('query', 'entitlements')).toMatchObject({ plan: 'free', features: [] });
   expect(await call('mutation', 'confirmSignIn', { requestId: 'AAAAAAAAAAAAAAAAAAAAAA' })).toBe(false);
   // The confirmation needs its own user gesture in the window: without a click it is refused.
   expect(await call('mutation', 'confirmSignIn', { requestId: confirming.requestId })).toBe(false);
@@ -149,7 +148,6 @@ test('account-sign-in-confirm-is-pro', async () => {
   expect(signedIn).toMatchObject({ status: 'signed-in', user: { email: backend.user.email }, requestId: null, fingerprint: null });
   expect(signedIn.entitlements.plan).toBe('pro');
   expect([...signedIn.entitlements.features].sort()).toEqual([...PLAN_FEATURES.pro].sort());
-  expect(await call('query', 'entitlements')).toMatchObject({ plan: 'pro', status: 'active' });
   // The listener is gone.
   await expect.poll(() => fetch(callbackUrl).then(() => 'open', () => 'closed')).toBe('closed');
 });
@@ -202,7 +200,6 @@ test('account-tampered-snapshot-is-free', async () => {
   await launch();
   await expect.poll(async () => (await accountState()).status).toBe('signed-in');
   expect((await accountState()).entitlements).toMatchObject({ plan: 'free', features: [], status: 'invalid' });
-  expect(await call('query', 'entitlements')).toMatchObject({ plan: 'free', features: [] });
   backend.mode = 'ok';
   expect(await call('mutation', 'refresh')).toBe(true);
   expect((await accountState()).entitlements).toMatchObject({ plan: 'pro', status: 'active' });
@@ -213,6 +210,5 @@ test('account-sign-out-revokes', async () => {
   const token = backend.tokens.at(-1)!;
   expect(await call('mutation', 'signOut')).toBe(true);
   await expect.poll(() => backend.revoked.includes(token)).toBe(true);
-  expect(await accountState()).toMatchObject({ status: 'signed-out', user: null, entitlements: { plan: 'free', status: 'none' } });
-  expect(await call('query', 'entitlements')).toMatchObject({ plan: 'free', features: [] });
+  expect(await accountState()).toMatchObject({ status: 'signed-out', user: null, entitlements: { plan: 'free', features: [], status: 'none' } });
 });
