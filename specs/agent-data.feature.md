@@ -51,7 +51,9 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
   inside). JSON: `ChatExportV1` (`kind: 'frost.agent-chat'`, `version: 1`). Neither carries a chat,
   call or approval id, an input hash or a key; tool output stays marked untrusted. Message text,
   the title and skill names are escaped (`inertMarkdown`), so an image, link or HTML a reply holds
-  fetches nothing when the file is opened.
+  fetches nothing when the file is opened. An MCP tool card is labelled with its server's name as the
+  panel shows it ("Untrusted tool from {name}", the name escaped in Markdown), and with the server's id only
+  when main no longer knows the server.
 - **The user's skills are data validated by `SkillSchema` in main.** Stored as the validated JSON
   (`agent_skills`), validated again when read; composed **after** the built-ins, so a user skill can
   never take a built-in's id, and saving one with such an id is refused (`builtin-id`). `create`
@@ -122,6 +124,8 @@ Spec: `specs/agent-data.spec.ts` (grants page words, `CHAT_RETENTIONS`, `DEFAULT
 - **Scenario: export-markdown-golden** — the Markdown text, fences that can't be closed from inside.
 - **Scenario: export-markdown-hostile-text-is-inert** — images, links, HTML, a forged heading and a
   fence in a reply or the title come out escaped.
+- **Scenario: export-names-mcp-servers** — an MCP tool card's label in both formats says the server's name
+  (Markdown: escaped), not its id; a server main no longer holds is named by its id.
 - **Scenario: export-json-golden** — the `ChatExportV1` object.
 - **Scenario: export-has-no-ids-hashes-or-keys** — neither format carries a chat, call or approval
   id, an input hash or the key; tool output says untrusted.
