@@ -9,6 +9,7 @@ import {
   PROJECTS_TITLE,
   PROJECT_VIEWS,
   PROJECT_VIEW_LABELS,
+  SAVED_SEARCH_TEXT,
   QUERY_FIELD_MAX_CHARS,
   RUN_TARGET_OUTCOME_LABELS,
   queryLabel,
@@ -69,7 +70,7 @@ import { SiteCrawlButton } from '../crawl/SiteCrawlButton';
 
 // The Projects sheet (acceptance `projects.feature.md`, The sheet): over the page column like
 // History, it lists the projects (Unfiled first) with create, inline rename and delete (main asks
-// first), and shows one project: its pages and queries with each one's last capture and change count
+// first), and shows one project: its pages and saved searches with each one's last capture and change count
 // (a click opens it in the active tab), its render profile, and "Capture now" with its progress and
 // Cancel, and its retention and disk usage (`Retention.tsx`). While a run is under way the sheet
 // shrinks to a band (`data-running`), so the run's tab is shown (a viewport screenshot captures what
@@ -502,7 +503,7 @@ function ProjectView({
     event.preventDefault();
     const parsed = queryFromForm(form);
     if ('problem' in parsed) return say(parsed.problem);
-    if (await change(ipc.projects.addSearch.mutate({ projectId, search: parsed.search }).catch(() => null), 'Query added.')) setForm((current) => ({ ...EMPTY_QUERY_FORM, engine: current.engine }));
+    if (await change(ipc.projects.addSearch.mutate({ projectId, search: parsed.search }).catch(() => null), SAVED_SEARCH_TEXT.added)) setForm((current) => ({ ...EMPTY_QUERY_FORM, engine: current.engine }));
   };
   const setProfile = (choice: string) => {
     const profile = profileOfChoice(choice);
@@ -655,9 +656,9 @@ function ProjectView({
 
             <section className="projects-section" aria-labelledby="projects-queries-title">
               <h3 className="projects-section-title" id="projects-queries-title">
-                Search queries <span className="projects-count">{queries.length}</span>
+                {SAVED_SEARCH_TEXT.heading} <span className="projects-count">{queries.length}</span>
               </h3>
-              {queries.length === 0 ? <p className="projects-empty">No queries yet.</p> : null}
+              {queries.length === 0 ? <p className="projects-empty">{SAVED_SEARCH_TEXT.empty}</p> : null}
               <ul className="projects-entries">
                 {queries.map((query) => (
                   <EntryRow
@@ -713,7 +714,7 @@ function ProjectView({
                   </label>
                   <button type="submit" className="projects-small-button" data-testid="projects-query-add">
                     <PlusIcon />
-                    <span>Add query</span>
+                    <span>{SAVED_SEARCH_TEXT.add}</span>
                   </button>
                   <button ref={bulkButton} type="button" className="projects-small-button" data-testid="projects-bulk-open" aria-haspopup="dialog" onClick={() => setBulkOpen(true)}>
                     Bulk add…

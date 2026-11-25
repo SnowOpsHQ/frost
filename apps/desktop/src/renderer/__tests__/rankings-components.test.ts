@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { CADENCE_TEXT, CAPTURE_SCHEDULE_NOTE, RANK_CHECK_AVAILABLE } from '@app/specs/capture-schedule.spec';
 import type { TabState } from '@app/specs/browser.spec';
-import { BULK_ADD_TEXT, CHECK_RANKINGS_TEXT, DUE_TEXT, PROJECT_REFUSAL_MESSAGES, PROJECT_SETTINGS_TEXT, PROJECT_VIEWS, RUN_BLOCKED_NOTE, RUN_BLOCK_REASON_LABELS, RUN_REFUSAL_MESSAGES, type ProjectSummary } from '@app/specs/projects.spec';
+import { BULK_ADD_TEXT, CHECK_RANKINGS_TEXT, DUE_TEXT, PROJECT_REFUSAL_MESSAGES, PROJECT_SETTINGS_TEXT, PROJECT_VIEWS, RUN_BLOCKED_NOTE, RUN_BLOCK_REASON_LABELS, RUN_REFUSAL_MESSAGES, SAVED_SEARCH_TEXT, type ProjectSummary } from '@app/specs/projects.spec';
 import { RANKINGS_REFUSAL_MESSAGES, RANK_VIEW_TEXT, type RankPoint, type RankTableRow, type ReadingDate, type SearchParamsShape } from '@app/specs/rankings.spec';
 import { DATA_CHECK_REFUSAL_MESSAGES, DATA_CHECK_TEXT, DATA_SPEND_NOTE } from '@app/specs/data-sources.spec';
 
@@ -307,6 +307,16 @@ describe('rankings components', () => {
     expect($('projects-settings-unfiled')!.textContent).toBe(PROJECT_SETTINGS_TEXT.unfiled);
     expect($('projects-site-input')).toBeNull();
     expect($('projects-competitor-input')).toBeNull();
+  });
+
+  // spec: specs/projects.feature.md — saved-search-is-named-one-way
+  test('saved-search-is-named-one-way', async () => {
+    await openSheet(summary(P1, 'Shop'));
+    expect(host.querySelector('#projects-queries-title')!.textContent).toContain(SAVED_SEARCH_TEXT.heading);
+    expect(host.textContent).toContain(SAVED_SEARCH_TEXT.empty);
+    expect($('projects-query-add')!.textContent).toBe(SAVED_SEARCH_TEXT.add);
+    // A query is the text one types: the form's field keeps that word.
+    expect(host.querySelector('[data-testid="projects-query-text"]')!.closest('label')!.textContent).toBe('Query');
   });
 
   // spec: specs/projects.feature.md — The sheet (Bulk add)
