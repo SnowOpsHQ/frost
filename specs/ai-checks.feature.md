@@ -1,7 +1,7 @@
 # Feature: AI checks
 
 Spec: `specs/ai-checks.spec.ts` (`AI_CHECK_MODES`, `AI_CHECKS_SETTING_KEY`, `AI_CHECK_KINDS`,
-`AI_CHECK_LIMITS`, `AI_QUALITY_RATINGS`, `AI_CHECKS_ENABLE_PROMPT`, `AI_CHECK_UNAVAILABLE`,
+`AI_CHECK_LIMITS`, `MAX_PENDING_AI_CHECK_WATCHES`, `AI_QUALITY_RATINGS`, `AI_CHECKS_ENABLE_PROMPT`, `AI_CHECK_UNAVAILABLE`,
 `AI_CHECK_WAITING_REASONS`, `aiCheckFailureReason`, `AI_CHECK_TASK`, `AI_CHECK_EXTRACT_TAGS`,
 `AI_CHECKS_TABLES`), `specs/ai-checks.schema.ts` (`AiCheckInputSchema`, `AiCheckOutputSchema`,
 `AiCheckResultSchema`, `AiChecksStateSchema`, the `aiChecks.*` inputs), `specs/seo-javascript.spec.ts`

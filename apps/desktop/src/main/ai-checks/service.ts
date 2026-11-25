@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { modelPageUrl } from '@app/specs/agent-page-tools.spec';
-import { AI_CHECK_LIMITS, AI_CHECK_SYSTEM_PROMPT, aiCheckFailureReason, DEFAULT_AI_CHECK_MODE, isAiCheckMode, type AiCheckMode, type AiCheckUnavailableReason } from '@app/specs/ai-checks.spec';
+import { AI_CHECK_LIMITS, AI_CHECK_SYSTEM_PROMPT, aiCheckFailureReason, DEFAULT_AI_CHECK_MODE, isAiCheckMode, MAX_PENDING_AI_CHECK_WATCHES, type AiCheckMode, type AiCheckUnavailableReason } from '@app/specs/ai-checks.spec';
 import type { AiCheckResult, AiCheckView, AiChecksState } from '@app/specs/ai-checks.schema';
 import type { AiChecksService } from '@app/ipc-contract';
 import type { AiChecksRepository, SettingsRepository } from '@app/db';
@@ -440,7 +440,7 @@ export function createAiChecksService(deps: AiChecksDeps): AiChecksMainService {
         };
         signal?.addEventListener('abort', onAbort, { once: true });
         waiters.push(waiter);
-        while (waiters.length > 8) waiters.shift()!.wake();
+        while (waiters.length > MAX_PENDING_AI_CHECK_WATCHES) waiters.shift()!.wake();
       });
     },
 

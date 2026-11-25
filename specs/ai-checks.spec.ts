@@ -57,6 +57,9 @@ export const AI_CHECK_LIMITS = {
   maxUrlChars: 2_048,
 } as const;
 
+/** How many `aiChecks.watch` long-polls may wait at once; one more answers the oldest early. */
+export const MAX_PENDING_AI_CHECK_WATCHES = 8;
+
 /** Where the mode is stored (`app_settings`; no migration of its own). */
 export const AI_CHECKS_SETTING_KEY = 'ai_checks_mode' as const;
 
