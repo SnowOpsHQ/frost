@@ -5,7 +5,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { TabState } from '@app/specs/browser.spec';
-import { A11Y_RUN_MESSAGES, A11Y_TIMEOUT_MS, IDLE_A11Y_RUN, type AccessibilityRunState } from '@app/specs/seo-compliance.spec';
+import { A11Y_FAIL_MESSAGES, A11Y_RUN_MESSAGES, A11Y_TIMEOUT_MS, IDLE_A11Y_RUN, type AccessibilityRunState } from '@app/specs/seo-compliance.spec';
 
 vi.mock('../ipc', () => ({ actions: {} }));
 
@@ -53,5 +53,25 @@ describe('the accessibility run progress', () => {
     expect(progress()?.textContent).toBe(`${A11Y_RUN_MESSAGES.running} 3 s ${cap}`);
     expect(live()).toEqual([region]);
     expect(region?.textContent).toBe(A11Y_RUN_MESSAGES.running);
+  });
+
+  test('a11y-status-messages-announced-by-one-region', () => {
+    const cardWith = (run: AccessibilityRunState, report: unknown = { status: 'not-run' }) =>
+      createElement(AccessibilityCard, { tab: TAB, run, report: report as never, flash: () => undefined });
+    act(() => root.render(card(IDLE_A11Y_RUN)));
+    const region = live()[0];
+    expect(region?.textContent).toBe('');
+    const states: [string, AccessibilityRunState, unknown, string][] = [
+      ['scoring', { status: 'done', startedAt: STARTED_AT, finishedAt: STARTED_AT, reason: null }, { status: 'not-run' }, A11Y_RUN_MESSAGES.done],
+      ['timed-out', { status: 'timed-out', startedAt: STARTED_AT, finishedAt: STARTED_AT, reason: null }, { status: 'not-run' }, A11Y_RUN_MESSAGES['timed-out']],
+      ['failed', { status: 'failed', startedAt: STARTED_AT, finishedAt: STARTED_AT, reason: 'busy' }, { status: 'not-run' }, A11Y_FAIL_MESSAGES.busy],
+      ['invalid', IDLE_A11Y_RUN, { status: 'invalid' }, 'The page returned accessibility results frost could not read safely.'],
+    ];
+    for (const [, run, report, text] of states) {
+      act(() => root.render(cardWith(run, report)));
+      // The same region, now holding the message; no other element is a live region.
+      expect(live()).toEqual([region]);
+      expect(region?.textContent).toBe(text);
+    }
   });
 });

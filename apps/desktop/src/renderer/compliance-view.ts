@@ -135,6 +135,24 @@ export function a11yNote(view: A11yView): string | null {
   return null;
 }
 
+/** What the card's live status says in a view: the running, scoring, timed-out, failed and invalid messages; empty otherwise. */
+export function a11yLiveText(view: A11yView): string {
+  switch (view.kind) {
+    case 'running':
+      return A11Y_RUN_MESSAGES.running;
+    case 'scoring':
+      return A11Y_RUN_MESSAGES.done;
+    case 'timed-out':
+      return A11Y_RUN_MESSAGES['timed-out'];
+    case 'failed':
+      return view.message;
+    case 'invalid':
+      return 'The page returned accessibility results frost could not read safely.';
+    default:
+      return '';
+  }
+}
+
 /** The run button's label. */
 export function runButtonLabel(view: A11yView): string {
   if (view.kind === 'running') return 'Checking…';
