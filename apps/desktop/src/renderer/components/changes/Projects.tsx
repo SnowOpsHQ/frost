@@ -788,12 +788,18 @@ export function Projects({ tab, onClose }: { readonly tab: TabState | undefined;
       live = false;
     };
   }, [selected, generation]);
-  // A run of the shown project that ends (or captures a target): read the project again.
+  // A run of the shown project that ends (or captures a target): read the project again, once per
+  // step of the run. Selecting the project again later reads it already: no second reload for a step
+  // this sheet read again before.
   const captured = run?.targets.filter((target) => target.outcome === 'captured').length ?? 0;
   const runEnded = run !== null && !runActive(run.state);
+  const runStep = run === null ? null : `${run.runId ?? ''} ${run.projectId ?? ''} ${runEnded} ${captured}`;
+  const reloadedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (run?.projectId === selected && (runEnded || captured > 0)) reload();
-  }, [runEnded, captured, run?.projectId, selected, reload]);
+    if (runStep === null || run?.projectId !== selected || !(runEnded || captured > 0) || reloadedFor.current === runStep) return;
+    reloadedFor.current = runStep;
+    reload();
+  }, [runStep, runEnded, captured, run?.projectId, selected, reload]);
   useEffect(() => {
     sheet.current?.focus();
   }, []);

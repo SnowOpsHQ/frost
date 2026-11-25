@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 // Spec: specs/retention.spec.ts (RetentionPreviewAnswer, PurgeNowAnswer), specs/projects.spec.ts (RunState)
 // Acceptance: specs/retention.feature.md (The project view: the preview line "refreshed after each
-// change"). Issue #25 (Efficiency): Save and Purge now read the figures once each.
+// change"); specs/projects.feature.md (The sheet). Issue #25 (Efficiency): Save and Purge now read the
+// figures once each, and selecting a project does not fire again a reload for a run it already read.
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -57,6 +58,8 @@ const $ = <T extends Element = HTMLElement>(testId: string) => host.querySelecto
 
 const summary = (id: string, name: string): ProjectSummary => ({ id, name, unfiled: false, renderProfile: null, retention: { mode: 'forever', value: null }, favorite: false, site: null, createdAt: 1, lastCapturedAt: null, cadence: 'off', autoCapture: false, due: false });
 const PROJECTS = [summary(P1, 'One'), summary(P2, 'Two')];
+/** P1's run, ended with one target captured. */
+const endedRun: RunState = { version: 4, runId: 'run-1', projectId: P1, state: 'done', current: 1, total: 1, omitted: 0, screenshot: false, targets: [{ kind: 'page', label: 'https://example.com/', outcome: 'captured', changeCount: 0, screenshot: null }], blockedReason: null };
 
 /** How many times each read was sent so far. */
 const counts = () => ({ list: fakes.list.mock.calls.length, get: fakes.get.mock.calls.length, preview: fakes.retentionPreview.mock.calls.length, usage: fakes.usage.mock.calls.length, purgeLog: fakes.purgeLog.mock.calls.length });
@@ -110,4 +113,42 @@ test('retention-purge-reads-once', async () => {
   await flush();
   expect(fakes.purgeNow).toHaveBeenCalledTimes(1);
   expect(since(before)).toEqual({ list: 1, get: 1, preview: 1, usage: 1, purgeLog: 1 });
+});
+
+/** Selects project `id` in the list. */
+async function select(id: string) {
+  const item = [...host.querySelectorAll<HTMLElement>('[data-testid="projects-item"]')].find((element) => element.dataset.project === id)!;
+  await act(async () => item.querySelector<HTMLButtonElement>('[data-testid="projects-item-open"]')!.click());
+  await flush();
+}
+
+test('project-switch-reads-once', async () => {
+  // P1's run ended while P1 is shown: P1 is read again once, as before.
+  await openSheet(endedRun);
+  expect($('projects-detail')!.dataset.project).toBe(P1);
+  let before = counts();
+  await select(P2);
+  expect($('projects-detail')!.dataset.project).toBe(P2);
+  expect(since(before)).toEqual({ list: 0, get: 1, preview: 1, usage: 1, purgeLog: 1 });
+  // Back to P1: its selection reads it; the run it already read again is not read again.
+  before = counts();
+  await select(P1);
+  expect($('projects-detail')!.dataset.project).toBe(P1);
+  expect(since(before)).toEqual({ list: 0, get: 1, preview: 1, usage: 1, purgeLog: 1 });
+  expect(fakes.get).toHaveBeenLastCalledWith({ projectId: P1 });
+});
+
+test('project-switch-reads-a-run-it-had-not-read', async () => {
+  // P1's run ended while P2 was shown: selecting P1 reads the list and P1 again for it, as before (once).
+  await openSheet(endedRun, P2);
+  expect($('projects-detail')!.dataset.project).toBe(P2);
+  let before = counts();
+  await select(P1);
+  expect($('projects-detail')!.dataset.project).toBe(P1);
+  expect(since(before).list).toBe(1);
+  // Read for that run now: P2 and back reads each project once, and the list not at all.
+  await select(P2);
+  before = counts();
+  await select(P1);
+  expect(since(before)).toEqual({ list: 0, get: 1, preview: 1, usage: 1, purgeLog: 1 });
 });
