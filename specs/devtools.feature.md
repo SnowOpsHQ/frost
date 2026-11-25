@@ -126,7 +126,9 @@ line maps to one named test.
 - **Issues from the shown audit.** The chrome's own audit (the sidebar's), every finding in one
   table sortable by severity, rule and category; clicking a row opens the SEO sidebar on the most
   specific panel after Overview that covers the finding's category (the one with the fewest
-  categories; `ISSUE_FALLBACK_PANEL` otherwise).
+  categories; `ISSUE_FALLBACK_PANEL` otherwise). The Category column and its sort header name a category by
+  its label (`SEO_CATEGORY_LABELS` of `specs/seo-rules.spec.ts`: `Meta description`, `Page speed`), never by
+  its id (`meta-description`, `performance`); an id with no label shows as it is.
 
 ## Request observers (`main/browser/__tests__/web-request-requests.test.ts`)
 - **Scenario: request-observers-share-the-session-listeners** — `observeRequests` installs one
@@ -364,6 +366,8 @@ line maps to one named test.
   one; a navigation masks it again.
 - **Scenario: clear-site-data-asks** — with main's dialog answering Cancel the cookies stay; with
   OK they are gone.
+- **Scenario: issues-show-category-labels** — each row's Category reads as `SEO_CATEGORY_LABELS` says (an
+  unknown id as itself), while the row keeps the id for sorting and for the panel it opens.
 - **Scenario: issues-jump-to-panel** — clicking an issue opens the SEO sidebar on its panel.
 - **Scenario: devtools-shortcut-not-swallowed** — a page that cancels every key still cannot keep
   `Mod+Shift+D` from toggling the drawer, and never sees it.
