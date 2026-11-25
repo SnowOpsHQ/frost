@@ -101,7 +101,7 @@ export {
   type XRobotsTag,
 } from './indexability';
 export { altState, filterImages, imageCounts, isLazyInFirstViewport, isOversized, isSvg, lacksDimensions, type AltState } from './images';
-export { csvCell, filterLinks, linkCounts, linksCsv, NO_LINK_FILTER, relFlags, type LinkCounts, type LinkFilter } from './links';
+export { csvCell, filterLinks, linkCounts, linksCsv, relFlags, type LinkCounts, type LinkFilter } from './links';
 export {
   analyseSchema,
   formatJson,

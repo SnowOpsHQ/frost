@@ -3,8 +3,11 @@
 // Acceptance: specs/seo-panels.feature.md (Links, Images and Social helpers)
 import { describe, expect, test } from 'vitest';
 import { CSV_FORMULA_PREFIXES, LINKS_CSV_COLUMNS } from '@app/specs/seo-sidebar.spec';
-import { altState, csvCell, filterImages, filterLinks, imageCounts, linkCounts, linksCsv, NO_LINK_FILTER, pageFacts, pageUrls, relFlags, runAudit, serpPreview, socialPreview, type PageImage, type PageLink } from '../index';
+import { altState, csvCell, filterImages, filterLinks, imageCounts, linkCounts, linksCsv, pageFacts, pageUrls, relFlags, runAudit, serpPreview, socialPreview, type LinkFilter, type PageImage, type PageLink } from '../index';
 import { page, socialTags, text } from './fixtures';
+
+/** Every link: no type, rel or text filter. */
+const NO_LINK_FILTER: LinkFilter = { type: 'all', rel: 'all', query: '' };
 
 const link = (changes: Partial<PageLink> = {}): PageLink => ({ href: 'https://example.com/a', scheme: 'https:', rel: '', text: 'A page', kind: 'internal', target: null, ...changes });
 const image = (changes: Partial<PageImage> = {}): PageImage => ({
