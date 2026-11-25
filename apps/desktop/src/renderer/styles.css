@@ -5589,6 +5589,7 @@ input {
   flex-direction: column;
   width: min(var(--palette-width), 100%);
   min-height: 0;
+  border: 1px solid transparent;
   border-radius: var(--r-lg);
   background: var(--bg-surface);
   box-shadow: var(--e-ring);
@@ -5754,7 +5755,8 @@ input {
   place-items: center;
   min-width: var(--h-badge);
   height: var(--h-badge);
-  padding: 0 var(--space-2);
+  padding: 0 calc(var(--space-2) - 1px);
+  border: 1px solid transparent;
   border-radius: var(--r-xs);
   background: var(--bg-surface);
   box-shadow: var(--e-ring);

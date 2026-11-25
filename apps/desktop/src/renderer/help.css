@@ -176,7 +176,8 @@
 
 /* Key hints: as the command palette's, --bg-surface with --e-ring in --text-mono. */
 .help-kbd {
-  padding: 1px var(--space-2);
+  padding: 0 calc(var(--space-2) - 1px);
+  border: 1px solid transparent;
   border-radius: var(--r-xs);
   background: var(--bg-surface);
   box-shadow: var(--e-ring);
