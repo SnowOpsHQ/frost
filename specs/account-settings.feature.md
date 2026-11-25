@@ -144,7 +144,7 @@ to one named test.
 
 ## Palette (`apps/desktop/src/renderer/__tests__/settings-palette.test.ts`)
 - `settings-palette-actions` — the four actions, in the Browser group, each open its section and move focus themselves; "Sign in to frost" is offered only while signed out; "Search Console settings" only while Search Console is shown (not once main says it is not `configured`).
-- `settings-palette-follows-main-while-open` — while the palette is open, main's answer that Search Console is `configured: false` (or that the account is no longer signed out) re-resolves its list: "Search Console settings" (and "Sign in to frost") drop out without typing or closing; nothing is watched while the palette is closed.
+- `settings-palette-follows-main-while-open` (also mounted: `__tests__/palette-settings-live.test.ts`) — while the palette is open, main's answer that Search Console is `configured: false` (or that the account is no longer signed out) re-resolves its list: "Search Console settings" (and "Sign in to frost") drop out without typing or closing; nothing is watched while the palette is closed.
 - `settings-palette-registers-with-others` — they register beside the built-in and browser-polish actions with no duplicate ID.
 
 ## Main (`apps/desktop/src/main/account/__tests__/settings-requests.test.ts`)
