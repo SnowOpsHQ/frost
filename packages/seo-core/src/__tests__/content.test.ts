@@ -3,7 +3,7 @@
 // Acceptance: specs/seo-content.feature.md (Words and n-grams, Readability, Sentences, Target query)
 import { describe, expect, test, vi } from 'vitest';
 import { CONTENT_LIMITS, FLESCH, FLESCH_BANDS, INFLESZ_BANDS, NGRAM_SIZES, READABILITY_FORMULAS, READABILITY_LANGUAGES, SENTENCE_LIMITS, STOP_WORD_LANGUAGES, TARGET_QUERY_PLACES, VISIBLE_TEXT_LIMITS } from '@app/specs/seo-content.spec';
-import { contentReport, fleschBand, fleschReadingEase, queryChecklist, queryTerms, readability, readabilityBand, runAudit, sentenceReport, STOP_WORDS, syllables, wordsOf, type ContentReport } from '../index';
+import { contentReport, fieldRuns, fleschBand, fleschReadingEase, queryChecklist, queryTerms, readability, readabilityBand, runAudit, sentenceReport, STOP_WORDS, syllables, wordsOf, type ContentReport } from '../index';
 import { cleanSnapshot, page, text } from './fixtures';
 
 /** The content report of a page whose visible text is `body` (in `lang`). */
@@ -529,5 +529,17 @@ describe('content report segmentation', () => {
     const sentences = passes.filter((p) => p.startsWith('word:') && p !== 'word:page' && p !== 'word:');
     expect(sentences.length).toBeGreaterThan(50);
     expect(sentences.length).toBe(new Set(sentences).size);
+  });
+
+  test('field-runs-stop-at-the-cap', () => {
+    // More headings than the field cap holds: once the cap is reached the rest are not segmented.
+    const headings = Array.from({ length: CONTENT_LIMITS.maxFieldWords * 2 }, (_, i) => `heading${i}`);
+    const spy = vi.spyOn(Intl.Segmenter.prototype, 'segment');
+    try {
+      expect(fieldRuns(headings, 'en').flat()).toHaveLength(CONTENT_LIMITS.maxFieldWords);
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(CONTENT_LIMITS.maxFieldWords + 1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

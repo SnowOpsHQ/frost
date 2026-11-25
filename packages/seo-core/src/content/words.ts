@@ -131,7 +131,17 @@ export function wordsOf(text: string, lang: string | null, stop: ReadonlySet<str
  * runs (`wordRuns`: a run never spans punctuation or two texts), at most `max` words in all.
  */
 export function fieldRuns(texts: string | readonly string[], lang: string | null, max: number = CONTENT_LIMITS.maxFieldWords): string[][] {
-  return cappedRuns((typeof texts === 'string' ? [texts] : texts).flatMap((text) => wordRuns(text, lang, null)), max);
+  const out: string[][] = [];
+  let left = max;
+  // Text by text, so the texts after the cap is reached are never segmented.
+  for (const text of typeof texts === 'string' ? [texts] : texts) {
+    if (left <= 0) break;
+    for (const terms of cappedRuns(wordRuns(text, lang, null), left)) {
+      out.push(terms);
+      left -= terms.length;
+    }
+  }
+  return out;
 }
 
 /** `runs` as terms, at most `max` words in all (what `fieldRuns` makes of the runs of its texts). */
