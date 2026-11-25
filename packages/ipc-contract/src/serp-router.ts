@@ -9,7 +9,7 @@ import { enforceSender, middleware, publicProcedure, router } from './trpc';
 // The SERP overlay ↔ main (Phase 3 Task 4; spec `serp-service.schema.ts`; acceptance
 // `serp-overlay.feature.md`, Router). Every procedure starts `publicProcedure.use(enforceSender)`.
 // Task 5 adds the visibility probes (`visibility-probes.feature.md`, `serp-probes-procedures`):
-// `runProbes`, `stopProbes`, `probes` and `watchProbes`, with the same strict tab inputs. Phase 10
+// `runProbes`, `stopProbes` and `watchProbes`, with the same strict tab inputs. Phase 10
 // Task 10 adds `openDestination` (`serp-panels.feature.md`, Open in an AI engine): a tab and a table
 // id only; main builds the URL from the tab's own search.
 
@@ -55,13 +55,13 @@ async function watchProbes(serp: SerpService, tabId: number, sinceVersion: numbe
 }
 
 /**
- * `watch` and `state` answer the tab's `SerpTabState`; `setOutlines` whether its outlines are drawn
- * now; `packStatus` the pack in use, `checkPackUpdate` how the user's update check ended;
- * `intentState` where on-device intent stands, `enableIntent` how the user's "Enable" ended, and
- * `classify` a query's intent (local only); `runProbes` whether the tab's visibility probes run (the
- * only procedure here that fetches, and only on the user's action), `stopProbes` whether a run was
- * stopped, and `probes` / `watchProbes` the tab's `ProbesState`; `openDestination` whether the tab's
- * own search opened in an AI engine (`OpenDestinationAnswerSchema`, checked on the way out).
+ * `watch` answers the tab's `SerpTabState` (the pack in use among it); `setOutlines` whether its
+ * outlines are drawn now; `checkPackUpdate` how the user's update check ended; `intentState` where
+ * on-device intent stands, `enableIntent` how the user's "Enable" ended, and `classify` a query's
+ * intent (local only); `runProbes` whether the tab's visibility probes run (the only procedure here
+ * that fetches, and only on the user's action), `stopProbes` whether a run was stopped, and
+ * `watchProbes` the tab's `ProbesState`; `openDestination` whether the tab's own search opened in an
+ * AI engine (`OpenDestinationAnswerSchema`, checked on the way out).
  */
 export const serpRouter = router({
   watch: publicProcedure
@@ -69,20 +69,11 @@ export const serpRouter = router({
     .use(requireSerp)
     .input(SerpWatchInputSchema)
     .query(({ ctx, input }) => watchSerp(ctx.serp, input.tabId, input.sinceVersion)),
-  state: publicProcedure
-    .use(enforceSender)
-    .use(requireSerp)
-    .input(SerpTabInputSchema)
-    .query(({ ctx, input }) => ctx.serp.state(input.tabId)),
   setOutlines: publicProcedure
     .use(enforceSender)
     .use(requireSerp)
     .input(SerpOutlinesInputSchema)
     .mutation(({ ctx, input }) => ctx.serp.setOutlines(input.tabId, input.on) === true),
-  packStatus: publicProcedure
-    .use(enforceSender)
-    .use(requireSerp)
-    .query(({ ctx }) => ctx.serp.packStatus()),
   checkPackUpdate: publicProcedure
     .use(enforceSender)
     .use(requireSerp)
@@ -110,11 +101,6 @@ export const serpRouter = router({
     .use(requireSerp)
     .input(SerpTabInputSchema)
     .mutation(({ ctx, input }) => ctx.serp.stopProbes(input.tabId) === true),
-  probes: publicProcedure
-    .use(enforceSender)
-    .use(requireSerp)
-    .input(SerpTabInputSchema)
-    .query(({ ctx, input }) => ctx.serp.probes(input.tabId)),
   watchProbes: publicProcedure
     .use(enforceSender)
     .use(requireSerp)

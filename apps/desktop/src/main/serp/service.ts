@@ -122,6 +122,8 @@ export interface Serp extends Omit<SerpService, keyof SerpProbesService | 'openD
   dispose(): void;
   /** The tab's SERP state as it stands, passively: no read is started and no reading dropped (Phase 10 Task 10, `destinations.ts`). */
   peek(tabId: number): SerpState;
+  /** The selector pack in use and the last update check's outcome (`PackStatusSchema`; each `SerpTabState.pack`). */
+  packStatus(): PackStatus;
   /** How many `watch` calls wait. */
   pendingWatches(): number;
 }

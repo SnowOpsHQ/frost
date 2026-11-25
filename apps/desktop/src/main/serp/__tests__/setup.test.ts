@@ -96,7 +96,7 @@ describe('SERP setup', () => {
     expect(checks.fetch).not.toHaveBeenCalled();
     await expect(unpackaged.service.checkPackUpdate()).resolves.toBe('installed');
     expect(checks.fetch.mock.calls.map(([request]) => request.url)).toEqual([url, `${url}.sig`]);
-    expect(unpackaged.service.packStatus()).toMatchObject({ version: 999, source: 'remote' });
+    expect(unpackaged.service.state(1).pack).toMatchObject({ version: 999, source: 'remote' });
     unpackaged.dispose();
 
     // Packaged: the same switches change nothing; the spec's URL is asked for.
@@ -137,7 +137,7 @@ describe('SERP setup', () => {
     expect(page.listenerCount('destroyed')).toBe(1);
     expect(chrome.eventNames()).toEqual([]);
     // A bundled pack that does not verify disables reading (never unsigned).
-    expect(setup.service.packStatus().state).toBe('disabled');
+    expect(setup.service.state(1).pack.state).toBe('disabled');
     expect(setup.readApi.snapshot(1)).toEqual({ status: 'disabled', tabId: 1, reason: 'pack-invalid' });
     // Disposed on will-quit (the intent process with it).
     emitter.emit('will-quit');

@@ -2,7 +2,7 @@
  * The Zod side of the visibility probes (Phase 3 Task 5; plain values in `visibility-probes.spec.ts`;
  * acceptance `visibility-probes.feature.md`): what a run reports (`ProbeRowSchema` per agent,
  * `ProbeDiffSchema` per agent against the browser baseline, `ProbeReportSchema`), what
- * `serp.probes` / `serp.watchProbes` and `SerpReadApi.probes` answer (`ProbesStateSchema`), and the
+ * `serp.watchProbes` and `SerpReadApi.probes` answer (`ProbesStateSchema`), and the
  * SERP worker's `probe` jobs (`ProbeJobSchema`) and their answers (`ProbeJobResultSchema`). Not for
  * the chrome renderer (no Zod there).
  *
@@ -139,7 +139,7 @@ export const ProbeReportSchema = z.strictObject({
 });
 export type ProbeReport = z.infer<typeof ProbeReportSchema>;
 
-/** What `serp.probes` / `serp.watchProbes` answer: the report and the probes' `version` (`0` before any change). */
+/** What `serp.watchProbes` (and `SerpReadApi.probes`) answer: the report and the probes' `version` (`0` before any change). */
 export const ProbesStateSchema = ProbeReportSchema.extend({ version: z.int().nonnegative() });
 export type ProbesState = z.infer<typeof ProbesStateSchema>;
 
