@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // Spec: specs/agent-session.spec.ts (AgentState, AGENT_WATCH_TIMEOUT_MS)
-// Acceptance: specs/agent-panel.feature.md (agent-watch-hook-backs-off-and-stops)
+// Acceptance: specs/agent-panel.feature.md (agent-watch-hook-backs-off-and-stops, agent-watch-is-shared-by-every-caller)
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -88,4 +88,55 @@ test('agent-watch-pauses-when-version-does-not-advance', async () => {
   for (let i = 0; i < 4; i++) await act(async () => vi.advanceTimersByTime(AGENT_WATCH_IDLE_PAUSE_MS));
   expect(watch).toHaveBeenCalledTimes(7);
   act(() => root.unmount());
+});
+
+test('agent-watch-is-shared-by-every-caller', async () => {
+  // Issue #25 (Efficiency): every `useAgentState` caller reads one `agent.watch` poll, never one each
+  // against main's `MAX_PENDING_AGENT_WATCHES`.
+  const polls: { since: number; signal: AbortSignal; answer: (s: AgentState) => void }[] = [];
+  const watch = vi.fn((since: number, signal: AbortSignal) => new Promise<AgentState>((resolve) => polls.push({ since, signal, answer: resolve })));
+  const seenBy: (AgentState | null)[] = [];
+  function Caller({ index }: { index: number }) {
+    seenBy[index] = useAgentState(watch);
+    return null;
+  }
+  const callers = (count: number) => createElement('div', null, ...Array.from({ length: count }, (_, index) => createElement(Caller, { key: index, index })));
+  act(() => root.render(callers(4)));
+  await act(async () => undefined);
+  // Four callers, one poll in flight.
+  expect(watch).toHaveBeenCalledTimes(1);
+  expect(polls[0]!.since).toBe(0);
+  expect(seenBy).toEqual([null, null, null, null]);
+  // Every caller sees each new state; each answer is followed by exactly one poll.
+  await act(async () => polls[0]!.answer(makeState({ version: 5 })));
+  expect(seenBy.map((s) => s?.version)).toEqual([5, 5, 5, 5]);
+  expect(watch).toHaveBeenCalledTimes(2);
+  expect(polls[1]!.since).toBe(5);
+  await act(async () => polls[1]!.answer(makeState({ version: 6 })));
+  expect(seenBy.map((s) => s?.version)).toEqual([6, 6, 6, 6]);
+  expect(watch).toHaveBeenCalledTimes(3);
+  // A caller that mounts while the poll runs sees the current state at once and opens no poll.
+  act(() => root.render(callers(5)));
+  await act(async () => undefined);
+  expect(seenBy[4]?.version).toBe(6);
+  expect(watch).toHaveBeenCalledTimes(3);
+  // Unmounting some callers keeps the poll; unmounting the last aborts it and polls no more.
+  act(() => root.render(callers(1)));
+  expect(polls[2]!.signal.aborted).toBe(false);
+  act(() => root.render(createElement('div')));
+  expect(polls[2]!.signal.aborted).toBe(true);
+  await act(async () => polls[2]!.answer(makeState({ version: 7 })));
+  await act(async () => vi.advanceTimersByTime(AGENT_WATCH_RETRY_MS.max * 2));
+  expect(watch).toHaveBeenCalledTimes(3);
+  // Mounting again starts afresh: no stale state, one new poll since 0.
+  seenBy.length = 0;
+  act(() => root.render(callers(2)));
+  expect(seenBy).toEqual([null, null]);
+  await act(async () => undefined);
+  expect(watch).toHaveBeenCalledTimes(4);
+  expect(polls[3]!.since).toBe(0);
+  await act(async () => polls[3]!.answer(makeState({ version: 8 })));
+  expect(seenBy.map((s) => s?.version)).toEqual([8, 8]);
+  act(() => root.unmount());
+  expect(polls[4]!.signal.aborted).toBe(true);
 });

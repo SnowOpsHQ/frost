@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import type { AgentState } from '@app/specs/agent-session.spec';
 import { ipc } from '../ipc';
 
@@ -21,15 +21,27 @@ type Watch = (sinceVersion: number, signal: AbortSignal) => Promise<AgentState>;
 
 const defaultWatch: Watch = (sinceVersion, signal) => ipc.agent.watch.query({ sinceVersion }, { signal });
 
+interface AgentStore {
+  /** For `useSyncExternalStore`: the first listener starts the poll, the last one's unsubscribe stops it. */
+  subscribe(listener: () => void): () => void;
+  /** The last state (`null` before the first answer, and again once the poll stopped). */
+  current(): AgentState | null;
+}
+
 /**
- * Long-polls `agent.watch` (as `useBrowserState` does `browser.watch`): each answer is the panel's
- * whole `AgentState` and its version. A failed poll waits (`agentWatchRetryMs`, backing off) and
- * tries again; an answer that didn't advance the version pauses `AGENT_WATCH_IDLE_PAUSE_MS` first.
- * Unmounting stops the loop and aborts the poll in flight (its answer, if any, is dropped).
+ * Long-polls `agent.watch` (as `useBrowserState` does `browser.watch`) for every caller at once: each
+ * answer is the panel's whole `AgentState` and its version. A failed poll waits (`agentWatchRetryMs`,
+ * backing off) and tries again; an answer that didn't advance the version pauses
+ * `AGENT_WATCH_IDLE_PAUSE_MS` first. When the last caller unmounts the loop stops, the poll in flight
+ * is aborted (its answer, if any, is dropped) and the state is forgotten: the next caller starts afresh.
+ * (Not `createWatchStore`: that one neither aborts nor pauses, and keeps its last answer.)
  */
-export function useAgentState(watch: Watch = defaultWatch): AgentState | null {
-  const [state, setState] = useState<AgentState | null>(null);
-  useEffect(() => {
+function createAgentStore(watch: Watch): AgentStore {
+  const listeners = new Set<() => void>();
+  let value: AgentState | null = null;
+  let stop: (() => void) | null = null;
+
+  function start(): () => void {
     let live = true;
     const abort = new AbortController();
     let since = 0;
@@ -52,7 +64,8 @@ export function useAgentState(watch: Watch = defaultWatch): AgentState | null {
             continue;
           }
           since = next.version;
-          setState(next);
+          value = next;
+          for (const listener of [...listeners]) listener();
         } catch {
           if (!live) return;
           failures += 1;
@@ -66,6 +79,33 @@ export function useAgentState(watch: Watch = defaultWatch): AgentState | null {
       clearTimeout(timer);
       wake?.();
     };
-  }, [watch]);
-  return state;
+  }
+
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      stop ??= start();
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size > 0 || stop === null) return;
+        stop();
+        stop = null;
+        value = null;
+      };
+    },
+    current: () => value,
+  };
+}
+
+/** One store per `watch` (the app's is `agent.watch`; a test passes its own). */
+const stores = new WeakMap<Watch, AgentStore>();
+
+/** Main's `AgentState` (`null` until main answers), from the one poll every caller shares. */
+export function useAgentState(watch: Watch = defaultWatch): AgentState | null {
+  let store = stores.get(watch);
+  if (store === undefined) {
+    store = createAgentStore(watch);
+    stores.set(watch, store);
+  }
+  return useSyncExternalStore(store.subscribe, store.current);
 }
