@@ -38,11 +38,15 @@ export function Retention({
 }: {
   readonly projectId: string;
   readonly retention: { readonly mode: RetentionMode; readonly value: number | null };
-  /** Changes when the project was read again (a run captured, a page was added): the figures are read again. */
+  /**
+   * Changes when the project was read again (a run captured, a page was added, `onChanged` after Save
+   * or Purge now): the figures are read again.
+   */
   readonly refreshKey: unknown;
   /** A capture run is under way (Purge now and Compact wait). */
   readonly busy: boolean;
   readonly say: (text: string) => void;
+  /** Reads the project again (and so changes `refreshKey`). */
   readonly onChanged: () => void;
 }) {
   const id = useId();
@@ -84,22 +88,24 @@ export function Retention({
     if ('problem' in parsed) return say(parsed.problem);
     const answer = await ipc.projects.setRetention.mutate({ projectId, policy: parsed.policy }).catch(() => null);
     say(answer === null ? 'The policy could not be saved. Try again.' : answer.status === 'ok' ? 'Retention saved.' : RETENTION_REFUSAL_MESSAGES[answer.reason]);
+    // The project is read again, and with it (`refreshKey`) these figures: once.
     onChanged();
-    refresh();
   };
-  const act = async (run: () => Promise<string>) => {
+  /** Runs `run` with the buttons waiting and says its outcome; then `reread` (if any) reads the figures again. */
+  const act = async (run: () => Promise<string>, reread?: () => void) => {
     setWorking(true);
     try {
       say(await run());
     } finally {
       setWorking(false);
-      refresh();
+      reread?.();
     }
   };
   const purge = () =>
     act(async () => {
       const text = purgeNowText(await ipc.projects.purgeNow.mutate({ projectId }).catch(() => null));
-      // The Changes panel reads its history and screenshots again.
+      // The Changes panel reads its history and screenshots again; the project is read again, and
+      // with it (`refreshKey`) these figures.
       notifyProjectsChanged();
       onChanged();
       return text;
@@ -109,7 +115,7 @@ export function Retention({
       const text = compactText(await ipc.projects.compact.mutate().catch(() => null));
       setCompacted(text);
       return text;
-    });
+    }, refresh);
 
   const bounded = form.mode === 'forever' ? null : RETENTION_VALUE_BOUNDS[form.mode];
   const unsaved = retentionFormChanged(form, retention);

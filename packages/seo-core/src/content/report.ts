@@ -3,10 +3,10 @@ import type { PageSnapshot } from '../types';
 import { described } from '../rules/head';
 import { parseUrl } from '../util';
 import { ngramTables, type NgramTables } from './ngrams';
-import { readability, type Readability } from './readability';
+import { readability, sentenceTerms, type Readability } from './readability';
 import { sentenceReport, type SentenceReport } from './sentences';
 import { measureSnippet, snippetText, type SnippetCut } from './widths';
-import { contentLanguage, fieldRuns, primaryLanguage, stopWordsFor, wordRuns, type ContentLanguage } from './words';
+import { cappedRuns, contentLanguage, fieldRuns, primaryLanguage, stopWordsFor, wordRuns, type ContentLanguage } from './words';
 
 // The Content panel's report (spec `seo-content.spec.ts`; acceptance `seo-content.feature.md`):
 // built by `runAudit`, so in the analysis worker, from the validated snapshot only.
@@ -69,9 +69,11 @@ export function contentReport(s: PageSnapshot): ContentReport {
     h1: fieldRuns(s.headings.filter((h) => h.level === 1).map((h) => h.text), lang),
     description: fieldRuns(description, lang),
     url: urlTerms(s.url, lang),
-    'first-words': fieldRuns(text, lang, CONTENT_LIMITS.firstWords),
+    // The words already read, when they were read for the same language.
+    'first-words': lang === declared ? cappedRuns(unfiltered, CONTENT_LIMITS.firstWords) : fieldRuns(text, lang, CONTENT_LIMITS.firstWords),
     headings: fieldRuns(s.headings.filter((h) => h.level > 1).map((h) => h.text), lang),
   };
+  const parts = sentenceTerms(text, lang);
   const measured = measureSnippet(title, description);
   return {
     available: s.visibleText !== undefined,
@@ -79,8 +81,8 @@ export function contentReport(s: PageSnapshot): ContentReport {
     language,
     words: runs.reduce((sum, run) => sum + run.length, 0),
     ngrams: ngramTables(runs, fields),
-    readability: readability(text, lang),
-    sentences: sentenceReport(text, lang),
+    readability: readability(text, lang, parts),
+    sentences: sentenceReport(text, lang, parts),
     snippet: {
       title: snippetText(title) === '' ? null : measured.title,
       descriptionDesktop: snippetText(description) === '' ? null : measured.descriptionDesktop,

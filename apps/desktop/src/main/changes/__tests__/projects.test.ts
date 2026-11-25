@@ -82,9 +82,18 @@ function setup(deps: Partial<ProjectsServiceDeps> = {}) {
   const settings = fakeSettings();
   // The cadence and Due notice are tested as they will ship once L1 is cleared (`RANK_CHECK_AVAILABLE`
   // injected `true`); `set-cadence-unavailable-until-cleared` passes the shipped flag.
-  const service = createProjectsService({ store: opened.changeIntel, files, confirmDelete, activeUrl: () => state.activeUrl, runs, now: tick, log, confirmRankRun, settings, rankCheckAvailable: true, ...deps });
+  // The service's store records each repository method it calls (`calls`); `repo` is the store itself.
+  const calls: string[] = [];
+  const store = new Proxy(opened.changeIntel, {
+    get(target, key) {
+      const value: unknown = Reflect.get(target, key, target);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]): unknown => (calls.push(String(key)), value.apply(target, args));
+    },
+  });
+  const service = createProjectsService({ store, files, confirmDelete, activeUrl: () => state.activeUrl, runs, now: tick, log, confirmRankRun, settings, rankCheckAvailable: true, ...deps });
   const count = (sql: string, ...args: string[]) => (raw.prepare(sql).get(...args) as { n: number }).n;
-  return { service, repo: opened.changeIntel, files, unlinked, confirmDelete, state, runs, log, count, raw, confirmRankRun, settings };
+  return { service, repo: opened.changeIntel, calls, files, unlinked, confirmDelete, state, runs, log, count, raw, confirmRankRun, settings };
 }
 
 /** Creates a project and answers its id. */
@@ -246,6 +255,44 @@ describe('projects service', () => {
     expect(detail.queries.map((q) => [q.params.device, q.changeCount, q.lastCapturedAt === null])).toEqual([
       ['mobile', 7, false],
       ['desktop', null, true],
+    ]);
+  });
+
+  test('project-detail-reads-history-once', async () => {
+    // `projects.feature.md` (The service: `get`; `project-detail-shows-last-capture`): the same answer
+    // whatever the number of pages and saved searches, from the same repository reads: one batched
+    // history read for all of them, never one per page or saved search (issue #25, Efficiency).
+    const { service, repo, calls } = setup();
+    const small = await created(service, 'Small');
+    const large = await created(service, 'Large');
+    await service.addPage(small, A);
+    await service.addQuery(small, SEARCH);
+    for (let i = 0; i < 30; i++) await service.addPage(large, `https://example.com/${i}`);
+    await service.addQuery(large, SEARCH);
+    await service.addQuery(large, { ...SEARCH, device: 'desktop' });
+    await service.addQuery(large, { ...SEARCH, query: 'black tea' });
+    await capture(repo, large, 'https://example.com/3', 'one');
+    await capture(repo, large, 'https://example.com/3', 'two', { changeCount: 5 });
+    await capture(repo, large, PARAMS.url, 'serp', { searchParams: PARAMS });
+    const readsOf = async (projectId: string) => {
+      calls.length = 0;
+      const detail = (await service.get(projectId))!;
+      return { detail, reads: [...calls] };
+    };
+    const one = await readsOf(small);
+    const many = await readsOf(large);
+    expect(many.detail.pages).toHaveLength(30);
+    expect(many.detail.queries).toHaveLength(3);
+    expect(many.reads).toEqual(one.reads);
+    expect(many.reads.filter((name) => name === 'history')).toEqual([]);
+    // The answer per entry is unchanged: its lane's latest change count and its last capture in the project.
+    const lastAt = (await repo.history({ pageUrl: 'https://example.com/3', projectId: large, limit: 1 })).entries[0]!.lastCapturedAt;
+    expect(many.detail.pages[3]).toMatchObject({ url: 'https://example.com/3', changeCount: 5, lastCapturedAt: lastAt });
+    expect(many.detail.pages.filter((page) => page.lastCapturedAt !== null)).toHaveLength(1);
+    expect(many.detail.queries.map((q) => [q.params.device, q.params.query, q.changeCount, q.lastCapturedAt === null])).toEqual([
+      ['mobile', 'green tea', null, false],
+      ['desktop', 'green tea', null, true],
+      ['mobile', 'black tea', null, true],
     ]);
   });
 

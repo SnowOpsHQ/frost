@@ -1,6 +1,5 @@
 import { READABILITY_FORMULAS, SENTENCE_LIMITS, type DifficultSentenceReason } from '@app/specs/seo-content.spec';
-import { letterWords, readabilityLanguage, readingEase, syllables } from './readability';
-import { sentencesOf } from './words';
+import { readabilityLanguage, readingEase, sentenceTerms, syllables, type SentenceTerms } from './readability';
 
 // Sentence statistics (spec `seo-content.spec.ts`, Sentences): information about the page's
 // sentences, never a rule. Pure; run in the analysis worker.
@@ -42,8 +41,8 @@ function excerpt(sentence: string): string {
   return trimmed.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max).trimEnd();
 }
 
-/** Sentence statistics of `text` in language `code` (see the spec, Sentences). */
-export function sentenceReport(text: string, code: string | null): SentenceReport {
+/** Sentence statistics of `text` in language `code` (see the spec, Sentences); `parts` are `sentenceTerms(text, code)` when the caller has them. */
+export function sentenceReport(text: string, code: string | null, parts?: readonly SentenceTerms[]): SentenceReport {
   const language = readabilityLanguage(code);
   const formula = language === null ? null : READABILITY_FORMULAS[language];
   let sentences = 0;
@@ -53,8 +52,7 @@ export function sentenceReport(text: string, code: string | null): SentenceRepor
   let complexWords = 0;
   let difficultTotal = 0;
   const items: DifficultSentence[] = [];
-  for (const sentence of sentencesOf(text, code)) {
-    const terms = letterWords(sentence, code);
+  for (const { sentence, terms } of parts ?? sentenceTerms(text, code)) {
     if (terms.length === 0) continue;
     sentences += 1;
     words += terms.length;

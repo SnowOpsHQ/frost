@@ -1,9 +1,9 @@
 // Spec: specs/seo-content.spec.ts (NGRAM_*, CONTENT_LIMITS, STOP_WORD_LANGUAGES, language detection,
 // FLESCH, FLESCH_BANDS, READABILITY_FORMULAS, SENTENCE_LIMITS, the target query)
 // Acceptance: specs/seo-content.feature.md (Words and n-grams, Readability, Sentences, Target query)
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { CONTENT_LIMITS, FLESCH, FLESCH_BANDS, INFLESZ_BANDS, NGRAM_SIZES, READABILITY_FORMULAS, READABILITY_LANGUAGES, SENTENCE_LIMITS, STOP_WORD_LANGUAGES, TARGET_QUERY_PLACES, VISIBLE_TEXT_LIMITS } from '@app/specs/seo-content.spec';
-import { contentReport, fleschBand, fleschReadingEase, queryChecklist, queryTerms, readability, readabilityBand, runAudit, sentenceReport, STOP_WORDS, syllables, wordsOf, type ContentReport } from '../index';
+import { contentReport, fieldRuns, fleschBand, fleschReadingEase, queryChecklist, queryTerms, readability, readabilityBand, runAudit, sentenceReport, STOP_WORDS, syllables, wordsOf, type ContentReport } from '../index';
 import { cleanSnapshot, page, text } from './fixtures';
 
 /** The content report of a page whose visible text is `body` (in `lang`). */
@@ -504,5 +504,42 @@ describe('target query', () => {
     // A word past the first 100 is not in "first words".
     expect(queryChecklist('oolong', r.fields, 'en').find((c) => c.place === 'first-words')).toMatchObject({ presence: 'none' });
     expect(queryChecklist('', r.fields, 'en')).toEqual([]);
+  });
+});
+
+// Efficiency (issue #25): the report segments the page text once per granularity, not once per consumer.
+describe('content report segmentation', () => {
+  test('segments-text-once', () => {
+    const body = Array.from({ length: 30 }, (_, i) => `Search engine optimization helps page ${i} rank well. Content number ${i} wins readers over time.`).join('\n');
+    const segment = Intl.Segmenter.prototype.segment;
+    const passes: string[] = [];
+    const spy = vi.spyOn(Intl.Segmenter.prototype, 'segment').mockImplementation(function (this: Intl.Segmenter, input: string) {
+      passes.push(`${this.resolvedOptions().granularity}:${input === body ? 'page' : input}`);
+      return segment.call(this, input);
+    });
+    try {
+      report(body, { lang: 'en' });
+    } finally {
+      spy.mockRestore();
+    }
+    // The whole text is segmented once per granularity (n-grams and first words share the words; readability and sentences share the sentences) ...
+    expect(passes.filter((p) => p === 'word:page')).toHaveLength(1);
+    expect(passes.filter((p) => p === 'sentence:page')).toHaveLength(1);
+    // ... and no sentence is segmented into words twice.
+    const sentences = passes.filter((p) => p.startsWith('word:') && p !== 'word:page' && p !== 'word:');
+    expect(sentences.length).toBeGreaterThan(50);
+    expect(sentences.length).toBe(new Set(sentences).size);
+  });
+
+  test('field-runs-stop-at-the-cap', () => {
+    // More headings than the field cap holds: once the cap is reached the rest are not segmented.
+    const headings = Array.from({ length: CONTENT_LIMITS.maxFieldWords * 2 }, (_, i) => `heading${i}`);
+    const spy = vi.spyOn(Intl.Segmenter.prototype, 'segment');
+    try {
+      expect(fieldRuns(headings, 'en').flat()).toHaveLength(CONTENT_LIMITS.maxFieldWords);
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(CONTENT_LIMITS.maxFieldWords + 1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -330,10 +330,12 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
     return out;
   };
 
-  /** A page's (or query's) last capture in the project, and the change count of its lane's latest version. */
-  const capturesOf = async (projectId: string, url: string, searchParamsJson: string | null): Promise<ProjectEntryCaptures> => {
-    const { entries } = await store.history({ pageUrl: url, projectId, limit: LANE_LOOKUP });
-    const lane: HistoryEntry[] = entries.filter((entry) => entry.searchParamsJson === searchParamsJson);
+  /**
+   * A page's (or query's) last capture in the project, and the change count of its lane's latest version,
+   * from the project's history of its URL (`entries`, the newest `LANE_LOOKUP` versions).
+   */
+  const capturesOf = (entries: readonly HistoryEntry[], searchParamsJson: string | null): ProjectEntryCaptures => {
+    const lane = entries.filter((entry) => entry.searchParamsJson === searchParamsJson);
     const latest = lane[0];
     const lastCapturedAt = lane.reduce<number | null>((last, entry) => (entry.lastCapturedAt !== null && (last === null || entry.lastCapturedAt > last) ? entry.lastCapturedAt : last), null);
     return { lastCapturedAt, changeCount: latest?.diff ? latest.diff.changeCount : null };
@@ -415,14 +417,15 @@ export function createProjectsService(deps: ProjectsServiceDeps): MainProjectsSe
           if (project === null) return null;
           const [pages, queries] = [await store.projectPages(projectId), await store.projectQueries(projectId)];
           const tags = await store.projectTags(projectId);
-          const pageEntries = [];
-          for (const page of pages) pageEntries.push({ id: page.id, url: page.url, ...(await capturesOf(projectId, page.url, null)), tags: tagsOf(tags, 'page', page.id) });
-          const queryEntries = [];
-          for (const query of queries) {
+          const searches = queries.flatMap((query) => {
             const params = paramsOf(query.searchParamsJson);
-            if (params === null) continue;
-            queryEntries.push({ id: query.id, params, url: params.url, ...(await capturesOf(projectId, params.url, canonicalJson(params))), tags: tagsOf(tags, 'search', query.id) });
-          }
+            return params === null ? [] : [{ id: query.id, params }];
+          });
+          // Every page's and saved search's history in one read, not one each.
+          const histories = await store.histories({ pageUrls: [...pages.map((page) => page.url), ...searches.map((search) => search.params.url)], projectId, limit: LANE_LOOKUP });
+          const historyOf = (url: string) => histories.get(url) ?? [];
+          const pageEntries = pages.map((page) => ({ id: page.id, url: page.url, ...capturesOf(historyOf(page.url), null), tags: tagsOf(tags, 'page', page.id) }));
+          const queryEntries = searches.map(({ id, params }) => ({ id, params, url: params.url, ...capturesOf(historyOf(params.url), canonicalJson(params)), tags: tagsOf(tags, 'search', id) }));
           const competitors: ProjectCompetitor[] = [];
           for (const competitor of await store.competitors(projectId)) if (storedDomain(competitor.domain) !== null) competitors.push({ id: competitor.id, domain: competitor.domain });
           const [summary] = await summaries([project]);

@@ -228,13 +228,13 @@ function start(): void {
   // frost's own (`null`). Shared by the served HTML and the link checks.
   const tabUserAgent = (contents: WebContents): string | null => {
     const tabId = browser.tabIdOf(contents);
-    const profile = tabId === null ? null : (browser.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile ?? null);
+    const profile = tabId === null ? null : browser.renderProfileOf(tabId);
     return profile && profile.status !== 'failed' ? profileUserAgent(profile.profile, process.versions.chrome) : null;
   };
   // A render profile with JavaScript off: the served HTML is parsed as that browser parsed it.
   const tabScripting = (contents: WebContents): boolean => {
     const tabId = browser.tabIdOf(contents);
-    const profile = tabId === null ? null : (browser.getState().tabs.find((tab) => tab.id === tabId)?.renderProfile ?? null);
+    const profile = tabId === null ? null : browser.renderProfileOf(tabId);
     return !(profile && profile.status !== 'failed' && profile.profile.javascriptDisabled);
   };
   const servedInput = (contents: WebContents, url: string) => {
@@ -252,7 +252,7 @@ function start(): void {
   const devtools = createDevtoolsService({
     contentsOf: (tabId) => [...tabContents.values()].find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) ?? null,
     // Only the active tab is served (specs/devtools.spec.ts, DEVTOOLS_TAB_SCOPE).
-    activeTabId: () => browser.getState().activeTabId,
+    activeTabId: () => browser.activeTabId(),
     tabIdOf: (contentsId) => browser.tabIdOf(webContents.fromId(contentsId)),
     responses,
     robots: () => robots,
@@ -275,7 +275,7 @@ function start(): void {
     const id = contents.id;
     contents.on('dom-ready', () => {
       const tabId = browser.tabIdOf(contents);
-      if (tabId !== null && tabId === browser.getState().activeTabId) void collect(contents, { prime: true }).catch(() => undefined);
+      if (tabId !== null && tabId === browser.activeTabId()) void collect(contents, { prime: true }).catch(() => undefined);
     });
     contents.once('destroyed', () => {
       shownTimes.forget(id);
@@ -451,11 +451,9 @@ function start(): void {
       analyse: (job) => checksAnalyzer.analyseCheck(job),
       robots: (pageUrl) => robotsFetcher.get(pageUrl),
       tab: (tabId) => {
-        const state = browser.getState();
-        const tab = state.tabs.find((t) => t.id === tabId);
-        const contents = tab ? webContents.getAllWebContents().find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) : undefined;
-        if (!tab || !contents) return null;
-        return { contentsId: contents.id, url: contents.getURL(), active: state.activeTabId === tabId, userAgent: tabUserAgent(contents), audit: browser.seo.getAudit(tabId) };
+        const contents = browser.hasTab(tabId) ? webContents.getAllWebContents().find((c) => !c.isDestroyed() && browser.tabIdOf(c) === tabId) : undefined;
+        if (!contents) return null;
+        return { contentsId: contents.id, url: contents.getURL(), active: browser.activeTabId() === tabId, userAgent: tabUserAgent(contents), audit: browser.seo.getAudit(tabId) };
       },
       rescore: (tabId) => void browser.rescoreAudit(tabId),
     });
@@ -508,7 +506,7 @@ function start(): void {
         javascript: {
           refetchServed: (tabId) => {
             // Only the active tab (the one the panel shows): another tab's answer is never dropped.
-            if (browser.getState().activeTabId !== tabId) return false;
+            if (browser.activeTabId() !== tabId) return false;
             const contents = webContents.getAllWebContents().find((c) => !c.isDestroyed() && isBrowseContents(c) && browser.tabIdOf(c) === tabId);
             if (!contents || !served) return false;
             served.drop(contents.id, contents.getURL());

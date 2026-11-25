@@ -43,7 +43,12 @@ export const ciProjectPages = sqliteTable(
     updatedAt: integer('updated_at').notNull(),
     deletedAt: integer('deleted_at'),
   },
-  (table) => [index('ci_project_pages_project_id').on(table.projectId), uniqueIndex('ci_project_pages_live_url').on(table.projectId, table.url).where(sql`deleted_at IS NULL`)],
+  (table) => [
+    index('ci_project_pages_project_id').on(table.projectId),
+    uniqueIndex('ci_project_pages_live_url').on(table.projectId, table.url).where(sql`deleted_at IS NULL`),
+    // `0247` (`migrations.ts`, `PROJECT_PAGES_URL_INDEX_MIGRATIONS`): the live pages by URL.
+    index('ci_project_pages_live_by_url').on(table.url, table.projectId).where(sql`deleted_at IS NULL`),
+  ],
 );
 
 /** A project's queries with their search parameters (JSON): one live row per `(projectId, query, searchParams)`. */

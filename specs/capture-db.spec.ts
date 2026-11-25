@@ -128,6 +128,15 @@ export const MAX_RETENTION_DAYS = 3_650;
 /** Largest page of a history, screenshot, page or purge-log read. */
 export const MAX_HISTORY_PAGE = 100;
 
+/**
+ * Migration `0247_ci_project_pages_live_by_url` (issue #25, Efficiency): the index
+ * `ci_project_pages_live_by_url` on `ci_project_pages (url, project_id) WHERE deleted_at IS NULL`, which
+ * the lookups of a page among the live project pages by its URL alone search (a page's projects,
+ * `projectsForPage`; the browsing history's `prune` that keeps project pages) instead of reading every
+ * project page. Its own migration after `0246`: `0040` is never edited.
+ */
+export const PROJECT_PAGES_URL_INDEX_MIGRATION_IDS = ['0247_ci_project_pages_live_by_url'] as const;
+
 // ---- Edited screenshots (Phase 11 Task 7, Decision 9; `screenshot.spec.ts`, Editing) -------------
 
 /**

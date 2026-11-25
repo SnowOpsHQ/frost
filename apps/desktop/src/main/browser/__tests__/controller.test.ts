@@ -1635,3 +1635,27 @@ describe('content notes generation', () => {
     expect(controller.getState().contentNotesGeneration).toBe(0);
   });
 });
+
+// Issue 25 (efficiency): main's hot paths read one field of a tab, not the whole state.
+describe('single-field accessors', () => {
+  test('activeTabId, hasTab and renderProfileOf answer what the state holds without building it', () => {
+    // `searchEngine` is read once per state built: a count of the states built.
+    const searchEngine = vi.fn(() => 'google' as const);
+    const counted = createBrowserController({ createView: () => new FakeTabView() as unknown as TabView, platform: 'linux', searchEngine });
+    counted.attach(new FakeHostWindow() as unknown as HostWindow);
+    counted.newTab();
+    searchEngine.mockClear();
+    const expected = counted.getState();
+    expect(searchEngine).toHaveBeenCalledTimes(1);
+    searchEngine.mockClear();
+
+    expect(counted.activeTabId()).toBe(expected.activeTabId);
+    for (const tab of expected.tabs) {
+      expect(counted.hasTab(tab.id)).toBe(true);
+      expect(counted.renderProfileOf(tab.id)).toEqual(tab.renderProfile);
+    }
+    expect(counted.hasTab(9999)).toBe(false);
+    expect(counted.renderProfileOf(9999)).toBeNull();
+    expect(searchEngine).not.toHaveBeenCalled();
+  });
+});

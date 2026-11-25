@@ -41,12 +41,21 @@ Phase 10's project workspace tables, the new `ci_projects` columns and the SERP 
   not-null, primary key); every index of the Drizzle schema exists (`ci_versions (lane_key,
   created_at)` and `(page_url, created_at)`; `ci_captures (project_id, created_at)`, `(version_id)`,
   `(page_url, created_at)`; `ci_diffs (to_version_id)` and `(from_version_id)`; `ci_screenshots (project_id, created_at)`,
-  `(page_url, created_at)`, `(sha256)`; `ci_project_pages (project_id)` and the unique live
-  `(project_id, url) WHERE deleted_at IS NULL`; `ci_project_queries (project_id)` and the unique live
+  `(page_url, created_at)`, `(sha256)`; `ci_project_pages (project_id)`, the unique live
+  `(project_id, url) WHERE deleted_at IS NULL` and (`0247`) the live `(url, project_id) WHERE deleted_at
+  IS NULL`; `ci_project_queries (project_id)` and the unique live
   `(project_id, query, search_params) WHERE deleted_at IS NULL`; `ci_tombstones (purge_id)`), plus
   `ci_tombstones`' unique `(table_name, row_id)`; every trigger of the Immutability section exists
   by name, and no other; the Unfiled row is there; and the `CHECK`s refuse an unknown enum value and a short id.
-- **Scenario: change-intel-sql-is-portable** — no `CHANGE_INTEL_MIGRATIONS` SQL contains `PRAGMA`,
+- **Scenario: project-pages-url-index** — `0247_ci_project_pages_live_by_url`
+  (`PROJECT_PAGES_URL_INDEX_MIGRATION_IDS`, after `0246` in `MIGRATIONS`) adds
+  `ci_project_pages_live_by_url` on `ci_project_pages (url, project_id) WHERE deleted_at IS NULL` to a
+  database that has every earlier migration. The lookups of a page among the live project pages by its
+  URL alone search it (`EXPLAIN QUERY PLAN`: `SEARCH … USING [COVERING] INDEX ci_project_pages_live_by_url
+  (url=?…)`) instead of reading every project page: a page's projects (`projectsForPage`) and the
+  browsing history's `prune` that keeps project pages. The history's list "in a project" (project and
+  URL) still searches the unique live `(project_id, url)`; no lookup reads every project page.
+- **Scenario: change-intel-sql-is-portable** — no `CHANGE_INTEL_MIGRATIONS` (or `0247`) SQL contains `PRAGMA`,
   `ATTACH`, `VIRTUAL`, a `json…(` function, `->`, `GENERATED`, `STRICT`, `WITHOUT ROWID` or
   `AUTOINCREMENT`.
 

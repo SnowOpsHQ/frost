@@ -131,17 +131,30 @@ export function wordsOf(text: string, lang: string | null, stop: ReadonlySet<str
  * runs (`wordRuns`: a run never spans punctuation or two texts), at most `max` words in all.
  */
 export function fieldRuns(texts: string | readonly string[], lang: string | null, max: number = CONTENT_LIMITS.maxFieldWords): string[][] {
-  const runs: string[][] = [];
+  const out: string[][] = [];
   let left = max;
+  // Text by text, so the texts after the cap is reached are never segmented.
   for (const text of typeof texts === 'string' ? [texts] : texts) {
-    for (const run of wordRuns(text, lang, null)) {
-      if (left <= 0) return runs;
-      const terms = run.slice(0, left).map((word) => word.term);
-      runs.push(terms);
+    if (left <= 0) break;
+    for (const terms of cappedRuns(wordRuns(text, lang, null), left)) {
+      out.push(terms);
       left -= terms.length;
     }
   }
-  return runs;
+  return out;
+}
+
+/** `runs` as terms, at most `max` words in all (what `fieldRuns` makes of the runs of its texts). */
+export function cappedRuns(runs: readonly (readonly Word[])[], max: number = CONTENT_LIMITS.maxFieldWords): string[][] {
+  const out: string[][] = [];
+  let left = max;
+  for (const run of runs) {
+    if (left <= 0) return out;
+    const terms = run.slice(0, left).map((word) => word.term);
+    out.push(terms);
+    left -= terms.length;
+  }
+  return out;
 }
 
 /** The sentences of `text` (segmented for `lang`): `Intl.Segmenter` sentence segments; without it, lines. */

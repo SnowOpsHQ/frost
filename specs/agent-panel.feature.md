@@ -37,8 +37,10 @@ to one named test.
   skill: {name}" to the composer. The composer's focus is its message field, or its skill picker
   while a picked skill replaces that field. A new approval opening the panel moves no focus.
 - **State.** The panel renders main's `AgentState` only, long-polled over `agent.watch` with backoff
-  on error and a short pause after an answer that didn't advance the version (never a tight loop);
-  unmounting aborts the poll in flight. Intents go over the sender-guarded `agent.*` procedures, each with a
+  on error and a short pause after an answer that didn't advance the version (never a tight loop).
+  Every `useAgentState` caller reads one shared poll (issue #25, Efficiency: never one each against
+  `MAX_PENDING_AGENT_WATCHES`); a caller mounting while it runs sees its state at once, and unmounting
+  the last caller aborts the poll in flight and forgets the state (the next caller starts afresh). Intents go over the sender-guarded `agent.*` procedures, each with a
   safe fallback on an IPC failure.
 - **Inert text.** Model text, page text and tool output are React text children only (no HTML, no
   Markdown); tool output sits in a `<pre>` under "untrusted data, shown as text".
@@ -127,8 +129,8 @@ to one named test.
   narrower window the agent panel gives way before the SEO sidebar's.
 
 ## Wiring
-- **Scenario: agent-watch-hook-backs-off-and-stops**, **agent-watch-pauses-when-version-does-not-advance**
-  (`agent-state-hook.test.ts`).
+- **Scenario: agent-watch-hook-backs-off-and-stops**, **agent-watch-pauses-when-version-does-not-advance**,
+  **agent-watch-is-shared-by-every-caller** (`agent-state-hook.test.ts`).
 - **Scenario: agent-palette-actions** (`agent-palette.test.ts`).
 - **Scenario: agent-styles-are-delimited** (`src/__tests__/agent-styles.test.ts`) — every `.agent`
   rule in `agent.css` (its widths are tokens in `tokens.css`); approved code wraps (`pre-wrap`); no inline style or HTML injection in the

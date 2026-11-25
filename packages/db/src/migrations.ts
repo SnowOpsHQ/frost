@@ -4,7 +4,7 @@ import { AGENT_GRANTS_MIGRATIONS } from './agent-grants-migrations';
 import { AGENT_CHATS_MIGRATIONS } from './agent-chats-migrations';
 import { AGENT_SKILLS_MIGRATIONS } from './agent-skills-migrations';
 import { AGENT_MCP_MIGRATIONS } from './agent-mcp-migrations';
-import { CHANGE_INTEL_MIGRATIONS } from './change-intel/migrations';
+import { CHANGE_INTEL_MIGRATIONS, PROJECT_PAGES_URL_INDEX_MIGRATIONS } from './change-intel/migrations';
 import { AGENT_SKILL_PREFS_MIGRATIONS } from './agent-skill-prefs-migrations';
 import { AI_CHECKS_MIGRATIONS } from './ai-checks-migrations';
 import { WORKSPACE_MIGRATIONS } from './change-intel/workspace-migrations';
@@ -117,6 +117,7 @@ export const MIGRATIONS: readonly Migration[] = [
   ...LOCATION_PROFILES_MIGRATIONS,
   ...SERP_API_READINGS_MIGRATIONS,
   ...SITE_CRAWL_PACING_MIGRATIONS,
+  ...PROJECT_PAGES_URL_INDEX_MIGRATIONS,
 ];
 
 /**

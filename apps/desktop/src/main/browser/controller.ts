@@ -6,7 +6,7 @@ import { OPEN_IN_TEMPLATES, type OpenInTemplateId, type OpenToolResult, type Pal
 import { isPublicAddress, openInUrl } from '@app/specs/open-in.spec';
 import { FULLSCREEN_BANNER_HEIGHT, type PermissionDecision } from '@app/specs/permissions.spec';
 import type { PageCommand } from '@app/specs/page-commands.spec';
-import { DEFAULT_TAB_OVERRIDES, type RenderProfile, type TabOverrides } from '@app/specs/render-profile.spec';
+import { DEFAULT_TAB_OVERRIDES, type RenderProfile, type TabOverrides, type TabRenderProfile } from '@app/specs/render-profile.spec';
 import { isWebUrl, parseWebUrl } from '@app/specs/web-url.spec';
 import { pageViewRadius } from '@app/specs/workspace-layout.spec';
 import { displayUrl, resolveAddressInput } from './address';
@@ -113,6 +113,12 @@ export interface BrowserController extends BrowserService {
    * permission handlers attribute a request to its tab with it (`permissions.feature.md`).
    */
   tabIdOf(contents: unknown): number | null;
+  /** The active tab's id, or `null` (what `getState().activeTabId` holds, without building the state). */
+  activeTabId(): number | null;
+  /** Whether a tab with this id is open (what `getState().tabs` holds, without building the state). */
+  hasTab(tabId: number): boolean;
+  /** The tab's render profile, or `null` (none in effect, or no such tab): `getState().tabs[..].renderProfile`, without building the state. */
+  renderProfileOf(tabId: number): TabRenderProfile | null;
   /** Whether the tab is in HTML fullscreen (its new permission requests are denied). */
   isFullscreen(tabId: number): boolean;
   /**
@@ -1296,6 +1302,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     notify: raiseNotice,
 
     tabIdOf,
+
+    activeTabId: () => strip.activeTabId,
+
+    hasTab: (tabId) => strip.tabs.some((tab) => tab.id === tabId),
+
+    renderProfileOf(tabId) {
+      const tab = strip.tabs.find((t) => t.id === tabId);
+      return tab ? renderProfiles.state(tab) : null;
+    },
 
     isFullscreen,
 
