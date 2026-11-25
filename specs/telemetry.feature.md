@@ -124,7 +124,8 @@ chrome reaches it only through `telemetry.*` (`packages/ipc-contract/src/telemet
   synchronously when main starts, before any window opens and before telemetry is created. Missing,
   unreadable, larger than `TELEMETRY_CONSENT_FILE_MAX_BYTES` (checked with `stat` before reading, and
   in bytes after), not JSON, another version or any other shape reads as both off. Writes are atomic
-  (a temporary file renamed over it, `0600`); if a write fails the file is removed or, if it cannot be
+  (a temporary file renamed over it, `0600`, the rename tried again on Windows while another program
+  has the file open: `renameOverSync`); if a write fails the file is removed or, if it cannot be
   (a locked file on Windows), overwritten in place with both off, so the next start is off (fail
   closed: a turn-off never survives as on). The state then says `persisted: false` (Settings: "for
   this run only") until a later write succeeds.

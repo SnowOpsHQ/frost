@@ -168,8 +168,14 @@ one named test.
   by renaming a new one over it goes through `renameOver`: the agent's settings, keys and ChatGPT
   host id, the secret store, the intent model, screenshots, the SERP pack, the sync config, and
   the update's download and prefs. No other file under `src/main` calls the file system's rename
-  itself. One exception is listed by name in the test: the telemetry consent file, which is
-  written synchronously.
+  itself, and none calls `renameSync` itself either: the telemetry consent file, which is written
+  synchronously, goes through `renameOverSync` (`rename-over-sync-waits-for-a-busy-file`).
+- **Scenario: rename-over-sync-waits-for-a-busy-file** (`packages/db/src/__tests__/rename-over-sync.test.ts`)
+  — `renameOverSync`, the synchronous counterpart of `renameOver`, tries a refused rename again
+  with the same codes (EPERM, EACCES, EBUSY), the same waits (`RENAME_RETRY_WAITS_MS`) and the same
+  platform rule (Windows only): the wait blocks the thread instead of yielding. It lives in
+  `@app/db` (`rename-over-sync.ts`), which `renameOver` takes its codes and waits from, because
+  `@app/db` cannot import from the desktop app and the database's own startup needs it too.
 - **Scenario: credentials-read-error-not-cached** — a file that can't be read makes `setKey` and
   `clearKey` fail without writing (other slots survive); once readable it is read afresh.
 - **Scenario: credentials-re-encrypted-when-asked** — when decryption answers `shouldReEncrypt`, the
