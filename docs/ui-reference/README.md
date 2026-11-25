@@ -7,11 +7,13 @@ bundled) and spacing are the tokens in `apps/desktop/src/renderer/tokens.css`
 
 ## Surfaces
 - **Shell:** one chrome row (back, forward, reload, the tab strip, new tab, the address bar and the
-  toolbar toggles) over the page, with a docked, collapsible, resizable SEO sidebar. The agent panel
+  toolbar toggles) over the page, with a docked, collapsible, resizable SEO sidebar and an SEO
+  devtools drawer. The agent panel
   is summoned on demand, so the page gets room by default.
 - **SEO panels:** Overview; On-Page; Content; Links; Images; Social; Schema; Indexability; Page
   Speed; Compliance; JavaScript; SERP; Visibility; Search Console; Changes; Inspector.
-- **Sheets in the page column:** History, Projects, the screenshot editor, Settings and Help.
+- **Sheets in the page column:** History, Projects, the screenshot editor, Site crawl, AI answers,
+  Diagnostics, What's new, Settings and Help (keyboard shortcuts).
 - **Settings sections:** Account, Search Console, Data sources, Locations, AI checks, Telemetry and
   History.
 

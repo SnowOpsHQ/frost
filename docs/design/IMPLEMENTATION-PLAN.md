@@ -157,7 +157,8 @@ Semgrep ipc rules + a Playwright `openExternal` regression test) in CI.
 
 ## 6. Decisions made on the open questions
 1. **Product intent**: a shippable product. frost is free and open source (2026-10-29); no local
-   feature is gated, and an account is needed only for sync (`docs/plans/phase-4-accounts-telemetry.md`,
+   feature needs a frost account or a paid plan (some, such as rank checks, crawling and the data
+   sources, have availability gates of their own), and an account is needed only for sync (`docs/plans/phase-4-accounts-telemetry.md`,
    "Change of 2026-10-29").
 2. **AI model routing**: the user's own route, not proxied credits: their Anthropic or OpenAI key,
    the Vercel AI Gateway, or their ChatGPT plan. Main makes every model request; keys stay in the

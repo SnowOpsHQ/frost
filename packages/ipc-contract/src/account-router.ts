@@ -18,7 +18,7 @@ import { enforceSender, middleware, publicProcedure, router } from './trpc';
 // The account ↔ main (Phase 4; specs `entitlements-snapshot.spec.ts`, `account-state.schema.ts`;
 // acceptance `entitlements-client.feature.md` and `account-signin.feature.md`, Router). Every procedure
 // starts `publicProcedure.use(enforceSender)`. Task 4: the `requireFeature` gate (the chrome reads the
-// entitlements in `account.state`); Task 5: the sign-in flow. Every output is validated with a strict
+// entitlements in `AccountState`, through `account.watch`); Task 5: the sign-in flow. Every output is validated with a strict
 // schema, so a service answer that carries anything else (a token, a snapshot) is a masked internal
 // error, never forwarded.
 
