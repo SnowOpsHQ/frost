@@ -1534,6 +1534,10 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   attach-menu option (`.agent-attach-option`) and the agent's two focusable code blocks (`.agent-code`, `.agent-pre`) show
   focus as the app's ring, as the approval card's and its buttons': `--focus-ring` beside a transparent 2px outline forced
   colours draw (and the browser's own outline does not), not the option's faint `--accent-soft` fill alone.
+- **Scenario: agent-pressed-tool-holds-on-hover** (`apps/desktop/src/__tests__/edge-and-focus-styles.test.ts`; issue #25) — a pressed
+  agent-head tool (`.agent-head-tool[aria-pressed='true']`, its `--accent-soft` fill and `--accent` icon) keeps its
+  pressed look under the pointer: its selector outweighs `.tool:hover`'s `--bg-hover`, whichever stylesheet loads later
+  (the agent's loads before `styles.css`, so a tie goes to the hover).
 
 ## Unit, fonts (`apps/desktop/src/__tests__/fonts.test.ts`)
 - **Scenario: bundled-fonts-cover-the-type-scale** — the (family, weight) pairs of `BUNDLED_FONTS`
