@@ -136,6 +136,9 @@ named test.
   label throws at registration; a dynamic source's bad or duplicate ids are dropped.
 - **Scenario: registry-resolves-dynamic-sources** — a function source is asked with the context
   each time.
+- **Scenario: registry-signals-changes-in-availability-inputs** — `invalidate` calls each
+  `subscribe`d listener and bumps `version`; a `watch`ed input source is started only while a listener
+  is subscribed (stopped with the last) and may call `invalidate` to make an open palette resolve again.
 - **Scenario: availability-filters-and-never-throws** — unavailable actions are left out; a predicate
   or source that throws leaves out only its own actions.
 - **Scenario: matcher-prefers-prefix-and-word-starts** — prefix > word-start > substring >

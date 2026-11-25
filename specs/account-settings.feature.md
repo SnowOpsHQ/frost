@@ -42,7 +42,7 @@ to one named test.
   service or no Search Console client used to give each its own top section saying only "… isn't
   configured in this build". Such a section has nothing to set, so once main says so (`account.watch`
   answers `unconfigured`; `gsc.watch` answers `configured: false`) it is left out of the section list
-  and the sheet (`SETTINGS_OPTIONAL_SECTIONS`, `settingsSectionsShown`). Until main has answered it
+  and the sheet (and, even from an already open palette, its "Search Console settings" action) (`SETTINGS_OPTIONAL_SECTIONS`, `settingsSectionsShown`). Until main has answered it
   shows, with "Loading…" (the UI never guesses). Rejected: a compact muted "not available" line in
   place (still two headings and two list entries with nothing to do, at the top of the sheet), and
   moving them to the end (the list would reorder itself by build). **Where requests land:** a request
@@ -144,6 +144,7 @@ to one named test.
 
 ## Palette (`apps/desktop/src/renderer/__tests__/settings-palette.test.ts`)
 - `settings-palette-actions` — the four actions, in the Browser group, each open its section and move focus themselves; "Sign in to frost" is offered only while signed out; "Search Console settings" only while Search Console is shown (not once main says it is not `configured`).
+- `settings-palette-follows-main-while-open` — while the palette is open, main's answer that Search Console is `configured: false` (or that the account is no longer signed out) re-resolves its list: "Search Console settings" (and "Sign in to frost") drop out without typing or closing; nothing is watched while the palette is closed.
 - `settings-palette-registers-with-others` — they register beside the built-in and browser-polish actions with no duplicate ID.
 
 ## Main (`apps/desktop/src/main/account/__tests__/settings-requests.test.ts`)
