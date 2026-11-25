@@ -83,3 +83,37 @@ describe('palette registry', () => {
     expect(registry.ids()).toEqual(['shown', 'hidden', 'throws', 'by.state']);
   });
 });
+
+describe('palette registry change signal', () => {
+  test('registry-signals-changes-in-availability-inputs', () => {
+    const registry = createPaletteRegistry();
+    const heard = vi.fn();
+    const off = registry.subscribe(heard);
+    const before = registry.version();
+    registry.invalidate();
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(registry.version()).not.toBe(before);
+    off();
+    registry.invalidate();
+    expect(heard).toHaveBeenCalledTimes(1);
+    // A watched input is started with the first listener and stopped with the last.
+    const stop = vi.fn();
+    const start = vi.fn((_invalidate: () => void) => stop);
+    const unwatch = registry.watch(start);
+    expect(start).not.toHaveBeenCalled();
+    const offA = registry.subscribe(() => undefined);
+    const offB = registry.subscribe(() => undefined);
+    expect(start).toHaveBeenCalledTimes(1);
+    offA();
+    expect(stop).not.toHaveBeenCalled();
+    offB();
+    expect(stop).toHaveBeenCalledTimes(1);
+    // Watching while a listener is subscribed starts at once; unwatching stops it.
+    const offC = registry.subscribe(() => undefined);
+    expect(start).toHaveBeenCalledTimes(2);
+    unwatch();
+    expect(stop).toHaveBeenCalledTimes(2);
+    offC();
+    expect(stop).toHaveBeenCalledTimes(2);
+  });
+});

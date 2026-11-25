@@ -6,7 +6,7 @@ import type { BrowserState } from '@app/specs/browser.spec';
 import { browserPolishPaletteSources } from '../browser-polish-palette';
 import { builtinPaletteSources, type PaletteApi } from '../palette/builtins';
 import { createPaletteRegistry, type PaletteContext } from '../palette/registry';
-import { settingsPaletteSources } from '../settings-palette';
+import { settingsPaletteSources, watchSettingsAvailability } from '../settings-palette';
 
 const ctx = { state: null as BrowserState | null, tab: undefined, audit: null, sidebarOpen: false, chrome: { openPanel: vi.fn(), setSidebarOpen: vi.fn() } } satisfies PaletteContext;
 
@@ -60,5 +60,32 @@ describe('Settings palette actions', () => {
     ).not.toThrow();
     const ids = registry.ids();
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  test('settings-palette-follows-main-while-open', () => {
+    // Stores as `useSyncExternalStore` sees them: an answer calls the listeners.
+    const fake = <T,>(first: T | null) => {
+      let value = first;
+      const listeners = new Set<() => void>();
+      return { current: () => value, subscribe: (l: () => void) => (listeners.add(l), () => void listeners.delete(l)), answer: (next: T) => { value = next; for (const l of listeners) l(); }, count: () => listeners.size };
+    };
+    const account = fake<{ status: AccountStatus }>({ status: 'signed-out' });
+    const gsc = fake<{ configured: boolean }>(null);
+    const registry = createPaletteRegistry();
+    registry.register(...settingsPaletteSources({ openSettings: vi.fn(), accountStatus: () => account.current()?.status ?? null, gscConfigured: () => gsc.current()?.configured ?? null }));
+    registry.watch(watchSettingsAvailability([account, gsc]));
+    // What an open palette does: resolve again whenever the registry says its inputs changed.
+    let listed = registry.resolve(ctx).map((a) => a.id);
+    expect(account.count()).toBe(0);
+    const off = registry.subscribe(() => (listed = registry.resolve(ctx).map((a) => a.id)));
+    expect(listed).toContain('settings.search-console');
+    expect(listed).toContain('settings.sign-in');
+    gsc.answer({ configured: false });
+    expect(listed).not.toContain('settings.search-console');
+    account.answer({ status: 'signed-in' });
+    expect(listed).not.toContain('settings.sign-in');
+    off();
+    expect(account.count()).toBe(0);
+    expect(gsc.count()).toBe(0);
   });
 });

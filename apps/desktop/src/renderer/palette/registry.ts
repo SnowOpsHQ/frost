@@ -129,6 +129,17 @@ export interface PaletteRegistry {
   resolve(ctx: PaletteContext): PaletteAction[];
   /** The ids of every registered static action. */
   ids(): string[];
+  /** Calls `listener` whenever an availability input outside the context changed (`invalidate`); answers the unsubscribe. */
+  subscribe(listener: () => void): () => void;
+  /** Changes with every `invalidate`: a snapshot for `useSyncExternalStore`. */
+  version(): number;
+  /** Says an input an action's availability reads (outside the context) changed: listeners resolve again. */
+  invalidate(): void;
+  /**
+   * Registers an availability input: `start(invalidate)` runs while at least one listener is subscribed
+   * (an open palette), and answers its stop; nothing is watched while the palette is closed.
+   */
+  watch(start: (invalidate: () => void) => () => void): () => void;
 }
 
 const GROUP_IDS: ReadonlySet<string> = new Set(PALETTE_GROUPS.map((group) => group.id));
@@ -161,6 +172,14 @@ export function createPaletteRegistry(): PaletteRegistry {
     const ids = new Set<string>();
     for (const { source } of entries) if (typeof source !== 'function') ids.add(source.id);
     return ids;
+  };
+
+  const listeners = new Set<() => void>();
+  const watchers = new Map<(invalidate: () => void) => () => void, (() => void) | null>();
+  let version = 0;
+  const invalidate = () => {
+    version += 1;
+    for (const listener of [...listeners]) listener();
   };
 
   return {
@@ -209,6 +228,29 @@ export function createPaletteRegistry(): PaletteRegistry {
     },
 
     ids: () => [...staticIds()],
+
+    subscribe(listener) {
+      listeners.add(listener);
+      if (listeners.size === 1) for (const start of watchers.keys()) watchers.set(start, start(invalidate));
+      return () => {
+        if (!listeners.delete(listener) || listeners.size > 0) return;
+        for (const [start, stop] of watchers) {
+          stop?.();
+          watchers.set(start, null);
+        }
+      };
+    },
+
+    version: () => version,
+    invalidate,
+
+    watch(start) {
+      watchers.set(start, listeners.size > 0 ? start(invalidate) : null);
+      return () => {
+        watchers.get(start)?.();
+        watchers.delete(start);
+      };
+    },
   };
 }
 
@@ -221,6 +263,11 @@ export const paletteRegistry: PaletteRegistry = createPaletteRegistry();
  */
 export function registerPaletteActions(...sources: PaletteSource[]): () => void {
   return paletteRegistry.register(...sources);
+}
+
+/** Registers an availability input with the palette (`PaletteRegistry.watch`); answers the unwatch. */
+export function watchPaletteInputs(start: (invalidate: () => void) => () => void): () => void {
+  return paletteRegistry.watch(start);
 }
 
 /** The ready audit in `ctx`, or `null`. */
