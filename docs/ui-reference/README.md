@@ -1,19 +1,23 @@
 # UI direction
 
 frost's interface is its own design. This note records the direction it follows; no UI assets,
-screenshots or markup from other products are kept in this repository.
+screenshots or markup from other products are kept in this repository. The colours, type (Geist,
+bundled) and spacing are the tokens in `apps/desktop/src/renderer/tokens.css`
+(`specs/design-tokens.feature.md`).
 
 ## Surfaces
-- **Shell:** browser chrome with a docked, collapsible SEO sidebar; an AI panel (later phase) that is
-  summoned on demand, so the page gets room by default.
-- **SEO panels:** Overview; On-Page (content, links, images, social); Schema; Indexability; Page
-  Speed; Compliance; later: SERP, AI readiness, Search Console, Changes.
-- **App views (later phases):** Projects, Screenshots.
-- **Settings (later phases):** Profile, Teams, Preferences, Browser, General, People, Integrations,
-  Billing, API keys.
+- **Shell:** one chrome row (back, forward, reload, the tab strip, new tab, the address bar and the
+  toolbar toggles) over the page, with a docked, collapsible, resizable SEO sidebar. The agent panel
+  is summoned on demand, so the page gets room by default.
+- **SEO panels:** Overview; On-Page; Content; Links; Images; Social; Schema; Indexability; Page
+  Speed; Compliance; JavaScript; SERP; Visibility; Search Console; Changes; Inspector.
+- **Sheets in the page column:** History, Projects, the screenshot editor, Settings and Help.
+- **Settings sections:** Account, Search Console, Data sources, Locations, AI checks, Telemetry and
+  History.
 
 ## Principles
-- A persistent, scannable panel rail showing per-panel status (pass / warn / error) at a glance,
-  rather than a hidden panel menu.
+- A persistent, scannable panel rail showing per-panel status (pass / warn / error) at a glance.
+  Panels you do not use can be unpinned into a "More panels" menu, whose dot shows the worst status
+  inside it.
 - Every panel follows the Overview pattern: health score → ranked issues → how to fix.
 - Page-derived content is always shown as inert text.
