@@ -1525,6 +1525,11 @@ Code: `apps/desktop/src/renderer/tokens.css` and `fonts.css`, imported by `main.
   a rule above the one it overrides, fails it.
 - **Scenario: hex-colours-do-not-grow** — the literal hex colours outside `tokens.css` (comments
   aside) stay at or under `HEX_COLOUR_RATCHET`.
+- **Scenario: ring-edges-keep-a-forced-colours-border** (`apps/desktop/src/__tests__/edge-and-focus-styles.test.ts`; issue #25) — the
+  command palette's card (`.palette`), its key hints (`.palette-kbd`) and Help's key hints (`.help-kbd`) draw
+  their edge with `--e-ring`, a shadow forced colours drop, so each also has a `1px solid transparent` border
+  (the edge forced colours draw, as the settings cards'); the box stays the size it was: the hints' 1px of
+  padding the border takes comes off their horizontal padding (`calc(var(--space-2) - 1px)`) and, on Help's, the vertical 1px.
 
 ## Unit, fonts (`apps/desktop/src/__tests__/fonts.test.ts`)
 - **Scenario: bundled-fonts-cover-the-type-scale** — the (family, weight) pairs of `BUNDLED_FONTS`
