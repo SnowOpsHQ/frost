@@ -119,12 +119,11 @@ export const historyRouter = router({
     .mutation(async ({ ctx, input }) => (await ctx.history.clearRange(input.range)) === true),
 });
 
-/** Local preferences: the search engine (`searchEngine` its id, `setSearchEngine` whether it was stored). */
+/**
+ * Local preferences: `setSearchEngine` whether the search engine was stored. The chrome reads the
+ * engine in use from the browser state (`browser.watch`), not from here.
+ */
 export const settingsRouter = router({
-  searchEngine: publicProcedure
-    .use(enforceSender)
-    .use(requireSettings)
-    .query(({ ctx }) => ctx.settings.searchEngine()),
   setSearchEngine: publicProcedure
     .use(enforceSender)
     .use(requireSettings)

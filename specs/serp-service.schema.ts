@@ -1,8 +1,8 @@
 /**
  * The Zod side of the SERP service (Phase 3 Task 4; plain values in `serp-service.spec.ts`;
  * acceptance `serp-overlay.feature.md`, Router and Service): what the stable read API answers
- * (`SerpStateSchema`, `IntentAnswerSchema`, `PackStatusSchema`), what `serp.watch` and `serp.state`
- * answer (`SerpTabStateSchema`) and the `serp.*` procedures' inputs. Not for the chrome renderer (no
+ * (`SerpStateSchema`, `IntentAnswerSchema`, `PackStatusSchema`), what `serp.watch` answers
+ * (`SerpTabStateSchema`) and the `serp.*` procedures' inputs. Not for the chrome renderer (no
  * Zod there).
  *
  * **Stable after merge** (Phase 5's agent tools import these answers through `SerpReadApi`): a
@@ -114,7 +114,7 @@ export const SerpParamNamesSchema = z
   }, { message: 'a parameter name twice' });
 
 /**
- * What `serp.watch` and `serp.state` answer for a tab: its SERP state, whether its outlines are
+ * What `serp.watch` answers for a tab: its SERP state, whether its outlines are
  * drawn, the intent of its current query (`null` until a `ready` reading has one, or while it is
  * being classified), the service's `version` (`0` before any change) and the pack's status.
  * Phase 10 adds `paramNames` (optional): the pack's parameter names for the engine of a `pending`,
@@ -133,7 +133,7 @@ export type SerpTabState = z.infer<typeof SerpTabStateSchema>;
 
 // ---- Procedures ---------------------------------------------------------------------------------
 
-/** `serp.state` input: the tab. */
+/** `serp.runProbes` / `serp.stopProbes` input: the tab. */
 export const SerpTabInputSchema = z.strictObject({ tabId });
 /** `serp.watch` input: the tab, and the last version the chrome has (`-1`: none yet, answered at once). */
 export const SerpWatchInputSchema = z.strictObject({ tabId, sinceVersion: z.int().min(-1).max(Number.MAX_SAFE_INTEGER) });

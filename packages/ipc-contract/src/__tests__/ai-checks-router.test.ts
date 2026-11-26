@@ -1,4 +1,4 @@
-// Spec: specs/ai-checks.schema.ts (AiChecksStateSchema, AiChecksTabInputSchema, AiChecksWatchInputSchema,
+// Spec: specs/ai-checks.schema.ts (AiChecksStateSchema, AiChecksWatchInputSchema,
 // AiChecksSetModeInputSchema, AiChecksCheckNowInputSchema, AiChecksModeSchema), specs/ai-checks.spec.ts (AI_CHECK_MODES),
 // specs/ipc-sender.spec.ts, specs/ipc-transport.spec.ts (IPC_INTERNAL_ERROR_CODE)
 // Acceptance: specs/ai-checks.feature.md (Router)
@@ -43,7 +43,6 @@ function fakeAiChecks(state: AiChecksState = READY) {
 
 /** Every aiChecks procedure, its type and a valid input. */
 const PROCEDURES: Record<string, { type: 'query' | 'mutation'; input: unknown }> = {
-  state: { type: 'query', input: { tabId: 1 } },
   watch: { type: 'query', input: { tabId: 1, sinceVersion: -1 } },
   setMode: { type: 'mutation', input: { mode: 'automatic' } },
   checkNow: { type: 'mutation', input: { tabId: 1 } },
@@ -90,7 +89,6 @@ describe('aiChecks router', () => {
     }
     // The answers, from the app's own window.
     const aiChecks = fakeAiChecks();
-    await expect(call(ctxFor(aiChecks), 'state', { tabId: 1 })).resolves.toEqual(READY);
     await expect(call(ctxFor(aiChecks), 'watch', { tabId: 1, sinceVersion: 3 })).resolves.toEqual(READY);
     expect(aiChecks.watch).toHaveBeenCalledWith(1, 3, expect.any(AbortSignal));
     await expect(call(ctxFor(aiChecks), 'setMode', { mode: 'automatic' })).resolves.toBe('automatic');
@@ -110,8 +108,7 @@ describe('aiChecks router', () => {
     }
     // Strict inputs: nothing more, nothing malformed reaches the service.
     const bad: Record<string, unknown[]> = {
-      state: [{}, { tabId: 0 }, { tabId: 1.5 }, { tabId: '1' }, { tabId: 1, url: URL_A }],
-      watch: [{ tabId: 1 }, { tabId: 1, sinceVersion: -2 }, { tabId: 1, sinceVersion: 0, extra: 1 }],
+      watch: [{}, { tabId: 0, sinceVersion: 0 }, { tabId: 1.5, sinceVersion: 0 }, { tabId: '1', sinceVersion: 0 }, { tabId: 1, sinceVersion: 0, url: URL_A }, { tabId: 1 }, { tabId: 1, sinceVersion: -2 }, { tabId: 1, sinceVersion: 0, extra: 1 }],
       setMode: [{}, { mode: 'always' }, { mode: 'automatic', consented: true }, { mode: 'off', windowId: 1 }],
       checkNow: [{}, { tabId: 1, again: 'yes' }, { tabId: 1, route: 'gateway' }, { tabId: 1, modelId: 'openai/gpt-5' }, { tabId: 1, input: 'page text' }],
     };
@@ -132,11 +129,9 @@ describe('aiChecks router', () => {
       { ...READY, mode: 'always' } as never,
     ];
     for (const state of leaks) {
-      for (const name of ['state', 'watch']) {
-        const error = await errorOf(call(ctxFor(fakeAiChecks(state)), name, PROCEDURES[name]!.input));
-        expect(error.code, name).toBe(IPC_INTERNAL_ERROR_CODE);
-        expect(error.message).not.toContain('sk-ant-secret');
-      }
+      const error = await errorOf(call(ctxFor(fakeAiChecks(state)), 'watch', PROCEDURES.watch!.input));
+      expect(error.code).toBe(IPC_INTERNAL_ERROR_CODE);
+      expect(error.message).not.toContain('sk-ant-secret');
     }
     const odd = fakeAiChecks();
     odd.setMode.mockResolvedValueOnce('everything' as never);

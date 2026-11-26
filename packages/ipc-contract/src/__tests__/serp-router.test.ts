@@ -38,7 +38,6 @@ function fakeSerp() {
           }),
     ),
     setOutlines: vi.fn((tabId: number, on: boolean) => tabId === 1 && on),
-    packStatus: vi.fn(() => PACK),
     checkPackUpdate: vi.fn(async (): Promise<PackUpdateOutcome> => 'not-newer'),
     intentState: vi.fn((): IntentState => 'model-missing'),
     enableIntent: vi.fn(async (): Promise<IntentEnableOutcome> => 'ready'),
@@ -85,16 +84,13 @@ async function errorOf(run: Promise<unknown>): Promise<TRPCError> {
 
 const VALID_INPUT: Record<string, unknown> = {
   watch: { tabId: 1, sinceVersion: -1 },
-  state: { tabId: 1 },
   setOutlines: { tabId: 1, on: true },
-  packStatus: undefined,
   checkPackUpdate: undefined,
   intentState: undefined,
   enableIntent: undefined,
   classify: { query: 'best running shoes' },
   runProbes: { tabId: 1 },
   stopProbes: { tabId: 1 },
-  probes: { tabId: 1 },
   watchProbes: { tabId: 1, sinceVersion: -1 },
   openDestination: { tabId: 1, destination: 'perplexity' },
 };
@@ -129,13 +125,11 @@ describe('serp router', () => {
   test('serp-inputs-validated', async () => {
     const bad: Record<string, unknown[]> = {
       watch: [{ tabId: 1 }, { tabId: 1, sinceVersion: -2 }, { tabId: 1, sinceVersion: 1.5 }, { tabId: 0, sinceVersion: 0 }, { tabId: 1, sinceVersion: 0, extra: 1 }, undefined],
-      state: [{ tabId: 0 }, { tabId: -1 }, { tabId: '1' }, { tabId: 1, url: 'https://www.google.com/search?q=x' }, {}, undefined],
       setOutlines: [{ tabId: 1 }, { tabId: 1, on: 'yes' }, { tabId: 0, on: true }, { tabId: 1, on: true, layout: { results: 'body' } }, undefined],
       classify: [{}, { query: 1 }, { query: 'x'.repeat(10_000) }, { query: 'x', model: 'other' }, undefined],
       // The probes take the tab alone: never a URL, a user agent or an agent list to fetch with.
       runProbes: [{ tabId: 0 }, { tabId: 1.5 }, { tabId: '1' }, { tabId: 1, url: 'http://10.0.0.1/' }, { tabId: 1, userAgent: 'x' }, { tabId: 1, agents: ['gptbot'] }, {}, undefined],
       stopProbes: [{ tabId: 0 }, { tabId: 1, all: true }, undefined],
-      probes: [{ tabId: -1 }, { tabId: 1, url: 'https://example.com/' }, undefined],
       watchProbes: [{ tabId: 1 }, { tabId: 1, sinceVersion: -2 }, { tabId: 1, sinceVersion: 0, extra: 1 }, undefined],
     };
     for (const name of Object.keys(bad)) {
@@ -151,12 +145,11 @@ describe('serp router', () => {
     for (const name of PROCEDURES) expect((await errorOf(procedure(ctxFor(undefined), name)(VALID_INPUT[name]))).code, name).toBe(IPC_INTERNAL_ERROR_CODE);
     const { serp } = fakeSerp();
     const ctx = ctxFor(serp);
-    await expect(procedure(ctx, 'state')({ tabId: 1 })).resolves.toEqual(state(3));
+    await expect(procedure(ctx, 'watch')({ tabId: 1, sinceVersion: -1 })).resolves.toEqual(state(3));
     expect(SerpTabStateSchema.safeParse(state(3)).success).toBe(true);
     await expect(procedure(ctx, 'setOutlines')({ tabId: 1, on: true })).resolves.toBe(true);
     await expect(procedure(ctx, 'setOutlines')({ tabId: 2, on: true })).resolves.toBe(false);
     expect(serp.setOutlines).toHaveBeenLastCalledWith(2, true);
-    await expect(procedure(ctx, 'packStatus')()).resolves.toEqual(PACK);
     await expect(procedure(ctx, 'checkPackUpdate')()).resolves.toBe('not-newer');
     await expect(procedure(ctx, 'intentState')()).resolves.toBe('model-missing');
     await expect(procedure(ctx, 'enableIntent')()).resolves.toBe('ready');
@@ -165,7 +158,7 @@ describe('serp router', () => {
     await expect(procedure(ctx, 'runProbes')({ tabId: 1 })).resolves.toBe(true);
     await expect(procedure(ctx, 'runProbes')({ tabId: 2 })).resolves.toBe(false);
     await expect(procedure(ctx, 'stopProbes')({ tabId: 1 })).resolves.toBe(true);
-    await expect(procedure(ctx, 'probes')({ tabId: 1 })).resolves.toEqual(probesState(5));
+    await expect(procedure(ctx, 'watchProbes')({ tabId: 1, sinceVersion: -1 })).resolves.toEqual(probesState(5));
     expect(ProbesStateSchema.safeParse(probesState(5)).success).toBe(true);
   });
 
@@ -189,9 +182,9 @@ describe('serp router', () => {
   });
 
   test('serp-probes-procedures', async () => {
-    // Exactly the four probe procedures, each refusing a foreign sender before the service is touched (above).
+    // Exactly the three probe procedures, each refusing a foreign sender before the service is touched (above).
     const paths = Object.keys(appRouter._def.procedures).filter((p) => p.startsWith('serp.') && /probes/i.test(p));
-    expect(paths.sort()).toEqual(['serp.probes', 'serp.runProbes', 'serp.stopProbes', 'serp.watchProbes']);
+    expect(paths.sort()).toEqual(['serp.runProbes', 'serp.stopProbes', 'serp.watchProbes']);
     const { serp, pushProbes } = fakeSerp();
     const ctx = ctxFor(serp);
     await procedure(ctx, 'runProbes')({ tabId: 1 });

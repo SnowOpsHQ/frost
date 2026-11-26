@@ -203,10 +203,10 @@ it is still `applying`, or it `failed`. No profile is `null`.
 
 ## Router (`changes.*`)
 `capture` (mutation: `CaptureInputSchema` → `CaptureAnswer`), `history` (`HistoryInputSchema` →
-`HistoryAnswer`), `version` (`VersionInputSchema` → `VersionAnswer`), `diff` (`DiffInputSchema` →
-`DiffAnswer`) and `pages` (`PagesInputSchema` → `PagesAnswer`). Each starts
+`HistoryAnswer`) and `diff` (`DiffInputSchema` → `DiffAnswer`). Each starts
 `publicProcedure.use(enforceSender)`, then `requireChanges` (a context without the service fails
-closed), then its strict input.
+closed), then its strict input. One version's snapshot and the captured pages have no procedure: they
+are main's reads only (`ChangesReadService`'s `getVersion` and `listPages`).
 
 ## Scenarios
 ### Router (`packages/ipc-contract/src/__tests__/changes-router.test.ts`)
@@ -373,4 +373,6 @@ closed), then its strict input.
   search parameters do not parse is `null` or skipped; a stored diff that does not parse is
   computed afresh.
 - **Scenario: read-api-schemas-parse-answers** — every `ChangesReadService` answer parses with its
-  `CHANGES_READ_API` output schema, and every operation has a description and both schemas.
+  `CHANGES_READ_API` output schema, and every operation has a description and both schemas;
+  `listPages` and `getVersion` (main's reads only, no procedure) refuse malformed ids, out-of-range
+  limits and extra keys.

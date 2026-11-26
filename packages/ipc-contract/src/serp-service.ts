@@ -1,7 +1,7 @@
 import type { AiDestinationId, OpenDestinationResult } from '@app/specs/ai-destinations.spec';
 import type { IntentAnswer, IntentEnableOutcome, IntentState } from '@app/specs/intent-classifier.spec';
 import type { PackUpdateOutcome } from '@app/specs/serp-selector-pack.spec';
-import type { PackStatus, SerpState, SerpTabState } from '@app/specs/serp-service.schema';
+import type { SerpState, SerpTabState } from '@app/specs/serp-service.schema';
 import type { ProbesState } from '@app/specs/visibility-probes.schema';
 
 // The SERP overlay as the `serp.*` procedures and other phases see it (Phase 3 Task 4; spec
@@ -22,7 +22,10 @@ export interface SerpProbesService {
   runProbes(tabId: number): boolean;
   /** Stops the tab's run, keeping what it found; `true` if one was running. */
   stopProbes(tabId: number): boolean;
-  /** The tab's run for the page it shows now (`ProbesStateSchema`; `idle` without one). Never fetches; never throws. */
+  /**
+   * The tab's run for the page it shows now (`ProbesStateSchema`; `idle` without one): what
+   * `serp.watchProbes` answers when nothing changes. Never fetches; never throws.
+   */
   probes(tabId: number): ProbesState;
   /**
    * Resolves with the tab's probes state once its `version` exceeds `sinceVersion` (at once if it
@@ -37,7 +40,7 @@ export interface SerpService extends SerpProbesService {
    * The tab's SERP state (`SerpTabStateSchema`): its reading of the page it shows now, whether its
    * outlines are drawn, its query's intent and the pack's status. A result page with no reading yet
    * that has finished loading is read now (`pending`). A tab id that names no open tab is
-   * `not-serp` with no URL. Never throws.
+   * `not-serp` with no URL. What `serp.watch` answers when nothing changes. Never throws.
    */
   state(tabId: number): SerpTabState;
   /**
@@ -51,8 +54,6 @@ export interface SerpService extends SerpProbesService {
    * active tab with a `ready` reading; anything else is `false` (a no-op for `on`).
    */
   setOutlines(tabId: number, on: boolean): boolean;
-  /** The selector pack in use and the last update check's outcome (`PackStatusSchema`). */
-  packStatus(): PackStatus;
   /**
    * The user's "Check for selector updates": fetches, verifies and, if newer, installs the remote
    * pack (`PACK_UPDATE_OUTCOMES`). The only thing that requests a pack. Concurrent calls share one

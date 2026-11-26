@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
-import { AiChecksCheckNowInputSchema, AiChecksModeSchema, AiChecksSetModeInputSchema, AiChecksStateSchema, AiChecksTabInputSchema, AiChecksWatchInputSchema, type AiChecksState } from '@app/specs/ai-checks.schema';
+import { AiChecksCheckNowInputSchema, AiChecksModeSchema, AiChecksSetModeInputSchema, AiChecksStateSchema, AiChecksWatchInputSchema, type AiChecksState } from '@app/specs/ai-checks.schema';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import type { AiChecksService } from './ai-checks-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
@@ -37,16 +37,10 @@ async function watchAiChecks(aiChecks: AiChecksService, tabId: number, sinceVers
 }
 
 /**
- * `state` / `watch`: the tab's `AiChecksState` (`watch` long-polls on `sinceVersion`); `setMode`: the
- * mode in effect afterwards; `checkNow`: whether a check runs or waits for its turn now.
+ * `watch`: the tab's `AiChecksState` (a long-poll on `sinceVersion`); `setMode`: the mode in effect
+ * afterwards; `checkNow`: whether a check runs or waits for its turn now.
  */
 export const aiChecksRouter = router({
-  state: publicProcedure
-    .use(enforceSender)
-    .use(requireAiChecks)
-    .input(AiChecksTabInputSchema)
-    .output(AiChecksStateSchema)
-    .query(({ ctx, input }) => ctx.aiChecks.state(input.tabId)),
   watch: publicProcedure
     .use(enforceSender)
     .use(requireAiChecks)

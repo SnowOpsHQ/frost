@@ -35,7 +35,6 @@ function fakes() {
     clearRange: vi.fn(async (_range: string) => true),
   } satisfies HistoryService;
   const settings = {
-    searchEngine: vi.fn(() => 'bing' as const),
     setSearchEngine: vi.fn(async (_engine: string) => true),
   } satisfies SettingsService;
   return { find, history, settings };
@@ -81,7 +80,6 @@ const VALID_INPUT: Record<string, unknown> = {
   'history.retention': undefined,
   'history.setRetention': { retention: '7d', keepProjectPages: false },
   'history.clearRange': { range: 'hour' },
-  'settings.searchEngine': undefined,
   'settings.setSearchEngine': { engine: 'duckduckgo' },
 };
 const PATHS = Object.keys(VALID_INPUT);
@@ -181,7 +179,6 @@ describe('browser polish router', () => {
     await expect(call('history.reopenClosedTab')).resolves.toBeNull();
     await expect(call('history.show')).resolves.toBeNull();
     expect(all.history.show).toHaveBeenCalledOnce();
-    await expect(call('settings.searchEngine')).resolves.toBe('bing');
     await expect(call('settings.setSearchEngine', { engine: 'duckduckgo' })).resolves.toBe(true);
     expect(all.settings.setSearchEngine).toHaveBeenCalledWith('duckduckgo');
   });

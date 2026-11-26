@@ -4,7 +4,7 @@
 > lessons from a private analysis of an existing product — **not** from its code, bundle, or branding. The security
 > and privacy gaps we found are designed out from the start, not inherited.
 
-Status: **draft for approval** · nothing is built until this is signed off.
+Status: **approved**; Phases 0–12 are built (status: `README.md`). The roadmap below is the original design intent; each `docs/plans/` file records what was built.
 
 ---
 
@@ -155,11 +155,18 @@ Semgrep ipc rules + a Playwright `openExternal` regression test) in CI.
 
 ---
 
-## 6. Open decisions (genuinely yours — don't need them to start Phase 0)
-1. **Product intent**: shippable product vs. internal tool — changes how much Phase 4/backend we build.
-2. **AI model routing**: our own proxied credits (like the original) vs. user bring-your-own-key.
-3. **Backend build-vs-buy**: Payload CMS (fast) vs. a lean custom API (lighter, more control).
-4. **VPN**: in or out of scope long-term.
-5. **Monetization**: whether Phase 4 billing is needed for v1.
+## 6. Decisions made on the open questions
+1. **Product intent**: a shippable product. frost is free and open source (2026-10-29); no local
+   feature needs a frost account or a paid plan (some, such as rank checks, crawling and the data
+   sources, have availability gates of their own), and an account is needed only for sync (`docs/plans/phase-4-accounts-telemetry.md`,
+   "Change of 2026-10-29").
+2. **AI model routing**: the user's own route, not proxied credits: their Anthropic or OpenAI key,
+   the Vercel AI Gateway, or their ChatGPT plan. Main makes every model request; keys stay in the
+   OS keychain (`docs/plans/phase-5-ai-agent.md`, `docs/plans/agent-chatgpt-plan.md`).
+3. **Backend build-vs-buy**: a lean custom API (`apps/backend`: Hono, better-auth, Drizzle on
+   Postgres), run locally and in tests, never deployed from this repo.
+4. **VPN**: out of scope. frost bundles none; Settings › Locations takes a proxy the user already has.
+5. **Monetization**: none. There is no billing in v1.
 
-None block the early phases; Phases 0–3 are the same regardless.
+Phases 0–12 are built (Phases 8–12 are planned only in `docs/plans/`, not in §4); their status is in
+`README.md` and each plan under `docs/plans/`.

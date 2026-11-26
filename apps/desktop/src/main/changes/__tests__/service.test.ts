@@ -1,5 +1,5 @@
 // Spec: specs/changes.spec.ts (CAPTURE_REFUSALS incl. tab-emulation-on, CAPTURE_BUSY, CAPTURE_STALE_RETRIES), specs/changes.schema.ts
-// (RegionAnswerSchema, CHANGES_READ_API), specs/capture-db.spec.ts (UNFILED_PROJECT_ID), specs/capture.spec.ts (DIFF_ENGINE_VERSION),
+// (RegionAnswerSchema, CHANGES_READ_API), specs/capture-db.spec.ts (UNFILED_PROJECT_ID, MAX_HISTORY_PAGE), specs/capture.spec.ts (DIFF_ENGINE_VERSION),
 // specs/rankings.spec.ts (searchIdentityJson), specs/rankings-url.spec.ts (serpFiltersOf), specs/rankings.schema.ts (StoredReadingSchema),
 // specs/workspace-db.spec.ts (SEARCH_KEY_VERSION, MAX_SERP_READING_JSON_BYTES)
 // Acceptance: specs/rankings.feature.md (The search key and its version: one key function; Scenario:
@@ -13,7 +13,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { canonicalJson, diffSnapshots } from '@app/change-intel';
 import { openSessionStore, uuidv7, type AppendCaptureInput, type SessionStore } from '@app/db';
 import type { SeoAuditResponse } from '@app/seo-core';
-import { UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
+import { MAX_HISTORY_PAGE, UNFILED_PROJECT_ID } from '@app/specs/capture-db.spec';
 import { CAPTURE_LIMITS, DIFF_ENGINE_VERSION, type CaptureSnapshot } from '@app/specs/capture-snapshot.schema';
 import { StoredReadingSchema } from '@app/specs/rankings.schema';
 import type { SearchParams } from '@app/specs/serp-search-params.schema';
@@ -785,6 +785,16 @@ describe('changes service', () => {
     expect(await service.history({ url: PAGE, cursor: page.next as never })).toMatchObject({ versions: [{ versionId: one.versionId }], next: null });
     expect(answers.getVersion).toEqual([await service.version({ versionId: one.versionId }), null]);
     expect(answers.diff![1]).toBeNull();
+    // Strict inputs (these two have no procedure, so their schemas are checked here): a malformed id,
+    // an out-of-range limit or an extra key is refused before main reads anything.
+    const badIds = ['', 'not-an-id', '01920000-0000-7000-8000-0000000000AA', '01920000-0000-4000-8000-000000000001', `${one.versionId}0`, 5, null];
+    const bad = {
+      listPages: [{ limit: 0 }, { limit: MAX_HISTORY_PAGE + 1 }, { limit: '5' }, { extra: 1 }, ...badIds.map((projectId) => ({ projectId }))],
+      getVersion: [{}, undefined, { versionId: one.versionId, extra: 1 }, ...badIds.map((versionId) => ({ versionId }))],
+    };
+    for (const [name, list] of Object.entries(bad) as [keyof typeof bad, unknown[]][]) {
+      for (const input of list) expect(CHANGES_READ_API[name].input.safeParse(input).success, `${name} ${String(JSON.stringify(input))}`).toBe(false);
+    }
   });
 });
 

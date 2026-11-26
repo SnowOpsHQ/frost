@@ -13,8 +13,6 @@ export interface LinkFilter {
   readonly query: string;
 }
 
-export const NO_LINK_FILTER: LinkFilter = { type: 'all', rel: 'all', query: '' };
-
 /** Which of `LINK_REL_FLAGS` the link's `rel` has. */
 export function relFlags(link: Pick<PageLink, 'rel'>): Readonly<Record<LinkRelFlag, boolean>> {
   const rel = tokens(link.rel);

@@ -14,7 +14,7 @@ Task 5; review focus `probes-are-bounded`. Each line maps to one named test.
 ## Decisions
 - **Only on the user's action.** Nothing is fetched until `serp.runProbes` (or
   `SerpReadApi.runProbes`, which Phase 5 gates behind its approval model) for the active tab showing
-  an `http(s)` page. Page loads, navigations, `serp.probes` and `serp.watchProbes` never fetch.
+  an `http(s)` page. Page loads, navigations and `serp.watchProbes` never fetch.
 - **Bounded.** One fetcher call per agent (8), never retried, at most 3 redirects each (at most 32
   requests), at most 2 calls in flight, `page` the tab's URL (so the fetcher's private-address rule
   applies: a private host only for a private page), `PROBE_LIMITS`' caps and `PROBE_KEEP_HEADERS`.
@@ -65,6 +65,6 @@ Task 5; review focus `probes-are-bounded`. Each line maps to one named test.
 - `probes-parse-in-worker` — probe jobs run one at a time in one worker; past `parseTimeoutMs` it is terminated and the job is `parse-failed`; a crash fails the job; a full queue refuses at once; after `dispose()` nothing spawns; the worker entry answers `{ id, kind: 'probe', job }` with `{ id, result }`, and its code imports no Electron.
 
 ## Router and setup
-- `serp-probes-procedures` (`packages/ipc-contract/src/__tests__/serp-router.test.ts`) — `serp.runProbes`, `serp.stopProbes` (mutations, `{ tabId }` → whether it runs / stopped), `serp.probes` (`{ tabId }` → `ProbesState`) and `serp.watchProbes` (`{ tabId, sinceVersion }` → `ProbesState`, a long-poll as `serp.watch`) are `enforceSender`-first with strict inputs, like the other `serp.*` procedures.
+- `serp-probes-procedures` (`packages/ipc-contract/src/__tests__/serp-router.test.ts`) — `serp.runProbes`, `serp.stopProbes` (mutations, `{ tabId }` → whether it runs / stopped) and `serp.watchProbes` (`{ tabId, sinceVersion }` → `ProbesState`, a long-poll as `serp.watch`; exactly these three) are `enforceSender`-first with strict inputs, like the other `serp.*` procedures.
 - `serp-setup-wires-probes` (`apps/desktop/src/main/serp/__tests__/setup.test.ts`) — the service and the read API expose the probes; a run uses the SERP lane and main's robots.txt fetcher; a tab's new document, in-page move and close, and Clear Browsing Data, cancel it; `will-quit` disposes the probes and their worker.
 - `serp-lane-own-queues` (`setup.test.ts`) — over one hop, a link check holding the `checks` lane's slots on a site (more waiting) never delays the probes, which run in the SERP lane's own queues; "Check for selector updates" goes through the same lane and hop.

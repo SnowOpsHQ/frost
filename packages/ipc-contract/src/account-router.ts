@@ -10,22 +10,17 @@ import {
 } from '@app/specs/account-state.schema';
 import { SettingsViewStateSchema, SettingsViewWatchInputSchema, type SettingsViewState } from '@app/specs/account-settings.schema';
 import { WATCH_TIMEOUT_MS } from '@app/specs/browser.spec';
-import {
-  EntitlementsSchema,
-  entitlementGrants,
-  FEATURE_FLAGS,
-  FEATURE_NOT_ENTITLED_CODE,
-  type FeatureFlag,
-} from '@app/specs/entitlements-snapshot.spec';
+import { entitlementGrants, FEATURE_FLAGS, FEATURE_NOT_ENTITLED_CODE, type FeatureFlag } from '@app/specs/entitlements-snapshot.spec';
 import { IPC_INTERNAL_ERROR_CODE } from '@app/specs/ipc-transport.spec';
 import type { AccountService, SettingsRequests } from './account-service';
 import { enforceSender, middleware, publicProcedure, router } from './trpc';
 
 // The account ↔ main (Phase 4; specs `entitlements-snapshot.spec.ts`, `account-state.schema.ts`;
 // acceptance `entitlements-client.feature.md` and `account-signin.feature.md`, Router). Every procedure
-// starts `publicProcedure.use(enforceSender)`. Task 4: `account.entitlements` and the `requireFeature`
-// gate; Task 5: the sign-in flow. Every output is validated with a strict schema, so a service answer
-// that carries anything else (a token, a snapshot) is a masked internal error, never forwarded.
+// starts `publicProcedure.use(enforceSender)`. Task 4: the `requireFeature` gate (the chrome reads the
+// entitlements in `AccountState`, through `account.watch`); Task 5: the sign-in flow. Every output is validated with a strict
+// schema, so a service answer that carries anything else (a token, a snapshot) is a masked internal
+// error, never forwarded.
 
 /** Hands the procedure main's `AccountService` (after `enforceSender`; fails closed without it). */
 const requireAccount = middleware(({ ctx, next }) => {
@@ -90,8 +85,8 @@ async function watchAccount(account: AccountService, sinceVersion: number): Prom
 }
 
 /**
- * - `entitlements`: main's verified `Entitlements` (strictly `EntitlementsSchema`).
- * - `state` / `watch`: the account (`AccountStateSchema`; `watch` long-polls on `sinceVersion`).
+ * - `state` / `watch`: the account (`AccountStateSchema`, main's verified entitlements among it;
+ *   `watch` long-polls on `sinceVersion`).
  * - `signIn`: starts a sign-in for the sender's window (`SignInResult`; `needs-gesture` without a live
  *   user gesture there).
  * - `confirmSignIn` / `cancelSignIn` (`{ requestId }`), `signOut`, `refresh`: a boolean (see
@@ -116,11 +111,6 @@ async function watchSettings(settings: SettingsRequests, windowId: number, since
 }
 
 export const accountRouter = router({
-  entitlements: publicProcedure
-    .use(enforceSender)
-    .use(requireAccount)
-    .output(EntitlementsSchema)
-    .query(({ ctx }) => ctx.account.entitlements()),
   state: publicProcedure
     .use(enforceSender)
     .use(requireAccount)
